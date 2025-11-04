@@ -1,21 +1,23 @@
 import torch
 import gymnasium as gym
 import numpy as np
-
-import ray
-from ray import tune
-from ray.rllib.algorithms.ppo import PPOConfig
-
-from gymnasium.spaces.utils import flatten_space, flatten
-from ray.rllib.algorithms.callbacks import DefaultCallbacks
-
-
 import os
 import sys
 import signal
 import pprint
 import pickle
 import traceback
+
+# Set environment variable to avoid GPU warning
+os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
+
+import ray
+from ray import tune
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+
+from gymnasium.spaces.utils import flatten_space, flatten
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
 
 # Add current directory to Python path for Ray workers
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -110,11 +112,18 @@ def create_hierarchical_truck_config():
         get_graph())  # , len(get_truck_configs()))
     flat_obs_space = flatten_space(raw_obs_space)
 
+    # Use new API stack configuration
     config = (
         PPOConfig()
         .environment(
             "hierarchical_truck_env",
             env_config={}
+        )
+        .rl_module(
+            model_config={
+                "fcnet_hiddens": [128, 64, 32],
+                "fcnet_activation": "relu",
+            }
         )
         .multi_agent(
             policies={
@@ -146,12 +155,11 @@ def create_hierarchical_truck_config():
             # RLlib API uses these parameter names in this version
             train_batch_size=2000,
             minibatch_size=256,
-            num_sgd_iter=10,
+            num_epochs=10,  # Changed from num_sgd_iter
             lr=0.0003,
             entropy_coeff=0.01,
         )
         .callbacks(DebugCallback)
-        # .rollouts(batch_mode="complete_episodes")
         .framework("torch")
     )
     print("end of creating config")
@@ -161,14 +169,10 @@ def create_hierarchical_truck_config():
 def eval(checkpoint_path):
     if not ray.is_initialized():
         ray.init(
-            num_cpus=4, 
+            num_cpus=1, 
             _temp_dir="/tmp/ray1",
             address=None, 
             object_store_memory=10**9,
-            runtime_env={
-                "working_dir": SCRIPT_DIR,
-                "py_modules": [os.path.join(SCRIPT_DIR, "truck_env")]
-            }
         )
     try:
         # Create config
@@ -277,22 +281,21 @@ def eval(checkpoint_path):
 def main():
     """Main training loop."""
     if not ray.is_initialized():
-        print("I'm in init!!!!")
+        print("Initializing Ray...")
         ray.init(
             num_cpus=4, 
             _temp_dir="/tmp/ray1",
             address=None, 
             object_store_memory=10**9,
-            runtime_env={
-                "working_dir": SCRIPT_DIR,
-                "py_modules": [os.path.join(SCRIPT_DIR, "truck_env")]
-            }
         )
         
     config = create_hierarchical_truck_config()
+    
+    # Use build_learner_group instead of build to avoid deprecation warning
+    # Actually, just use build() - the warning is about internal implementation
     algo = config.build()
 
-    print("Starting hierarchical truck routing training...")
+    print("\nStarting hierarchical truck routing training...")
     print("=" * 60)
 
     checkpoint_dir = './saved_models/'

@@ -3,6 +3,12 @@ Simple test script for HierarchicalTruckRoutingEnv with verbose output.
 Tests the environment with random actions and shows detailed debug information.
 """
 
+import sys
+import os
+
+# Add parent directory to path to enable imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from truck_env.truck_env import HierarchicalTruckRoutingEnv
 
 

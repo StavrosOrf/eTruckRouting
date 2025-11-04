@@ -12,16 +12,13 @@ DCFAST_CHARGING_RATE = 200.0
 MAX_CHARGERS = 100
 
 
-GRAPH_MAPPINGS = {
-    "node_to_index": None,
-    "index_to_node": None
-}
+GRAPH_MAPPINGS = {"node_to_index": None, "index_to_node": None}
 
 path = os.getcwd()
 
 
 def read_file(filename):
-    with open(filename, 'rb') as f:
+    with open(filename, "rb") as f:
         return pickle.load(f)
 
 
@@ -56,10 +53,7 @@ def slow_charger():
     return LEVEL_CHARGING_RATE
 
 
-charger_function_map = {
-    "fast": fast_charger,
-    "slow": slow_charger
-}
+charger_function_map = {"fast": fast_charger, "slow": slow_charger}
 
 
 def get_node_to_index():
@@ -80,7 +74,8 @@ def get_route_sequence():
         [54382864, 90796641],
         [9512913929, 49291774, 90810515],
         [9512913929, 90539746, 90403004],
-        [9512913929, 353478871, 9509748626]]
+        [9512913929, 353478871, 9509748626],
+    ]
 
 
 def charge_standard(current_charge, time=1):
@@ -98,15 +93,16 @@ def get_truck_types():
             "battery_capacity": BATTERY_CAPACITY,
             "base_speed": 50.0,  # km/h
             "base_discharge_function": discharge_standard,  # battery per km
-            "base_charge_function": charge_standard
+            "base_charge_function": charge_standard,
         },
         "heavy": {
             "battery_capacity": BATTERY_CAPACITY,
             "base_speed": 40.0,
             "base_discharge_function": discharge_standard,  # battery per km
-            "base_charge_function": charge_standard
-        }
+            "base_charge_function": charge_standard,
+        },
     }
+
 
 # def get_charger_configs():
 #    """Define charger specifications at each node."""
@@ -133,19 +129,24 @@ def get_charger_occupancy_template(graph):
         for node, data in graph.nodes(data=True)
         if data["has_charger"]
     }
+
+
 # =============================================================================
 # CUSTOM DISCHARGE AND CHARGE FUNCTIONS
 # =============================================================================
 
 
-def discharge_function(truck_config: dict, edge_data: dict, travel_time: float, current_time: float) -> float:
+def discharge_function(
+    truck_config: dict, edge_data: dict, travel_time: float, current_time: float
+) -> float:
     """Custom non-linear discharge function."""
     truck_type = get_truck_types()[truck_config["truck_type"]]
 
     # Base discharge based on distance and truck type
     # edge_data["distance"] * truck_type["base_discharge_rate"]
     base_discharge = truck_type["base_discharge_function"](
-        truck_config["current_battery"], edge_data["distance"])
+        truck_config["current_battery"], edge_data["distance"]
+    )
 
     # Terrain factor affects discharge
     terrain_modifier = edge_data.get("terrain_factor", 1.0)
@@ -158,13 +159,21 @@ def discharge_function(truck_config: dict, edge_data: dict, travel_time: float, 
     # if truck_config["current_battery"] > 15 else 1.3
     battery_efficiency = 1.0
 
-    total_discharge = base_discharge * terrain_modifier * \
-        time_modifier * battery_efficiency
+    total_discharge = (
+        base_discharge * terrain_modifier * time_modifier * battery_efficiency
+    )
 
     return max(0, total_discharge)
 
 
-def charge_function(graph, truck_config: dict, charger_node: int, charge_time: float, current_time: float, charger_type) -> float:
+def charge_function(
+    graph,
+    truck_config: dict,
+    charger_node: int,
+    charge_time: float,
+    current_time: float,
+    charger_type,
+) -> float:
     """Custom non-linear charge function."""
     charger_configs = get_charger_configs(graph)
     truck_types = get_truck_types()
@@ -180,7 +189,8 @@ def charge_function(graph, truck_config: dict, charger_node: int, charge_time: f
     # Base charge rate
     print(f"truck_type is {truck_type}")
     base_charge = truck_type["base_charge_function"](
-        current_battery, charge_time)  # * charger_function_map[charger_type]
+        current_battery, charge_time
+    )  # * charger_function_map[charger_type]
 
     # Truck charge efficiency
     efficiency = 1  # truck_type["charge_efficiency"]
@@ -206,6 +216,7 @@ def charge_function(graph, truck_config: dict, charger_node: int, charge_time: f
 
     return min(total_charge, max_possible_charge)
 
+
 # =============================================================================
 # ACTION AND OBSERVATION SPACES
 # =============================================================================
@@ -224,10 +235,10 @@ def get_low_level_action_space():
 
 def map_charger_type(station_type):
     """Map charger types to internal names."""
-    if station_type == 'Level2':
-        return 'slow'
-    elif station_type == 'DCFC' or station_type == 'DCFast':
-        return 'fast'
+    if station_type == "Level2":
+        return "slow"
+    elif station_type == "DCFC" or station_type == "DCFast":
+        return "fast"
     return station_type  # Fallback for unknown types
 
 
@@ -241,7 +252,7 @@ def get_graph_new():
     all_nodes = set()
 
     # Collect all nodes from edges and chargers
-    for (u, v) in edge_distance.keys():
+    for u, v in edge_distance.keys():
         all_nodes.add(u)
         all_nodes.add(v)
     all_nodes.update(chargers.keys())
@@ -255,20 +266,21 @@ def get_graph_new():
     charger_aggregated = {}
     for node, info in chargers.items():
         # Handle single charger type per node
-        if 'station_type' in info:
-            mapped_type = map_charger_type(info['station_type'])
-            count = int(info['total_capacity'])
+        if "station_type" in info:
+            mapped_type = map_charger_type(info["station_type"])
+            count = int(info["total_capacity"])
             idx = node_to_index[node]
             charger_aggregated.setdefault(idx, {})[mapped_type] = count
 
         # Handle multiple charger types per node
-        elif 'chargers' in info:
-            for charger in info['chargers']:
-                mapped_type = map_charger_type(charger['station_type'])
-                count = int(charger['total_capacity'])
+        elif "chargers" in info:
+            for charger in info["chargers"]:
+                mapped_type = map_charger_type(charger["station_type"])
+                count = int(charger["total_capacity"])
                 idx = node_to_index[node]
-                charger_aggregated.setdefault(idx, {})[mapped_type] = charger_aggregated.get(
-                    idx, {}).get(mapped_type, 0) + count
+                charger_aggregated.setdefault(idx, {})[mapped_type] = (
+                    charger_aggregated.get(idx, {}).get(mapped_type, 0) + count
+                )
 
     # Add nodes with properties using INDEXES
     for idx in range(len(node_list)):
@@ -277,25 +289,24 @@ def get_graph_new():
                 "has_charger": True,
                 "charger_type": charger_aggregated[idx],
                 # Store original ID for reference
-                "original_id": index_to_node[idx]
+                "original_id": index_to_node[idx],
             }
         else:
             props = {
                 "has_charger": False,
                 "charger_type": None,
                 # Store original ID for reference
-                "original_id": index_to_node[idx]
+                "original_id": index_to_node[idx],
             }
         G.add_node(idx, **props)
 
     # Add edges with attributes using INDEXES
-    for (u_orig, v_orig) in edge_distance.keys():
+    for u_orig, v_orig in edge_distance.keys():
         u_idx = node_to_index[u_orig]
         v_idx = node_to_index[v_orig]
         distance = edge_distance[(u_orig, v_orig)]
         time_val = edge_time.get((u_orig, v_orig), 0)
-        G.add_edge(u_idx, v_idx, distance=distance,
-                   time=time_val, terrain_factor=1.0)
+        G.add_edge(u_idx, v_idx, distance=distance, time=time_val, terrain_factor=1.0)
     GRAPH_MAPPINGS["node_to_index"] = node_to_index
     GRAPH_MAPPINGS["index_to_node"] = index_to_node
     return G
@@ -306,17 +317,21 @@ def get_graph_old():
     G = nx.DiGraph()
 
     # Add nodes with properties
-    G.add_nodes_from([
-        (0, {"has_charger": False, "charger_type": None}),      # Start node
-        (1, {"has_charger": True, "charger_type": {
-         "slow": 2, "fast": 3}}),     # Charging station
-        (2, {"has_charger": False, "charger_type": None}),      # Regular node
-        # Charging station
-        (3, {"has_charger": True, "charger_type": {"fast": 5}}),
-        (4, {"has_charger": False, "charger_type": None}),      # End node
-        # Charging station
-        (5, {"has_charger": True, "charger_type": {"slow": 1}}),
-    ])
+    G.add_nodes_from(
+        [
+            (0, {"has_charger": False, "charger_type": None}),  # Start node
+            (
+                1,
+                {"has_charger": True, "charger_type": {"slow": 2, "fast": 3}},
+            ),  # Charging station
+            (2, {"has_charger": False, "charger_type": None}),  # Regular node
+            # Charging station
+            (3, {"has_charger": True, "charger_type": {"fast": 5}}),
+            (4, {"has_charger": False, "charger_type": None}),  # End node
+            # Charging station
+            (5, {"has_charger": True, "charger_type": {"slow": 1}}),
+        ]
+    )
 
     # Add edges with distance and terrain difficulty
     edges = [
@@ -341,10 +356,10 @@ def get_truck_configs_new():
     return [
         {
             "id": idx,
-            "start_node": node_to_index[route[0]],   # Convert to index
-            "end_node": node_to_index[route[-1]],     # Convert to index
+            "start_node": node_to_index[route[0]],  # Convert to index
+            "end_node": node_to_index[route[-1]],  # Convert to index
             "initial_battery": BATTERY_CAPACITY,
-            "truck_type": "standard"
+            "truck_type": "standard",
         }
         for idx, route in enumerate(route_sequence)
     ]
@@ -358,15 +373,15 @@ def get_truck_configs_old():
             "start_node": 0,
             "end_node": 4,
             "initial_battery": 25.0,
-            "truck_type": "standard"
+            "truck_type": "standard",
         },
         {
             "id": 1,
             "start_node": 0,
             "end_node": 5,
             "initial_battery": 20.0,
-            "truck_type": "heavy"
-        }
+            "truck_type": "heavy",
+        },
     ]
 
 
@@ -384,23 +399,25 @@ def get_observation_space(graph):  # , num_trucks):
     """Observation space for both agent levels."""
     num_nodes = graph.number_of_nodes()
 
-    return Dict({
-        # "truck_id": Discrete(num_trucks), random trucks
-        "id": Box(0.0, 1.0, shape=(), dtype=np.float32),  # for debug
-        "current_node": Discrete(num_nodes),
-        "destination_node": Discrete(num_nodes),
-        "battery_level": Box(0.0, BATTERY_CAPACITY, shape=(), dtype=np.float32),
-        "battery_capacity": Box(0.0, BATTERY_CAPACITY, shape=(), dtype=np.float32),
-        "is_charging": Discrete(2),
-        "charger_available": Discrete(2),
-        # "charger_occupancy": Box(0, 5, shape=(), dtype=np.float32),
-        # "charger_capacity": Box(0, 5, shape=(), dtype=np.float32),
-        "charger_occupancy_fast": Box(0.0, MAX_CHARGERS, (), np.float32),
-        "charger_occupancy_slow": Box(0.0, MAX_CHARGERS, (), np.float32),
-        # "charger_capacity_fast": Box(0.0, MAX_CHARGERS, (), np.float32),
-        # "charger_capacity_slow": Box(0.0, MAX_CHARGERS, (), np.float32),
-        "time_elapsed": Box(0.0, 1000.0, shape=(), dtype=np.float32),
-        "waiting_time": Box(0.0, 800.0, shape=(), dtype=np.float32),
-        "can_reach_destination": Discrete(2),
-        "nearest_charger_distance": Box(0.0, 900.0, shape=(), dtype=np.float32),
-    })
+    return Dict(
+        {
+            # "truck_id": Discrete(num_trucks), random trucks
+            "id": Box(0.0, 1.0, shape=(), dtype=np.float32),  # for debug
+            "current_node": Discrete(num_nodes),
+            "destination_node": Discrete(num_nodes),
+            "battery_level": Box(0.0, BATTERY_CAPACITY, shape=(), dtype=np.float32),
+            "battery_capacity": Box(0.0, BATTERY_CAPACITY, shape=(), dtype=np.float32),
+            "is_charging": Discrete(2),
+            "charger_available": Discrete(2),
+            # "charger_occupancy": Box(0, 5, shape=(), dtype=np.float32),
+            # "charger_capacity": Box(0, 5, shape=(), dtype=np.float32),
+            "charger_occupancy_fast": Box(0.0, MAX_CHARGERS, (), np.float32),
+            "charger_occupancy_slow": Box(0.0, MAX_CHARGERS, (), np.float32),
+            # "charger_capacity_fast": Box(0.0, MAX_CHARGERS, (), np.float32),
+            # "charger_capacity_slow": Box(0.0, MAX_CHARGERS, (), np.float32),
+            "time_elapsed": Box(0.0, 1000.0, shape=(), dtype=np.float32),
+            "waiting_time": Box(0.0, 800.0, shape=(), dtype=np.float32),
+            "can_reach_destination": Discrete(2),
+            "nearest_charger_distance": Box(0.0, 900.0, shape=(), dtype=np.float32),
+        }
+    )

@@ -187,7 +187,7 @@ def charge_function(
     current_battery = truck_config["current_battery"]
 
     # Base charge rate
-    print(f"truck_type is {truck_type}")
+    # print(f"truck_type is {truck_type}")
     base_charge = truck_type["base_charge_function"](
         current_battery, charge_time
     )  # * charger_function_map[charger_type]

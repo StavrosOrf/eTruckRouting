@@ -283,7 +283,7 @@ def main():
     if not ray.is_initialized():
         print("Initializing Ray...")
         ray.init(
-            num_cpus=4, 
+            num_cpus=2, 
             _temp_dir="/tmp/ray1",
             address=None, 
             object_store_memory=10**9,

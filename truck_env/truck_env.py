@@ -1,5 +1,6 @@
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 import networkx as nx
+import numpy as np
 from gymnasium.spaces.utils import flatten_space, flatten
 
 from truck_env.utils import (
@@ -105,17 +106,11 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
         
         # Initialize truck states
         self.trucks = []
-        num_trucks = len(self.trucks)
 
         for i, config in enumerate(self.truck_configs):
-            if num_trucks > 1:
-                normalized_id = i / (num_trucks - 1)
-            else:
-                normalized_id = 0
-
             truck_type = self.truck_types[config["truck_type"]]
             truck_state = {
-                "id": int(normalized_id),
+                "id": i,  # Use the actual index, not normalized
                 "current_node": config["start_node"],
                 "destination_node": config["end_node"],
                 "current_battery": config["initial_battery"],
@@ -225,65 +220,19 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
         self.global_time = max(truck["time_elapsed"] for truck in self.trucks)
 
         # Check termination conditions
-        # Consider the episode done if either condition is met
-        """
-        global_done = all(
-            truck["current_node"] == truck["destination_node"] or truck["current_battery"] <= 0
-            for truck in self.trucks
-        )
-
-        # Also end if max time exceeded
-        if self.global_time > 1000 or global_done:
-            print("⏹️ Forcing episode end")
-            if self.global_time > 1000:
-                print("⏱️ Episode ended due to time limit")
-            elif global_done:
-                print("✅ Episode ended: all trucks done or stuck")            
-            terminateds["__all__"] = True
-            if terminateds[agent]:
-                self.done_agents.add(agent)
-        else:
-            terminateds["__all__"] = False
-            
-        #observations = self._get_observations()
-        all_obs = self._get_observations()
-        observations = {aid: obs for aid, obs in all_obs.items() if aid not in self.done_agents}        
-        print("📦 Observations returned:", list(observations.keys()))
-        
-        # Important: mark each agent done individually!
-        for agent in self.agents:
-            if agent not in terminateds:
-                terminateds[agent] = terminateds["__all__"]
-            if terminateds[agent]:
-                self.done_agents.add(agent)                
-            truncateds[agent] = False
-            infos[agent] = {}        
-        print("Step called:", action_dict)
-        print("Terminateds:", terminateds)        
-        active_agents = [agent for agent in self.agents if agent not in self.done_agents]
-
-        observations = {aid: obs for aid, obs in self._get_observations().items() if aid in active_agents}
-        rewards = {aid: rewards.get(aid, 0.0) for aid in active_agents}
-        terminateds = {aid: terminateds.get(aid, False) for aid in active_agents}
-        truncateds = {aid: truncateds.get(aid, False) for aid in active_agents}
-        #infos = {aid: infos.get(aid, {}) for aid in active_agents}
-
-        terminateds["__all__"] = terminateds.get("__all__", False)
-        truncateds["__all__"] = False  # or your truncation logic        
-        """
         all_done = self.current_step >= 1000
         truck_statuses = []
 
-        for truck in self.trucks:
+        for i, truck in enumerate(self.trucks):
             truck_done = (
                 truck["current_node"] == truck["destination_node"]
-                or truck["current_battery"] <= 0
+                or truck["current_battery"] / truck["battery_capacity"] <= 0.05
             )
             truck_statuses.append(truck_done)
 
             # Set individual agent termination
-            high_agent = f"truck_{truck['id']}_route_planner"
-            low_agent = f"truck_{truck['id']}_charge_manager"
+            high_agent = f"truck_{i}_route_planner"
+            low_agent = f"truck_{i}_charge_manager"
 
             terminateds[high_agent] = truck_done
             terminateds[low_agent] = truck_done
@@ -291,10 +240,28 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
         terminateds["__all__"] = all(truck_statuses) or all_done
         truncateds["__all__"] = all_done  # Timeout truncation
         
-        # Get observations for all agents
-        observations = self._get_observations()
+        # Get observations for all agents BEFORE filtering
+        try:
+            all_observations = self._get_observations()
+        except Exception as e:
+            if self.debug:
+                print(f"Warning: Could not get observations: {e}")
+            all_observations = {}
         
-        # Set rewards, terminateds, truncateds, and infos for all agents
+        # IMPORTANT: Only include observations for agents that are NOT terminated
+        # RLlib expects no observation data for agents that are terminated
+        observations = {}
+        for agent_id in self.agents:
+            if agent_id in terminateds and terminateds[agent_id]:
+                # Do NOT include observation for terminated agents
+                pass
+            else:
+                # Include observation for active agents
+                if agent_id in all_observations:
+                    observations[agent_id] = all_observations[agent_id]
+        
+        # Set rewards, terminateds, truncateds, and infos for ALL agents
+        # (even terminated ones must have entries in these dicts)
         for agent_id in self.agents:
             if agent_id not in rewards:
                 rewards[agent_id] = 0.0
@@ -373,10 +340,11 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
         if truck["current_battery"] < discharge:
             # Penalize but don't terminate - let agent recover
             rewards[high_agent] = penalty_run_out_of_energy() / 5  # Smaller penalty
-            print(
-                f"⚠️ Truck {truck['id']} insufficient energy "
-                f"({truck['current_battery']:.2f} < {discharge:.2f})"
-            )
+            if self.verbose:
+                print(
+                    f"⚠️ Truck {truck['id']} insufficient energy "
+                    f"({truck['current_battery']:.2f} < {discharge:.2f})"
+                )
             return  # Skip movement but continue episode
         # Execute move
         truck["current_battery"] -= discharge
@@ -411,9 +379,6 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
         if not charger_types:
             rewards[low_agent] = 0.0
             return
-        print(
-            f"⚡ Truck {truck['id']} at node {current_node} took charge action: {action}"
-        )
 
         if action == 1:  # Start charging
             if truck["is_charging"]:
@@ -542,10 +507,9 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
             }
             for ctype in ["fast", "slow"]:  # or use your actual charger types
                 obs[f"charger_occupancy_{ctype}"] = charger_occupancy.get(ctype, 0)
-            # pprint.pprint(f"OBS is {obs}")
-            # pprint.pprint(f"_raw_obs_space is {self._raw_obs_space}")
+           
             flat_obs = flatten(self._raw_obs_space, obs)
-            print(f"Flattened obs shape: {flat_obs.shape}, type: {type(flat_obs)}")
+            # print(f"Flattened obs shape: {flat_obs.shape}, type: {type(flat_obs)}")
             observations[high_agent] = flat_obs  # .copy()
             observations[low_agent] = flat_obs  # .copy()
 

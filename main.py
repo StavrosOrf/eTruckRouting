@@ -134,18 +134,18 @@ def create_hierarchical_truck_config():
             policy_mapping_fn=policy_mapping_fn,
             policies_to_train=["high_level_policy", "low_level_policy"],
         )
-        .rollouts(
+        .env_runners(
             # Reduce fragment length
             rollout_fragment_length=10,
             # Number of parallel rollout workers (processes)
-            num_rollout_workers=2,
+            num_env_runners=2,
             # Number of envs created per rollout worker
-            num_envs_per_worker=1,
+            num_envs_per_env_runner=1,
         )
         .training(
             # RLlib API uses these parameter names in this version
             train_batch_size=2000,
-            sgd_minibatch_size=256,
+            minibatch_size=256,
             num_sgd_iter=10,
             lr=0.0003,
             entropy_coeff=0.01,

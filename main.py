@@ -6,8 +6,6 @@ import ray
 from ray import tune
 from ray.rllib.algorithms.ppo import PPOConfig
 
-from typing import Dict as TypingDict, List, Tuple, Any
-from gymnasium.spaces import Discrete, Box, Dict, MultiDiscrete
 from gymnasium.spaces.utils import flatten_space, flatten
 from ray.rllib.algorithms.callbacks import DefaultCallbacks
 
@@ -124,18 +122,19 @@ def create_hierarchical_truck_config():
             policy_mapping_fn=policy_mapping_fn,
             policies_to_train=["high_level_policy", "low_level_policy"],
         )
-        .env_runners(
-            sample_timeout_s=300,
-
+        .rollouts(
             # Reduce fragment length
             rollout_fragment_length=10,
-            num_env_runners=2,
-            num_envs_per_env_runner=1,
+            # Number of parallel rollout workers (processes)
+            num_rollout_workers=2,
+            # Number of envs created per rollout worker
+            num_envs_per_worker=1,
         )
         .training(
-            train_batch_size_per_learner=2000,
-            minibatch_size=256,
-            num_epochs=10,
+            # RLlib API uses these parameter names in this version
+            train_batch_size=2000,
+            sgd_minibatch_size=256,
+            num_sgd_iter=10,
             lr=0.0003,
             entropy_coeff=0.01,
         )
@@ -261,44 +260,44 @@ def main():
         print("I'm in init!!!!")
         ray.init(num_cpus=4, _temp_dir="/tmp/ray1",
                  address=None, object_store_memory=10**9)
-    try:
-        config = create_hierarchical_truck_config()
-        algo = config.build()
-
-        print("Starting hierarchical truck routing training...")
-        print("=" * 60)
         
-        checkpoint_dir = './saved_models/'
+    config = create_hierarchical_truck_config()
+    algo = config.build()
 
-        for iteration in range(30):
-            result = algo.train()
-            # pprint.pprint(result)
-            print(f"Iteration {iteration + 1}:")
-            print(
-                f"  Episode Reward Mean: {result.get('env_runners', 'N/A').get('episode_return_mean', 'N/A')}")
-            print(
-                f"  High Level Policy Reward: {result.get('env_runners', 'N/A').get('module_episode_returns_mean', {}).get('high_level_policy', 'N/A')}")
-            print(
-                f"  Low Level Policy Reward: {result.get('env_runners', 'N/A').get('module_episode_returns_mean', {}).get('low_level_policy', 'N/A')}")
-            print(f"  Time passed Total: {result.get('time_total_s', 'N/A')}")
+    print("Starting hierarchical truck routing training...")
+    print("=" * 60)
 
-            print("-" * 40)
-        print("Training completed!")
-        # Save checkpoint
+    checkpoint_dir = './saved_models/'
 
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        checkpoint_path = algo.save(checkpoint_dir)
-        print(f"Saved checkpoint to: {checkpoint_path}")
-        algo.stop()
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        traceback.print_exc()
-        ray.shutdown()
-        # Force termination if needed
-        os.kill(os.getpid(), signal.SIGTERM)
-    finally:
-        if ray.is_initialized():
-            ray.shutdown()
+    for iteration in range(30):
+        result = algo.train()
+        # pprint.pprint(result)
+        print(f"Iteration {iteration + 1}:")
+        print(
+            f"  Episode Reward Mean: {result.get('env_runners', 'N/A').get('episode_return_mean', 'N/A')}")
+        print(
+            f"  High Level Policy Reward: {result.get('env_runners', 'N/A').get('module_episode_returns_mean', {}).get('high_level_policy', 'N/A')}")
+        print(
+            f"  Low Level Policy Reward: {result.get('env_runners', 'N/A').get('module_episode_returns_mean', {}).get('low_level_policy', 'N/A')}")
+        print(f"  Time passed Total: {result.get('time_total_s', 'N/A')}")
+
+        print("-" * 40)
+    print("Training completed!")
+    # Save checkpoint
+
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = algo.save(checkpoint_dir)
+    print(f"Saved checkpoint to: {checkpoint_path}")
+    algo.stop()
+    # except Exception as e:
+    #     print(f"Error occurred: {e}")
+    #     traceback.print_exc()
+    #     ray.shutdown()
+    #     # Force termination if needed
+    #     os.kill(os.getpid(), signal.SIGTERM)
+    # finally:
+    #     if ray.is_initialized():
+    #         ray.shutdown()
 
 
 if __name__ == "__main__":

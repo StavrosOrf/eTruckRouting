@@ -48,6 +48,8 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
 
         self.possible_agents = self.all_agents
         self.agents = self.all_agents.copy()
+        # Set _agent_ids for RLlib MultiAgentEnv compatibility
+        self._agent_ids = set(self.all_agents)
         # Define action and observation spaces
         self._action_space_dict = {}
         self._observation_space_dict = {}
@@ -459,3 +461,44 @@ class HierarchicalTruckRoutingEnv(MultiAgentEnv):
             return truck["current_battery"] >= estimated_discharge
         except nx.NetworkXNoPath:
             return False
+
+    # MultiAgentEnv interface methods
+    def observation_space_contains(self, x):
+        """Check if x is a valid observation."""
+        if not isinstance(x, dict):
+            return False
+        for agent_id, obs in x.items():
+            if agent_id not in self._observation_space_dict:
+                return False
+            if not self._observation_space_dict[agent_id].contains(obs):
+                return False
+        return True
+
+    def action_space_contains(self, x):
+        """Check if x is a valid action."""
+        if not isinstance(x, dict):
+            return False
+        for agent_id, action in x.items():
+            if agent_id not in self._action_space_dict:
+                return False
+            if not self._action_space_dict[agent_id].contains(action):
+                return False
+        return True
+
+    def observation_space_sample(self, agent_ids=None):
+        """Sample from the observation space."""
+        if agent_ids is None:
+            agent_ids = self._agent_ids
+        return {
+            agent_id: self._observation_space_dict[agent_id].sample()
+            for agent_id in agent_ids
+        }
+
+    def action_space_sample(self, agent_ids=None):
+        """Sample from the action space."""
+        if agent_ids is None:
+            agent_ids = self._agent_ids
+        return {
+            agent_id: self._action_space_dict[agent_id].sample()
+            for agent_id in agent_ids
+        }

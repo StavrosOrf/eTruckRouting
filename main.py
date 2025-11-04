@@ -11,10 +11,16 @@ from ray.rllib.algorithms.callbacks import DefaultCallbacks
 
 
 import os
+import sys
 import signal
 import pprint
 import pickle
 import traceback
+
+# Add current directory to Python path for Ray workers
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
 
 from truck_env.truck_env import HierarchicalTruckRoutingEnv
 from truck_env.utils import (
@@ -32,9 +38,14 @@ from truck_env.utils import (
 
 class DebugCallback(DefaultCallbacks):
     def on_episode_end(self, *, episode, **kwargs):
-        rewards = episode.get_rewards()
-        total_reward = sum(sum(r) if isinstance(r, list)
-                           else r for r in rewards.values())
+        # EpisodeV2 doesn't have get_rewards(), use agent_rewards instead
+        if hasattr(episode, 'agent_rewards'):
+            rewards = episode.agent_rewards
+        else:
+            # Fallback for older API
+            rewards = {}
+        
+        total_reward = sum(sum(r) if isinstance(r, list) else r for r in rewards.values()) if rewards else 0.0
 
         print("📊 Episode ended.")
         for aid, r in rewards.items():
@@ -42,8 +53,9 @@ class DebugCallback(DefaultCallbacks):
             print(f"  - {aid}: {total:.2f}")
         print(f"💰 Total reward: {total_reward:.2f}")
 
-        # ✅ This is the only place that works in your RLlib version
-        episode.custom_data["total_reward"] = total_reward
+        # Store in custom_data
+        if hasattr(episode, 'custom_data'):
+            episode.custom_data["total_reward"] = total_reward
 
 
 # =============================================================================
@@ -148,8 +160,16 @@ def create_hierarchical_truck_config():
 
 def eval(checkpoint_path):
     if not ray.is_initialized():
-        ray.init(num_cpus=4, _temp_dir="/tmp/ray1",
-                 address=None, object_store_memory=10**9)
+        ray.init(
+            num_cpus=4, 
+            _temp_dir="/tmp/ray1",
+            address=None, 
+            object_store_memory=10**9,
+            runtime_env={
+                "working_dir": SCRIPT_DIR,
+                "py_modules": [os.path.join(SCRIPT_DIR, "truck_env")]
+            }
+        )
     try:
         # Create config
         config = create_hierarchical_truck_config()
@@ -258,8 +278,16 @@ def main():
     """Main training loop."""
     if not ray.is_initialized():
         print("I'm in init!!!!")
-        ray.init(num_cpus=4, _temp_dir="/tmp/ray1",
-                 address=None, object_store_memory=10**9)
+        ray.init(
+            num_cpus=4, 
+            _temp_dir="/tmp/ray1",
+            address=None, 
+            object_store_memory=10**9,
+            runtime_env={
+                "working_dir": SCRIPT_DIR,
+                "py_modules": [os.path.join(SCRIPT_DIR, "truck_env")]
+            }
+        )
         
     config = create_hierarchical_truck_config()
     algo = config.build()

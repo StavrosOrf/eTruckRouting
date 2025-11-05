@@ -204,7 +204,45 @@ class EventDrivenVisualizer:
             if truck.failed:
                 print(f"  ⚠️  Failure Reason: Battery depleted or time exceeded")
         
+        # Print charger utilization statistics
+        if 'charger_utilization' in info:
+            self.print_charger_utilization(info['charger_utilization'])
+        
         print("\n" + "="*110 + "\n")
+    
+    def print_charger_utilization(self, utilization: dict):
+        """Print charging station utilization statistics."""
+        print(f"\n{'CHARGING STATION UTILIZATION':^110}")
+        print("-" * 110)
+        
+        overall = utilization['overall']
+        level2 = utilization['level2']
+        dcfast = utilization['dcfast']
+        
+        print(f"\n📊 Overall Statistics:")
+        print(f"  Average Utilization:    {overall['avg_utilization']*100:.1f}%")
+        print(f"  Total Charge Sessions:  {overall['total_sessions']}")
+        print(f"  Total Charge Time:      {overall['total_charge_time']:.2f} hours")
+        
+        print(f"\n🔌 Level 2 Chargers ({level2['num_chargers']} stations):")
+        print(f"  Average Utilization:    {level2['avg_utilization']*100:.1f}%")
+        print(f"  Total Sessions:         {level2['total_sessions']}")
+        print(f"  Total Charge Time:      {level2['total_charge_time']:.2f} hours")
+        
+        print(f"\n⚡ DC Fast Chargers ({dcfast['num_chargers']} stations):")
+        print(f"  Average Utilization:    {dcfast['avg_utilization']*100:.1f}%")
+        print(f"  Total Sessions:         {dcfast['total_sessions']}")
+        print(f"  Total Charge Time:      {dcfast['total_charge_time']:.2f} hours")
+        
+        # Show top 5 most utilized chargers
+        all_chargers = sorted(utilization['all_chargers'], key=lambda x: x['utilization_rate'], reverse=True)
+        if all_chargers:
+            print(f"\n🏆 Top 5 Most Utilized Chargers:")
+            for i, charger in enumerate(all_chargers[:5], 1):
+                util_pct = charger['utilization_rate'] * 100
+                util_bar = '█' * int(util_pct / 5) + '░' * (20 - int(util_pct / 5))
+                print(f"  {i}. Node {charger['node']:10d} ({charger['type']:7s}): [{util_bar}] {util_pct:5.1f}% | " +
+                      f"{charger['sessions']} sessions | {charger['charge_time']:.1f}h")
 
 
 def run_visualization(

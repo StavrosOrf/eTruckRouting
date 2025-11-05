@@ -202,12 +202,41 @@ class TransportationGraph:
             node: Node to check
             
         Returns:
-            Dictionary with charger types and capacities, or empty dict if no charger
+            Dictionary with 'station_type' and 'total_capacity', or empty dict if no charger
         """
         if node in self.charging_nodes:
             node_data = self.graph.nodes[node]
-            return node_data.get("charger_type", {})
+            return {
+                'station_type': node_data.get('station_type', 'Level2'),
+                'total_capacity': node_data.get('total_capacity', 1.0)
+            }
         return {}
+    
+    def get_charger_type(self, node: int) -> str:
+        """
+        Get the charger type for a charging station node.
+        
+        Args:
+            node: Charging station node
+            
+        Returns:
+            'Level2' or 'DCFast', or None if not a charging station
+        """
+        info = self.get_charger_info(node)
+        return info.get('station_type', None)
+    
+    def get_charger_capacity(self, node: int) -> float:
+        """
+        Get the total capacity (number of charging slots) for a charging station.
+        
+        Args:
+            node: Charging station node
+            
+        Returns:
+            Number of charging slots, or 0 if not a charging station
+        """
+        info = self.get_charger_info(node)
+        return info.get('total_capacity', 0.0)
     
     def has_charger(self, node: int) -> bool:
         """Check if a node has a charging station."""

@@ -31,20 +31,10 @@ environment:
 # Truck Configuration
 # -------------------
 truck:
-  # Truck type selection: "random", "standard", or "heavy"
-  type_selection: "random"
-  
-  # Standard truck specifications
-  standard:
-    battery_capacity: 300.0  # kWh
-    base_speed: 40.0         # km/h
-    discharge_rate: 0.2      # kWh/km (base rate, modified by terrain)
-    
-  # Heavy truck specifications
-  heavy:
-    battery_capacity: 500.0  # kWh
-    base_speed: 35.0         # km/h
-    discharge_rate: 0.3      # kWh/km (base rate, modified by terrain)
+  # Electric truck specifications (single type)
+  battery_capacity: 400.0  # kWh
+  base_speed: 40.0         # km/h
+  discharge_rate: 0.25     # kWh/km (base rate, modified by terrain)
   
   # Initial battery level: "full", "random", or specific percentage (0-100)
   initial_battery: "full"
@@ -56,8 +46,17 @@ truck:
 # Charging Configuration
 # ----------------------
 charging:
-  # Charging rate (kWh per hour)
-  charge_rate: 50.0
+  # Two charger types based on input data
+  
+  # Level 2 chargers (slower, more common)
+  level2:
+    charge_rate: 7.2      # kW (typical Level 2 charging power)
+    efficiency: 0.90      # 90% charging efficiency
+    
+  # DC Fast chargers (faster, less common)
+  dcfast:
+    charge_rate: 50.0     # kW (typical DC Fast charging power)
+    efficiency: 0.85      # 85% charging efficiency (faster = slightly less efficient)
   
   # Available charging durations (hours)
   charge_durations: [1, 2, 3, 4]
@@ -65,9 +64,6 @@ charging:
   # Queue simulation (for future enhancement)
   enable_queue: false
   max_queue_size: 3
-  
-  # Charging efficiency (percentage of energy transferred)
-  efficiency: 0.95
 
 
 # Delivery Route Generation

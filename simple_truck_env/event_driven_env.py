@@ -13,13 +13,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 import sys
 import os
+import json
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from truck_env.utils import (
     get_graph,
-    get_truck_types,
     discharge_function as original_discharge_function,
     charge_function as original_charge_function,
 )
@@ -114,7 +114,14 @@ class EventDrivenTruckEnv(gym.Env):
         # Load graph and initialize transportation network
         graph = get_graph()
         self.transport_graph = TransportationGraph(graph)
-        self.truck_types_config = get_truck_types()
+        
+        # Load waiting time lookup table for queue simulation
+        waiting_time_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'truck_env', 'data', 'waiting_time_lookup.json'
+        )
+        with open(waiting_time_path, 'r') as f:
+            self.waiting_time_lookup = json.load(f)
         
         # Get charging nodes
         self.charging_nodes = self.transport_graph.get_charging_nodes()
@@ -181,7 +188,23 @@ class EventDrivenTruckEnv(gym.Env):
         # Charging station queue/occupancy tracking
         self.charger_occupancy = {node: [] for node in self.charging_nodes}  # List of truck IDs
         self.charger_capacity = {
-            node: sum(self.transport_graph.get_charger_info(node).values())
+            node: self.transport_graph.get_charger_capacity(node)
+            for node in self.charging_nodes
+        }
+        self.charger_type = {
+            node: self.transport_graph.get_charger_type(node)
+            for node in self.charging_nodes
+        }
+        
+        # Charging station utilization tracking
+        self.charger_stats = {
+            node: {
+                'total_charge_sessions': 0,
+                'total_charge_time': 0.0,
+                'total_trucks_served': set(),
+                'occupancy_time': 0.0,  # Total time with at least one truck
+                'last_update_time': 0.0,
+            }
             for node in self.charging_nodes
         }
         
@@ -202,8 +225,18 @@ class EventDrivenTruckEnv(gym.Env):
         self.event_queue = []
         self.episode_reward = 0.0
         
-        # Reset charger occupancy
+        # Reset charger occupancy and statistics
         self.charger_occupancy = {node: [] for node in self.charging_nodes}
+        self.charger_stats = {
+            node: {
+                'total_charge_sessions': 0,
+                'total_charge_time': 0.0,
+                'total_trucks_served': set(),
+                'occupancy_time': 0.0,
+                'last_update_time': 0.0,
+            }
+            for node in self.charging_nodes
+        }
         
         # Create trucks with random delivery sequences
         self.trucks = []
@@ -255,37 +288,32 @@ class EventDrivenTruckEnv(gym.Env):
             exclude_charging_nodes=True
         )
         
-        # Select truck type
+        # Get truck specifications (single type)
         truck_config = self.config.get('truck', {})
-        type_selection = truck_config.get('type_selection', 'random')
-        
-        if type_selection == 'random':
-            truck_type = np.random.choice(["standard", "heavy"])
-        else:
-            truck_type = type_selection
-        
-        truck_spec = self.truck_types_config[truck_type]
+        battery_capacity = truck_config.get('battery_capacity', 400.0)
+        base_speed = truck_config.get('base_speed', 40.0)
+        discharge_rate = truck_config.get('discharge_rate', 0.25)
         
         # Determine initial battery
         initial_battery_setting = truck_config.get('initial_battery', 'full')
         if initial_battery_setting == 'full':
-            initial_battery = truck_spec["battery_capacity"]
+            initial_battery = battery_capacity
         elif initial_battery_setting == 'random':
-            initial_battery = np.random.uniform(0.3, 1.0) * truck_spec["battery_capacity"]
+            initial_battery = np.random.uniform(0.3, 1.0) * battery_capacity
         elif isinstance(initial_battery_setting, (int, float)):
-            initial_battery = (initial_battery_setting / 100.0) * truck_spec["battery_capacity"]
+            initial_battery = (initial_battery_setting / 100.0) * battery_capacity
         else:
-            initial_battery = truck_spec["battery_capacity"]
+            initial_battery = battery_capacity
         
         # Create truck
         truck = Truck(
             truck_id=truck_id,
-            truck_type=truck_type,
+            truck_type="electric",  # Single truck type
             delivery_sequence=delivery_sequence,
             initial_battery=initial_battery,
-            battery_capacity=truck_spec["battery_capacity"],
-            base_speed=truck_spec["base_speed"],
-            discharge_rate=truck_spec.get("discharge_rate", 0.2)
+            battery_capacity=battery_capacity,
+            base_speed=base_speed,
+            discharge_rate=discharge_rate
         )
         
         self.trucks.append(truck)
@@ -380,9 +408,17 @@ class EventDrivenTruckEnv(gym.Env):
         )
         
         # Remove from charger occupancy
-        if truck.current_node in self.charger_occupancy:
-            if truck.truck_id in self.charger_occupancy[truck.current_node]:
-                self.charger_occupancy[truck.current_node].remove(truck.truck_id)
+        charger_node = truck.current_node
+        if charger_node in self.charger_occupancy:
+            if truck.truck_id in self.charger_occupancy[charger_node]:
+                self.charger_occupancy[charger_node].remove(truck.truck_id)
+                
+                # Update utilization stats
+                stats = self.charger_stats[charger_node]
+                if len(self.charger_occupancy[charger_node]) == 0:  # Last truck leaving
+                    # Charger is now idle, add occupancy time
+                    stats['occupancy_time'] += (self.global_clock - stats['last_update_time'])
+                stats['last_update_time'] = self.global_clock
         
         if self.verbose:
             print(f"  Truck {truck.truck_id} finished charging")
@@ -553,6 +589,42 @@ class EventDrivenTruckEnv(gym.Env):
         
         return time_penalty + distance_penalty
     
+    def _get_waiting_time(self, charger_node: int, current_utilization: float) -> float:
+        """
+        Get expected waiting time at a charger based on current utilization.
+        
+        Args:
+            charger_node: The charging station node
+            current_utilization: Current utilization rate (0-1)
+            
+        Returns:
+            Expected waiting time in hours
+        """
+        charger_type = self.charger_type[charger_node]
+        capacity = int(self.charger_capacity[charger_node])
+        
+        # Get lookup table for this charger type and capacity
+        if charger_type not in self.waiting_time_lookup:
+            return 0.0
+        
+        capacity_str = str(capacity)
+        if capacity_str not in self.waiting_time_lookup[charger_type]:
+            # Use closest available capacity
+            available_capacities = sorted([int(c) for c in self.waiting_time_lookup[charger_type].keys()])
+            closest_capacity = min(available_capacities, key=lambda x: abs(x - capacity))
+            capacity_str = str(closest_capacity)
+        
+        # Round utilization to nearest 0.05
+        util_rounded = round(current_utilization / 0.05) * 0.05
+        util_rounded = max(0.05, min(0.95, util_rounded))  # Clamp to available range
+        util_str = f"{util_rounded:.2f}"
+        
+        # Get waiting time in minutes and convert to hours
+        waiting_minutes = self.waiting_time_lookup[charger_type][capacity_str].get(util_str, 0.0)
+        waiting_hours = waiting_minutes / 60.0
+        
+        return waiting_hours
+    
     def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
         """Execute charging action and schedule charge completion event."""
         # Check if at a charging station
@@ -561,27 +633,65 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  ERROR: Truck {truck.truck_id} not at charging station")
             return -10.0
         
-        # Check charger availability
+        # Check charger availability and calculate waiting time
         charger_node = truck.current_node
         current_occupancy = len(self.charger_occupancy[charger_node])
         capacity = self.charger_capacity[charger_node]
         
+        # Calculate current utilization (based on occupancy)
+        current_utilization = current_occupancy / capacity if capacity > 0 else 0.0
+        
+        # Get waiting time based on current utilization
+        wait_time = 0.0
         if current_occupancy >= capacity:
-            # Charger full - apply waiting time
-            wait_time = self.charging_config.get('queue_wait_time', 0.5)
-            truck.add_waiting_time(wait_time)
+            # Charger at capacity - use maximum utilization
+            wait_time = self._get_waiting_time(charger_node, 0.95)
             if self.verbose:
-                print(f"  Charger full! Waiting {wait_time:.2f}h")
+                print(f"  Charger at capacity! Expected wait: {wait_time:.2f}h")
+        elif current_occupancy > 0:
+            # Charger partially occupied - use actual utilization
+            wait_time = self._get_waiting_time(charger_node, current_utilization)
+            if self.verbose and wait_time > 0.01:
+                print(f"  Charger utilization: {current_utilization*100:.1f}% - Expected wait: {wait_time:.2f}h")
+        
+        # Apply waiting time
+        if wait_time > 0:
+            truck.add_waiting_time(wait_time)
         
         # Add to charger occupancy
         self.charger_occupancy[charger_node].append(truck.truck_id)
         
-        # Calculate charge amount
-        charge_rate = self.charging_config.get('charge_rate', 50.0)  # kWh per hour
+        # Update utilization stats - track occupancy time
+        stats = self.charger_stats[charger_node]
+        if len(self.charger_occupancy[charger_node]) == 1:  # First truck at this charger
+            # Add occupancy time from last update until now
+            if stats['last_update_time'] > 0:
+                stats['occupancy_time'] += (self.global_clock - stats['last_update_time'])
+        stats['last_update_time'] = self.global_clock
+        stats['total_charge_sessions'] += 1
+        stats['total_trucks_served'].add(truck.truck_id)
+        
+        # Get charger type and determine charge rate
+        charger_type = self.charger_type[charger_node]
+        charging_config = self.config.get('charging', {})
+        
+        if charger_type == 'DCFast':
+            charger_config = charging_config.get('dcfast', {})
+            charge_rate = charger_config.get('charge_rate', 50.0)  # kW
+            efficiency = charger_config.get('efficiency', 0.85)
+        else:  # Level2
+            charger_config = charging_config.get('level2', {})
+            charge_rate = charger_config.get('charge_rate', 7.2)  # kW
+            efficiency = charger_config.get('efficiency', 0.90)
+        
+        # Calculate charge amount (accounting for efficiency)
         charge_amount = min(
-            charge_hours * charge_rate,
+            charge_hours * charge_rate * efficiency,
             truck.battery_capacity - truck.current_battery
         )
+        
+        # Track total charge time at this station
+        stats['total_charge_time'] += charge_hours
         
         # Schedule charge completion event
         completion_time = self.global_clock + charge_hours
@@ -678,6 +788,9 @@ class EventDrivenTruckEnv(gym.Env):
         all_complete = all(truck.is_complete for truck in self.trucks)
         any_failed = any(truck.failed for truck in self.trucks)
         
+        # Calculate charger utilization statistics
+        charger_utilization = self._get_charger_utilization_stats()
+        
         return {
             "global_clock": self.global_clock,
             "active_truck_id": self.active_truck_id,
@@ -688,6 +801,80 @@ class EventDrivenTruckEnv(gym.Env):
             "events_pending": len(self.event_queue),
             "trucks": [truck.get_state_dict() for truck in self.trucks],
             "truck_states": self.truck_states.copy(),
+            "charger_utilization": charger_utilization,
+        }
+    
+    def _get_charger_utilization_stats(self) -> Dict:
+        """Calculate charging station utilization statistics."""
+        # Update occupancy time for currently occupied chargers
+        for node in self.charging_nodes:
+            if len(self.charger_occupancy[node]) > 0:
+                stats = self.charger_stats[node]
+                stats['occupancy_time'] += (self.global_clock - stats['last_update_time'])
+                stats['last_update_time'] = self.global_clock
+        
+        # Compile statistics by charger type
+        level2_stats = {'nodes': [], 'utilization_rates': [], 'total_sessions': 0, 'total_charge_time': 0}
+        dcfast_stats = {'nodes': [], 'utilization_rates': [], 'total_sessions': 0, 'total_charge_time': 0}
+        
+        all_chargers = []
+        
+        for node in self.charging_nodes:
+            stats = self.charger_stats[node]
+            charger_type = self.charger_type[node]
+            capacity = self.charger_capacity[node]
+            
+            # Calculate utilization rate (time with at least one truck / total time)
+            utilization_rate = stats['occupancy_time'] / self.global_clock if self.global_clock > 0 else 0.0
+            
+            charger_info = {
+                'node': int(node),
+                'type': charger_type,
+                'capacity': int(capacity),
+                'utilization_rate': utilization_rate,
+                'sessions': stats['total_charge_sessions'],
+                'charge_time': stats['total_charge_time'],
+                'trucks_served': len(stats['total_trucks_served']),
+                'current_occupancy': len(self.charger_occupancy[node])
+            }
+            
+            all_chargers.append(charger_info)
+            
+            # Aggregate by type
+            if charger_type == 'Level2':
+                level2_stats['nodes'].append(int(node))
+                level2_stats['utilization_rates'].append(utilization_rate)
+                level2_stats['total_sessions'] += stats['total_charge_sessions']
+                level2_stats['total_charge_time'] += stats['total_charge_time']
+            else:  # DCFast
+                dcfast_stats['nodes'].append(int(node))
+                dcfast_stats['utilization_rates'].append(utilization_rate)
+                dcfast_stats['total_sessions'] += stats['total_charge_sessions']
+                dcfast_stats['total_charge_time'] += stats['total_charge_time']
+        
+        # Calculate average utilization by type
+        level2_avg = sum(level2_stats['utilization_rates']) / len(level2_stats['utilization_rates']) if level2_stats['utilization_rates'] else 0.0
+        dcfast_avg = sum(dcfast_stats['utilization_rates']) / len(dcfast_stats['utilization_rates']) if dcfast_stats['utilization_rates'] else 0.0
+        
+        return {
+            'all_chargers': all_chargers,
+            'level2': {
+                'avg_utilization': level2_avg,
+                'total_sessions': level2_stats['total_sessions'],
+                'total_charge_time': level2_stats['total_charge_time'],
+                'num_chargers': len(level2_stats['nodes'])
+            },
+            'dcfast': {
+                'avg_utilization': dcfast_avg,
+                'total_sessions': dcfast_stats['total_sessions'],
+                'total_charge_time': dcfast_stats['total_charge_time'],
+                'num_chargers': len(dcfast_stats['nodes'])
+            },
+            'overall': {
+                'avg_utilization': (level2_avg * len(level2_stats['nodes']) + dcfast_avg * len(dcfast_stats['nodes'])) / len(self.charging_nodes) if self.charging_nodes else 0.0,
+                'total_sessions': level2_stats['total_sessions'] + dcfast_stats['total_sessions'],
+                'total_charge_time': level2_stats['total_charge_time'] + dcfast_stats['total_charge_time']
+            }
         }
     
     def _action_to_string(self, action: int) -> str:

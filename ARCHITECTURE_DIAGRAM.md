@@ -156,7 +156,7 @@ Fixed dimension: 13 (active truck state + global info)
 5. Return:
    ┌──────────────────────────────┐
    │ (obs, reward, terminated,    │
-   │  truncated, info)             │
+   │  truncated, info)            │
    │  - obs: active truck state   │
    │  - info['global_clock']      │
    │  - info['active_truck_id']   │

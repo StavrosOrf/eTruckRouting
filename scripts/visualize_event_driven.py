@@ -273,7 +273,8 @@ def run_visualization(
     config['environment']['max_time'] = max_time
     config['environment']['verbose'] = False
     
-    env = EventDrivenTruckEnv(config=config)
+    env = EventDrivenTruckEnv(config=config,
+                              enable_plotting=True)
     visualizer = EventDrivenVisualizer(env)
     
     # Reset environment

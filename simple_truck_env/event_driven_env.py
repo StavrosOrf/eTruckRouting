@@ -9,11 +9,10 @@ from gymnasium import spaces
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
 import heapq
-from dataclasses import dataclass, field
-from enum import Enum
 import sys
 import os
 import json
+import datetime
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,27 +24,10 @@ from truck_env.utils import (
 )
 from simple_truck_env.transportation_graph import TransportationGraph
 from simple_truck_env.truck import Truck
-from simple_truck_env.config_utils import load_config, get_env_config
-
-
-class EventType(Enum):
-    """Types of events in the simulation."""
-    TRUCK_READY = "truck_ready"  # Truck is ready to take an action
-    ROUTE_COMPLETE = "route_complete"  # Truck completed routing to a node
-    CHARGE_COMPLETE = "charge_complete"  # Truck completed charging
-    TRUCK_TERMINATED = "truck_terminated"  # Truck finished or failed
-
-
-@dataclass(order=True)
-class Event:
-    """Represents a simulation event."""
-    time: float  # When the event occurs
-    event_type: EventType = field(compare=False)
-    truck_id: int = field(compare=False)
-    data: Dict = field(default_factory=dict, compare=False)
-    
-    def __repr__(self):
-        return f"Event(time={self.time:.2f}, type={self.event_type.value}, truck={self.truck_id})"
+from simple_truck_env.config_utils import load_config
+from simple_truck_env.event_handlers import EventType, Event, EventHandler
+from simple_truck_env.plotter import EnvironmentPlotter
+from simple_truck_env.statistics import EnvironmentStatistics
 
 
 class EventDrivenTruckEnv(gym.Env):
@@ -66,7 +48,9 @@ class EventDrivenTruckEnv(gym.Env):
         min_hop_distance: Optional[float] = None,
         max_hop_distance: Optional[float] = None,
         max_time: Optional[float] = None,
-        verbose: Optional[bool] = None
+        verbose: Optional[bool] = None,
+        enable_plotting: Optional[bool] = None,
+        run_id: Optional[str] = None
     ):
         """
         Initialize the event-driven environment.
@@ -79,6 +63,8 @@ class EventDrivenTruckEnv(gym.Env):
             max_hop_distance: Maximum distance between delivery stops (overrides config)
             max_time: Maximum simulation time in hours (overrides config)
             verbose: Print detailed information (overrides config)
+            enable_plotting: Enable plotting and statistics (default: False)
+            run_id: Identifier for this run (used in output folder name)
         """
         super().__init__()
         
@@ -106,6 +92,33 @@ class EventDrivenTruckEnv(gym.Env):
         self.max_hop_distance = max_hop_distance if max_hop_distance is not None else env_config.get('max_hop_distance', 150.0)
         self.max_time = max_time if max_time is not None else env_config.get('max_time', 48.0)  # 48 hours default
         self.verbose = verbose if verbose is not None else env_config.get('verbose', False)
+        
+        # Visualization and output settings
+        self.enable_plotting = enable_plotting if enable_plotting is not None else env_config.get('enable_plotting', False)
+        self.run_id = run_id if run_id is not None else env_config.get('run_id', 'default')
+        
+        # Create output directory and helpers if plotting is enabled
+        if self.enable_plotting:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.output_dir = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'results',
+                f"{self.run_id}_{timestamp}"
+            )
+            os.makedirs(self.output_dir, exist_ok=True)
+            
+            # Initialize plotter and statistics collector
+            self.plotter = EnvironmentPlotter(self.output_dir, self.verbose)
+            self.stats_collector = EnvironmentStatistics(self.output_dir, self.verbose)
+            
+            if self.verbose:
+                print(f"Plotting enabled. Output directory: {self.output_dir}")
+        else:
+            self.plotter = None
+            self.stats_collector = None
+        
+        # Initialize event handler
+        self.event_handler = EventHandler(self.verbose)
         
         # Extract reward and charging config
         self.reward_config = self.config.get('rewards', {})
@@ -238,6 +251,10 @@ class EventDrivenTruckEnv(gym.Env):
             for node in self.charging_nodes
         }
         
+        # Track actual routes for visualization
+        self.truck_routes = {}  # truck_id -> list of (node, time, event_type)
+        self.truck_initial_plans = {}  # truck_id -> {'start': node, 'deliveries': [nodes]}
+        
         # Create trucks with random delivery sequences
         self.trucks = []
         self.truck_states = {}
@@ -269,6 +286,16 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"\n  Truck {truck.truck_id}:")
                 print(f"    Delivery sequence: {truck.delivery_sequence}")
                 print(f"    Battery: {truck.current_battery:.1f}/{truck.battery_capacity:.1f} kWh")
+        
+        # Generate initial route plot if plotting is enabled
+        if self.enable_plotting and self.plotter:
+            self.plotter.plot_initial_routes(
+                self.transport_graph,
+                self.truck_initial_plans,
+                self.charging_nodes,
+                self.num_trucks,
+                self.num_stops
+            )
         
         return obs, info
     
@@ -317,6 +344,13 @@ class EventDrivenTruckEnv(gym.Env):
         )
         
         self.trucks.append(truck)
+        
+        # Store initial plan for visualization
+        self.truck_routes[truck_id] = [(start_node, 0.0, 'start')]
+        self.truck_initial_plans[truck_id] = {
+            'start': start_node,
+            'deliveries': delivery_sequence.copy()
+        }
     
     def _advance_to_next_decision(self):
         """
@@ -340,111 +374,22 @@ class EventDrivenTruckEnv(gym.Env):
                 return
             
             elif event.event_type == EventType.ROUTE_COMPLETE:
-                self._handle_route_complete(event)
+                self.event_handler.handle_route_complete(
+                    event, self.trucks, self.truck_states, self.truck_routes,
+                    self.event_queue, self.global_clock, self.enable_plotting
+                )
             
             elif event.event_type == EventType.CHARGE_COMPLETE:
-                self._handle_charge_complete(event)
+                self.event_handler.handle_charge_complete(
+                    event, self.trucks, self.truck_states, self.charger_occupancy,
+                    self.charger_stats, self.event_queue, self.global_clock
+                )
             
             elif event.event_type == EventType.TRUCK_TERMINATED:
-                self._handle_truck_terminated(event)
+                self.event_handler.handle_truck_terminated(event, self.trucks)
         
         # No more events - episode is over
         self.active_truck_id = None
-    
-    def _handle_route_complete(self, event: Event):
-        """Handle completion of routing to a node."""
-        truck = self.trucks[event.truck_id]
-        data = event.data
-        
-        # Update truck position and state
-        truck.move_to_node(
-            node=data['destination'],
-            distance=data['distance'],
-            travel_time=data['travel_time'],
-            discharge=data['discharge']
-        )
-        
-        if self.verbose:
-            print(f"  Truck {truck.truck_id} arrived at node {truck.current_node}")
-            print(f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)")
-        
-        # Check if truck failed
-        if truck.failed:
-            self.truck_states[truck.truck_id] = "failed"
-            heapq.heappush(self.event_queue, Event(
-                time=self.global_clock,
-                event_type=EventType.TRUCK_TERMINATED,
-                truck_id=truck.truck_id,
-                data={"reason": "battery_depleted"}
-            ))
-        # Check if truck completed all deliveries
-        elif truck.is_complete:
-            self.truck_states[truck.truck_id] = "complete"
-            heapq.heappush(self.event_queue, Event(
-                time=self.global_clock,
-                event_type=EventType.TRUCK_TERMINATED,
-                truck_id=truck.truck_id,
-                data={"reason": "deliveries_complete"}
-            ))
-        else:
-            # Truck is ready for next action
-            self.truck_states[truck.truck_id] = "active"
-            heapq.heappush(self.event_queue, Event(
-                time=self.global_clock,
-                event_type=EventType.TRUCK_READY,
-                truck_id=truck.truck_id,
-                data={"reason": "route_complete"}
-            ))
-    
-    def _handle_charge_complete(self, event: Event):
-        """Handle completion of charging."""
-        truck = self.trucks[event.truck_id]
-        data = event.data
-        
-        # Complete charging
-        truck.finish_charging(
-            charge_amount=data['charge_amount'],
-            charge_duration=data['charge_duration']
-        )
-        
-        # Remove from charger occupancy
-        charger_node = truck.current_node
-        if charger_node in self.charger_occupancy:
-            if truck.truck_id in self.charger_occupancy[charger_node]:
-                self.charger_occupancy[charger_node].remove(truck.truck_id)
-                
-                # Update utilization stats
-                stats = self.charger_stats[charger_node]
-                if len(self.charger_occupancy[charger_node]) == 0:  # Last truck leaving
-                    # Charger is now idle, add occupancy time
-                    stats['occupancy_time'] += (self.global_clock - stats['last_update_time'])
-                stats['last_update_time'] = self.global_clock
-        
-        if self.verbose:
-            print(f"  Truck {truck.truck_id} finished charging")
-            print(f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)")
-        
-        # Truck is ready for next action
-        self.truck_states[truck.truck_id] = "active"
-        heapq.heappush(self.event_queue, Event(
-            time=self.global_clock,
-            event_type=EventType.TRUCK_READY,
-            truck_id=truck.truck_id,
-            data={"reason": "charge_complete"}
-        ))
-    
-    def _handle_truck_terminated(self, event: Event):
-        """Handle truck termination (complete or failed)."""
-        truck = self.trucks[event.truck_id]
-        reason = event.data.get('reason', 'unknown')
-        
-        if self.verbose:
-            print(f"  Truck {truck.truck_id} TERMINATED: {reason}")
-            print(f"    Total time: {truck.total_time_elapsed:.2f}h")
-            print(f"    Total distance: {truck.total_distance_traveled:.2f} km")
-        
-        # Truck will not generate any more events
-        # State already set in previous handler
     
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
@@ -789,7 +734,14 @@ class EventDrivenTruckEnv(gym.Env):
         any_failed = any(truck.failed for truck in self.trucks)
         
         # Calculate charger utilization statistics
-        charger_utilization = self._get_charger_utilization_stats()
+        charger_utilization = EnvironmentStatistics.get_charger_utilization_stats(
+            self.charging_nodes,
+            self.charger_stats,
+            self.charger_type,
+            self.charger_capacity,
+            self.charger_occupancy,
+            self.global_clock
+        )
         
         return {
             "global_clock": self.global_clock,
@@ -802,79 +754,6 @@ class EventDrivenTruckEnv(gym.Env):
             "trucks": [truck.get_state_dict() for truck in self.trucks],
             "truck_states": self.truck_states.copy(),
             "charger_utilization": charger_utilization,
-        }
-    
-    def _get_charger_utilization_stats(self) -> Dict:
-        """Calculate charging station utilization statistics."""
-        # Update occupancy time for currently occupied chargers
-        for node in self.charging_nodes:
-            if len(self.charger_occupancy[node]) > 0:
-                stats = self.charger_stats[node]
-                stats['occupancy_time'] += (self.global_clock - stats['last_update_time'])
-                stats['last_update_time'] = self.global_clock
-        
-        # Compile statistics by charger type
-        level2_stats = {'nodes': [], 'utilization_rates': [], 'total_sessions': 0, 'total_charge_time': 0}
-        dcfast_stats = {'nodes': [], 'utilization_rates': [], 'total_sessions': 0, 'total_charge_time': 0}
-        
-        all_chargers = []
-        
-        for node in self.charging_nodes:
-            stats = self.charger_stats[node]
-            charger_type = self.charger_type[node]
-            capacity = self.charger_capacity[node]
-            
-            # Calculate utilization rate (time with at least one truck / total time)
-            utilization_rate = stats['occupancy_time'] / self.global_clock if self.global_clock > 0 else 0.0
-            
-            charger_info = {
-                'node': int(node),
-                'type': charger_type,
-                'capacity': int(capacity),
-                'utilization_rate': utilization_rate,
-                'sessions': stats['total_charge_sessions'],
-                'charge_time': stats['total_charge_time'],
-                'trucks_served': len(stats['total_trucks_served']),
-                'current_occupancy': len(self.charger_occupancy[node])
-            }
-            
-            all_chargers.append(charger_info)
-            
-            # Aggregate by type
-            if charger_type == 'Level2':
-                level2_stats['nodes'].append(int(node))
-                level2_stats['utilization_rates'].append(utilization_rate)
-                level2_stats['total_sessions'] += stats['total_charge_sessions']
-                level2_stats['total_charge_time'] += stats['total_charge_time']
-            else:  # DCFast
-                dcfast_stats['nodes'].append(int(node))
-                dcfast_stats['utilization_rates'].append(utilization_rate)
-                dcfast_stats['total_sessions'] += stats['total_charge_sessions']
-                dcfast_stats['total_charge_time'] += stats['total_charge_time']
-        
-        # Calculate average utilization by type
-        level2_avg = sum(level2_stats['utilization_rates']) / len(level2_stats['utilization_rates']) if level2_stats['utilization_rates'] else 0.0
-        dcfast_avg = sum(dcfast_stats['utilization_rates']) / len(dcfast_stats['utilization_rates']) if dcfast_stats['utilization_rates'] else 0.0
-        
-        return {
-            'all_chargers': all_chargers,
-            'level2': {
-                'avg_utilization': level2_avg,
-                'total_sessions': level2_stats['total_sessions'],
-                'total_charge_time': level2_stats['total_charge_time'],
-                'num_chargers': len(level2_stats['nodes'])
-            },
-            'dcfast': {
-                'avg_utilization': dcfast_avg,
-                'total_sessions': dcfast_stats['total_sessions'],
-                'total_charge_time': dcfast_stats['total_charge_time'],
-                'num_chargers': len(dcfast_stats['nodes'])
-            },
-            'overall': {
-                'avg_utilization': (level2_avg * len(level2_stats['nodes']) + dcfast_avg * len(dcfast_stats['nodes'])) / len(self.charging_nodes) if self.charging_nodes else 0.0,
-                'total_sessions': level2_stats['total_sessions'] + dcfast_stats['total_sessions'],
-                'total_charge_time': level2_stats['total_charge_time'] + dcfast_stats['total_charge_time']
-            }
         }
     
     def _action_to_string(self, action: int) -> str:
@@ -890,5 +769,33 @@ class EventDrivenTruckEnv(gym.Env):
             return f"Charge for {hours}h"
     
     def close(self):
-        """Clean up resources."""
-        pass
+        """Clean up resources and generate final visualizations."""
+        if self.enable_plotting and self.plotter and self.stats_collector:
+            # Generate final plots
+            self.plotter.plot_actual_routes(
+                self.transport_graph,
+                self.truck_routes,
+                self.charging_nodes,
+                self.num_trucks,
+                self.global_clock
+            )
+            
+            # Print and save statistics
+            charger_util = EnvironmentStatistics.get_charger_utilization_stats(
+                self.charging_nodes,
+                self.charger_stats,
+                self.charger_type,
+                self.charger_capacity,
+                self.charger_occupancy,
+                self.global_clock
+            )
+            
+            self.stats_collector.print_statistics(
+                self.trucks,
+                self.truck_states,
+                self.truck_routes,
+                charger_util,
+                self.global_clock,
+                self.num_trucks
+            )
+

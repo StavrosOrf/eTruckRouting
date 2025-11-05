@@ -2,7 +2,7 @@
 Transportation Graph class for managing the road network.
 """
 import networkx as nx
-import random
+import numpy as np
 from typing import List, Tuple, Dict, Set
 
 
@@ -157,7 +157,7 @@ class TransportationGraph:
                     break
             
             # Randomly select next node
-            next_node = random.choice(valid_next_nodes)
+            next_node = np.random.choice(valid_next_nodes)
             sequence.append(next_node)
             current_node = next_node
         
@@ -166,7 +166,7 @@ class TransportationGraph:
             remaining_nodes = [n for n in candidate_nodes if n not in sequence]
             if not remaining_nodes:
                 break
-            sequence.append(random.choice(remaining_nodes))
+            sequence.append(np.random.choice(remaining_nodes))
         
         return sequence
     

@@ -38,15 +38,17 @@ def get_env_config(config: Dict[str, Any]) -> Dict[str, Any]:
         config: Full configuration dictionary
         
     Returns:
-        Dictionary with parameters for SimpleTruckEnv.__init__()
+        Dictionary with parameters for EventDrivenTruckEnv.__init__()
     """
     env_config = config.get('environment', {})
+    advanced_config = config.get('advanced', {})
     
     return {
+        'num_trucks': advanced_config.get('num_trucks', 1),
         'num_stops': env_config.get('num_stops', 5),
         'min_hop_distance': env_config.get('min_hop_distance', 30.0),
         'max_hop_distance': env_config.get('max_hop_distance', 120.0),
-        'max_steps': env_config.get('max_steps', 300),
+        'max_time': env_config.get('max_time', 48.0),
         'verbose': env_config.get('verbose', False),
     }
 
@@ -140,15 +142,17 @@ def print_config_summary(config: Dict[str, Any]):
         config: Configuration dictionary
     """
     print("="*70)
-    print("SimpleTruckEnv Configuration Summary")
+    print("Event-Driven Truck Environment Configuration")
     print("="*70)
     
     # Environment settings
     env = config.get('environment', {})
+    advanced = config.get('advanced', {})
     print("\n📦 Environment:")
-    print(f"   Delivery stops: {env.get('num_stops', 'N/A')}")
+    print(f"   Number of trucks: {advanced.get('num_trucks', 1)}")
+    print(f"   Delivery stops per truck: {env.get('num_stops', 'N/A')}")
     print(f"   Hop distance: {env.get('min_hop_distance', 'N/A')}-{env.get('max_hop_distance', 'N/A')} km")
-    print(f"   Max steps: {env.get('max_steps', 'N/A')}")
+    print(f"   Max time: {env.get('max_time', 48.0)} hours")
     print(f"   Verbose: {env.get('verbose', False)}")
     
     # Truck settings
@@ -184,16 +188,16 @@ def print_config_summary(config: Dict[str, Any]):
 # Example usage functions
 def create_env_from_config(config_path: Optional[str] = None, preset: Optional[str] = None):
     """
-    Create a SimpleTruckEnv instance from configuration file.
+    Create an EventDrivenTruckEnv instance from configuration file.
     
     Args:
         config_path: Path to config file (None for default)
         preset: Optional preset name to apply
         
     Returns:
-        Configured SimpleTruckEnv instance
+        Configured EventDrivenTruckEnv instance
     """
-    from simple_truck_env import SimpleTruckEnv
+    from simple_truck_env import EventDrivenTruckEnv
     
     # Load config
     config = load_config(config_path)
@@ -202,14 +206,8 @@ def create_env_from_config(config_path: Optional[str] = None, preset: Optional[s
     if preset:
         config = apply_preset(config, preset)
     
-    # Extract environment parameters
-    env_params = get_env_config(config)
-    
-    # Create environment
-    env = SimpleTruckEnv(**env_params)
-    
-    # Store full config in environment for reference
-    env.config = config
+    # Create environment with full config
+    env = EventDrivenTruckEnv(config=config)
     
     return env
 

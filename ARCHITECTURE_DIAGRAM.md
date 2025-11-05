@@ -1,10 +1,10 @@
-# SimpleTruckEnv Architecture
+# Event-Driven Truck Environment Architecture
 
 ## System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     SimpleTruckEnv                               │
+│                 EventDrivenTruckEnv                              │
 │                                                                   │
 │  ┌────────────────┐                                              │
 │  │  config.yaml   │──────┐                                       │
@@ -14,6 +14,7 @@
 │              │  Configuration    │                               │
 │              │  - num_trucks: 3  │                               │
 │              │  - num_stops: 5   │                               │
+│              │  - max_time: 48h  │                               │
 │              │  - rewards        │                               │
 │              └───────────────────┘                               │
 │                          │                                       │
@@ -27,54 +28,64 @@
 │  └───────────────────────────────────────────────────┘          │
 │                          │                                       │
 │                          ▼                                       │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │           🕐 GLOBAL CLOCK: 5.42h                        │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                          │                                       │
+│                          ▼                                       │
 │  ┌──────────────┬───────────────┬───────────────┐              │
 │  │   Truck 0    │   Truck 1     │   Truck 2     │              │
 │  │ Battery: 85% │ Battery: 45%  │ Battery: 92%  │              │
 │  │ Location: 45 │ Location: 128 │ Location: 201 │              │
+│  │ State: active│ State:charging│ State: routing│              │
 │  │ Deliver: 2/5 │ Deliver: 4/5  │ Deliver: 1/5  │              │
 │  └──────────────┴───────────────┴───────────────┘              │
 │                          │                                       │
 │                          ▼                                       │
 │  ┌───────────────────────────────────────────────────┐          │
-│  │       Charger Occupancy Tracking                  │          │
-│  │  Station 11:  [Truck 0, Truck 1]   (2/3 slots)    │          │
-│  │  Station 58:  []                   (0/2 slots)    │          │
-│  │  Station 106: [Truck 2]            (1/4 slots)    │          │
+│  │       📋 EVENT QUEUE (Priority Heap)              │          │
+│  │  t=6.50h: TRUCK_READY (Truck 1)                   │          │
+│  │  t=7.12h: ROUTE_COMPLETE (Truck 2)                │          │
+│  │  t=8.30h: CHARGE_COMPLETE (Truck 0)               │          │
+│  └───────────────────────────────────────────────────┘          │
+│                          │                                       │
+│                          ▼                                       │
+│  ┌───────────────────────────────────────────────────┐          │
+│  │  🚛 ACTIVE TRUCK: Truck 1 (waiting for action)    │          │
 │  └───────────────────────────────────────────────────┘          │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-## Action Space (MultiDiscrete)
+## Action Space (Discrete - Single Agent)
 
 ```
-For num_trucks = 3:
+For the ACTIVE truck only:
 
-MultiDiscrete([26, 5, 26, 5, 26, 5])
-               ┬   ┬  ┬   ┬  ┬   ┬
-               │   │  │   │  │   └─── Truck 2: Charge Action [0-4]
-               │   │  │   │  └─────── Truck 2: Nav Action [0-25]
-               │   │  │   └────────── Truck 1: Charge Action [0-4]
-               │   │  └────────────── Truck 1: Nav Action [0-25]
-               │   └─────────────────  Truck 0: Charge Action [0-4]
-               └─────────────────────  Truck 0: Nav Action [0-25]
+Discrete(30)  # 25 chargers + 1 delivery + 4 charge durations
+         │
+         └─── Single action for active truck
 
-Action Example: [25, 0, 0, 2, 1, 3]
-                 │   │  │  │  │  │
-                 │   │  │  │  │  └─ Truck 2: charge 3h
-                 │   │  │  │  └──── Truck 2: go to charger 1
-                 │   │  │  └─────── Truck 1: charge 2h  
-                 │   │  └────────── Truck 1: go to charger 0
-                 │   └───────────── Truck 0: no charge
-                 └───────────────── Truck 0: go to next delivery
+Action Breakdown:
+  [0-24]  → Navigate to charging station 0-24
+  [25]    → Navigate to next delivery stop
+  [26]    → Charge for 1 hour (if at charger)
+  [27]    → Charge for 2 hours (if at charger)
+  [28]    → Charge for 3 hours (if at charger)
+  [29]    → Charge for 4 hours (if at charger)
+
+Example Actions:
+  action = 25  →  "Go to next delivery"
+  action = 0   →  "Go to charging station at node 11"
+  action = 27  →  "Charge for 2 hours"
 ```
 
 ## Observation Space (Box)
 
 ```
-For num_trucks = 3, obs_dim = 30 (10 per truck):
+Fixed dimension: 13 (active truck state + global info)
 
 ┌─────────────────────────────────────────────────────────┐
-│ Truck 0 (indices 0-9):                                  │
+│ Active Truck State (indices 0-9):                       │
 │  [0] current_node_normalized                            │
 │  [1] next_delivery_node_normalized                      │
 │  [2] battery_level (kWh)                                │
@@ -83,83 +94,98 @@ For num_trucks = 3, obs_dim = 30 (10 per truck):
 │  [5] deliveries_remaining                               │
 │  [6] nearest_charger_distance                           │
 │  [7] can_reach_next_delivery                            │
-│  [8] time_elapsed                                       │
+│  [8] time_elapsed (truck)                               │
 │  [9] distance_traveled                                  │
 ├─────────────────────────────────────────────────────────┤
-│ Truck 1 (indices 10-19):                                │
-│  [same structure]                                        │
-├─────────────────────────────────────────────────────────┤
-│ Truck 2 (indices 20-29):                                │
-│  [same structure]                                        │
+│ Global State (indices 10-12):                           │
+│  [10] global_clock (hours)                              │
+│  [11] active_trucks_count                               │
+│  [12] events_pending_in_queue                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Step Execution Flow
+## Step Execution Flow (Event-Driven)
 
 ```
-1. Receive MultiDiscrete Action
+1. Receive Discrete Action for Active Truck
    ┌───────────────────────────┐
-   │ [nav_0, ch_0, nav_1, ch_1]│
+   │ action = 25 (next delivery)│
    └───────────────────────────┘
                 │
                 ▼
-2. For Each Truck:
+2. Execute Action:
    ┌──────────────────────────────┐
-   │ Execute Navigation Action     │
-   │  - Calculate distance         │
+   │ If Navigation Action:         │
+   │  - Calculate distance/time    │
    │  - Check battery feasibility  │
-   │  - Move truck                 │
-   │  - Update battery             │
-   │  - Calculate reward           │
+   │  - Schedule ROUTE_COMPLETE    │
+   │    event at t + travel_time   │
+   │  - Set truck state: "routing" │
    └──────────────────────────────┘
                 │
                 ▼
    ┌──────────────────────────────┐
-   │ Execute Charging Action       │
+   │ If Charging Action:           │
    │  - Check if at charger        │
-   │  - Simulate queue/waiting     │
-   │  - Charge battery             │
-   │  - Calculate reward           │
+   │  - Schedule CHARGE_COMPLETE   │
+   │    event at t + charge_hours  │
+   │  - Set truck state: "charging"│
    └──────────────────────────────┘
                 │
                 ▼
-3. Check Termination:
+3. Advance Global Clock:
+   ┌──────────────────────────────┐
+   │ Pop events from queue until: │
+   │  - TRUCK_READY found → STOP  │
+   │  - Process other events:     │
+   │    * ROUTE_COMPLETE          │
+   │    * CHARGE_COMPLETE         │
+   │    * TRUCK_TERMINATED        │
+   └──────────────────────────────┘
+                │
+                ▼
+4. Check Termination:
    ┌──────────────────────────────┐
    │ All trucks complete?   → Done │
    │ Any truck failed?      → Done │
-   │ Max steps reached?     → Trun │
+   │ Clock >= max_time?     → Trun │
+   │ Otherwise → active_truck_id   │
    └──────────────────────────────┘
                 │
                 ▼
-4. Return:
+5. Return:
    ┌──────────────────────────────┐
-   │ (obs, reward, done, trunc,   │
-   │  info)                        │
+   │ (obs, reward, terminated,    │
+   │  truncated, info)             │
+   │  - obs: active truck state   │
+   │  - info['global_clock']      │
+   │  - info['active_truck_id']   │
    └──────────────────────────────┘
 ```
 
 ## Reward Structure
 
 ```
-Per-Step Reward = Σ (truck rewards)
+Per-Step Reward (for active truck):
 
-For each truck:
-  Navigation Reward:
-    - Base: time_penalty × travel_time
-    - Delivery bonus: +50 (if delivery completed)
-    - Invalid action: -10
-    - Insufficient battery: -50
-  
-  Charging Reward:
-    - Base: time_penalty × (charge_time + wait_time)
-    - Invalid (not at charger): -10
+Navigation Reward:
+  - Time penalty: -1.0 × travel_time (hours)
+  - Distance penalty: -0.1 × distance (km)
+  - Delivery bonus: +50.0 (if delivery completed)
+  - Invalid action: -10.0
+  - Insufficient battery: -50.0
+
+Charging Reward:
+  - Charge penalty: -2.0 × charge_time (hours)
+  - Invalid (not at charger): -10.0
 
 Episode Completion:
-  - All complete: +1000
-  - Any failed: -500
+  - All complete: Natural termination
+  - Any failed: Natural termination
+  - Time limit: Truncated
 ```
 
-## Data Flow
+## Data Flow (Event-Driven)
 
 ```
 ┌─────────────┐
@@ -167,25 +193,50 @@ Episode Completion:
 │ (RL Policy) │
 └─────────────┘
       │
-      │ action [nav_0, ch_0, nav_1, ch_1, ...]
+      │ action (single discrete value)
       ▼
 ┌─────────────────────────────────────┐
-│ SimpleTruckEnv                      │
+│ EventDrivenTruckEnv                 │
 │                                     │
-│  1. Parse actions per truck         │
-│  2. Execute navigation              │
-│  3. Execute charging                │
-│  4. Update truck states             │
-│  5. Calculate rewards               │
-│  6. Build observation               │
+│  1. Get active truck                │
+│  2. Execute action (nav or charge)  │
+│  3. Schedule future event           │
+│  4. Advance clock to next READY     │
+│  5. Calculate reward                │
+│  6. Build observation (active truck)│
 └─────────────────────────────────────┘
       │
-      │ (obs, reward, done, info)
+      │ (obs, reward, terminated, truncated, info)
+      │ info includes: global_clock, active_truck_id
       ▼
 ┌─────────────┐
 │ Agent       │
 │ (Training)  │
 └─────────────┘
+```
+
+## Event Types & Flow
+
+```
+EventType Enum:
+  ┌────────────────────────────────────┐
+  │ TRUCK_READY       → Needs decision │
+  │ ROUTE_COMPLETE    → Arrived        │
+  │ CHARGE_COMPLETE   → Charged        │
+  │ TRUCK_TERMINATED  → Done/Failed    │
+  └────────────────────────────────────┘
+
+Event Processing:
+  t=0.00 → TRUCK_READY(0) → step() called → action=25 (delivery)
+  t=0.00 → Schedule ROUTE_COMPLETE(0, t=1.5h)
+  t=0.00 → TRUCK_READY(1) → step() called → action=27 (charge 2h)
+  t=0.00 → Schedule CHARGE_COMPLETE(1, t=2.0h)
+  t=1.50 → ROUTE_COMPLETE(0) → Truck 0 at delivery
+  t=1.50 → Schedule TRUCK_READY(0)
+  t=1.50 → TRUCK_READY(0) → step() called...
+  t=2.00 → CHARGE_COMPLETE(1) → Truck 1 charged
+  t=2.00 → Schedule TRUCK_READY(1)
+  ...
 ```
 
 ## File Structure
@@ -196,16 +247,17 @@ EVPR/
 │   ├── __init__.py              # Package exports
 │   ├── config.yaml              # 📝 Configuration file
 │   ├── config_utils.py          # Config loading utilities
-│   ├── simple_truck_env.py      # 🚛 Main environment
+│   ├── event_driven_env.py      # 🚛 Main environment (EVENT-DRIVEN)
 │   ├── truck.py                 # Truck state/logic
 │   ├── transportation_graph.py  # Graph utilities
 │   └── README.md                # Documentation
 │
 ├── scripts/
-│   ├── test_multitruck_env.py   # ✅ Tests
-│   ├── example_multitruck.py    # 📖 Examples
-│   └── demo_config.py           # Config demos
+│   ├── test_event_driven_env.py # ✅ Tests
+│   └── visualize_simple_env.py  # � Visualization
 │
+├── EVENT_DRIVEN_GUIDE.md        # Architecture guide
+├── RESEARCH_OVERVIEW.md         # Research problem
 └── truck_env/
     ├── data/                    # Graph data files
     └── utils.py                 # Shared utilities
@@ -217,7 +269,7 @@ EVPR/
 config.yaml
 ├── environment          # Basic settings
 │   ├── num_stops
-│   ├── max_steps
+│   ├── max_time        ← KEY: Time limit (hours)
 │   └── verbose
 │
 ├── advanced            # Multi-truck settings
@@ -237,48 +289,73 @@ config.yaml
 │
 └── rewards            # Reward function
     ├── time_penalty
-    ├── delivery_bonus
-    ├── completion_bonus
-    └── failure_penalty
+    ├── distance_penalty  ← NEW
+    ├── charge_penalty    ← NEW
+    └── delivery_bonus
 ```
 
-## Typical Episode Timeline
+## Typical Episode Timeline (Event-Driven)
 
 ```
-Step 0: Reset
+t=0.00h: Reset
   ┌────────────────────────────────┐
   │ Truck 0: Start @ node 45       │
   │ Truck 1: Start @ node 128      │
   │ Truck 2: Start @ node 201      │
+  │ → All trucks get READY events  │
   └────────────────────────────────┘
 
-Step 1-5: Initial Deliveries
+t=0.00h: Truck 0 Decision
   ┌────────────────────────────────┐
-  │ Truck 0: 45 → 67 (delivery 1)  │
-  │ Truck 1: 128 → 89 (delivery 1) │
-  │ Truck 2: 201 → 156 (delivery 1)│
+  │ Active: Truck 0                │
+  │ Action: 25 (go to delivery)    │
+  │ → Schedule ROUTE_COMPLETE @1.2h│
   └────────────────────────────────┘
 
-Step 6-10: Mixed Actions
+t=0.00h: Truck 1 Decision  
   ┌────────────────────────────────┐
-  │ Truck 0: 67 → 92 (delivery 2)  │
-  │ Truck 1: 89 → Charger @ 11     │
-  │   └─ Charging 2h (battery low) │
-  │ Truck 2: 156 → 178 (delivery 2)│
+  │ Active: Truck 1                │
+  │ Action: 0 (go to charger)      │
+  │ → Schedule ROUTE_COMPLETE @0.8h│
   └────────────────────────────────┘
 
-Step 15: Completion
+t=0.80h: Truck 1 Arrives at Charger
+  ┌────────────────────────────────┐
+  │ Event: ROUTE_COMPLETE (Truck 1)│
+  │ → Truck 1 now at charger       │
+  │ → Schedule TRUCK_READY         │
+  └────────────────────────────────┘
+
+t=0.80h: Truck 1 Decision
+  ┌────────────────────────────────┐
+  │ Active: Truck 1                │
+  │ Action: 27 (charge 2 hours)    │
+  │ → Schedule CHARGE_COMPLETE @2.8h│
+  └────────────────────────────────┘
+
+t=1.20h: Truck 0 Completes Delivery
+  ┌────────────────────────────────┐
+  │ Event: ROUTE_COMPLETE (Truck 0)│
+  │ → Delivery 1/5 complete        │
+  │ → Schedule TRUCK_READY         │
+  └────────────────────────────────┘
+
+t=1.20h: Truck 0 Decision
+  ┌────────────────────────────────┐
+  │ Active: Truck 0                │
+  │ Action: 25 (next delivery)     │
+  │ → Schedule ROUTE_COMPLETE @2.5h│
+  └────────────────────────────────┘
+
+t=2.50h: Truck 0 Completes Another Delivery
+  ...continuing until all trucks complete...
+
+t=15.30h: All Complete
   ┌────────────────────────────────┐
   │ Truck 0: ✅ Complete (5/5)     │
-  │ Truck 1: 🚛 Active (3/5)       │
+  │ Truck 1: ✅ Complete (5/5)     │
   │ Truck 2: ✅ Complete (5/5)     │
-  └────────────────────────────────┘
-
-Step 25: All Complete
-  ┌────────────────────────────────┐
-  │ Truck 0: ✅ Complete           │
-  │ Truck 1: ✅ Complete           │
-  │ Truck 2: ✅ Complete           │
-  │ → Episode ends, +1000 bonus    │
+  │ → Episode terminates           │
+  │ → Final time: 15.30 hours      │
   └────────────────────────────────┘
 ```

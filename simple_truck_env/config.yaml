@@ -15,8 +15,11 @@ environment:
   # Maximum distance between consecutive delivery stops (km)
   max_hop_distance: 120.0
   
-  # Maximum steps per episode before truncation
+  # Maximum steps per episode before truncation (for step-based environments)
   max_steps: 300
+  
+  # Maximum simulation time in hours (for event-driven environments)
+  max_time: 48.0
   
   # Enable verbose output for debugging
   verbose: false
@@ -88,6 +91,12 @@ delivery:
 rewards:
   # Time-based reward coefficient (negative per hour spent)
   time_penalty: -1.0
+  
+  # Distance-based penalty coefficient (negative per km traveled)
+  distance_penalty: -0.1
+  
+  # Charging time penalty (negative per hour charging)
+  charge_penalty: -2.0
   
   # Bonus for completing a delivery
   delivery_bonus: 50.0

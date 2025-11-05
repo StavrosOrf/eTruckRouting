@@ -1,0 +1,273 @@
+# SimpleTruckEnv Configuration File
+# =================================
+# This file contains all problem-specific initialization parameters
+# for the electric truck routing and charging environment.
+
+# Environment Settings
+# --------------------
+environment:
+  # Number of delivery stops per truck episode
+  num_stops: 5
+  
+  # Minimum distance between consecutive delivery stops (km)
+  min_hop_distance: 30.0
+  
+  # Maximum distance between consecutive delivery stops (km)
+  max_hop_distance: 120.0
+  
+  # Maximum steps per episode before truncation
+  max_steps: 300
+  
+  # Enable verbose output for debugging
+  verbose: false
+  
+  # Random seed for reproducibility (null for random)
+  seed: null
+
+
+# Truck Configuration
+# -------------------
+truck:
+  # Truck type selection: "random", "standard", or "heavy"
+  type_selection: "random"
+  
+  # Standard truck specifications
+  standard:
+    battery_capacity: 300.0  # kWh
+    base_speed: 40.0         # km/h
+    discharge_rate: 0.2      # kWh/km (base rate, modified by terrain)
+    
+  # Heavy truck specifications
+  heavy:
+    battery_capacity: 500.0  # kWh
+    base_speed: 35.0         # km/h
+    discharge_rate: 0.3      # kWh/km (base rate, modified by terrain)
+  
+  # Initial battery level: "full", "random", or specific percentage (0-100)
+  initial_battery: "full"
+  
+  # Battery failure threshold (percentage below which truck fails)
+  failure_threshold: 0.05  # 5% of capacity
+
+
+# Charging Configuration
+# ----------------------
+charging:
+  # Charging rate (kWh per hour)
+  charge_rate: 50.0
+  
+  # Available charging durations (hours)
+  charge_durations: [1, 2, 3, 4]
+  
+  # Queue simulation (for future enhancement)
+  enable_queue: false
+  max_queue_size: 3
+  
+  # Charging efficiency (percentage of energy transferred)
+  efficiency: 0.95
+
+
+# Delivery Route Generation
+# --------------------------
+delivery:
+  # Exclude charging nodes from being delivery destinations
+  exclude_charging_nodes: true
+  
+  # Allow depot as start location
+  allow_depot_start: true
+  
+  # Strategy for selecting delivery nodes: "random", "clustered", "distributed"
+  selection_strategy: "random"
+  
+  # Minimum battery required to accept a delivery route (percentage)
+  min_route_battery: 0.2  # 20% of capacity
+
+
+# Reward Function
+# ---------------
+rewards:
+  # Time-based reward coefficient (negative per hour spent)
+  time_penalty: -1.0
+  
+  # Bonus for completing a delivery
+  delivery_bonus: 50.0
+  
+  # Bonus for completing all deliveries
+  completion_bonus: 1000.0
+  
+  # Penalty for battery failure
+  failure_penalty: -500.0
+  
+  # Penalty for invalid action (no path, illegal move)
+  invalid_action_penalty: -10.0
+  
+  # Penalty for insufficient battery
+  insufficient_battery_penalty: -50.0
+  
+  # Efficiency bonus (if time < baseline, extra reward)
+  enable_efficiency_bonus: false
+  efficiency_bonus_rate: 10.0  # reward per hour saved
+
+
+# Graph/Network Settings
+# -----------------------
+network:
+  # Path to graph data files (relative to project root)
+  graph_data_dir: "truck_env/data"
+  
+  # Graph file names
+  shortest_path_energy_file: "shortest_path_energy_dict.pkl"
+  shortest_path_time_file: "shortest_path_time_dict.pkl"
+  station_info_file: "station_info_dict.pkl"
+  
+  # Terrain factor range (impacts battery discharge)
+  terrain_factor_min: 0.8
+  terrain_factor_max: 1.5
+  
+  # Default terrain factor if not specified
+  default_terrain_factor: 1.0
+
+
+# Observation Space Configuration
+# --------------------------------
+observation:
+  # Normalize observations
+  normalize: false
+  
+  # Include additional features
+  include_time_features: true
+  include_distance_features: true
+  include_battery_percentage: true
+  
+  # Feature scaling ranges (for normalization)
+  max_node_id: 300
+  max_battery: 500.0
+  max_distance: 5000.0
+  max_time: 1000.0
+
+
+# Training Settings (for RL algorithms)
+# --------------------------------------
+training:
+  # Number of parallel environments
+  num_envs: 4
+  
+  # Episode collection
+  episodes_per_iteration: 100
+  
+  # Curriculum learning (gradually increase difficulty)
+  curriculum:
+    enabled: false
+    initial_stops: 2
+    final_stops: 10
+    increase_every: 1000  # episodes
+
+
+# Evaluation Settings
+# --------------------
+evaluation:
+  # Number of episodes for evaluation
+  num_episodes: 100
+  
+  # Use deterministic policy during evaluation
+  deterministic: true
+  
+  # Metrics to track
+  metrics:
+    - "total_time"
+    - "total_distance"
+    - "num_charges"
+    - "completion_rate"
+    - "battery_efficiency"
+    - "average_delivery_time"
+
+
+# Logging and Monitoring
+# ----------------------
+logging:
+  # Enable detailed logging
+  enabled: true
+  
+  # Log level: "DEBUG", "INFO", "WARNING", "ERROR"
+  level: "INFO"
+  
+  # Log directory
+  log_dir: "logs/simple_truck_env"
+  
+  # Save episode statistics
+  save_episode_stats: true
+  
+  # Tensorboard logging
+  tensorboard: true
+  tensorboard_dir: "runs/simple_truck_env"
+
+
+# Rendering/Visualization
+# ------------------------
+rendering:
+  # Render mode: "human", "rgb_array", or null
+  mode: null
+  
+  # Frame rate for visualization
+  fps: 10
+  
+  # Show truck path
+  show_path: true
+  
+  # Show charging stations
+  show_chargers: true
+
+
+# Advanced Settings
+# -----------------
+advanced:
+  # Use cached distance calculations
+  cache_distances: true
+  
+  # Precompute all shortest paths (faster but more memory)
+  precompute_paths: false
+  
+  # Multi-truck simulation
+  multi_truck: true
+  num_trucks: 3
+  
+  # Action masking (prevent invalid actions)
+  action_masking: false
+  
+  # State augmentation
+  augment_state: false
+  augmentation_noise: 0.01
+
+
+# Experiment Presets
+# ------------------
+# Uncomment a preset to quickly configure for specific scenarios
+
+# presets:
+#   # Easy scenario - short routes, many chargers
+#   easy:
+#     num_stops: 2
+#     min_hop_distance: 20.0
+#     max_hop_distance: 60.0
+#     max_steps: 100
+#   
+#   # Medium scenario - balanced difficulty
+#   medium:
+#     num_stops: 5
+#     min_hop_distance: 30.0
+#     max_hop_distance: 120.0
+#     max_steps: 300
+#   
+#   # Hard scenario - long routes, sparse chargers
+#   hard:
+#     num_stops: 10
+#     min_hop_distance: 50.0
+#     max_hop_distance: 200.0
+#     max_steps: 500
+#   
+#   # Extreme scenario - very challenging
+#   extreme:
+#     num_stops: 15
+#     min_hop_distance: 80.0
+#     max_hop_distance: 300.0
+#     max_steps: 1000

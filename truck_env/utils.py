@@ -247,7 +247,7 @@ def get_graph_new():
     edge_time = read_file(edge_time_file)
     chargers = read_file(chargers_file)
 
-    """Build road network graph using index-based nodes (0,1,2,...)"""
+    """Build road network graph using index-based nodes (0, 1, 2,...)"""
     G = nx.DiGraph()
     all_nodes = set()
 

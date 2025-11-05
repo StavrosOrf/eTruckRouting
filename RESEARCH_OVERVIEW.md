@@ -2,7 +2,7 @@
 
 ## Research Question
 
-**How can we efficiently route hundreds of electric trucks to make multiple deliveries while managing battery constraints and charging infrastructure?**
+### How can we efficiently route hundreds of electric trucks to make multiple deliveries while managing battery constraints and charging infrastructure?
 
 ## Sources of Uncertainty
 

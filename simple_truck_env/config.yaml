@@ -118,7 +118,7 @@ rewards:
 # -----------------------
 network:
   # Path to graph data files (relative to project root)
-  graph_data_dir: "truck_env/data"
+  graph_data_dir: "simple_truck_env/data"
   
   # Graph file names
   shortest_path_energy_file: "shortest_path_energy_dict.pkl"

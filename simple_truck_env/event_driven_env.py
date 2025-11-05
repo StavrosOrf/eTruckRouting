@@ -131,7 +131,7 @@ class EventDrivenTruckEnv(gym.Env):
         # Load waiting time lookup table for queue simulation
         waiting_time_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            'truck_env', 'data', 'waiting_time_lookup.json'
+            'simple_truck_env', 'data', 'waiting_time_lookup.json'
         )
         with open(waiting_time_path, 'r') as f:
             self.waiting_time_lookup = json.load(f)

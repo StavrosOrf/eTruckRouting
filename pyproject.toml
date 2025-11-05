@@ -15,7 +15,7 @@ dependencies = [
     "torch>=2.9.0",
     "tqdm>=4.67",
     "wandb>=0.22.2",
-    "ray[rllib,tune]>=2.51.0",
+    "scikit-learn>=1.3.2",
     "networkx>=3.5",
     "dm-tree>=0.1.8",
 ]
@@ -25,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["truck_env"]
+packages = ["simple_truck_env"]
 
 [tool.ruff]
 line-length = 88  # Same as black

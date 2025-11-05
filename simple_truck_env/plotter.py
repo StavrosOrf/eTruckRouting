@@ -2,8 +2,89 @@
 Visualization and plotting utilities for the event-driven truck environment.
 """
 import os
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import numpy as np
+
+
+def compute_node_coordinates_from_distances(graph, verbose: bool = False) -> Dict[int, Tuple[float, float]]:
+    """
+    Compute 2D coordinates for graph nodes such that Euclidean distances 
+    match edge weights as closely as possible using Multidimensional Scaling (MDS).
+    
+    Args:
+        graph: NetworkX graph with 'distance' weights on edges
+        verbose: Print progress information
+        
+    Returns:
+        Dictionary mapping node_id to (x, y) coordinates
+    """
+    import networkx as nx
+    from sklearn.manifold import MDS
+    
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+    
+    if verbose:
+        print(f"Computing coordinates for {n} nodes using edge distances...")
+    
+    # Compute shortest path distances between all pairs of nodes
+    # This creates a distance matrix where entry (i,j) is the shortest path distance
+    distance_matrix = np.zeros((n, n))
+    
+    # Use NetworkX to compute all pairs shortest path lengths
+    # This handles disconnected graphs gracefully
+    try:
+        shortest_paths = dict(nx.all_pairs_dijkstra_path_length(graph, weight='distance'))
+        
+        for i, node_i in enumerate(nodes):
+            for j, node_j in enumerate(nodes):
+                if i == j:
+                    distance_matrix[i, j] = 0
+                elif node_j in shortest_paths.get(node_i, {}):
+                    distance_matrix[i, j] = shortest_paths[node_i][node_j]
+                else:
+                    # If no path exists, use a large distance
+                    distance_matrix[i, j] = 1000.0
+    except Exception as e:
+        if verbose:
+            print(f"Warning: Could not compute shortest paths, using direct edges only: {e}")
+        # Fallback: use only direct edge distances
+        distance_matrix.fill(1000.0)
+        np.fill_diagonal(distance_matrix, 0)
+        for u, v, data in graph.edges(data=True):
+            i, j = node_to_idx[u], node_to_idx[v]
+            dist = data.get('distance', 1.0)
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist
+    
+    if verbose:
+        print("Distance matrix computed. Running MDS...")
+    
+    # Apply MDS to embed nodes in 2D space
+    # dissimilarity='precomputed' means we're providing distances, not features
+    mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42, 
+              max_iter=500, n_init=4, normalized_stress='auto')
+    
+    try:
+        coords_2d = mds.fit_transform(distance_matrix)
+    except Exception as e:
+        if verbose:
+            print(f"MDS failed: {e}. Using spring layout as fallback.")
+        # Fallback to spring layout
+        pos = nx.spring_layout(graph, weight='distance', k=2, iterations=100, seed=42)
+        return {node: (pos[node][0] * 100, pos[node][1] * 100) for node in nodes}
+    
+    # Create the node_positions dictionary
+    node_positions = {}
+    for i, node in enumerate(nodes):
+        node_positions[node] = (coords_2d[i, 0], coords_2d[i, 1])
+    
+    if verbose:
+        print(f"MDS completed. Stress: {mds.stress_:.2f}")
+        print("Coordinates computed successfully.")
+    
+    return node_positions
 
 
 class EnvironmentPlotter:
@@ -51,11 +132,30 @@ class EnvironmentPlotter:
         
         fig, ax = plt.subplots(figsize=(18, 14))
         
-        # Use spring layout for better visualization
+        # Compute node positions from graph edge distances
         all_nodes = transport_graph.get_all_nodes()
-        print(f"Computing spring layout for {len(all_nodes)} nodes...")
-        node_positions = nx.spring_layout(transport_graph.graph, k=1.5, iterations=50, seed=42)
-        print("Spring layout computed.")
+        
+        # Check if coordinates are already computed
+        has_coords = all(transport_graph.graph.nodes[node].get('x') is not None and 
+                        transport_graph.graph.nodes[node].get('y') is not None 
+                        for node in list(all_nodes)[:10])
+        
+        if has_coords:
+            # Use existing coordinates
+            node_positions = {}
+            for node in all_nodes:
+                data = transport_graph.graph.nodes[node]
+                node_positions[node] = (data.get('x', 0), data.get('y', 0))
+            print(f"Using pre-computed coordinates for {len(all_nodes)} nodes.")
+        else:
+            # Compute coordinates from edge distances
+            node_positions = compute_node_coordinates_from_distances(
+                transport_graph.graph, verbose=self.verbose
+            )
+            # Store computed coordinates back in the graph
+            for node, (x, y) in node_positions.items():
+                transport_graph.graph.nodes[node]['x'] = x
+                transport_graph.graph.nodes[node]['y'] = y
         
         # Plot all edges (road network) in light gray
         for edge in transport_graph.graph.edges():
@@ -122,9 +222,9 @@ class EnvironmentPlotter:
                 ax.annotate(f'{idx}', xy=pos, fontsize=9, ha='center', va='center', 
                            color='white', weight='bold', zorder=7)
         
-        ax.set_xlabel('Spring Layout X', fontsize=12)
-        ax.set_ylabel('Spring Layout Y', fontsize=12)
-        ax.set_title(f'Initial Planned Routes - Transportation Network (Spring Layout)\n{num_trucks} Trucks, {num_stops} Stops Each, {len(charging_nodes)} Charging Stations', 
+        ax.set_xlabel('X Coordinate (km)', fontsize=12)
+        ax.set_ylabel('Y Coordinate (km)', fontsize=12)
+        ax.set_title(f'Initial Planned Routes - Transportation Network\n{num_trucks} Trucks, {num_stops} Stops Each, {len(charging_nodes)} Charging Stations', 
                     fontsize=14, weight='bold')
         ax.legend(loc='upper right', fontsize=9, framealpha=0.9, ncol=2)
         ax.grid(True, alpha=0.3, linestyle='--')
@@ -172,11 +272,30 @@ class EnvironmentPlotter:
         
         fig, ax = plt.subplots(figsize=(18, 14))
         
-        # Use spring layout for better visualization
+        # Use the same coordinates as computed in plot_initial_routes
         all_nodes = transport_graph.get_all_nodes()
-        print(f"Computing spring layout for {len(all_nodes)} nodes...")
-        node_positions = nx.spring_layout(transport_graph.graph, k=1.5, iterations=50, seed=42)
-        print("Spring layout computed.")
+        
+        # Check if coordinates are already computed
+        has_coords = all(transport_graph.graph.nodes[node].get('x') is not None and 
+                        transport_graph.graph.nodes[node].get('y') is not None 
+                        for node in list(all_nodes)[:10])
+        
+        if has_coords:
+            # Use existing coordinates
+            node_positions = {}
+            for node in all_nodes:
+                data = transport_graph.graph.nodes[node]
+                node_positions[node] = (data.get('x', 0), data.get('y', 0))
+            print(f"Using pre-computed coordinates for {len(all_nodes)} nodes.")
+        else:
+            # Compute coordinates from edge distances
+            node_positions = compute_node_coordinates_from_distances(
+                transport_graph.graph, verbose=self.verbose
+            )
+            # Store computed coordinates back in the graph
+            for node, (x, y) in node_positions.items():
+                transport_graph.graph.nodes[node]['x'] = x
+                transport_graph.graph.nodes[node]['y'] = y
         
         # Plot all edges (road network) in light gray
         for edge in transport_graph.graph.edges():
@@ -261,9 +380,9 @@ class EnvironmentPlotter:
                 ax.annotate('', xy=(x1 + 0.6*dx, y1 + 0.6*dy), xytext=(x1 + 0.4*dx, y1 + 0.4*dy),
                            arrowprops=dict(arrowstyle='->', color=color, lw=2, alpha=0.7), zorder=3)
         
-        ax.set_xlabel('Spring Layout X', fontsize=12)
-        ax.set_ylabel('Spring Layout Y', fontsize=12)
-        ax.set_title(f'Actual Truck Routes - Transportation Network (Spring Layout)\nSimulation Time: {global_clock:.1f}h', 
+        ax.set_xlabel('X Coordinate (km)', fontsize=12)
+        ax.set_ylabel('Y Coordinate (km)', fontsize=12)
+        ax.set_title(f'Actual Truck Routes - Transportation Network\nSimulation Time: {global_clock:.1f}h', 
                     fontsize=14, weight='bold')
         ax.legend(loc='upper right', fontsize=9, framealpha=0.9, ncol=2)
         ax.grid(True, alpha=0.3, linestyle='--')

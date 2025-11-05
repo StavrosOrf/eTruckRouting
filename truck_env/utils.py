@@ -22,9 +22,9 @@ def read_file(filename):
         return pickle.load(f)
 
 
-edge_distance_file = f"{path}/truck_env/data/shortest_path_energy_dict.pkl"
-edge_time_file = f"{path}/truck_env/data/shortest_path_time_dict.pkl"
-chargers_file = f"{path}/truck_env/data/station_info_dict.pkl"
+edge_distance_file = f"{path}/simple_truck_env/data/shortest_path_energy_dict.pkl"
+edge_time_file = f"{path}/simple_truck_env/data/shortest_path_time_dict.pkl"
+chargers_file = f"{path}/simple_truck_env/data/station_info_dict.pkl"
 
 isNew = True
 

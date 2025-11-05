@@ -70,26 +70,25 @@ def test_multidiscrete_actions():
     obs, info = env.reset(seed=123)
     
     print(f"\nAction space nvec: {env.action_space.nvec}")
-    print(f"Expected format: [nav_0, charge_0, nav_1, charge_1, nav_2, charge_2]")
+    print(f"Expected format: [action_0, action_1, action_2]")
+    print(f"Each action: 0-{env.num_charging_nodes-1}=chargers, {env.num_charging_nodes}=delivery, {env.num_charging_nodes+1}+=charge")
     
     # Create a manual action for all trucks
-    # Truck 0: go to next delivery, no charge
-    # Truck 1: go to charging station 0, charge for 2 hours
-    # Truck 2: go to next delivery, no charge
+    # Truck 0: go to next delivery
+    # Truck 1: charge for 2 hours
+    # Truck 2: go to next delivery
     
     num_trucks = env.num_trucks
     action = []
     for i in range(num_trucks):
         if i == 1:
-            # Truck 1: go to charger and charge
-            nav_action = 0  # First charging station
-            charge_action = 2  # Charge for 2 hours
+            # Truck 1: charge for 2 hours (charging action index 1 = 2 hours)
+            truck_action = env.num_navigation_actions + 1  # charge 2h
         else:
-            # Other trucks: go to delivery, no charge
-            nav_action = env.num_charging_nodes  # Next delivery
-            charge_action = 0  # No charging
+            # Other trucks: go to delivery
+            truck_action = env.num_charging_nodes  # Next delivery
         
-        action.extend([nav_action, charge_action])
+        action.append(truck_action)
     
     action = np.array(action)
     print(f"\nExecuting action: {action}")
@@ -156,15 +155,10 @@ def test_charging_queue():
     env = SimpleTruckEnv(config=config)
     obs, info = env.reset(seed=789)
     
-    print(f"\nSending all trucks to same charging station...")
+    print(f"\nSending all trucks to charge for 2 hours...")
     
-    # Send all trucks to first charging station and charge
-    charger_idx = 0
-    action = []
-    for i in range(env.num_trucks):
-        action.extend([charger_idx, 2])  # Go to charger 0, charge for 2h
-    
-    action = np.array(action)
+    # Send all trucks to charge (action = nav_actions + 1 = charge 2h)
+    action = np.array([env.num_navigation_actions + 1] * env.num_trucks)
     
     obs, reward, terminated, truncated, info = env.step(action)
     
@@ -188,7 +182,7 @@ def test_action_space_verification():
         env = SimpleTruckEnv(config=config)
         
         # Check action space
-        expected_length = num_trucks * 2  # 2 actions per truck
+        expected_length = num_trucks  # 1 action per truck
         actual_length = len(env.action_space.nvec)
         
         print(f"\nTrucks: {num_trucks}")
@@ -200,6 +194,7 @@ def test_action_space_verification():
         action = env.action_space.sample()
         print(f"  Sample action shape: {action.shape}")
         print(f"  Sample action: {action}")
+        print(f"  Action range per truck: 0 to {env.num_navigation_actions + env.num_charge_actions - 1}")
         
         assert expected_length == actual_length, f"Action space mismatch for {num_trucks} trucks"
         

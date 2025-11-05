@@ -100,16 +100,15 @@ def example_3_manual_actions():
     obs, info = env.reset(seed=100)
     
     print("\nManually controlling 2 trucks:")
-    print("  Truck 0: Go to next delivery, no charge")
-    print("  Truck 1: Go to charging station 0, charge for 1 hour")
+    print("  Truck 0: Go to next delivery")
+    print("  Truck 1: Charge for 2 hours")
     
     # Build action manually
-    # Format: [nav_0, charge_0, nav_1, charge_1]
+    # Format: [action_0, action_1]
+    # Each action is either navigation (0 to num_charging_nodes) or charging (num_charging_nodes+1 onwards)
     action = np.array([
-        env.num_charging_nodes,  # Truck 0: go to next delivery
-        0,                        # Truck 0: no charging
-        0,                        # Truck 1: go to charging station 0
-        1,                        # Truck 1: charge for 1 hour
+        env.num_charging_nodes,           # Truck 0: go to next delivery
+        env.num_navigation_actions + 1,   # Truck 1: charge for 2 hours
     ])
     
     obs, reward, terminated, truncated, info = env.step(action)
@@ -148,21 +147,18 @@ def example_4_coordinated_strategy():
             truck_id = truck_state['truck_id']
             battery_pct = truck_state['battery_percentage']
             
-            # Navigation action
+            # Decide action based on battery level and location
             if battery_pct < 30.0:
-                # Low battery - find nearest charger
-                nav_action = 0  # Go to first charging station (simplified)
+                # Low battery - go to nearest charger (simplified: charger 0)
+                truck_action = 0
+            elif battery_pct < 50.0 and truck_state['current_node'] in env.charging_nodes:
+                # At charger with medium battery - charge for 2 hours
+                truck_action = env.num_navigation_actions + 1  # charge 2h
             else:
                 # Go to next delivery
-                nav_action = env.num_charging_nodes
+                truck_action = env.num_charging_nodes
             
-            # Charging action
-            if battery_pct < 50.0 and truck_state['current_node'] in env.charging_nodes:
-                charge_action = 2  # Charge for 2 hours
-            else:
-                charge_action = 0  # No charging
-            
-            action.extend([nav_action, charge_action])
+            action.append(truck_action)
         
         action = np.array(action)
         obs, reward, terminated, truncated, info = env.step(action)
@@ -203,27 +199,24 @@ def example_5_action_space_explained():
     print(f"  Shape: {env.action_space.nvec}")
     print(f"  Number of trucks: {env.num_trucks}")
     
-    print(f"\nEach truck has 2 action components:")
-    print(f"  1. Navigation action (0 to {env.num_navigation_actions - 1}):")
-    print(f"     - 0 to {env.num_charging_nodes - 1}: Go to specific charging station")
-    print(f"     - {env.num_charging_nodes}: Go to next delivery")
-    print(f"  2. Charging action (0 to {env.num_charge_actions - 1}):")
-    print(f"     - 0: No charging")
-    print(f"     - 1 to {env.num_charge_actions - 1}: Charge for 1-4 hours")
+    print(f"\nEach truck has 1 action combining navigation and charging:")
+    print(f"  - 0 to {env.num_charging_nodes - 1}: Go to specific charging station")
+    print(f"  - {env.num_charging_nodes}: Go to next delivery")
+    print(f"  - {env.num_navigation_actions} to {env.num_navigation_actions + env.num_charge_actions - 1}: Charge for 1-4 hours at current location")
     
-    print(f"\nAction array format: [nav_0, charge_0, nav_1, charge_1, ...]")
+    print(f"\nAction array format: [action_0, action_1, ...]")
     print(f"For {env.num_trucks} trucks: length = {len(env.action_space.nvec)}")
     
     # Show some example actions
     print(f"\nExample actions:")
     
     # All trucks go to deliveries
-    action1 = np.array([env.num_charging_nodes, 0] * env.num_trucks)
+    action1 = np.array([env.num_charging_nodes] * env.num_trucks)
     print(f"  All to deliveries: {action1}")
     
-    # First truck charges
-    action2 = np.array([0, 2, env.num_charging_nodes, 0])
-    print(f"  Truck 0 charges at station 0 for 2h, Truck 1 to delivery: {action2}")
+    # First truck charges, second goes to delivery
+    action2 = np.array([env.num_navigation_actions + 1, env.num_charging_nodes])
+    print(f"  Truck 0 charges for 2h, Truck 1 to delivery: {action2}")
     
     # Random action
     action3 = env.action_space.sample()

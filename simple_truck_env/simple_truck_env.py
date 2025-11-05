@@ -259,7 +259,11 @@ class SimpleTruckEnv(gym.Env):
         Execute one step in the environment.
         
         Args:
-            action: MultiDiscrete action array [nav_0, charge_0, nav_1, charge_1, ..., nav_N, charge_N]
+            action: MultiDiscrete action array [action_0, action_1, ..., action_N]
+                    Each action is either:
+                    - 0 to num_charging_nodes-1: Go to charging station
+                    - num_charging_nodes: Go to next delivery
+                    - num_charging_nodes+1 to end: Charge for 1-4 hours at current location
             
         Returns:
             observation, reward, terminated, truncated, info
@@ -278,23 +282,23 @@ class SimpleTruckEnv(gym.Env):
                 # Skip trucks that are done
                 continue
             
-            # Extract actions for this truck
-            nav_action = action[truck_idx * 2]
-            charge_action = action[truck_idx * 2 + 1]
+            # Extract action for this truck
+            truck_action = action[truck_idx]
             
             if self.verbose:
                 print(f"\nTruck {truck.truck_id}:")
-                print(f"  Nav action: {self._nav_action_to_string(nav_action)}")
-                print(f"  Charge action: {self._charge_action_to_string(charge_action)}")
+                print(f"  Action: {self._action_to_string(truck_action)}")
                 print(f"  Current: node={truck.current_node}, battery={truck.current_battery:.1f} kWh")
             
-            # Execute navigation action
-            nav_reward = self._execute_navigation_action(truck, nav_action)
-            total_reward += nav_reward
-            
-            # Execute charging action (if applicable)
-            if charge_action > 0:  # 0 = no charge
-                charge_reward = self._execute_charge_action(truck, charge_action)
+            # Decode action: navigation or charging?
+            if truck_action < self.num_navigation_actions:
+                # Navigation action
+                nav_reward = self._execute_navigation_action(truck, truck_action)
+                total_reward += nav_reward
+            else:
+                # Charging action
+                charge_idx = truck_action - self.num_navigation_actions
+                charge_reward = self._execute_charge_action(truck, charge_idx + 1)  # +1 because charge actions are 1-4
                 total_reward += charge_reward
         
         # Check termination conditions
@@ -393,21 +397,17 @@ class SimpleTruckEnv(gym.Env):
         
         return reward
     
-    def _execute_charge_action(self, truck: Truck, charge_action: int) -> float:
+    def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
         """
         Execute a charging action for a specific truck.
         
         Args:
             truck: The truck to charge
-            charge_action: Charging action (0=no charge, 1-4=charge for 1-4 hours)
+            charge_hours: Hours to charge (1, 2, 3, or 4)
             
         Returns:
             Reward for this action
         """
-        if charge_action == 0:
-            # No charging requested
-            return 0.0
-        
         current_node = truck.current_node
         
         # Check if at a charging station
@@ -416,10 +416,6 @@ class SimpleTruckEnv(gym.Env):
                 print(f"    ❌ Not at a charging station!")
             return self.reward_config.get('invalid_action_penalty', -10.0)
         
-        # Get charge duration
-        charge_durations = self.charging_config.get('charge_durations', [1, 2, 3, 4])
-        hours = charge_durations[charge_action - 1] if charge_action <= len(charge_durations) else 1
-        
         # Check charger availability and simulate queue
         waiting_time = self._simulate_charging_queue(truck, current_node)
         
@@ -427,12 +423,12 @@ class SimpleTruckEnv(gym.Env):
         charge_rate = self.charging_config.get('charge_rate', 50.0)
         efficiency = self.charging_config.get('efficiency', 0.95)
         charge_amount = min(
-            charge_rate * hours * efficiency,
+            charge_rate * charge_hours * efficiency,
             truck.battery_capacity - truck.current_battery
         )
         
         # Total time = waiting + charging
-        total_time = waiting_time + hours
+        total_time = waiting_time + charge_hours
         
         # Execute charging
         truck.finish_charging(charge_amount, total_time)
@@ -448,7 +444,7 @@ class SimpleTruckEnv(gym.Env):
         if self.verbose:
             if waiting_time > 0:
                 print(f"    ⏳ Waited {waiting_time:.1f}h for charger")
-            print(f"    🔌 Charged for {hours}h, gained {charge_amount:.1f} kWh")
+            print(f"    🔌 Charged for {charge_hours}h, gained {charge_amount:.1f} kWh")
             print(f"    Battery: {truck.current_battery:.1f}/{truck.battery_capacity:.1f} kWh")
         
         return reward
@@ -537,21 +533,17 @@ class SimpleTruckEnv(gym.Env):
             "any_failed": any(t.failed for t in self.trucks),
         }
     
-    def _nav_action_to_string(self, action: int) -> str:
-        """Convert navigation action index to human-readable string."""
+    def _action_to_string(self, action: int) -> str:
+        """Convert action index to human-readable string."""
         if action < self.num_charging_nodes:
             return f"Go to charging station at node {self.charging_nodes[action]}"
-        else:
+        elif action == self.num_charging_nodes:
             return f"Go to next delivery"
-    
-    def _charge_action_to_string(self, action: int) -> str:
-        """Convert charging action index to human-readable string."""
-        if action == 0:
-            return "No charging"
         else:
-            charge_durations = self.charging_config.get('charge_durations', [1, 2, 3, 4])
-            hours = charge_durations[action - 1] if action <= len(charge_durations) else 1
-            return f"Charge for {hours} hour(s)"
+            # Charging action
+            charge_idx = action - self.num_navigation_actions
+            hours = charge_idx + 1  # 1, 2, 3, or 4 hours
+            return f"Charge for {hours} hour(s) at current location"
     
     def render(self):
         """Render the environment state."""

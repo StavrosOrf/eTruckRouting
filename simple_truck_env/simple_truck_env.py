@@ -152,7 +152,7 @@ class SimpleTruckEnv(gym.Env):
                 1000.0,  # time_elapsed (hours)
                 5000.0,  # distance_traveled (km)
             ] * self.num_trucks),
-            dtype=np.float32
+            dtype=np.float64
         )
         
         # Charging station queue/occupancy tracking
@@ -518,7 +518,7 @@ class SimpleTruckEnv(gym.Env):
             
             obs_list.extend(truck_obs)
         
-        return np.array(obs_list, dtype=np.float32)
+        return np.array(obs_list, dtype=np.float64)
     
     def _get_info(self) -> Dict:
         """Get additional information."""

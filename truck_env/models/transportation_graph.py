@@ -101,7 +101,7 @@ class TransportationGraph:
         """Return list of all nodes in the graph."""
         return list(self.graph.nodes())
     
-    def get_distance(self, from_node: int, to_node: int) -> float:
+    def get_path_energy(self, from_node: int, to_node: int) -> float:
         """
         Get the distance between two nodes.
         
@@ -113,7 +113,7 @@ class TransportationGraph:
             to_node: Destination node
             
         Returns:
-            Distance in km, or float('inf') if no path exists
+            Distance in kWh of energy used for the trip, or float('inf') if no path exists
         """
         # Check cache first
         cache_key = (from_node, to_node)
@@ -154,6 +154,21 @@ class TransportationGraph:
         except nx.NetworkXNoPath:
             return []
     
+    def get_time_distance(self, from_node: int, to_node: int) -> float:
+        """
+        Get the travel time between two nodes.
+        
+        Args:
+            from_node: Starting node
+            to_node: Destination node
+            
+        Returns:
+            Travel time in hours, or float('inf') if no path exists
+        """
+        if self.graph.has_edge(from_node, to_node):
+            return self.graph[from_node][to_node]["time"]
+        return float('inf')
+
     def get_edge_data(self, from_node: int, to_node: int) -> Dict:
         """
         Get edge data between two nodes.
@@ -226,7 +241,7 @@ class TransportationGraph:
                 if node in sequence:  # Skip already visited nodes
                     continue
                 
-                distance = self.get_distance(current_node, node)
+                distance = self.get_path_energy(current_node, node)
                 if min_hop_distance <= distance <= max_hop_distance:
                     valid_next_nodes.append(node)
             
@@ -273,7 +288,7 @@ class TransportationGraph:
             if charging_node == from_node:
                 return charging_node, 0.0
             
-            distance = self.get_distance(from_node, charging_node)
+            distance = self.get_path_energy(from_node, charging_node)
             if distance < min_distance:
                 min_distance = distance
                 nearest_node = charging_node
@@ -328,20 +343,6 @@ class TransportationGraph:
         """Check if a node has a charging station."""
         return node in self.charging_nodes
     
-    def calculate_total_distance(self, sequence: List[int]) -> float:
-        """
-        Calculate total distance for a sequence of nodes.
-        
-        Args:
-            sequence: List of nodes in order
-            
-        Returns:
-            Total distance in km
-        """
-        total = 0.0
-        for i in range(len(sequence) - 1):
-            total += self.get_distance(sequence[i], sequence[i + 1])
-        return total
     
     def clear_distance_cache(self):
         """Clear the distance cache from memory."""

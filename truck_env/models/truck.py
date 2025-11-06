@@ -16,7 +16,6 @@ class Truck:
         initial_battery: float,
         battery_capacity: float,
         base_speed: float,
-        discharge_rate: float = 0.2
     ):
         """
         Initialize a truck.
@@ -28,14 +27,12 @@ class Truck:
             initial_battery: Starting battery level (kWh)
             battery_capacity: Maximum battery capacity (kWh)
             base_speed: Base speed of truck (km/h)
-            discharge_rate: Base discharge rate (kWh/km)
         """
         self.truck_id = truck_id
         self.truck_type = truck_type
         self.delivery_sequence = delivery_sequence.copy()
         self.battery_capacity = battery_capacity
         self.base_speed = base_speed
-        self.discharge_rate = discharge_rate
         
         # Current state
         self.current_battery = initial_battery
@@ -133,21 +130,7 @@ class Truck:
         """Get current battery level as percentage."""
         return 100.0 * self.current_battery / self.battery_capacity
     
-    def can_reach_node(self, node: int, distance: float, terrain_factor: float = 1.0) -> bool:
-        """
-        Check if truck has enough battery to reach a node.
-        
-        Args:
-            node: Target node
-            distance: Distance to node (km)
-            terrain_factor: Terrain difficulty multiplier
-            
-        Returns:
-            True if truck can reach the node
-        """
-        estimated_discharge = self.discharge_rate * distance * terrain_factor
-        return self.current_battery >= estimated_discharge
-    
+
     def get_state_dict(self) -> Dict:
         """
         Get truck state as a dictionary.
@@ -166,7 +149,6 @@ class Truck:
             "battery_capacity": self.battery_capacity,
             "battery_percentage": self.get_battery_percentage(),
             "base_speed": self.base_speed,
-            "discharge_rate": self.discharge_rate,
             "is_charging": self.is_charging,
             "is_complete": self.is_complete,
             "failed": self.failed,

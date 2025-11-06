@@ -136,6 +136,7 @@ class EventHandler:
         trucks: List[Any],
         truck_states: Dict[int, str],
         charger_occupancy: Dict[int, List],
+        charger_queue: Dict[int, List],
         charger_stats: Dict,
         event_queue: List,
         global_clock: float
@@ -148,6 +149,7 @@ class EventHandler:
             trucks: List of Truck objects
             truck_states: Dictionary of truck states
             charger_occupancy: Dictionary of charger occupancy
+            charger_queue: Dictionary of charger queues (new parameter)
             charger_stats: Dictionary of charger statistics
             event_queue: Priority queue of events
             global_clock: Current simulation time
@@ -161,11 +163,21 @@ class EventHandler:
             charge_duration=data['charge_duration']
         )
         
-        # Remove from charger occupancy
+        # Remove from charger occupancy and queue
         charger_node = truck.current_node
         if charger_node in charger_occupancy:
             if truck.truck_id in charger_occupancy[charger_node]:
                 charger_occupancy[charger_node].remove(truck.truck_id)
+            
+            # Remove from queue as well
+            if charger_node in charger_queue:
+                charger_queue[charger_node] = [
+                    (tid, start, dur) for tid, start, dur in charger_queue[charger_node]
+                    if tid != truck.truck_id
+                ]
+                # Update queue length stat
+                if charger_node in charger_stats:
+                    charger_stats[charger_node]["queue_length"] = len(charger_queue[charger_node])
             
             # Update occupancy statistics
             if charger_node in charger_stats:

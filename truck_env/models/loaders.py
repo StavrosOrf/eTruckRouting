@@ -46,8 +46,6 @@ def create_truck(
     truck_config = config["truck"]
     battery_capacity = truck_config["battery_capacity"]
     base_speed = truck_config["base_speed"]
-    discharge_rate = truck_config["discharge_rate"]
-
     # Determine initial battery
     initial_battery_setting = truck_config["initial_battery"]
     if initial_battery_setting == "full":
@@ -67,7 +65,6 @@ def create_truck(
         initial_battery=initial_battery,
         battery_capacity=battery_capacity,
         base_speed=base_speed,
-        discharge_rate=discharge_rate,
     )
 
     return truck, delivery_sequence, start_node

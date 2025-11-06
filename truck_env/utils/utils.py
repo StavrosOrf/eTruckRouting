@@ -53,42 +53,67 @@ def map_charger_type(charger_type_str: str) -> str:
         return charger_type_str
 
 
-def get_graph() -> nx.DiGraph:
+def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     """
     Load and build the road network graph from JSON files.
+
+    Args:
+        config: Configuration dictionary. If None, uses default config.
 
     Returns:
         NetworkX directed graph with nodes, edges, and charging station information
     """
-    # Get the directory where this file is located
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(current_dir, "../data")
+    # Load config if not provided
+    if config is None:
+        config = load_config()
+    
+    # Get network configuration
+    network_config = config.get("network", {})
+    data_path = network_config.get("data_path", "data/")
+    energy_file = network_config.get("shortest_path_energy_file", "shortest_path_energy_dict.json")
+    time_file = network_config.get("shortest_path_time_file", "shortest_path_time_dict.json")
+    station_file = network_config.get("station_info_file", "station_info_dict.json")
 
-    edge_distance_file = os.path.join(data_dir, "shortest_path_energy_dict.json")
-    edge_time_file = os.path.join(data_dir, "shortest_path_time_dict.json")
-    chargers_file = os.path.join(data_dir, "station_info_dict.json")
+    # Get the directory where this file is located (truck_env/utils)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Navigate up from utils to truck_env
+    truck_env_dir = os.path.dirname(current_dir)
+    
+    # Construct data directory path
+    # If data_path starts with "truck_env/", use it as-is relative to project root
+    if data_path.startswith("truck_env/"):
+        # Relative to project root
+        project_root = os.path.dirname(truck_env_dir)
+        data_dir = os.path.join(project_root, data_path.rstrip('/'))
+    else:
+        # Relative to truck_env directory
+        data_dir = os.path.join(truck_env_dir, data_path.rstrip('/'))
+
+    edge_distance_file = os.path.join(data_dir, energy_file)
+    edge_time_file = os.path.join(data_dir, time_file)
+    chargers_file = os.path.join(data_dir, station_file)
 
     # Load edge distance data from JSON
     with open(edge_distance_file, 'r') as f:
         edge_distance_raw = json.load(f)
     # Convert string keys back to tuples (keys are stored as '(u, v)')
     edge_distance = {}
-    for k_str, v in edge_distance_raw.items():
+    for k_str, distance_val in edge_distance_raw.items():
         # Parse string representation of tuple: '(u, v)' -> (u, v)
         k_str = k_str.strip('()')
         u, v = map(int, k_str.split(', '))
-        edge_distance[(u, v)] = v
+        edge_distance[(u, v)] = distance_val
 
     # Load edge time data from JSON
     with open(edge_time_file, 'r') as f:
         edge_time_raw = json.load(f)
     # Convert string keys back to tuples
     edge_time = {}
-    for k_str, v in edge_time_raw.items():
+    for k_str, time_val in edge_time_raw.items():
         # Parse string representation of tuple: '(u, v)' -> (u, v)
         k_str = k_str.strip('()')
-        u, v_node = map(int, k_str.split(', '))
-        edge_time[(u, v_node)] = v
+        u, v = map(int, k_str.split(', '))
+        edge_time[(u, v)] = time_val
 
     # Load charger data from JSON
     with open(chargers_file, 'r') as f:

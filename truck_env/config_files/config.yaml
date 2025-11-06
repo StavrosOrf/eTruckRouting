@@ -8,10 +8,10 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 10
+  num_trucks: 2
 
   # Number of delivery stops per truck episode
-  num_stops: 5
+  num_stops: 3
 
   # Minimum energy consumption between consecutive delivery stops (kWh)
   min_hop_distance: 100.0
@@ -77,9 +77,6 @@ rewards:
   # Penalty for insufficient battery
   insufficient_battery_penalty: -50.0
 
-  # Efficiency bonus (if time < baseline, extra reward)
-  enable_efficiency_bonus: false
-  efficiency_bonus_rate: 10.0 # reward per hour saved
 
 # Graph/Network Settings
 # -----------------------

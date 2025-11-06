@@ -8,7 +8,7 @@ def evaluate_env(seed: int = 42):
     env = EventDrivenTruckEnv(
         config=config_file, run_id="test_run",
         verbose=True,
-        enable_plotting=False
+        enable_plotting=True
     )
 
     obs, info = env.reset(seed=seed)
@@ -49,5 +49,5 @@ def evaluate_env(seed: int = 42):
 
 if __name__ == "__main__":
     
-    for i in range(100):  
+    for i in range(1):  
         evaluate_env(seed=i)

@@ -27,7 +27,7 @@ class TransportationGraph:
         self._distance_cache = {}  # Dict[Tuple[int, int], float]
         self._cache_file = os.path.join(
             os.path.dirname(__file__),
-            '..', '..',  # Go up to EVPR root
+            '..', '..',  # Go up to EVRP root
             'truck_env', 'data', 'distance_matrix_cache.pkl'
         )
         self._cache_file = os.path.normpath(self._cache_file)

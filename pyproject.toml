@@ -17,6 +17,7 @@ dependencies = [
     "scikit-learn>=1.3.2",
     "networkx>=3.5",
     "dm-tree>=0.1.8",
+    "contextily>=1.2.1",
 ]
 
 [build-system]

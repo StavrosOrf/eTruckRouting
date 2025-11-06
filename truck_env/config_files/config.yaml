@@ -13,13 +13,13 @@ environment:
   min_hop_distance: 100.0
 
   # Maximum distance between consecutive delivery stops (km)
-  max_hop_distance: 500.0
+  max_hop_distance: 400.0
 
   # Maximum steps per episode before truncation (for step-based environments)
   max_steps: 300
 
   # Maximum simulation time in hours (for event-driven environments)
-  max_time: 48.0
+  max_time: 64.0
 
   # Enable verbose output for debugging
   verbose: false

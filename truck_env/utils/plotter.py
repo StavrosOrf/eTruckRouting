@@ -1,404 +1,332 @@
 """
 Visualization and plotting utilities for the event-driven truck environment.
+
+Uses OpenStreetMap tiles and real geographic coordinates for visualization.
 """
 import os
 from typing import Dict, List, Any, Tuple
+import json
+from pathlib import Path
 import numpy as np
-
-
-def compute_node_coordinates_from_distances(graph, verbose: bool = False) -> Dict[int, Tuple[float, float]]:
-    """
-    Compute 2D coordinates for graph nodes such that Euclidean distances 
-    match edge weights as closely as possible using Multidimensional Scaling (MDS).
-    
-    Args:
-        graph: NetworkX graph with 'distance' weights on edges
-        verbose: Print progress information
-        
-    Returns:
-        Dictionary mapping node_id to (x, y) coordinates
-    """
-    import networkx as nx
-    from sklearn.manifold import MDS
-    
-    nodes = list(graph.nodes())
-    n = len(nodes)
-    node_to_idx = {node: i for i, node in enumerate(nodes)}
-    
-    if verbose:
-        print(f"Computing coordinates for {n} nodes using edge distances...")
-    
-    # Compute shortest path distances between all pairs of nodes
-    # This creates a distance matrix where entry (i,j) is the shortest path distance
-    distance_matrix = np.zeros((n, n))
-    
-    # Use NetworkX to compute all pairs shortest path lengths
-    # This handles disconnected graphs gracefully
-    try:
-        shortest_paths = dict(nx.all_pairs_dijkstra_path_length(graph, weight='distance'))
-        
-        for i, node_i in enumerate(nodes):
-            for j, node_j in enumerate(nodes):
-                if i == j:
-                    distance_matrix[i, j] = 0
-                elif node_j in shortest_paths.get(node_i, {}):
-                    distance_matrix[i, j] = shortest_paths[node_i][node_j]
-                else:
-                    # If no path exists, use a large distance
-                    distance_matrix[i, j] = 1000.0
-    except Exception as e:
-        if verbose:
-            print(f"Warning: Could not compute shortest paths, using direct edges only: {e}")
-        # Fallback: use only direct edge distances
-        distance_matrix.fill(1000.0)
-        np.fill_diagonal(distance_matrix, 0)
-        for u, v, data in graph.edges(data=True):
-            i, j = node_to_idx[u], node_to_idx[v]
-            dist = data.get('distance', 1.0)
-            distance_matrix[i, j] = dist
-            distance_matrix[j, i] = dist
-    
-    if verbose:
-        print("Distance matrix computed. Running MDS...")
-    
-    # Apply MDS to embed nodes in 2D space
-    # dissimilarity='precomputed' means we're providing distances, not features
-    mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42, 
-              max_iter=500, n_init=4, normalized_stress='auto')
-    
-    try:
-        coords_2d = mds.fit_transform(distance_matrix)
-    except Exception as e:
-        if verbose:
-            print(f"MDS failed: {e}. Using spring layout as fallback.")
-        # Fallback to spring layout
-        pos = nx.spring_layout(graph, weight='distance', k=2, iterations=100, seed=42)
-        return {node: (pos[node][0] * 100, pos[node][1] * 100) for node in nodes}
-    
-    # Create the node_positions dictionary
-    node_positions = {}
-    for i, node in enumerate(nodes):
-        node_positions[node] = (coords_2d[i, 0], coords_2d[i, 1])
-    
-    if verbose:
-        print(f"MDS completed. Stress: {mds.stress_:.2f}")
-        print("Coordinates computed successfully.")
-    
-    return node_positions
+import matplotlib.pyplot as plt
 
 
 class EnvironmentPlotter:
     """
-    Handles all plotting and visualization for the truck routing environment.
+    Handles all plotting and visualization for the truck routing environment using OSM coordinates.
     """
     
-    def __init__(self, output_dir: str, verbose: bool = False):
+    def __init__(self, output_dir: str, verbose: bool = False, use_osm: bool = True):
         """
         Initialize the plotter.
         
         Args:
             output_dir: Directory to save plots
             verbose: Print verbose messages
+            use_osm: Whether to include OSM basemap in plots
         """
         self.output_dir = output_dir
         self.verbose = verbose
+        self.use_osm = use_osm
+        self.node_coords = {}
+        self.charger_coords = {}
+        self.road_segments = []
         
-    def plot_initial_routes(
-        self,
-        transport_graph: Any,
-        truck_initial_plans: Dict[int, Dict],
-        charging_nodes: List[int],
-        num_trucks: int,
-        num_stops: int
-    ):
-        """
-        Plot initial truck starting points and planned delivery routes.
-        
-        Args:
-            transport_graph: TransportationGraph instance
-            truck_initial_plans: Dictionary mapping truck_id to initial plan
-            charging_nodes: List of charging station node IDs
-            num_trucks: Number of trucks
-            num_stops: Number of stops per truck
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import matplotlib
-            import networkx as nx
-            matplotlib.use('Agg')  # Non-interactive backend
-        except ImportError:
-            print("Warning: matplotlib not available. Skipping plots.")
-            return
-        
-        fig, ax = plt.subplots(figsize=(18, 14))
-        
-        # Compute node positions from graph edge distances
-        all_nodes = transport_graph.get_all_nodes()
-        
-        # Check if coordinates are already computed
-        has_coords = all(transport_graph.graph.nodes[node].get('x') is not None and 
-                        transport_graph.graph.nodes[node].get('y') is not None 
-                        for node in list(all_nodes)[:10])
-        
-        if has_coords:
-            # Use existing coordinates
-            node_positions = {}
-            for node in all_nodes:
-                data = transport_graph.graph.nodes[node]
-                node_positions[node] = (data.get('x', 0), data.get('y', 0))
-            print(f"Using pre-computed coordinates for {len(all_nodes)} nodes.")
-        else:
-            # Compute coordinates from edge distances
-            node_positions = compute_node_coordinates_from_distances(
-                transport_graph.graph, verbose=self.verbose
-            )
-            # Store computed coordinates back in the graph
-            for node, (x, y) in node_positions.items():
-                transport_graph.graph.nodes[node]['x'] = x
-                transport_graph.graph.nodes[node]['y'] = y
-        
-        # Plot all edges (road network) in light gray
-        for edge in transport_graph.graph.edges():
-            x_coords = [node_positions[edge[0]][0], node_positions[edge[1]][0]]
-            y_coords = [node_positions[edge[0]][1], node_positions[edge[1]][1]]
-            ax.plot(x_coords, y_coords, 'lightgray', alpha=0.2, linewidth=0.5, zorder=1)
-        
-        # Collect all delivery/destination nodes across all trucks
-        all_delivery_nodes = set()
-        for plan in truck_initial_plans.values():
-            all_delivery_nodes.update(plan['deliveries'])
-        
-        # Plot all non-charging, non-delivery nodes as tiny dots
-        regular_nodes = [n for n in all_nodes if n not in charging_nodes and n not in all_delivery_nodes]
-        if regular_nodes:
-            regular_x = [node_positions[n][0] for n in regular_nodes]
-            regular_y = [node_positions[n][1] for n in regular_nodes]
-            ax.scatter(regular_x, regular_y, c='lightgray', s=5, marker='o',
-                      label=f'Network Nodes ({len(regular_nodes)})', alpha=0.3, zorder=2)
-        
-        # Plot charging stations with labels
-        if charging_nodes:
-            charger_x = [node_positions[n][0] for n in charging_nodes]
-            charger_y = [node_positions[n][1] for n in charging_nodes]
-            ax.scatter(charger_x, charger_y, c='orange', s=250, marker='s', 
-                      label=f'Charging Stations ({len(charging_nodes)})', alpha=0.8, 
-                      edgecolors='darkorange', linewidths=2, zorder=4)
-            
-            # Annotate charging station IDs
-            for node in charging_nodes:
-                pos = node_positions[node]
-                ax.annotate(f'C{node}', xy=pos, xytext=(0, 0), textcoords='offset points',
-                           fontsize=9, color='white', weight='bold', ha='center', va='center', zorder=5)
-        
-        # Plot each truck's planned route
-        colors = plt.cm.tab10(np.linspace(0, 1, num_trucks))
-        
-        for truck_id, plan in truck_initial_plans.items():
-            color = colors[truck_id]
-            
-            # Plot start point
-            start_pos = node_positions[plan['start']]
-            ax.scatter(*start_pos, c=[color], s=300, marker='*', 
-                      label=f'Truck {truck_id} Start', edgecolors='black', linewidths=2, zorder=6)
-            
-            # Plot delivery/destination points
-            delivery_x = [node_positions[n][0] for n in plan['deliveries']]
-            delivery_y = [node_positions[n][1] for n in plan['deliveries']]
-            ax.scatter(delivery_x, delivery_y, c=[color]*len(plan['deliveries']), 
-                      s=150, marker='o', alpha=0.8, edgecolors='black', linewidths=1.5, 
-                      label=f'Truck {truck_id} Destinations', zorder=5)
-            
-            # Draw planned route
-            route_nodes = [plan['start']] + plan['deliveries']
-            for i in range(len(route_nodes) - 1):
-                x_coords = [node_positions[route_nodes[i]][0], node_positions[route_nodes[i+1]][0]]
-                y_coords = [node_positions[route_nodes[i]][1], node_positions[route_nodes[i+1]][1]]
-                ax.plot(x_coords, y_coords, color=color, alpha=0.5, linewidth=2.5, 
-                       linestyle='--', zorder=3)
-            
-            # Annotate delivery sequence numbers
-            for idx, node in enumerate(plan['deliveries'], 1):
-                pos = node_positions[node]
-                ax.annotate(f'{idx}', xy=pos, fontsize=9, ha='center', va='center', 
-                           color='white', weight='bold', zorder=7)
-        
-        ax.set_xlabel('X Coordinate (km)', fontsize=12)
-        ax.set_ylabel('Y Coordinate (km)', fontsize=12)
-        ax.set_title(f'Initial Planned Routes - Transportation Network\n{num_trucks} Trucks, {num_stops} Stops Each, {len(charging_nodes)} Charging Stations', 
-                    fontsize=14, weight='bold')
-        ax.legend(loc='upper right', fontsize=9, framealpha=0.9, ncol=2)
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.set_aspect('equal', adjustable='box')
-        
-        # Add statistics box
-        stats_text = f'Graph Stats:\nNodes: {len(all_nodes)}\nEdges: {transport_graph.graph.number_of_edges()}\nChargers: {len(charging_nodes)}\nDestinations: {len(all_delivery_nodes)}'
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
-               verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9))
-        
-        filepath = os.path.join(self.output_dir, 'initial_routes.png')
-        plt.tight_layout()
-        plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        if self.verbose:
-            print(f"Initial routes plot saved to: {filepath}")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        self._load_visualization_data()
     
-    def plot_actual_routes(
-        self,
-        transport_graph: Any,
-        truck_routes: Dict[int, List],
-        charging_nodes: List[int],
-        num_trucks: int,
-        global_clock: float
-    ):
-        """
-        Plot the actual routes taken by trucks during simulation.
-        
-        Args:
-            transport_graph: TransportationGraph instance
-            truck_routes: Dictionary mapping truck_id to list of (node, time, event_type) tuples
-            charging_nodes: List of charging station node IDs
-            num_trucks: Number of trucks
-            global_clock: Current simulation time
-        """
+    def _load_visualization_data(self):
+        """Load visualization data from JSON files."""
         try:
-            import matplotlib.pyplot as plt
-            import matplotlib
-            import networkx as nx
-            matplotlib.use('Agg')  # Non-interactive backend
-        except ImportError:
-            print("Warning: matplotlib not available. Skipping plots.")
+            data_dir = Path(__file__).parent.parent / "data" / "vis_data"
+            
+            with open(data_dir / "node_CA_df.json", "r") as f:
+                route_data = json.load(f)
+            
+            with open(data_dir / "station_CA_df.json", "r") as f:
+                station_data = json.load(f)
+            
+            self.node_coords = self._create_node_coordinate_map_from_routes(route_data)
+            self.charger_coords = self._create_charger_coordinate_map(station_data)
+            self.road_segments = self._extract_road_segments_from_routes(route_data)
+            
+            if self.verbose:
+                print(f"  ✓ Loaded {len(self.node_coords)} OSM nodes")
+                print(f"  ✓ Loaded {len(self.charger_coords)} charger stations")
+                print(f"  ✓ Loaded {len(self.road_segments)} road segments")
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠ Warning: Could not load visualization data: {e}")
+    
+    def _extract_road_segments_from_routes(self, route_data):
+        """Extract road segments from route data."""
+        segments = []
+        for route in route_data:
+            if all(key in route for key in ["Start_Latitude", "Start_Longitude", "End_Latitude", "End_Longitude"]):
+                segment = {
+                    "start_lat": float(route["Start_Latitude"]),
+                    "start_lon": float(route["Start_Longitude"]),
+                    "end_lat": float(route["End_Latitude"]),
+                    "end_lon": float(route["End_Longitude"]),
+                }
+                segments.append(segment)
+        return segments
+    
+    def _create_node_coordinate_map_from_routes(self, route_data):
+        """Create a mapping from OSM node ID to (latitude, longitude)."""
+        node_coords = {}
+        for route in route_data:
+            if "origin_node" in route and "Start_Latitude" in route and "Start_Longitude" in route:
+                node_id = int(route["origin_node"])
+                lat = float(route["Start_Latitude"])
+                lon = float(route["Start_Longitude"])
+                if node_id not in node_coords:
+                    node_coords[node_id] = (lat, lon)
+            
+            if "destination_node" in route and "End_Latitude" in route and "End_Longitude" in route:
+                node_id = int(route["destination_node"])
+                lat = float(route["End_Latitude"])
+                lon = float(route["End_Longitude"])
+                if node_id not in node_coords:
+                    node_coords[node_id] = (lat, lon)
+        return node_coords
+    
+    def _create_charger_coordinate_map(self, station_data):
+        """Create a mapping from charger node ID to (latitude, longitude)."""
+        charger_coords = {}
+        for station in station_data:
+            node_id = int(station["node"])
+            lat = float(station["Latitude"])
+            lon = float(station["Longitude"])
+            charger_coords[node_id] = (lat, lon)
+        return charger_coords
+    
+    def _create_node_id_to_osm_map(self, transport_graph):
+        """Create mapping from graph node indices to OSM coordinates."""
+        node_coords = {}
+        for node_idx in transport_graph.graph.nodes():
+            node_data = transport_graph.graph.nodes[node_idx]
+            if 'original_id' in node_data:
+                osm_id = node_data['original_id']
+                if osm_id in self.node_coords:
+                    node_coords[node_idx] = self.node_coords[osm_id]
+        return node_coords
+    
+    def _add_osm_background(self, ax, node_coords):
+        """Add OpenStreetMap background to axes."""
+        if not self.use_osm:
             return
         
-        fig, ax = plt.subplots(figsize=(18, 14))
-        
-        # Use the same coordinates as computed in plot_initial_routes
-        all_nodes = transport_graph.get_all_nodes()
-        
-        # Check if coordinates are already computed
-        has_coords = all(transport_graph.graph.nodes[node].get('x') is not None and 
-                        transport_graph.graph.nodes[node].get('y') is not None 
-                        for node in list(all_nodes)[:10])
-        
-        if has_coords:
-            # Use existing coordinates
-            node_positions = {}
-            for node in all_nodes:
-                data = transport_graph.graph.nodes[node]
-                node_positions[node] = (data.get('x', 0), data.get('y', 0))
-            print(f"Using pre-computed coordinates for {len(all_nodes)} nodes.")
-        else:
-            # Compute coordinates from edge distances
-            node_positions = compute_node_coordinates_from_distances(
-                transport_graph.graph, verbose=self.verbose
-            )
-            # Store computed coordinates back in the graph
-            for node, (x, y) in node_positions.items():
-                transport_graph.graph.nodes[node]['x'] = x
-                transport_graph.graph.nodes[node]['y'] = y
-        
-        # Plot all edges (road network) in light gray
-        for edge in transport_graph.graph.edges():
-            x_coords = [node_positions[edge[0]][0], node_positions[edge[1]][0]]
-            y_coords = [node_positions[edge[0]][1], node_positions[edge[1]][1]]
-            ax.plot(x_coords, y_coords, 'lightgray', alpha=0.2, linewidth=0.5, zorder=1)
-        
-        # Collect all delivery/destination nodes across all trucks
-        all_delivery_nodes = set()
-        for route in truck_routes.values():
-            all_delivery_nodes.update([r[0] for r in route if r[2] == 'delivery'])
-        
-        # Plot all non-charging, non-delivery nodes as small dots
-        regular_nodes = [n for n in all_nodes if n not in charging_nodes and n not in all_delivery_nodes]
-        if regular_nodes:
-            non_charge_x = [node_positions[n][0] for n in regular_nodes]
-            non_charge_y = [node_positions[n][1] for n in regular_nodes]
-            ax.scatter(non_charge_x, non_charge_y, c='lightgray', s=5, marker='o',
-                      label=f'Network Nodes ({len(regular_nodes)})', alpha=0.3, zorder=2)
-        
-        # Plot charging stations with labels
-        if charging_nodes:
-            charger_x = [node_positions[n][0] for n in charging_nodes]
-            charger_y = [node_positions[n][1] for n in charging_nodes]
-            ax.scatter(charger_x, charger_y, c='orange', s=250, marker='s', 
-                      label=f'Charging Stations ({len(charging_nodes)})', alpha=0.8, 
-                      edgecolors='darkorange', linewidths=2, zorder=4)
+        try:
+            import contextily as ctx
             
-            # Annotate charging station IDs
-            for node in charging_nodes:
-                pos = node_positions[node]
-                ax.annotate(f'C{node}', xy=pos, xytext=(0, 0), textcoords='offset points',
-                           fontsize=9, color='white', weight='bold', ha='center', va='center', zorder=5)
+            if node_coords:
+                all_lats = [coord[0] for coord in node_coords.values()]
+                all_lons = [coord[1] for coord in node_coords.values()]
+                min_lat, max_lat = min(all_lats), max(all_lats)
+                min_lon, max_lon = min(all_lons), max(all_lons)
+                
+                lat_margin = (max_lat - min_lat) * 0.1
+                lon_margin = (max_lon - min_lon) * 0.1
+                
+                ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
+                ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
+            
+            ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.OpenStreetMap.Mapnik, 
+                          zoom=10, alpha=0.4)
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠ Warning: Could not add OSM background: {e}")
+    
+    def plot_initial_state(self, transport_graph: Any, truck_initial_plans: Dict[int, Dict],
+                          charging_nodes: List[int], num_trucks: int):
+        """Plot initial truck positions and planned delivery routes."""
+        try:
+            fig, ax = plt.subplots(figsize=(18, 14), dpi=150)
+            
+            node_coords = self._create_node_id_to_osm_map(transport_graph)
+            if not node_coords:
+                print("Warning: No node coordinates found.")
+                return
+            
+            self._add_osm_background(ax, node_coords)
+            
+            if self.road_segments:
+                for segment in self.road_segments:
+                    ax.plot(
+                        [segment["start_lon"], segment["end_lon"]],
+                        [segment["start_lat"], segment["end_lat"]],
+                        c="#cccccc", linewidth=0.5, alpha=0.4, zorder=2,
+                    )
+            
+            if node_coords:
+                all_lats = [coord[0] for coord in node_coords.values()]
+                all_lons = [coord[1] for coord in node_coords.values()]
+                ax.scatter(all_lons, all_lats, c="#888888", s=15, alpha=0.5,
+                          label="Network Nodes", zorder=3, edgecolors="none")
+            
+            truck_colors = plt.cm.tab10(range(num_trucks))
+            
+            for truck_id in range(num_trucks):
+                truck_color = truck_colors[truck_id]
+                plan = truck_initial_plans[truck_id]
+                
+                start_node = plan["start"]
+                if start_node in node_coords:
+                    start_lat, start_lon = node_coords[start_node]
+                    ax.scatter(start_lon, start_lat, c=[truck_color], s=250, marker="^",
+                              edgecolors="black", linewidths=2,
+                              label=f"Truck {truck_id} Start", zorder=7)
+                
+                delivery_nodes = plan["deliveries"]
+                delivery_lats, delivery_lons, delivery_coords_list = [], [], []
+                
+                for delivery_idx, delivery_node in enumerate(delivery_nodes):
+                    if delivery_node in node_coords:
+                        lat, lon = node_coords[delivery_node]
+                        delivery_lats.append(lat)
+                        delivery_lons.append(lon)
+                        delivery_coords_list.append((lat, lon, delivery_idx + 1))
+                
+                if delivery_lats:
+                    ax.scatter(delivery_lons, delivery_lats, c=[truck_color]*len(delivery_lats),
+                              s=100, marker="o", alpha=0.9, edgecolors="black", linewidths=1.5, zorder=6)
+                    
+                    for lat, lon, delivery_num in delivery_coords_list:
+                        ax.text(lon, lat, str(delivery_num), ha="center", va="center",
+                               fontsize=10, fontweight="bold", color="white", zorder=8,
+                               bbox=dict(boxstyle="circle,pad=0.1", facecolor="black", alpha=0.5, edgecolor="none"))
+                    
+                    ax.plot(delivery_lons, delivery_lats, c="gray", alpha=0.3,
+                           linewidth=1.5, linestyle="--", zorder=4)
+            
+            charger_lats = [lat for _, (lat, lon) in self.charger_coords.items()]
+            charger_lons = [lon for _, (lat, lon) in self.charger_coords.items()]
+            
+            if charger_lats:
+                ax.scatter(charger_lons, charger_lats, c="red", s=80, marker="s",
+                          edgecolors="darkred", linewidths=1, alpha=0.9,
+                          label="Charging Stations", zorder=6)
+            
+            ax.set_xlabel("Longitude", fontsize=13, fontweight="bold")
+            ax.set_ylabel("Latitude", fontsize=13, fontweight="bold")
+            ax.set_title(f"Initial Truck Positions\n({num_trucks} Trucks, {len(self.charger_coords)} Stations)",
+                        fontsize=15, fontweight="bold", pad=20)
+            ax.set_facecolor("#f5f5f5")
+            ax.grid(True, alpha=0.2, linestyle="--", linewidth=0.5)
+            ax.legend(loc="upper left", fontsize=11, framealpha=0.95, edgecolor="black")
+            
+            filepath = os.path.join(self.output_dir, "initial_state.png")
+            plt.tight_layout()
+            plt.savefig(filepath, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+            if self.verbose:
+                print(f"  ✓ Initial state plot saved to: {filepath}")
         
-        # Plot each truck's actual route
-        colors = plt.cm.tab10(np.linspace(0, 1, num_trucks))
+        except Exception as e:
+            print(f"Error creating initial state plot: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def plot_final_routes(self, transport_graph: Any, truck_routes: Dict[int, List[Tuple]],
+                         charging_nodes: List[int], num_trucks: int, final_time: float):
+        """Plot actual routes followed by trucks during simulation."""
+        try:
+            fig, ax = plt.subplots(figsize=(18, 14), dpi=150)
+            
+            node_coords = self._create_node_id_to_osm_map(transport_graph)
+            if not node_coords:
+                print("Warning: No node coordinates found.")
+                return
+            
+            self._add_osm_background(ax, node_coords)
+            
+            if self.road_segments:
+                for segment in self.road_segments:
+                    ax.plot(
+                        [segment["start_lon"], segment["end_lon"]],
+                        [segment["start_lat"], segment["end_lat"]],
+                        c="#cccccc", linewidth=0.5, alpha=0.4, zorder=2,
+                    )
+            
+            if node_coords:
+                all_lats = [coord[0] for coord in node_coords.values()]
+                all_lons = [coord[1] for coord in node_coords.values()]
+                ax.scatter(all_lons, all_lats, c="#888888", s=15, alpha=0.5,
+                          label="Network Nodes", zorder=3, edgecolors="none")
+            
+            truck_colors = plt.cm.tab10(range(num_trucks))
+            
+            for truck_id, route in truck_routes.items():
+                if not route:
+                    continue
+                
+                truck_color = truck_colors[truck_id]
+                
+                route_nodes = [r[0] for r in route]
+                event_types = [r[2] if len(r) > 2 else 'travel' for r in route]
+                
+                route_coords = [node_coords[node] for node in route_nodes if node in node_coords]
+                if route_coords:
+                    route_lats = [coord[0] for coord in route_coords]
+                    route_lons = [coord[1] for coord in route_coords]
+                    ax.plot(route_lons, route_lats, c=truck_color, alpha=0.7,
+                           linewidth=2.5, zorder=3)
+                
+                if route_nodes and route_nodes[0] in node_coords:
+                    start_lat, start_lon = node_coords[route_nodes[0]]
+                    ax.scatter(start_lon, start_lat, c=[truck_color], s=250, marker="^",
+                              edgecolors="black", linewidths=2,
+                              label=f"Truck {truck_id} Start", zorder=7)
+                
+                delivery_indices = [i for i, et in enumerate(event_types) if et == 'delivery']
+                if delivery_indices:
+                    delivery_lats = [node_coords[route_nodes[i]][0] for i in delivery_indices if route_nodes[i] in node_coords]
+                    delivery_lons = [node_coords[route_nodes[i]][1] for i in delivery_indices if route_nodes[i] in node_coords]
+                    
+                    ax.scatter(delivery_lons, delivery_lats, c=[truck_color]*len(delivery_lons),
+                              s=100, marker="o", alpha=0.9, edgecolors="black", linewidths=1.5, zorder=6)
+                    
+                    for idx, delivery_idx in enumerate(delivery_indices, 1):
+                        if route_nodes[delivery_idx] in node_coords:
+                            lat, lon = node_coords[route_nodes[delivery_idx]]
+                            ax.text(lon, lat, str(idx), ha="center", va="center",
+                                   fontsize=10, fontweight="bold", color="white", zorder=8,
+                                   bbox=dict(boxstyle="circle,pad=0.1", facecolor="black", alpha=0.5, edgecolor="none"))
+                
+                charger_indices = [i for i, et in enumerate(event_types) if et == 'charger']
+                if charger_indices:
+                    charger_lats = [node_coords[route_nodes[i]][0] for i in charger_indices if route_nodes[i] in node_coords]
+                    charger_lons = [node_coords[route_nodes[i]][1] for i in charger_indices if route_nodes[i] in node_coords]
+                    ax.scatter(charger_lons, charger_lats, c=[truck_color]*len(charger_lons),
+                              s=80, marker="D", alpha=0.7, edgecolors="black", linewidths=1, zorder=5)
+            
+            charger_lats = [lat for _, (lat, lon) in self.charger_coords.items()]
+            charger_lons = [lon for _, (lat, lon) in self.charger_coords.items()]
+            
+            if charger_lats:
+                ax.scatter(charger_lons, charger_lats, c="red", s=80, marker="s",
+                          edgecolors="darkred", linewidths=1, alpha=0.9,
+                          label="Charging Stations", zorder=6)
+            
+            ax.set_xlabel("Longitude", fontsize=13, fontweight="bold")
+            ax.set_ylabel("Latitude", fontsize=13, fontweight="bold")
+            ax.set_title(f"Final Truck Routes\n({num_trucks} Trucks, Time: {final_time:.1f}h)",
+                        fontsize=15, fontweight="bold", pad=20)
+            ax.set_facecolor("#f5f5f5")
+            ax.grid(True, alpha=0.2, linestyle="--", linewidth=0.5)
+            ax.legend(loc="upper left", fontsize=11, framealpha=0.95, edgecolor="black")
+            
+            filepath = os.path.join(self.output_dir, "final_routes.png")
+            plt.tight_layout()
+            plt.savefig(filepath, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+            if self.verbose:
+                print(f"  ✓ Final routes plot saved to: {filepath}")
         
-        for truck_id, route in truck_routes.items():
-            if not route:
-                continue
-            
-            color = colors[truck_id]
-            
-            # Separate nodes by type
-            start_nodes = [r[0] for r in route if r[2] == 'start']
-            delivery_nodes = [r[0] for r in route if r[2] == 'delivery']
-            charger_visits = [r[0] for r in route if r[2] == 'charger']
-            
-            # Plot start
-            if start_nodes:
-                start_pos = node_positions[start_nodes[0]]
-                ax.scatter(*start_pos, c=[color], s=300, marker='*', 
-                          label=f'Truck {truck_id} Start', edgecolors='black', linewidths=2, zorder=6)
-            
-            # Plot deliveries/destinations
-            if delivery_nodes:
-                delivery_x = [node_positions[n][0] for n in delivery_nodes]
-                delivery_y = [node_positions[n][1] for n in delivery_nodes]
-                ax.scatter(delivery_x, delivery_y, c=[color]*len(delivery_nodes), 
-                          s=150, marker='o', alpha=0.8, edgecolors='black', linewidths=2, 
-                          label=f'Truck {truck_id} Deliveries', zorder=5)
-            
-            # Plot charger visits
-            if charger_visits:
-                charger_visit_x = [node_positions[n][0] for n in charger_visits]
-                charger_visit_y = [node_positions[n][1] for n in charger_visits]
-                ax.scatter(charger_visit_x, charger_visit_y, c=[color]*len(charger_visits), 
-                          s=120, marker='D', alpha=0.6, edgecolors='black', linewidths=1.5, zorder=4)
-            
-            # Draw actual route path
-            route_nodes = [r[0] for r in route]
-            for i in range(len(route_nodes) - 1):
-                x_coords = [node_positions[route_nodes[i]][0], node_positions[route_nodes[i+1]][0]]
-                y_coords = [node_positions[route_nodes[i]][1], node_positions[route_nodes[i+1]][1]]
-                ax.plot(x_coords, y_coords, color=color, alpha=0.7, linewidth=2.5, zorder=3)
-            
-            # Add arrows to show direction
-            for i in range(0, len(route_nodes) - 1, max(1, len(route_nodes) // 5)):  # Every few segments
-                x1, y1 = node_positions[route_nodes[i]]
-                x2, y2 = node_positions[route_nodes[i+1]]
-                dx, dy = x2 - x1, y2 - y1
-                ax.annotate('', xy=(x1 + 0.6*dx, y1 + 0.6*dy), xytext=(x1 + 0.4*dx, y1 + 0.4*dy),
-                           arrowprops=dict(arrowstyle='->', color=color, lw=2, alpha=0.7), zorder=3)
-        
-        ax.set_xlabel('X Coordinate (km)', fontsize=12)
-        ax.set_ylabel('Y Coordinate (km)', fontsize=12)
-        ax.set_title(f'Actual Truck Routes - Transportation Network\nSimulation Time: {global_clock:.1f}h', 
-                    fontsize=14, weight='bold')
-        ax.legend(loc='upper right', fontsize=9, framealpha=0.9, ncol=2)
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.set_aspect('equal', adjustable='box')
-        
-        # Add statistics box
-        total_visits = sum(len(route) for route in truck_routes.values())
-        charger_visits = sum(len([r for r in route if r[2] == 'charger']) for route in truck_routes.values())
-        stats_text = f'Route Stats:\nTotal Visits: {total_visits}\nCharger Visits: {charger_visits}\nDeliveries: {len(all_delivery_nodes)}\nTime: {global_clock:.1f}h'
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
-               verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.9))
-        
-        filepath = os.path.join(self.output_dir, 'actual_routes.png')
-        plt.tight_layout()
-        plt.savefig(filepath, dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        if self.verbose:
-            print(f"Actual routes plot saved to: {filepath}")
+        except Exception as e:
+            print(f"Error creating final routes plot: {e}")
+            import traceback
+            traceback.print_exc()

@@ -1,5 +1,5 @@
-# EVPR
-Solving EVPR with RL
+# EVRP
+Solving EVRP with RL
 
 ## Setup Virtual Environment
 

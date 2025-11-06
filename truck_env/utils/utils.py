@@ -4,6 +4,7 @@ Utility functions for the simple truck environment.
 
 import os
 import pickle
+import json
 import networkx as nx
 from typing import Dict, Optional, Any
 import yaml
@@ -54,7 +55,7 @@ def map_charger_type(charger_type_str: str) -> str:
 
 def get_graph() -> nx.DiGraph:
     """
-    Load and build the road network graph from pickle files.
+    Load and build the road network graph from JSON files.
 
     Returns:
         NetworkX directed graph with nodes, edges, and charging station information
@@ -63,14 +64,37 @@ def get_graph() -> nx.DiGraph:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(current_dir, "../data")
 
-    edge_distance_file = os.path.join(data_dir, "shortest_path_energy_dict.pkl")
-    edge_time_file = os.path.join(data_dir, "shortest_path_time_dict.pkl")
-    chargers_file = os.path.join(data_dir, "station_info_dict.pkl")
+    edge_distance_file = os.path.join(data_dir, "shortest_path_energy_dict.json")
+    edge_time_file = os.path.join(data_dir, "shortest_path_time_dict.json")
+    chargers_file = os.path.join(data_dir, "station_info_dict.json")
 
-    # Load data files
-    edge_distance = read_file(edge_distance_file)
-    edge_time = read_file(edge_time_file)
-    chargers = read_file(chargers_file)
+    # Load edge distance data from JSON
+    with open(edge_distance_file, 'r') as f:
+        edge_distance_raw = json.load(f)
+    # Convert string keys back to tuples (keys are stored as '(u, v)')
+    edge_distance = {}
+    for k_str, v in edge_distance_raw.items():
+        # Parse string representation of tuple: '(u, v)' -> (u, v)
+        k_str = k_str.strip('()')
+        u, v = map(int, k_str.split(', '))
+        edge_distance[(u, v)] = v
+
+    # Load edge time data from JSON
+    with open(edge_time_file, 'r') as f:
+        edge_time_raw = json.load(f)
+    # Convert string keys back to tuples
+    edge_time = {}
+    for k_str, v in edge_time_raw.items():
+        # Parse string representation of tuple: '(u, v)' -> (u, v)
+        k_str = k_str.strip('()')
+        u, v_node = map(int, k_str.split(', '))
+        edge_time[(u, v_node)] = v
+
+    # Load charger data from JSON
+    with open(chargers_file, 'r') as f:
+        chargers_raw = json.load(f)
+    # Convert string keys to integers
+    chargers = {int(k): v for k, v in chargers_raw.items()}
 
     # Build road network graph
     G = nx.DiGraph()

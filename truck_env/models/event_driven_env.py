@@ -78,12 +78,12 @@ class EventDrivenTruckEnv(gym.Env):
         # Create output directory and helpers if plotting is enabled
         if self.enable_plotting:
             self.output_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "results", self.run_id
+                os.path.dirname(os.path.dirname(__file__)), "../results", self.run_id
             )
             os.makedirs(self.output_dir, exist_ok=True)
 
             # Initialize plotter and statistics collector
-            self.plotter = EnvironmentPlotter(self.output_dir, self.verbose)
+            self.plotter = EnvironmentPlotter(self.output_dir, self.verbose,use_osm=False)
             self.stats_collector = EnvironmentStatistics(self.output_dir, self.verbose)
 
             if self.verbose:
@@ -286,12 +286,11 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Generate initial route plot if plotting is enabled
         if self.enable_plotting and self.plotter:
-            self.plotter.plot_initial_routes(
+            self.plotter.plot_initial_state(
                 self.transport_graph,
                 self.truck_initial_plans,
                 self.charging_nodes,
                 self.num_trucks,
-                self.num_stops,
             )
 
         return obs, info
@@ -725,7 +724,8 @@ class EventDrivenTruckEnv(gym.Env):
         """Clean up resources and generate final visualizations."""
         if self.enable_plotting and self.plotter and self.stats_collector:
             # Generate final plots
-            self.plotter.plot_actual_routes(
+            print(f'truck routes: {self.truck_routes}')
+            self.plotter.plot_final_routes(
                 self.transport_graph,
                 self.truck_routes,
                 self.charging_nodes,

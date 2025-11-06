@@ -4,7 +4,8 @@ config_file = "truck_env/config_files/config.yaml"
 
 #create an instance of the environment
 env = EventDrivenTruckEnv(config=config_file,
-                          verbose=True,)
+                          verbose=True,
+                          enable_plotting=True)
 
 obs, info = env.reset(seed=42)
 
@@ -22,7 +23,10 @@ while True:
     # print("Observation:", obs)
     print("Reward:", reward)
     print("Done:", done, " | Truncated:", truncated)
-    input("Press Enter to continue...")
+    # input("Press Enter to continue...")
     
     if done or truncated:
         break
+
+# Close the environment to generate final plots
+env.close()

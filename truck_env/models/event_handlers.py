@@ -66,6 +66,11 @@ class EventHandler:
         truck = trucks[event.truck_id]
         data = event.data
         
+        # Check if this will be a delivery event BEFORE updating truck state
+        destination = data['destination']
+        next_delivery_target = truck.get_next_delivery_target()
+        is_delivery = destination == next_delivery_target
+        
         # Update truck position and state
         truck.move_to_node(
             node=data['destination'],
@@ -76,10 +81,22 @@ class EventHandler:
         
         # Track route for visualization
         if enable_plotting:
-            event_label = 'delivery' if data['destination'] in truck.delivery_sequence else 'charger'
-            truck_routes[truck.truck_id].append(
-                (data['destination'], global_clock, event_label)
-            )
+            event_label = 'delivery' if is_delivery else 'charger'
+            # Store the full path if available, otherwise just the destination
+            path = data.get('path', [destination])
+            # Add all intermediate nodes from the path (excluding start which is already in route)
+            if len(path) > 1:
+                for node in path[1:]:  # Skip first node (already in previous route)
+                    # Only label the final destination
+                    node_label = event_label if node == destination else 'travel'
+                    truck_routes[truck.truck_id].append(
+                        (node, global_clock, node_label)
+                    )
+            else:
+                # No path available, just add destination
+                truck_routes[truck.truck_id].append(
+                    (destination, global_clock, event_label)
+                )
         
         if self.verbose:
             print(f"  Truck {truck.truck_id} arrived at node {data['destination']}")

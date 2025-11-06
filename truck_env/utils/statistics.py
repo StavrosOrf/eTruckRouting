@@ -89,7 +89,7 @@ class EnvironmentStatistics:
         print(f"Average Distance per Truck: {total_distance/num_trucks:.2f} km")
         
         # Charging infrastructure statistics
-        self._print_charger_statistics(charger_util)
+        # self._print_charger_statistics(charger_util)
         
         # Save statistics to file
         self._save_statistics_file(

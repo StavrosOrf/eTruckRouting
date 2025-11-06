@@ -1,13 +1,15 @@
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 
 config_file = "truck_env/config_files/config.yaml"
-
+seed = 42
 #create an instance of the environment
 env = EventDrivenTruckEnv(config=config_file,
+                          run_id="test_run",
                           verbose=True,
                           enable_plotting=True)
 
-obs, info = env.reset(seed=42)
+obs, info = env.reset(seed=seed)
+env.action_space.seed(seed)
 
 print("Initial Observation:", obs)
 # print("Initial Info:", info)

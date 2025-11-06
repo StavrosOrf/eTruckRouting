@@ -43,6 +43,7 @@ class EventDrivenTruckEnv(gym.Env):
         config: Union[str, Dict],
         verbose: Optional[bool] = None,
         enable_plotting: Optional[bool] = None,
+        run_id: Optional[str] = None,
     ):
         """
         Initialize the event-driven environment.
@@ -73,7 +74,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Generate unique run_id based on timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_id = f"run_{timestamp}"
+        self.run_id = f"run_{timestamp}" if run_id is None else run_id
 
         # Create output directory and helpers if plotting is enabled
         if self.enable_plotting:
@@ -83,7 +84,9 @@ class EventDrivenTruckEnv(gym.Env):
             os.makedirs(self.output_dir, exist_ok=True)
 
             # Initialize plotter and statistics collector
-            self.plotter = EnvironmentPlotter(self.output_dir, self.verbose,use_osm=False)
+            self.plotter = EnvironmentPlotter(
+                self.output_dir, self.verbose, use_osm=False
+            )
             self.stats_collector = EnvironmentStatistics(self.output_dir, self.verbose)
 
             if self.verbose:
@@ -455,6 +458,9 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  ERROR: No path from {current_node} to {target_node}")
             return -10.0
 
+        # Get the full path for visualization
+        path = self.transport_graph.get_shortest_path(current_node, target_node)
+
         travel_time = distance / truck.base_speed
         discharge = distance * truck.discharge_rate
 
@@ -490,6 +496,7 @@ class EventDrivenTruckEnv(gym.Env):
                     "distance": distance,
                     "travel_time": travel_time,
                     "discharge": discharge,
+                    "path": path,  # Full path for visualization
                 },
             ),
         )
@@ -724,13 +731,13 @@ class EventDrivenTruckEnv(gym.Env):
         """Clean up resources and generate final visualizations."""
         if self.enable_plotting and self.plotter and self.stats_collector:
             # Generate final plots
-            print(f'truck routes: {self.truck_routes}')
             self.plotter.plot_final_routes(
                 self.transport_graph,
                 self.truck_routes,
                 self.charging_nodes,
                 self.num_trucks,
                 self.global_clock,
+                self.truck_initial_plans,
             )
 
             # Print and save statistics

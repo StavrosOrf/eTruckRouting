@@ -18,10 +18,9 @@ import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from truck_env.utils.utils import get_graph
+from truck_env.utils.utils import get_graph, load_config
 from truck_env.models.transportation_graph import TransportationGraph
 from truck_env.models.truck import Truck
-from truck_env.utils.config_utils import load_config
 from truck_env.models.event_handlers import EventType, Event, EventHandler
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.utils.statistics import EnvironmentStatistics
@@ -69,11 +68,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.verbose = verbose if verbose is not None else env_config["verbose"]
 
         # Visualization and output settings
-        self.enable_plotting = (
-            enable_plotting
-            if enable_plotting is not None
-            else env_config["enable_plotting"]
-        )
+        self.enable_plotting = enable_plotting
 
         # Generate unique run_id based on timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -110,7 +105,6 @@ class EventDrivenTruckEnv(gym.Env):
         # Load waiting time lookup table for queue simulation
         waiting_time_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "simple_truck_env",
             "data",
             "waiting_time_lookup.json",
         )

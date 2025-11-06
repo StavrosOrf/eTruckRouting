@@ -1,11 +1,35 @@
 """
 Utility functions for the simple truck environment.
 """
+
 import os
 import pickle
 import networkx as nx
-from typing import Dict, Tuple, Any
+from typing import Dict, Optional, Any
+import yaml
 
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load configuration from YAML file.
+    
+    Args:
+        config_path: Path to config file. If None, uses default config.yaml
+        
+    Returns:
+        Dictionary containing configuration parameters
+    """
+    if config_path is None:
+        # Use default config in same directory as this file
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(current_dir, "config.yaml")
+    
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
 
 def read_file(filename: str) -> Any:
     """Read a pickle file."""
@@ -18,7 +42,11 @@ def map_charger_type(charger_type_str: str) -> str:
     charger_type_lower = charger_type_str.lower()
     if "level2" in charger_type_lower or "level 2" in charger_type_lower:
         return "Level2"
-    elif "dcfast" in charger_type_lower or "dc fast" in charger_type_lower or "dc_fast" in charger_type_lower:
+    elif (
+        "dcfast" in charger_type_lower
+        or "dc fast" in charger_type_lower
+        or "dc_fast" in charger_type_lower
+    ):
         return "DCFast"
     else:
         return charger_type_str
@@ -27,18 +55,18 @@ def map_charger_type(charger_type_str: str) -> str:
 def get_graph() -> nx.DiGraph:
     """
     Load and build the road network graph from pickle files.
-    
+
     Returns:
         NetworkX directed graph with nodes, edges, and charging station information
     """
     # Get the directory where this file is located
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(current_dir, 'data')
-    
-    edge_distance_file = os.path.join(data_dir, 'shortest_path_energy_dict.pkl')
-    edge_time_file = os.path.join(data_dir, 'shortest_path_time_dict.pkl')
-    chargers_file = os.path.join(data_dir, 'station_info_dict.pkl')
-    
+    data_dir = os.path.join(current_dir, "../data")
+
+    edge_distance_file = os.path.join(data_dir, "shortest_path_energy_dict.pkl")
+    edge_time_file = os.path.join(data_dir, "shortest_path_time_dict.pkl")
+    chargers_file = os.path.join(data_dir, "station_info_dict.pkl")
+
     # Load data files
     edge_distance = read_file(edge_distance_file)
     edge_time = read_file(edge_time_file)
@@ -85,13 +113,17 @@ def get_graph() -> nx.DiGraph:
             props = {
                 "has_charger": True,
                 "charger_type": charger_aggregated[idx],
-                "original_id": index_to_node[idx],  # Store original node ID for reference
+                "original_id": index_to_node[
+                    idx
+                ],  # Store original node ID for reference
             }
         else:
             props = {
                 "has_charger": False,
                 "charger_type": None,
-                "original_id": index_to_node[idx],  # Store original node ID for reference
+                "original_id": index_to_node[
+                    idx
+                ],  # Store original node ID for reference
             }
         G.add_node(idx, **props)
 
@@ -104,31 +136,3 @@ def get_graph() -> nx.DiGraph:
         G.add_edge(u_idx, v_idx, distance=distance, time=time_val, terrain_factor=1.0)
 
     return G
-
-
-def discharge_function(current_charge: float, distance: float = 1.0) -> float:
-    """
-    Standard discharge function for battery consumption based on distance.
-    
-    Args:
-        current_charge: Current battery level (unused, for compatibility)
-        distance: Distance traveled in km
-        
-    Returns:
-        Battery consumed in kWh
-    """
-    return 0.2 * distance
-
-
-def charge_function(current_charge: float, time: float = 1.0) -> float:
-    """
-    Standard charge function for battery charging based on time.
-    
-    Args:
-        current_charge: Current battery level (unused, for compatibility)
-        time: Charging time in hours
-        
-    Returns:
-        Battery charged in kWh
-    """
-    return 0.8 * time

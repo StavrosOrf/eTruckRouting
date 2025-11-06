@@ -3,22 +3,37 @@ Transportation Graph class for managing the road network.
 """
 import networkx as nx
 import numpy as np
-from typing import List, Tuple, Dict, Set
+import os
+import pickle
+from typing import List, Tuple, Dict, Set, Optional
 
 
 class TransportationGraph:
     """Manages the transportation network graph and routing operations."""
     
-    def __init__(self, graph: nx.DiGraph):
+    def __init__(self, graph: nx.DiGraph, precompute_distances: bool = True):
         """
         Initialize the transportation graph.
         
         Args:
             graph: NetworkX directed graph with nodes and edges representing the road network
+            precompute_distances: If True, precompute and cache all-pairs shortest paths
         """
         self.graph = graph
         self.num_nodes = graph.number_of_nodes()
         self.charging_nodes = self._extract_charging_nodes()
+        
+        # Distance cache
+        self._distance_cache = {}  # Dict[Tuple[int, int], float]
+        self._cache_file = os.path.join(
+            os.path.dirname(__file__),
+            '..', '..',  # Go up to EVPR root
+            'truck_env', 'data', 'distance_matrix_cache.pkl'
+        )
+        self._cache_file = os.path.normpath(self._cache_file)
+        
+        if precompute_distances:
+            self._initialize_distance_cache()
         
     def _extract_charging_nodes(self) -> List[int]:
         """Extract all nodes that have charging stations."""
@@ -26,6 +41,57 @@ class TransportationGraph:
             node for node, data in self.graph.nodes(data=True)
             if data.get("has_charger", False)
         ]
+    
+    def _initialize_distance_cache(self):
+        """
+        Initialize the distance cache by either loading from file or computing it.
+        This is called during __init__ if precompute_distances=True.
+        """
+        # Try to load from cache file
+        if os.path.exists(self._cache_file):
+            try:
+                with open(self._cache_file, 'rb') as f:
+                    self._distance_cache = pickle.load(f)
+                print(f"[TransportationGraph] Loaded distance cache from disk")
+                print(f"  - Cache contains {len(self._distance_cache)} distance entries")
+                return
+            except Exception as e:
+                print(f"[TransportationGraph] Warning: Could not load distance cache: {e}")
+                print("[TransportationGraph] Computing distance matrix from scratch...")
+        
+        # Compute all-pairs shortest paths
+        print("[TransportationGraph] Computing all-pairs shortest path distances...")
+        print(f"  - Graph has {self.num_nodes} nodes, {self.graph.number_of_edges()} edges")
+        
+        try:
+            # Use all_pairs_dijkstra_path_length for efficiency
+            import time
+            start_time = time.time()
+            all_paths = dict(nx.all_pairs_dijkstra_path_length(
+                self.graph, weight='distance'
+            ))
+            compute_time = time.time() - start_time
+            
+            # Flatten into (from_node, to_node) -> distance dictionary
+            for from_node, paths in all_paths.items():
+                for to_node, distance in paths.items():
+                    self._distance_cache[(from_node, to_node)] = distance
+            
+            print(f"  - Computed {len(self._distance_cache)} distance pairs in {compute_time:.2f}s")
+            
+            # Save to cache file
+            try:
+                os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
+                with open(self._cache_file, 'wb') as f:
+                    pickle.dump(self._distance_cache, f)
+                cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
+                print(f"  - Saved cache to disk: {self._cache_file} ({cache_size_mb:.2f} MB)")
+            except Exception as e:
+                print(f"  - Warning: Could not save cache file: {e}")
+        
+        except Exception as e:
+            print(f"[TransportationGraph] Error computing distance matrix: {e}")
+            print("[TransportationGraph] Falling back to on-demand computation")
     
     def get_charging_nodes(self) -> List[int]:
         """Return list of all charging station nodes."""
@@ -39,6 +105,9 @@ class TransportationGraph:
         """
         Get the distance between two nodes.
         
+        Uses cached distance matrix for O(1) lookup if available,
+        otherwise falls back to Dijkstra computation.
+        
         Args:
             from_node: Starting node
             to_node: Destination node
@@ -46,11 +115,25 @@ class TransportationGraph:
         Returns:
             Distance in km, or float('inf') if no path exists
         """
+        # Check cache first
+        cache_key = (from_node, to_node)
+        if cache_key in self._distance_cache:
+            return self._distance_cache[cache_key]
+        
+        # If same node, distance is 0
+        if from_node == to_node:
+            self._distance_cache[cache_key] = 0.0
+            return 0.0
+        
+        # Compute using Dijkstra and cache result
         try:
-            return nx.shortest_path_length(
+            distance = nx.shortest_path_length(
                 self.graph, from_node, to_node, weight="distance"
             )
+            self._distance_cache[cache_key] = distance
+            return distance
         except nx.NetworkXNoPath:
+            self._distance_cache[cache_key] = float('inf')
             return float('inf')
     
     def get_shortest_path(self, from_node: int, to_node: int) -> List[int]:
@@ -256,3 +339,66 @@ class TransportationGraph:
         for i in range(len(sequence) - 1):
             total += self.get_distance(sequence[i], sequence[i + 1])
         return total
+    
+    def clear_distance_cache(self):
+        """Clear the distance cache from memory."""
+        self._distance_cache.clear()
+        print("[TransportationGraph] Distance cache cleared from memory")
+    
+    def save_distance_cache(self) -> bool:
+        """
+        Save the distance cache to file.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
+            with open(self._cache_file, 'wb') as f:
+                pickle.dump(self._distance_cache, f)
+            cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
+            print(f"[TransportationGraph] Distance cache saved: {cache_size_mb:.2f} MB")
+            return True
+        except Exception as e:
+            print(f"[TransportationGraph] Error saving distance cache: {e}")
+            return False
+    
+    def load_distance_cache(self) -> bool:
+        """
+        Load the distance cache from file.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not os.path.exists(self._cache_file):
+            print(f"[TransportationGraph] Cache file not found")
+            return False
+        
+        try:
+            with open(self._cache_file, 'rb') as f:
+                self._distance_cache = pickle.load(f)
+            print(f"[TransportationGraph] Distance cache loaded from disk")
+            print(f"  - Contains {len(self._distance_cache)} distance entries")
+            return True
+        except Exception as e:
+            print(f"[TransportationGraph] Error loading distance cache: {e}")
+            return False
+    
+    def get_cache_stats(self) -> Dict:
+        """
+        Get statistics about the distance cache.
+        
+        Returns:
+            Dictionary with cache statistics
+        """
+        cache_exists = os.path.exists(self._cache_file)
+        cache_size_mb = 0
+        if cache_exists:
+            cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
+        
+        return {
+            'num_cached_distances': len(self._distance_cache),
+            'cache_file_path': self._cache_file,
+            'cache_file_exists': cache_exists,
+            'cache_file_size_mb': cache_size_mb,
+        }

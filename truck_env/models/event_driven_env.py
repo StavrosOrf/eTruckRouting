@@ -24,6 +24,7 @@ from truck_env.models.truck import Truck
 from truck_env.models.event_handlers import EventType, Event, EventHandler
 from truck_env.models.loaders import create_truck
 from truck_env.models.observations import get_observation, action_to_string
+from truck_env.models.state_space import StateSpace
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.utils.statistics import EnvironmentStatistics
 
@@ -140,45 +141,14 @@ class EventDrivenTruckEnv(gym.Env):
             self.num_navigation_actions + self.num_charge_actions
         )
 
-        # Define observation space - Box for current active truck + global state
-        # Observation: [truck_state (10), global_time (1), active_trucks (1), events_pending (1)]
-        self.observation_space = spaces.Box(
-            low=np.array(
-                [
-                    0.0,  # current_node (normalized)
-                    0.0,  # next_delivery_node (normalized)
-                    0.0,  # battery_level
-                    0.0,  # battery_percentage
-                    0.0,  # is_charging
-                    0.0,  # deliveries_remaining
-                    0.0,  # nearest_charger_distance
-                    0.0,  # can_reach_next_delivery
-                    0.0,  # time_elapsed (truck)
-                    0.0,  # distance_traveled
-                    0.0,  # global_time
-                    0.0,  # active_trucks
-                    0.0,  # events_pending
-                ]
-            ),
-            high=np.array(
-                [
-                    1.0,  # current_node (normalized)
-                    1.0,  # next_delivery_node (normalized)
-                    500.0,  # battery_level (kWh)
-                    100.0,  # battery_percentage
-                    1.0,  # is_charging
-                    float(self.num_stops),  # deliveries_remaining
-                    1000.0,  # nearest_charger_distance (km)
-                    1.0,  # can_reach_next_delivery
-                    1000.0,  # time_elapsed (hours)
-                    5000.0,  # distance_traveled (km)
-                    self.max_time,  # global_time
-                    float(self.num_trucks),  # active_trucks
-                    100.0,  # events_pending
-                ]
-            ),
-            dtype=np.float64,
+        # Initialize state space
+        self.state_space_manager = StateSpace(
+            num_trucks=self.num_trucks,
+            num_stops=self.num_stops,
+            max_time=self.max_time,
+            num_charging_nodes=self.num_charging_nodes,
         )
+        self.observation_space = self.state_space_manager.observation_space
 
         # Event-driven simulation state
         self.global_clock = 0.0  # Current simulation time
@@ -674,15 +644,14 @@ class EventDrivenTruckEnv(gym.Env):
         return self.global_clock >= self.max_time
 
     def _get_observation(self) -> np.ndarray:
-        """Get observation for the active truck."""
-        return get_observation(
+        """Get observation/state for the active truck."""
+        return self.state_space_manager.get_state(
             trucks=self.trucks,
             active_truck_id=self.active_truck_id,
             transport_graph=self.transport_graph,
             charging_nodes=self.charging_nodes,
             truck_states=self.truck_states,
             event_queue=self.event_queue,
-            observation_space_shape=self.observation_space.shape,
             global_clock=self.global_clock,
         )
 

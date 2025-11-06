@@ -6,7 +6,7 @@
 
 ## Sources of Uncertainty
 
-- **Battery Degradation**: Actual discharge rates vary with terrain, weather, and load conditions
+- **Battery Depletion**: Actual discharge rates vary with terrain, weather, and load conditions
 - **Charging Availability**: Charging stations may be occupied when trucks arrive, causing unpredictable wait times
 - **Traffic Conditions**: Travel times fluctuate based on congestion and road conditions
 - **Dynamic Demand**: New delivery requests may arrive during execution, requiring route adjustments

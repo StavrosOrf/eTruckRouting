@@ -8,7 +8,7 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 2
+  num_trucks: 10
 
   # Number of delivery stops per truck episode
   num_stops: 5
@@ -90,6 +90,19 @@ network:
   shortest_path_time_file: "shortest_path_time_dict.json"
   station_info_file: "station_info_dict.json"
 
+# Traffic Simulation Settings
+# ----------------------------
+traffic:
+  # Enable traffic simulation (applies normal distribution to travel times)
+  enable_traffic: false
   
+  # Standard deviation of travel time distribution as fraction of mean time
+  # Example: std_dev_factor: 0.2 means std_dev = 0.2 * mean_time
+  # Travel time ~ N(mean_time, (std_dev_factor * mean_time)^2)
+  std_dev_factor: 0.15
+  
+  # Optionally cap the std_dev to avoid extreme values
+  # Set to 0 or negative to disable capping
+  max_std_dev_hours: 1.0
 
 

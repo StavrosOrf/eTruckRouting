@@ -8,7 +8,7 @@ and the environment steps forward when events finish. Only one truck is active a
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, Tuple, Optional, Union
 import heapq
 import sys
 import os
@@ -101,6 +101,12 @@ class EventDrivenTruckEnv(gym.Env):
         self.reward_config = self.config["rewards"]
         self.charging_config = self.config["charging"]
 
+        # Traffic simulation settings
+        self.traffic_config = self.config['traffic']
+        self.enable_traffic = self.traffic_config['enable_traffic']
+        self.traffic_std_factor = self.traffic_config['std_dev_factor']
+        self.traffic_max_std = self.traffic_config['max_std_dev_hours']
+
         # Load graph and initialize transportation network
         graph = get_graph(self.config)
         self.transport_graph = TransportationGraph(graph)
@@ -168,7 +174,7 @@ class EventDrivenTruckEnv(gym.Env):
             node: self.transport_graph.get_charger_type(node)
             for node in self.charging_nodes
         }
-        
+
         # Track when each truck will finish charging (for queue management)
         self.truck_charge_end_time = {}  # truck_id -> expected charge completion time
 
@@ -338,8 +344,8 @@ class EventDrivenTruckEnv(gym.Env):
                     self.global_clock,
                 )
 
-            elif event.event_type == EventType.TRUCK_TERMINATED:
-                self.event_handler.handle_truck_terminated(event, self.trucks)
+            # elif event.event_type == EventType.TRUCK_TERMINATED:
+            #     self.event_handler.handle_truck_terminated(event, self.trucks)
 
         # No more events - episode is over
         self.active_truck_id = None
@@ -430,13 +436,22 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Check if already at target
         if current_node == target_node:
-            if self.verbose:
-                print(f"  Already at node {target_node}")
-                print(f"  Simulating charging for 1 hour at current location")
-            # Simulate charging for 1 hour at current location
-            charge_durations = self.charging_config["charge_durations"]
-            charge_hours = charge_durations[0]
-            return self._execute_charge_action(truck, charge_hours=charge_hours)
+            if target_node in self.charging_nodes:
+                if self.verbose:
+                    print(f"  Already at node {target_node}")
+                    print(f"  Simulating charging for 1 hour at current location")
+                # Simulate charging for 1 hour at current location
+                charge_durations = self.charging_config["charge_durations"]
+                charge_hours = charge_durations[0]
+                return self._execute_charge_action(truck, charge_hours=charge_hours)
+            else:
+                # go to next delivery
+                if self.verbose:
+                    print(f"  Already at node {target_node}")
+                    print(f"  go to next delivery")
+                return self.execute_navigation_action(
+                    truck, action=self.num_charging_nodes
+                )
 
         # Calculate energy used for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
@@ -448,6 +463,9 @@ class EventDrivenTruckEnv(gym.Env):
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
         discharge = energy_used
         distance = travel_time * truck.base_speed
+
+        # Apply traffic simulation if enabled
+        actual_travel_time = self._apply_traffic_simulation(travel_time)
 
         # Check if truck can make it
         if discharge > truck.current_battery:
@@ -516,7 +534,7 @@ class EventDrivenTruckEnv(gym.Env):
             queue_penalty = -wait_time * self.reward_config["charge_penalty"]
 
         # Schedule route completion event
-        completion_time = self.global_clock + travel_time
+        completion_time = self.global_clock + actual_travel_time
         heapq.heappush(
             self.event_queue,
             Event(
@@ -526,7 +544,7 @@ class EventDrivenTruckEnv(gym.Env):
                 data={
                     "destination": target_node,
                     "distance": distance,
-                    "travel_time": travel_time,
+                    "travel_time": actual_travel_time,
                     "discharge": discharge,
                 },
             ),
@@ -537,7 +555,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         if self.verbose:
             print(f"  Routing to node {target_node}")
-            print(f"    Distance: {distance:.2f} km, Time: {travel_time:.2f}h")
+            print(f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h (base: {travel_time:.2f}h)")
             print(f"    Will arrive at t={completion_time:.2f}h")
             print(f"    Current Battery: {truck.current_battery:.1f} kWh")
             print(
@@ -546,8 +564,8 @@ class EventDrivenTruckEnv(gym.Env):
             if is_charger_nav and wait_time > 0:
                 print(f"    Will wait {wait_time:.2f}h in queue at charger")
 
-        # Calculate reward
-        time_penalty = -travel_time * self.reward_config["time_penalty"]
+        # Calculate reward (using actual travel time, not base time)
+        time_penalty = -actual_travel_time * self.reward_config["time_penalty"]
         distance_penalty = -distance * self.reward_config["distance_penalty"]
 
         # Bonus if this is a delivery
@@ -556,6 +574,38 @@ class EventDrivenTruckEnv(gym.Env):
             return time_penalty + distance_penalty + delivery_bonus + queue_penalty
 
         return time_penalty + distance_penalty + queue_penalty
+
+    def _apply_traffic_simulation(self, travel_time: float) -> float:
+        """
+        Apply traffic simulation to travel time using normal distribution.
+        
+        Args:
+            travel_time: Base travel time from the graph (hours)
+            
+        Returns:
+            Travel time with traffic variation applied (hours)
+        """
+        if not self.enable_traffic or travel_time <= 0:
+            return travel_time
+        
+        # Calculate standard deviation
+        std_dev = travel_time * self.traffic_std_factor
+        
+        # Cap the std_dev if max is specified
+        if self.traffic_max_std > 0:
+            std_dev = min(std_dev, self.traffic_max_std)
+        
+        # Sample from normal distribution N(mean=travel_time, std=std_dev)
+        actual_travel_time = np.random.normal(loc=travel_time, scale=std_dev)
+        
+        # Ensure travel time is positive (at least 1% of original)
+        actual_travel_time = max(actual_travel_time, travel_time * 0.01)
+        
+        if self.verbose:
+            variation_percent = ((actual_travel_time - travel_time) / travel_time) * 100
+            print(f"    Traffic simulation: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%)")
+        
+        return actual_travel_time
 
     def _get_waiting_time(self, charger_node: int, current_utilization: float) -> float:
         """
@@ -604,26 +654,26 @@ class EventDrivenTruckEnv(gym.Env):
     ) -> float:
         """
         Calculate realistic wait time based on actual trucks in queue and their charge times.
-        
+
         Takes into account:
         - Current occupancy (trucks actively charging)
         - Queue position (trucks waiting to charge)
         - When each truck will finish charging
-        
+
         Args:
             charger_node: The charging station node
             current_time: Current simulation time
-            
+
         Returns:
             Expected waiting time in hours (0 if slot available immediately)
         """
         capacity = int(self.charger_capacity[charger_node])
         current_occupancy = len(self.charger_occupancy[charger_node])
-        
+
         # If there's available capacity, no wait
         if current_occupancy < capacity:
             return 0.0
-        
+
         # Charger is at capacity - find when first truck will finish
         # Get the minimum end time among all trucks currently charging
         min_end_time = float("inf")
@@ -631,29 +681,36 @@ class EventDrivenTruckEnv(gym.Env):
             if truck_id in self.truck_charge_end_time:
                 end_time = self.truck_charge_end_time[truck_id]
                 min_end_time = min(min_end_time, end_time)
-        
+
         if min_end_time == float("inf"):
             # No charge end times recorded, use generic waiting time
             return self._get_waiting_time(charger_node, 0.95)
-        
+
         # Wait until the earliest truck finishes
         wait_time = max(0.0, min_end_time - current_time)
-        
+
         if self.verbose:
             print(f"    Queue wait calculation:")
-            print(f"      - Capacity: {capacity}, Currently charging: {current_occupancy}")
+            print(
+                f"      - Capacity: {capacity}, Currently charging: {current_occupancy}"
+            )
             print(f"      - Earliest finish time: {min_end_time:.2f}h")
             print(f"      - Calculated wait: {wait_time:.2f}h")
-        
+
         return wait_time
 
     def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
         """Execute charging action and schedule charge completion event."""
         # Check if at a charging station
         if truck.current_node not in self.charging_nodes:
-            if self.verbose:
-                print(f"  ERROR: Truck {truck.truck_id} not at charging station")
-            return 0.0
+            # go to next delivery instead
+            return self._execute_navigation_action(
+                truck, action=self.num_charging_nodes
+            )
+            # raise ValueError("Truck not at a charging station for charging action")
+            # if self.verbose:
+            #     print(f"  ERROR: Truck {truck.truck_id} not at charging station")
+            # return 0.0
 
         charger_node = truck.current_node
 
@@ -721,7 +778,9 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"  Charging for {charge_hours}h")
             print(f"    Will charge {charge_amount:.1f} kWh")
             print(f"    Will complete at t={completion_time:.2f}h")
-            print(f"    Charger: {self.charger_type[charger_node]} @ node {charger_node}")
+            print(
+                f"    Charger: {self.charger_type[charger_node]} @ node {charger_node}"
+            )
 
         # Calculate reward (penalty for time spent charging only, no queue penalty)
         charge_penalty = -charge_hours * self.reward_config["charge_penalty"]

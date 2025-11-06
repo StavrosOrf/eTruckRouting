@@ -28,10 +28,11 @@ while True:
     total_steps += 1
 
     print("\n--- Step Result ---")
+    print(f'action taken: {action}')
     # print("Observation:", obs)
     print("Reward:", reward)
     print("Done:", done, " | Truncated:", truncated)
-    # input("Press Enter to continue...")
+    input("Press Enter to continue...")
     
     if done or truncated:
         break

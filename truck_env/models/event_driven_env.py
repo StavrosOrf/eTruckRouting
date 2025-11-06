@@ -373,7 +373,7 @@ class EventDrivenTruckEnv(gym.Env):
         if self.verbose:
             print(f"\n{'='*80}")
             print(f"STEP at t={self.global_clock:.2f}h - Truck {self.active_truck_id}")
-            print(f"Action: {self._action_to_string(action)}")
+            print(f"Action: {self._action_to_string(action)} ({action})")
             print(f"Event Queue: {self.event_queue}")
             print(f"{'='*80}")
 
@@ -455,7 +455,14 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Calculate energy used for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
-        assert energy_used != float("inf"), "Energy calculation failed"
+        
+        # Check if path is reachable
+        if energy_used == float("inf"): 
+            if self.verbose:
+                print(f"  ERROR: No valid path from {current_node} to {target_node}")
+            # Penalize invalid navigation attempt (no path exists)
+            # return self.reward_config["invalid_action_penalty"]
+            raise ValueError("No valid path for navigation action")
 
         # Get the full path for visualization
         # path = self.transport_graph.get_shortest_path(current_node, target_node)
@@ -704,6 +711,11 @@ class EventDrivenTruckEnv(gym.Env):
         # Check if at a charging station
         if truck.current_node not in self.charging_nodes:
             # go to next delivery instead
+            
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} not at charging station")
+                print(f"  Executing navigation to next delivery instead")
+                
             return self._execute_navigation_action(
                 truck, action=self.num_charging_nodes
             )

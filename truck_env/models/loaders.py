@@ -28,10 +28,25 @@ def create_truck(
     Returns:
         Tuple of (truck, delivery_sequence, start_node)
     """
-    # Select random start node (avoid charging nodes as start)
+    # Select random start node (avoid charging nodes and sink nodes)
     all_nodes = transport_graph.get_all_nodes()
+    
+    # Filter out charging nodes
     non_charging_nodes = [n for n in all_nodes if n not in charging_nodes]
-    start_node = np.random.choice(non_charging_nodes)
+    
+    # Filter out sink nodes (nodes with no outgoing edges)
+    graph = transport_graph.graph
+    valid_start_nodes = [n for n in non_charging_nodes if graph.out_degree(n) > 0]
+    
+    # If no valid nodes found, use any non-charging node as fallback
+    if not valid_start_nodes:
+        valid_start_nodes = non_charging_nodes
+    
+    if not valid_start_nodes:
+        # Last resort: use any node
+        valid_start_nodes = all_nodes
+    
+    start_node = np.random.choice(valid_start_nodes)
 
     # Generate delivery sequence
     delivery_sequence = transport_graph.generate_delivery_sequence(

@@ -208,3 +208,6 @@ __marimo__/
 
 /visualizations/
 /results/
+uv.lock
+/truck_env/data/vis_data/
+truck_env/models/event_driven_env.py

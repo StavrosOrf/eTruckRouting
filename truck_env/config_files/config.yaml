@@ -223,7 +223,7 @@ advanced:
 
   # Multi-truck simulation
   multi_truck: true
-  num_trucks: 3
+  num_trucks: 2
 
   # Action masking (prevent invalid actions)
   action_masking: false

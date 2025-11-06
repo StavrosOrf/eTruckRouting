@@ -250,6 +250,9 @@ class TransportationGraph:
             if not remaining_nodes:
                 break
             sequence.append(np.random.choice(remaining_nodes))
+            
+        #make from numpy array to list of ints
+        sequence = [int(n) for n in sequence]
         
         return sequence
     

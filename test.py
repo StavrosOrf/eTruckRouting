@@ -19,11 +19,10 @@ while True:
     action = action_space.sample()  # Sample a random action
     obs, reward, done, truncated, info = env.step(action)
     
-    print("Observation:", obs)
+    # print("Observation:", obs)
     print("Reward:", reward)
-    print("Done:", done)
-    print("Truncated:", truncated)
-    # print("Info:", info)
+    print("Done:", done, " | Truncated:", truncated)
+    input("Press Enter to continue...")
     
     if done or truncated:
         break

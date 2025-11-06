@@ -173,7 +173,6 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "scikit-learn" },
-    { name = "scikit-video" },
     { name = "scipy" },
     { name = "torch" },
     { name = "tqdm" },
@@ -190,7 +189,6 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "scikit-learn", specifier = ">=1.3.2" },
-    { name = "scikit-video", specifier = ">=1.1.11" },
     { name = "scipy", specifier = ">=1.16.2" },
     { name = "torch", specifier = ">=2.9.0" },
     { name = "tqdm", specifier = ">=4.67" },
@@ -811,20 +809,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/83/87/066cafc896ee540c34becf95d30375fe5cbe93c3b75a0ee9aa852cd60021/scikit_learn-1.7.2-cp313-cp313t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:98335fb98509b73385b3ab2bd0639b1f610541d3988ee675c670371d6a87aa7c", size = 9527094, upload-time = "2025-09-09T08:21:11.486Z" },
     { url = "https://files.pythonhosted.org/packages/9c/2b/4903e1ccafa1f6453b1ab78413938c8800633988c838aa0be386cbb33072/scikit_learn-1.7.2-cp313-cp313t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:191e5550980d45449126e23ed1d5e9e24b2c68329ee1f691a3987476e115e09c", size = 9367436, upload-time = "2025-09-09T08:21:13.602Z" },
     { url = "https://files.pythonhosted.org/packages/b5/aa/8444be3cfb10451617ff9d177b3c190288f4563e6c50ff02728be67ad094/scikit_learn-1.7.2-cp313-cp313t-win_amd64.whl", hash = "sha256:57dc4deb1d3762c75d685507fbd0bc17160144b2f2ba4ccea5dc285ab0d0e973", size = 9275749, upload-time = "2025-09-09T08:21:15.96Z" },
-]
-
-[[package]]
-name = "scikit-video"
-version = "1.1.11"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "scipy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/80/eb/f67edc284d99d512011e2022f93b5110ab812c60dfa8b7790abda16a3a70/scikit-video-1.1.11.tar.gz", hash = "sha256:5061d2aeae1892b73a97c89a82942b3e8eebf2fe23e59c60e06ede5f8a24ed1e", size = 2237586, upload-time = "2018-09-20T02:10:11.512Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b1/a6/c69cad508139a342810ae46e946ebb3256aa6e42f690d901bb68f50582e3/scikit_video-1.1.11-py2.py3-none-any.whl", hash = "sha256:4fc131e509aaeeb0eecb6acb58b92a7ef905be5dbe27ed1d1ae089634b601f23", size = 2255186, upload-time = "2018-09-18T02:41:44.968Z" },
 ]
 
 [[package]]

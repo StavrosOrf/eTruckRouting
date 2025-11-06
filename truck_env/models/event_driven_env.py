@@ -22,6 +22,8 @@ from truck_env.utils.utils import get_graph, load_config
 from truck_env.models.transportation_graph import TransportationGraph
 from truck_env.models.truck import Truck
 from truck_env.models.event_handlers import EventType, Event, EventHandler
+from truck_env.models.loaders import create_truck
+from truck_env.models.observations import get_observation, action_to_string
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.utils.statistics import EnvironmentStatistics
 
@@ -56,7 +58,6 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Extract parameters from config (all required, no defaults)
         env_config = self.config["environment"]
-        truck_config = self.config["truck"]
         advanced_config = self.config["advanced"]
 
         # Load all parameters from config (no overrides, no defaults)
@@ -297,46 +298,14 @@ class EventDrivenTruckEnv(gym.Env):
 
     def _create_truck(self, truck_id: int):
         """Create a new truck with random delivery sequence."""
-        # Select random start node (avoid charging nodes as start)
-        all_nodes = self.transport_graph.get_all_nodes()
-        non_charging_nodes = [n for n in all_nodes if n not in self.charging_nodes]
-        start_node = np.random.choice(non_charging_nodes)
-
-        # Generate delivery sequence
-        delivery_sequence = self.transport_graph.generate_delivery_sequence(
-            start_node=start_node,
+        truck, delivery_sequence, start_node = create_truck(
+            truck_id=truck_id,
+            transport_graph=self.transport_graph,
+            config=self.config,
             num_stops=self.num_stops,
             min_hop_distance=self.min_hop_distance,
             max_hop_distance=self.max_hop_distance,
-            exclude_charging_nodes=True,
-        )
-
-        # Get truck specifications (single type)
-        truck_config = self.config.get("truck", {})
-        battery_capacity = truck_config.get("battery_capacity", 400.0)
-        base_speed = truck_config.get("base_speed", 40.0)
-        discharge_rate = truck_config.get("discharge_rate", 0.25)
-
-        # Determine initial battery
-        initial_battery_setting = truck_config.get("initial_battery", "full")
-        if initial_battery_setting == "full":
-            initial_battery = battery_capacity
-        elif initial_battery_setting == "random":
-            initial_battery = np.random.uniform(0.3, 1.0) * battery_capacity
-        elif isinstance(initial_battery_setting, (int, float)):
-            initial_battery = (initial_battery_setting / 100.0) * battery_capacity
-        else:
-            initial_battery = battery_capacity
-
-        # Create truck
-        truck = Truck(
-            truck_id=truck_id,
-            truck_type="electric",  # Single truck type
-            delivery_sequence=delivery_sequence,
-            initial_battery=initial_battery,
-            battery_capacity=battery_capacity,
-            base_speed=base_speed,
-            discharge_rate=discharge_rate,
+            charging_nodes=self.charging_nodes,
         )
 
         self.trucks.append(truck)
@@ -359,9 +328,6 @@ class EventDrivenTruckEnv(gym.Env):
 
             # Advance clock
             self.global_clock = event.time
-
-            if self.verbose:
-                print(f"\n[Clock: {self.global_clock:.2f}h] Processing {event}")
 
             # Process event
             if event.event_type == EventType.TRUCK_READY:
@@ -538,12 +504,12 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Will arrive at t={completion_time:.2f}h")
 
         # Calculate reward
-        time_penalty = -travel_time * self.reward_config.get("time_penalty", 1.0)
-        distance_penalty = -distance * self.reward_config.get("distance_penalty", 0.1)
+        time_penalty = -travel_time * self.reward_config["time_penalty"]
+        distance_penalty = -distance * self.reward_config["distance_penalty"]
 
         # Bonus if this is a delivery
         if target_node == truck.get_next_delivery_target():
-            delivery_bonus = self.reward_config.get("delivery_bonus", 50.0)
+            delivery_bonus = self.reward_config["delivery_bonus"]
             return time_penalty + distance_penalty + delivery_bonus
 
         return time_penalty + distance_penalty
@@ -642,16 +608,16 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Get charger type and determine charge rate
         charger_type = self.charger_type[charger_node]
-        charging_config = self.config.get("charging", {})
+        charging_config = self.config["charging"]
 
         if charger_type == "DCFast":
-            charger_config = charging_config.get("dcfast", {})
-            charge_rate = charger_config.get("charge_rate", 50.0)  # kW
-            efficiency = charger_config.get("efficiency", 0.85)
+            charger_config = charging_config["dcfast"]
+            charge_rate = charger_config["charge_rate"]  # kW
+            efficiency = charger_config["efficiency"]
         else:  # Level2
-            charger_config = charging_config.get("level2", {})
-            charge_rate = charger_config.get("charge_rate", 7.2)  # kW
-            efficiency = charger_config.get("efficiency", 0.90)
+            charger_config = charging_config["level2"]
+            charge_rate = charger_config["charge_rate"]  # kW
+            efficiency = charger_config["efficiency"]
 
         # Calculate charge amount (accounting for efficiency)
         charge_amount = min(
@@ -684,7 +650,7 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Will complete at t={completion_time:.2f}h")
 
         # Calculate reward (penalty for time spent charging)
-        charge_penalty = -charge_hours * self.reward_config.get("charge_penalty", 2.0)
+        charge_penalty = -charge_hours * self.reward_config["charge_penalty"]
         return charge_penalty
 
     def _check_terminated(self) -> bool:
@@ -703,66 +669,16 @@ class EventDrivenTruckEnv(gym.Env):
 
     def _get_observation(self) -> np.ndarray:
         """Get observation for the active truck."""
-        if self.active_truck_id is None:
-            # Return zeros if no active truck
-            return np.zeros(self.observation_space.shape[0], dtype=np.float64)
-
-        truck = self.trucks[self.active_truck_id]
-
-        # Normalize node IDs
-        max_node_id = float(self.transport_graph.num_nodes)
-        current_node_norm = truck.current_node / max_node_id
-        next_delivery = truck.get_next_delivery_target()
-        next_delivery_norm = (
-            (next_delivery / max_node_id) if next_delivery is not None else 0.0
+        return get_observation(
+            trucks=self.trucks,
+            active_truck_id=self.active_truck_id,
+            transport_graph=self.transport_graph,
+            charging_nodes=self.charging_nodes,
+            truck_states=self.truck_states,
+            event_queue=self.event_queue,
+            observation_space_shape=self.observation_space.shape,
+            global_clock=self.global_clock,
         )
-
-        # Find nearest charger
-        nearest_charger_dist = min(
-            self.transport_graph.get_distance(truck.current_node, charger)
-            for charger in self.charging_nodes
-        )
-
-        # Check if can reach next delivery
-        can_reach_next = 0.0
-        if next_delivery is not None:
-            dist_to_next = self.transport_graph.get_distance(
-                truck.current_node, next_delivery
-            )
-            can_reach_next = (
-                1.0 if truck.can_reach_node(next_delivery, dist_to_next) else 0.0
-            )
-
-        # Count active trucks
-        active_trucks = sum(
-            1
-            for state in self.truck_states.values()
-            if state not in ["complete", "failed"]
-        )
-
-        # Count pending events
-        events_pending = len(self.event_queue)
-
-        obs = np.array(
-            [
-                current_node_norm,
-                next_delivery_norm,
-                truck.current_battery,
-                truck.get_battery_percentage(),
-                float(truck.is_charging),
-                float(len(truck.get_remaining_deliveries())),
-                nearest_charger_dist,
-                can_reach_next,
-                truck.total_time_elapsed,
-                truck.total_distance_traveled,
-                self.global_clock,
-                float(active_trucks),
-                float(events_pending),
-            ],
-            dtype=np.float64,
-        )
-
-        return obs
 
     def _get_info(self) -> Dict:
         """Get info dictionary."""
@@ -798,15 +714,12 @@ class EventDrivenTruckEnv(gym.Env):
 
     def _action_to_string(self, action: int) -> str:
         """Convert action to human-readable string."""
-        if action < self.num_charging_nodes:
-            node = self.charging_nodes[action]
-            return f"Go to charger @ node {node}"
-        elif action == self.num_charging_nodes:
-            return "Go to next delivery"
-        else:
-            charge_idx = action - self.num_navigation_actions
-            hours = charge_idx + 1
-            return f"Charge for {hours}h"
+        return action_to_string(
+            action=action,
+            num_charging_nodes=self.num_charging_nodes,
+            num_navigation_actions=self.num_navigation_actions,
+            charging_nodes=self.charging_nodes,
+        )
 
     def close(self):
         """Clean up resources and generate final visualizations."""

@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from simple_truck_env import EventDrivenTruckEnv, load_config
+from truck_env import EventDrivenTruckEnv, load_config
 import numpy as np
 
 

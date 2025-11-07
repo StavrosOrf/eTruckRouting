@@ -557,8 +557,10 @@ class EventDrivenTruckEnv(gym.Env):
             ),
         )
 
-        # Update truck state
+        # Update truck state and track route information
         self.truck_states[truck.truck_id] = "routing"
+        truck.route_destination = target_node
+        truck.route_arrival_time = completion_time
 
         if self.verbose:
             print(f"  Routing to node {target_node}")

@@ -20,7 +20,7 @@ environment:
   max_hop_distance: 400.0
 
   # Maximum simulation time in hours (for event-driven environments)
-  max_time: 64.0
+  max_time: 150
 
 # Truck Configuration
 # -------------------

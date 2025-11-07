@@ -51,6 +51,10 @@ class Truck:
         # Completion tracking
         self.is_complete = False
         self.failed = False  # True if ran out of battery
+        
+        # Route tracking (for GNN state representation)
+        self.route_destination = None  # Next destination when on route
+        self.route_arrival_time = None  # Event time when truck will arrive at destination
     
     def get_next_delivery_target(self) -> Optional[int]:
         """

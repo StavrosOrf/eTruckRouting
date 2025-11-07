@@ -79,6 +79,10 @@ class EventHandler:
             discharge=data['discharge']
         )
         
+        # Clear route tracking information
+        truck.route_destination = None
+        truck.route_arrival_time = None
+        
         # Track route for visualization
         if enable_plotting:
             event_label = 'delivery' if is_delivery else 'charger'

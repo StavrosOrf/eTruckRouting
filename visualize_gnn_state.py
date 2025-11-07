@@ -157,8 +157,9 @@ class GNNVisualizer:
                     ax=ax,
                 )
 
-        # Draw labels
-        nx.draw_networkx_labels(G, pos, ax=ax, font_size=8, font_weight="bold")
+        # Build and draw node labels with real IDs
+        node_labels = self._build_node_labels(data)
+        nx.draw_networkx_labels(G, pos, labels=node_labels, ax=ax, font_size=7, font_weight="bold")
 
         ax.set_title("Graph Network Layout", fontweight="bold")
         ax.legend(loc="upper left", fontsize=10)
@@ -350,23 +351,47 @@ ENVIRONMENT STATE
         node_types = data.x[:, 0].int().tolist()
         return node_types
 
+    def _build_node_labels(self, data) -> Dict[int, str]:
+        """Build node labels with real IDs from node_list metadata."""
+        node_labels = {}
+        
+        # Check if node_list metadata is available
+        if hasattr(data, 'node_list') and data.node_list is not None:
+            for idx, (node_type, node_id) in enumerate(data.node_list):
+                if node_type == "depot":
+                    node_labels[idx] = f"D{node_id}"
+                elif node_type == "truck":
+                    node_labels[idx] = f"T{node_id}"
+                elif node_type == "delivery":
+                    node_labels[idx] = f"Del{node_id}"
+                elif node_type == "charger":
+                    node_labels[idx] = f"C{node_id}"
+                else:
+                    node_labels[idx] = str(idx)
+        else:
+            # Fallback to just indices if metadata not available
+            for i in range(data.num_nodes):
+                node_labels[i] = str(i)
+        
+        return node_labels
+
     def _extract_node_types_tensor(self, data) -> torch.Tensor:
         """Extract first feature (node type) from node features."""
         # First feature is the node type (0, 1, 2, or 3)
         return data.x[:, 0]
 
-    def save_figures(
-        self, figs: List, output_dir: str = "/home/sorfanouda/EVPR/gnn_plots"
+    def save_figure(
+        self, fig: List, index: int, output_dir: str = "/home/sorfanouda/EVPR/gnn_plots"
     ):
         """Save figures to files."""
         import os
 
         os.makedirs(output_dir, exist_ok=True)
 
-        for i, fig in enumerate(figs):
-            filepath = os.path.join(output_dir, f"gnn_plot_{i}.png")
-            fig.savefig(filepath, dpi=150, bbox_inches="tight")
-            print(f"✓ Saved: {filepath}")
+        # for i, fig in enumerate(figs):
+        filepath = os.path.join(output_dir, f"gnn_plot_{index}.png")
+        fig.savefig(filepath, dpi=150, bbox_inches="tight")
+        print(f"✓ Saved: {filepath}")
 
         return output_dir
 
@@ -418,9 +443,12 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         data_initial, env, title="Initial Graph Information"
     )
     figs.append(fig3)
+    output_dir = visualizer.save_figure(fig1, index=0)
+    output_dir = visualizer.save_figure(fig2, index=-1)
+    output_dir = visualizer.save_figure(fig3, index=-2)
 
     # Run steps and visualize
-    for step in range(1, num_steps + 1):
+    for step in range(1, 20):
         action = policy.get_action(env)
         if action is None:
             break
@@ -433,14 +461,17 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         fig = visualizer.plot_graph_structure(
             data, env, title=f"GNN Graph State - Step {step}"
         )
-        figs.append(fig)
+        # figs.append(fig)
+
+        output_dir = visualizer.save_figure(fig, index=5)
+        input("Press Enter to continue...")
 
         if done or truncated:
             break
 
     # Save all figures
     print("\nSaving figures...")
-    output_dir = visualizer.save_figures(figs)
+    
 
     print(f"\n✓ Visualization complete!")
     print(f"  - Generated {len(figs)} plots")

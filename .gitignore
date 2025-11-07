@@ -211,3 +211,4 @@ __marimo__/
 uv.lock
 /truck_env/data/vis_data/
 truck_env/models/event_driven_env.py
+gnn_plots/

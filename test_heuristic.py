@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, "/home/sorfanouda/EVPR")
 
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.models.heuristic_policy import HeuristicPolicy
+from truck_env.baselines.heuristic_policy import HeuristicPolicy
 import numpy as np
 
 

@@ -1,5 +1,5 @@
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.models.heuristic_policy import HeuristicPolicy
+from truck_env.baselines.heuristic_policy import HeuristicPolicy
 
 def evaluate_env(seed: int = 42):
     config_file = "truck_env/config_files/config.yaml"
@@ -27,11 +27,11 @@ def evaluate_env(seed: int = 42):
     policy = HeuristicPolicy(verbose=False)
 
     while True:
-        # action = action_space.sample()  # Sample a random action
+        action = action_space.sample()  # Sample a random action
         # action = 20  
         # Use heuristic policy to get action
         
-        action = policy.get_action(obs)
+        # action = policy.get_action(obs)
         obs, reward, done, truncated, info = env.step(action)
         total_reward += reward
         total_steps += 1

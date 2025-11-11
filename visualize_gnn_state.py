@@ -25,7 +25,7 @@ import torch
 
 sys.path.insert(0, "/home/sorfanouda/EVPR")
 
-from truck_env.models.gnn_state_space import GNNStateSpace
+from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 
 
@@ -408,7 +408,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     print("GNN State Visualization")
     print("=" * 80)
 
-    from truck_env.models.heuristic_policy import HeuristicPolicy
+    from truck_env.baselines.heuristic_policy import HeuristicPolicy
 
     # Initialize
     env = EventDrivenTruckEnv(config_path, verbose=True, enable_plotting=True)

@@ -24,7 +24,7 @@ from truck_env.models.transportation_graph import TransportationGraph
 from truck_env.models.truck import Truck
 from truck_env.models.event_handlers import EventType, Event, EventHandler
 from truck_env.models.loaders import create_truck
-from truck_env.models.state_space import StateSpace, action_to_string
+from truck_env.state.state_space import StateSpace, action_to_string
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.utils.statistics import EnvironmentStatistics
 

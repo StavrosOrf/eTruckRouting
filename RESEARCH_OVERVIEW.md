@@ -50,3 +50,30 @@ Electric trucks are essential for reducing transportation emissions, but their l
 - **Benchmark Framework**: Comprehensive test suite and baseline policies for evaluating routing strategies across different scenarios
 
 
+stateDiagram-v2
+    direction LR
+
+    [*] --> Ready: Truck_ready (episode start)
+
+    state "Ready" as Ready
+    state "Routing" as Routing
+    state "WaitingToCharge" as Waiting
+    state "Charging" as Charging
+    state "Complete" as Complete
+    state "Failed" as Failed
+
+    Ready --> Routing: action=Navigate (to delivery or charger)
+
+    Routing --> Ready: Arrive at delivery\n(Truck_routing)
+    Routing --> Ready: Arrive at charger & free port\n(Truck_routing → Truck_ready)
+    Routing --> Waiting: Arrive at charger & no free port\n(enqueue, no event if not first)
+
+    Ready --> Charging: action=Charge(h) & port free\n(schedule Truck_ready at t+ h)
+    Ready --> Waiting: action=Charge(h) & no port\n(enqueue, maybe timed Truck_ready if first)
+
+    Charging --> Ready: t = start + h\n(Truck_ready)
+
+    Waiting --> Ready: Port frees OR predicted wait elapses\n(Truck_ready)
+
+    Ready --> Complete: All deliveries done
+    Ready --> Failed: Infeasible decision\n(e.g., insufficient battery)

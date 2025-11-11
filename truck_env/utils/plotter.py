@@ -510,4 +510,292 @@ class EnvironmentPlotter:
         
         if self.verbose:
             print(f"  ✓ Final routes plot saved to: {filepath}")
+    
+    def plot_charger_queue_dynamics(
+        self,
+        charging_station,
+        transport_graph: Any,
+        final_time: float,
+    ):
+        """
+        Plot queue dynamics (occupancy and waitlist) for each charging station visited.
+        
+        Args:
+            charging_station: ChargingStation instance with queue_history
+            transport_graph: TransportationGraph instance
+            final_time: Final simulation time
+        """
+        try:
+            # Get chargers that were actually visited
+            visited_chargers = []
+            for node in charging_station.charging_nodes:
+                history = charging_station.queue_history[node]
+                if len(history["truck_events"]) > 0:  # Only plot chargers with activity
+                    visited_chargers.append(node)
+            
+            if not visited_chargers:
+                if self.verbose:
+                    print("  ⚠ No charging stations were visited during simulation")
+                return
+            
+            # Create subplots: one row per charger
+            n_chargers = len(visited_chargers)
+            fig, axes = plt.subplots(n_chargers, 1, figsize=(16, 4 * n_chargers), dpi=150)
+            
+            # Ensure axes is always a list
+            if n_chargers == 1:
+                axes = [axes]
+            
+            for idx, charger_node in enumerate(visited_chargers):
+                ax = axes[idx]
+                history = charging_station.queue_history[charger_node]
+                
+                # Get charger info
+                charger_type = charging_station.charger_type[charger_node]
+                capacity = int(charging_station.charger_capacity[charger_node])
+                
+                # Extract time series data
+                times = np.array(history["times"])
+                occupancy = np.array(history["occupancy"])
+                waitlist = np.array(history["waitlist"])
+                truck_events = history["truck_events"]
+                
+                # Plot occupancy and waitlist over time
+                ax.plot(times, occupancy, 'b-', linewidth=2, label='Occupancy (Charging)', marker='o', markersize=4)
+                ax.plot(times, waitlist, 'r--', linewidth=2, label='Waitlist (Waiting)', marker='s', markersize=4)
+                ax.axhline(y=capacity, color='green', linestyle=':', linewidth=2, label=f'Capacity ({capacity})')
+                
+                # Add event markers
+                event_colors = {'arrive': 'orange', 'start': 'blue', 'finish': 'purple'}
+                event_markers = {'arrive': '^', 'start': 'o', 'finish': 'v'}
+                event_labels = {'arrive': 'Arrive', 'start': 'Start Charging', 'finish': 'Finish Charging'}
+                
+                plotted_events = set()
+                for event_time, truck_id, event_type in truck_events:
+                    label = event_labels[event_type] if event_type not in plotted_events else None
+                    ax.scatter(event_time, -0.3, c=event_colors[event_type], 
+                             marker=event_markers[event_type], s=100, 
+                             label=label, zorder=5, edgecolors='black', linewidths=0.5)
+                    # Add truck ID annotation
+                    ax.text(event_time, -0.5, f'T{truck_id}', ha='center', va='top', 
+                           fontsize=8, fontweight='bold')
+                    plotted_events.add(event_type)
+                
+                # Styling
+                ax.set_xlabel('Time (hours)', fontsize=11, fontweight='bold')
+                ax.set_ylabel('Number of Trucks', fontsize=11, fontweight='bold')
+                ax.set_title(f'Charger Node {charger_node} ({charger_type}, Capacity: {capacity})',
+                           fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.3, linestyle='--')
+                ax.legend(loc='upper right', fontsize=9, framealpha=0.95)
+                ax.set_xlim(-0.5, final_time + 0.5)
+                ax.set_ylim(-1, max(capacity + 1, max(occupancy.max() if len(occupancy) > 0 else 0,
+                                                     waitlist.max() if len(waitlist) > 0 else 0) + 1))
+                
+                # Fill areas
+                ax.fill_between(times, 0, occupancy, alpha=0.2, color='blue', label='_nolegend_')
+                ax.fill_between(times, 0, waitlist, alpha=0.2, color='red', label='_nolegend_')
+            
+            plt.tight_layout()
+            filepath = os.path.join(self.output_dir, "charger_queue_dynamics.png")
+            plt.savefig(filepath, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+            if self.verbose:
+                print(f"  ✓ Charger queue dynamics plot saved to: {filepath}")
+        
+        except Exception as e:
+            print(f"Error creating charger queue dynamics plot: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def plot_charger_utilization_heatmap(
+        self,
+        charging_station,
+        transport_graph: Any,
+        final_time: float,
+    ):
+        """
+        Plot a heatmap showing when each charging station was in use.
+        
+        Args:
+            charging_station: ChargingStation instance
+            transport_graph: TransportationGraph instance
+            final_time: Final simulation time
+        """
+        try:
+            # Get visited chargers
+            visited_chargers = []
+            for node in charging_station.charging_nodes:
+                history = charging_station.queue_history[node]
+                if len(history["truck_events"]) > 0:
+                    visited_chargers.append(node)
+            
+            if not visited_chargers:
+                return
+            
+            # Create time bins (e.g., 0.5 hour intervals)
+            time_resolution = 0.5  # hours
+            n_bins = int(np.ceil(final_time / time_resolution))
+            time_bins = np.arange(0, final_time + time_resolution, time_resolution)
+            
+            # Create occupancy matrix
+            occupancy_matrix = np.zeros((len(visited_chargers), n_bins))
+            
+            for i, charger_node in enumerate(visited_chargers):
+                history = charging_station.queue_history[charger_node]
+                times = np.array(history["times"])
+                occupancy = np.array(history["occupancy"])
+                
+                # Interpolate occupancy for each time bin
+                for j in range(n_bins):
+                    bin_start = j * time_resolution
+                    bin_end = (j + 1) * time_resolution
+                    
+                    # Find occupancy values in this time range
+                    mask = (times >= bin_start) & (times < bin_end)
+                    if mask.any():
+                        occupancy_matrix[i, j] = occupancy[mask].mean()
+                    elif len(times) > 0 and times[0] > bin_end:
+                        occupancy_matrix[i, j] = 0
+                    elif len(times) > 0:
+                        # Use last known value
+                        last_idx = np.where(times < bin_start)[0]
+                        if len(last_idx) > 0:
+                            occupancy_matrix[i, j] = occupancy[last_idx[-1]]
+            
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(16, max(6, len(visited_chargers) * 0.5)), dpi=150)
+            
+            im = ax.imshow(occupancy_matrix, aspect='auto', cmap='YlOrRd', interpolation='nearest')
+            
+            # Set ticks and labels
+            ax.set_yticks(range(len(visited_chargers)))
+            charger_labels = []
+            for node in visited_chargers:
+                c_type = charging_station.charger_type[node]
+                capacity = int(charging_station.charger_capacity[node])
+                charger_labels.append(f'Node {node}\n({c_type}, Cap:{capacity})')
+            ax.set_yticklabels(charger_labels, fontsize=9)
+            
+            # X-axis: time bins
+            x_tick_interval = max(1, n_bins // 20)  # Show ~20 ticks max
+            x_ticks = range(0, n_bins, x_tick_interval)
+            x_labels = [f'{i * time_resolution:.1f}h' for i in x_ticks]
+            ax.set_xticks(x_ticks)
+            ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=9)
+            
+            ax.set_xlabel('Simulation Time', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Charging Station', fontsize=12, fontweight='bold')
+            ax.set_title('Charging Station Utilization Heatmap\n(Average Occupancy per Time Bin)',
+                        fontsize=14, fontweight='bold', pad=15)
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax, orientation='vertical', pad=0.02)
+            cbar.set_label('Average Occupancy', fontsize=11, fontweight='bold')
+            
+            plt.tight_layout()
+            filepath = os.path.join(self.output_dir, "charger_utilization_heatmap.png")
+            plt.savefig(filepath, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+            if self.verbose:
+                print(f"  ✓ Charger utilization heatmap saved to: {filepath}")
+        
+        except Exception as e:
+            print(f"Error creating charger utilization heatmap: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def plot_charger_statistics_summary(
+        self,
+        charging_station,
+        transport_graph: Any,
+    ):
+        """
+        Plot summary statistics for each charging station.
+        
+        Args:
+            charging_station: ChargingStation instance
+            transport_graph: TransportationGraph instance
+        """
+        try:
+            # Get visited chargers and their stats
+            visited_chargers = []
+            for node in charging_station.charging_nodes:
+                stats = charging_station.charger_stats[node]
+                if stats["total_charge_sessions"] > 0:
+                    visited_chargers.append(node)
+            
+            if not visited_chargers:
+                return
+            
+            # Extract statistics
+            charger_labels = []
+            sessions = []
+            charge_times = []
+            trucks_served = []
+            
+            for node in visited_chargers:
+                stats = charging_station.charger_stats[node]
+                c_type = charging_station.charger_type[node]
+                capacity = int(charging_station.charger_capacity[node])
+                
+                charger_labels.append(f'Node {node}\n({c_type[:4]})')
+                sessions.append(stats["total_charge_sessions"])
+                charge_times.append(stats["total_charge_time"])
+                trucks_served.append(len(stats["total_trucks_served"]))
+            
+            # Create bar charts
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6), dpi=150)
+            
+            x = np.arange(len(visited_chargers))
+            width = 0.6
+            
+            # Sessions
+            axes[0].bar(x, sessions, width, color='steelblue', edgecolor='black', linewidth=1)
+            axes[0].set_ylabel('Number of Sessions', fontsize=11, fontweight='bold')
+            axes[0].set_title('Total Charge Sessions', fontsize=12, fontweight='bold')
+            axes[0].set_xticks(x)
+            axes[0].set_xticklabels(charger_labels, fontsize=9)
+            axes[0].grid(axis='y', alpha=0.3)
+            
+            # Charge time
+            axes[1].bar(x, charge_times, width, color='coral', edgecolor='black', linewidth=1)
+            axes[1].set_ylabel('Total Time (hours)', fontsize=11, fontweight='bold')
+            axes[1].set_title('Total Charge Time', fontsize=12, fontweight='bold')
+            axes[1].set_xticks(x)
+            axes[1].set_xticklabels(charger_labels, fontsize=9)
+            axes[1].grid(axis='y', alpha=0.3)
+            
+            # Trucks served
+            axes[2].bar(x, trucks_served, width, color='mediumseagreen', edgecolor='black', linewidth=1)
+            axes[2].set_ylabel('Number of Trucks', fontsize=11, fontweight='bold')
+            axes[2].set_title('Unique Trucks Served', fontsize=12, fontweight='bold')
+            axes[2].set_xticks(x)
+            axes[2].set_xticklabels(charger_labels, fontsize=9)
+            axes[2].grid(axis='y', alpha=0.3)
+            
+            # Add value labels on bars
+            for ax in axes:
+                for i, bar in enumerate(ax.patches):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{height:.1f}',
+                           ha='center', va='bottom', fontsize=9, fontweight='bold')
+            
+            plt.suptitle('Charging Station Statistics Summary', fontsize=14, fontweight='bold', y=1.02)
+            plt.tight_layout()
+            
+            filepath = os.path.join(self.output_dir, "charger_statistics_summary.png")
+            plt.savefig(filepath, dpi=150, bbox_inches="tight")
+            plt.close()
+            
+            if self.verbose:
+                print(f"  ✓ Charger statistics summary saved to: {filepath}")
+        
+        except Exception as e:
+            print(f"Error creating charger statistics summary: {e}")
+            import traceback
+            traceback.print_exc()
 

@@ -9,16 +9,21 @@ import networkx as nx
 from typing import Dict, Optional, Any
 import yaml
 
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+def load_config(config: Optional[Any] = None) -> Dict[str, Any]:
     """
-    Load configuration from YAML file.
+    Load configuration from YAML file or dict.
     
     Args:
-        config_path: Path to config file. If None, uses default config.yaml
+        config: Path to config file, dict with config, or None for default config.yaml
         
     Returns:
         Dictionary containing configuration parameters
     """
+    # If already a dict, return it
+    if isinstance(config, dict):
+        return config
+    
+    config_path = config
     if config_path is None:
         # Use default config in same directory as this file
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,9 +33,9 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         raise FileNotFoundError(f"Config file not found: {config_path}")
     
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+        config_dict = yaml.safe_load(f)
     
-    return config
+    return config_dict
 
 def read_file(filename: str) -> Any:
     """Read a pickle file."""

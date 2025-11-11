@@ -11,10 +11,8 @@ from enum import Enum
 class EventType(Enum):
     """Types of events in the simulation."""
 
-    TRUCK_READY = "truck_ready"  # Truck is ready to take an action
-    ROUTE_COMPLETE = "route_complete"  # Truck completed routing to a node
-    CHARGE_COMPLETE = "charge_complete"  # Truck completed charging
-    TRUCK_TERMINATED = "truck_terminated"  # Truck finished or failed
+    TRUCK_READY = "truck_ready"  # Truck is ready to take an action (initial, after route, after charge, after wait)
+    TRUCK_ROUTING = "truck_routing"  # Truck completed routing to a node (arrival event)
 
 
 @dataclass(order=True)
@@ -44,7 +42,7 @@ class EventHandler:
         """
         self.verbose = verbose
 
-    def handle_route_complete(
+    def handle_truck_routing(
         self,
         event: Event,
         trucks: List[Any],
@@ -55,10 +53,10 @@ class EventHandler:
         enable_plotting: bool,
     ):
         """
-        Handle completion of routing to a node.
+        Handle truck arrival at a node (after routing).
 
         Args:
-            event: The route complete event
+            event: The truck routing event
             trucks: List of Truck objects
             truck_states: Dictionary of truck states
             truck_routes: Dictionary of truck routes
@@ -114,132 +112,16 @@ class EventHandler:
         # Check if truck failed
         if truck.failed:
             truck_states[truck.truck_id] = "failed"
-            heapq.heappush(
-                event_queue,
-                Event(
-                    time=global_clock,
-                    event_type=EventType.TRUCK_TERMINATED,
-                    truck_id=truck.truck_id,
-                    data={"reason": "battery_depleted"},
-                ),
-            )
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} FAILED: battery depleted")
         # Check if truck completed all deliveries
         elif truck.is_complete:
             truck_states[truck.truck_id] = "complete"
-            heapq.heappush(
-                event_queue,
-                Event(
-                    time=global_clock,
-                    event_type=EventType.TRUCK_TERMINATED,
-                    truck_id=truck.truck_id,
-                    data={"reason": "deliveries_complete"},
-                ),
-            )
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
         else:
-            # Truck is ready for next action
-            truck_states[truck.truck_id] = "active"
-            heapq.heappush(
-                event_queue,
-                Event(
-                    time=global_clock,
-                    event_type=EventType.TRUCK_READY,
-                    truck_id=truck.truck_id,
-                    data={"reason": "route_complete"},
-                ),
-            )
+            # Truck is ready for next action - update state
+            # Note: TRUCK_READY event will be scheduled by the main event loop
+            truck_states[truck.truck_id] = "ready"
 
-    def handle_charge_complete(
-        self,
-        event: Event,
-        trucks: List[Any],
-        truck_states: Dict[int, str],
-        charger_occupancy: Dict[int, List],
-        charger_queue: Dict[int, List],
-        charger_stats: Dict,
-        event_queue: List,
-        global_clock: float,
-    ):
-        """
-        Handle completion of charging.
 
-        Args:
-            event: The charge complete event
-            trucks: List of Truck objects
-            truck_states: Dictionary of truck states
-            charger_occupancy: Dictionary of charger occupancy
-            charger_queue: Dictionary of charger queues (new parameter)
-            charger_stats: Dictionary of charger statistics
-            event_queue: Priority queue of events
-            global_clock: Current simulation time
-        """
-        truck = trucks[event.truck_id]
-        data = event.data
-
-        # Complete charging
-        truck.finish_charging(
-            charge_amount=data["charge_amount"], charge_duration=data["charge_duration"]
-        )
-
-        # Remove from charger occupancy and queue
-        charger_node = truck.current_node
-        if charger_node in charger_occupancy:
-            if truck.truck_id in charger_occupancy[charger_node]:
-                charger_occupancy[charger_node].remove(truck.truck_id)
-
-            # Remove from queue as well
-            if charger_node in charger_queue:
-                charger_queue[charger_node] = [
-                    (tid, start, dur)
-                    for tid, start, dur in charger_queue[charger_node]
-                    if tid != truck.truck_id
-                ]
-                # Update queue length stat
-                if charger_node in charger_stats:
-                    charger_stats[charger_node]["queue_length"] = len(
-                        charger_queue[charger_node]
-                    )
-
-            # Update occupancy statistics
-            if charger_node in charger_stats:
-                stats = charger_stats[charger_node]
-                if len(charger_occupancy[charger_node]) == 0:
-                    # Charger became empty
-                    stats["occupancy_time"] += global_clock - stats["last_update_time"]
-                    stats["last_update_time"] = global_clock
-
-        if self.verbose:
-            print(f"  Truck {truck.truck_id} finished charging")
-            print(
-                f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)"
-            )
-            print(
-                f"    Charged: {data['charge_amount']:.1f} kWh in {data['charge_duration']:.2f}h"
-            )
-
-        # Truck is ready for next action
-        truck_states[truck.truck_id] = "active"
-        heapq.heappush(
-            event_queue,
-            Event(
-                time=global_clock,
-                event_type=EventType.TRUCK_READY,
-                truck_id=truck.truck_id,
-                data={"reason": "charge_complete"},
-            ),
-        )
-
-    def handle_truck_terminated(self, event: Event, trucks: List[Any]):
-        """
-        Handle truck termination.
-
-        Args:
-            event: The truck terminated event
-            trucks: List of Truck objects
-        """
-        truck = trucks[event.truck_id]
-        reason = event.data.get("reason", "unknown")
-
-        if self.verbose:
-            print(f"  Truck {truck.truck_id} TERMINATED: {reason}")
-            print(f"    Total time: {truck.total_time_elapsed:.2f}h")
-            print(f"    Total distance: {truck.total_distance_traveled:.2f} km")

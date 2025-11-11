@@ -218,7 +218,9 @@ class HeuristicPolicy:
 
         next_delivery = truck.get_next_delivery_target()
         if next_delivery is None:
-            return None, "No more deliveries"
+            # No more deliveries - truck should be complete
+            # Return a safe action (try to go to next delivery which will be handled by env)
+            return env.num_charging_nodes, "No more deliveries - truck complete"
 
         next_delivery = int(next_delivery)
         graph = env.transport_graph

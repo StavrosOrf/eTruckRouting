@@ -7,7 +7,7 @@ Creates visual plots of the GNN graph structure, showing:
 - Graph statistics and topology evolution
 - Feature distributions and correlations
 
-Multi-Depot GNN Design (v3.0):
+Multi-Depot GNN Design:
 - Nodes: Multiple depot nodes (one per unique truck starting position) + trucks + remaining deliveries + chargers
 - Edges: Truck↔Depot (energy, time) + Depot↔Location (energy, time) + Location↔Location (energy, time)
 - Edge Features: [energy_distance (kWh), time_to_traverse (hours)]

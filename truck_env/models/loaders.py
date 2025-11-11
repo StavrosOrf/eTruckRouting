@@ -48,14 +48,44 @@ def create_truck(
     
     start_node = np.random.choice(valid_start_nodes)
 
-    # Generate delivery sequence
-    delivery_sequence = transport_graph.generate_delivery_sequence(
-        start_node=start_node,
-        num_stops=num_stops,
-        min_hop_distance=min_hop_distance,
-        max_hop_distance=max_hop_distance,
-        exclude_charging_nodes=True,
-    )
+    # Generate delivery sequence with feasibility + capacity checks
+    truck_config = config["truck"]
+    battery_capacity = truck_config["battery_capacity"]
+    max_tries = 100
+    for attempt in range(max_tries):
+        delivery_sequence = transport_graph.generate_delivery_sequence(
+            start_node=start_node,
+            num_stops=num_stops,
+            min_hop_distance=min_hop_distance,
+            max_hop_distance=max_hop_distance,
+            exclude_charging_nodes=True,
+        )
+        ok = True
+        prev_node = start_node
+        for node in delivery_sequence[1:]:
+            node = int(node)
+            # Energy from prev_node to this delivery
+            e_to_delivery = transport_graph.get_path_energy(prev_node, node)
+            if e_to_delivery == float('inf'):
+                ok = False
+                break
+            nearest, e_from_delivery_to_charger = transport_graph.get_nearest_charging_node(node)
+            if nearest is None or e_from_delivery_to_charger == float('inf'):
+                ok = False
+                break
+            total_required = e_to_delivery + e_from_delivery_to_charger
+            if total_required > battery_capacity + 1e-6:
+                # This delivery violates guarantee (cannot start full and reach delivery + charger)
+                ok = False
+                break
+            prev_node = node
+        if ok:
+            break
+    else:
+        raise ValueError(
+            "Failed to generate a delivery sequence where each leg (prev->delivery->nearest charger) fits battery capacity after "
+            f"{max_tries} attempts. Consider increasing battery_capacity or adjusting hop distance constraints."
+        )
 
     # Get truck specifications (single type)
     truck_config = config["truck"]

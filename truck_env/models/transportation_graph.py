@@ -161,6 +161,8 @@ class TransportationGraph:
             self._distance_cache[cache_key] = distance
             return distance
         except nx.NetworkXError:
+
+            raise ValueError(f"No valid path from {from_node} to {to_node}")
             # If path doesn't exist or negative cycle detected
             self._distance_cache[cache_key] = float('inf')
             return float('inf')
@@ -194,7 +196,9 @@ class TransportationGraph:
         """
         if self.graph.has_edge(from_node, to_node):
             return self.graph[from_node][to_node]["time"]
-        return float("inf")
+        
+        raise ValueError(f"No edge exists from {from_node} to {to_node}")
+        # return float("inf")
 
     def get_edge_data(self, from_node: int, to_node: int) -> Dict:
         """

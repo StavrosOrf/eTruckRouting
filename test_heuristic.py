@@ -52,8 +52,8 @@ def test_heuristic_policy(
         truck_failures = 0
 
         while not done and not truncated:
-            # Get heuristic action
-            action = policy.get_action(env)
+            # Get heuristic action with explanation and log it
+            action, explanation = policy.get_action_with_explanations(env)
 
             if action is None:
                 # No more deliveries
@@ -72,9 +72,9 @@ def test_heuristic_policy(
             truck_id = info.get("active_truck_id")
             if verbose and step_count <= 10:  # Print first 10 steps
                 action_str = env._action_to_string(action)
-                print(
-                    f"Step {step_count}: Truck {truck_id} → {action_str} (reward: {reward:+.1f})"
-                )
+                print(f"Step {step_count}: Truck {truck_id} → {action_str} (reward: {reward:+.1f})")
+                # Also print one-line explanation summary
+                print(explanation.split("\n")[0])
 
             if done or truncated:
                 break

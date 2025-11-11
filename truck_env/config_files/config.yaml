@@ -17,16 +17,16 @@ environment:
   min_hop_distance: 100.0
 
   # Maximum energy consumption between consecutive delivery stops (kWh)
-  max_hop_distance: 400.0
+  max_hop_distance: 250.0
 
   # Maximum simulation time in hours (for event-driven environments)
-  max_time: 150
+  max_time: 450
 
 # Truck Configuration
 # -------------------
 truck:
   # Electric truck specifications (single type)
-  battery_capacity: 400.0 # kWh
+  battery_capacity: 450.0 # kWh
   base_speed: 40.0 # km/h
 
   # Initial battery level: "full", "random", or specific percentage (0-100)

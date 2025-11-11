@@ -15,6 +15,7 @@ import os
 import json
 import datetime
 
+
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -178,6 +179,12 @@ class EventDrivenTruckEnv(gym.Env):
         # Track when each truck will finish charging (for queue management)
         self.truck_charge_end_time = {}  # truck_id -> expected charge completion time
 
+        # (Removed predictive hybrid queue state: queue_lookup_weight, pending_arrivals)
+
+        # Simplified FCFS waitlist per charging station (feeds all ports)
+        # Each entry: {"truck_id": int, "planned_plug_time": Optional[float]}
+        self.charger_waitlist = {node: [] for node in self.charging_nodes}
+
         # Charging station utilization tracking
         self.charger_stats = {
             node: {
@@ -251,6 +258,10 @@ class EventDrivenTruckEnv(gym.Env):
                 ),
             )
 
+    # (Removed predictive queue state reset)
+        # Reset station waitlists
+        self.charger_waitlist = {node: [] for node in self.charging_nodes}
+
         # Process event queue until we find a truck that needs a decision
         self._advance_to_next_decision()
 
@@ -317,7 +328,75 @@ class EventDrivenTruckEnv(gym.Env):
 
             # Process event
             if event.event_type == EventType.TRUCK_READY:
-                # Truck needs a decision - stop here
+                # Charger gating: enforce FCFS waitlist with capacity ports
+                truck = self.trucks[event.truck_id]
+                node = int(truck.current_node)
+                if node in self.charging_nodes:
+                    capacity = int(self.charger_capacity[node])
+                    occupancy = len(self.charger_occupancy[node])
+                    free_slots = max(0, capacity - occupancy)
+                    waitlist = self.charger_waitlist[node]
+
+                    def ensure_in_waitlist(tid: int, planned: Optional[float]):
+                        if not any(e["truck_id"] == tid for e in waitlist):
+                            waitlist.append({"truck_id": tid, "planned_plug_time": planned})
+                        else:
+                            if planned is not None:
+                                for e in waitlist:
+                                    if e["truck_id"] == tid:
+                                        e["planned_plug_time"] = planned
+                                        break
+
+                    idx = next((i for i, e in enumerate(waitlist) if e["truck_id"] == truck.truck_id), None)
+
+                    if idx is None:
+                        # New arrival at charger (or first time requesting decision while here)
+                        if free_slots > 0 and len(waitlist) == 0:
+                            util = occupancy / float(capacity) if capacity > 0 else 0.0
+                            wait_h = self._get_waiting_time(node, util)
+                            if wait_h > 0:
+                                plug_time = self.global_clock + wait_h
+                                ensure_in_waitlist(truck.truck_id, planned=plug_time)
+                                heapq.heappush(
+                                    self.event_queue,
+                                    Event(
+                                        time=plug_time,
+                                        event_type=EventType.TRUCK_READY,
+                                        truck_id=event.truck_id,
+                                        data={"reason": "plug_delay"},
+                                    ),
+                                )
+                                continue
+                            else:
+                                ensure_in_waitlist(truck.truck_id, planned=self.global_clock)
+                                self.active_truck_id = event.truck_id
+                                return
+                        else:
+                            # Must wait in queue until a port frees
+                            ensure_in_waitlist(truck.truck_id, planned=None)
+                            continue
+                    else:
+                        # Already waiting
+                        planned = waitlist[idx]["planned_plug_time"]
+                        if (free_slots > 0) and (idx < free_slots) and (planned is None or planned <= self.global_clock):
+                            # Eligible to act now
+                            self.active_truck_id = event.truck_id
+                            return
+                        else:
+                            # Re-check later (either planned plug time or small delta)
+                            next_time = max(self.global_clock + 1e-3, planned if planned is not None else self.global_clock + 1e-3)
+                            heapq.heappush(
+                                self.event_queue,
+                                Event(
+                                    time=next_time,
+                                    event_type=EventType.TRUCK_READY,
+                                    truck_id=event.truck_id,
+                                    data={"reason": "waiting_for_slot"},
+                                ),
+                            )
+                            continue
+
+                # Not at a charger or gating passed
                 self.active_truck_id = event.truck_id
                 return
 
@@ -343,6 +422,28 @@ class EventDrivenTruckEnv(gym.Env):
                     self.event_queue,
                     self.global_clock,
                 )
+                # Wake trucks according to freed ports
+                charger_node = int(self.trucks[event.truck_id].current_node)
+                if charger_node in self.charging_nodes:
+                    capacity = int(self.charger_capacity[charger_node])
+                    occupancy = len(self.charger_occupancy[charger_node])
+                    free_slots = max(0, capacity - occupancy)
+                    waitlist = self.charger_waitlist[charger_node]
+                    if free_slots > 0 and waitlist:
+                        k = min(free_slots, len(waitlist))
+                        for i in range(k):
+                            planned = waitlist[i]["planned_plug_time"]
+                            tid = waitlist[i]["truck_id"]
+                            wake_time = max(self.global_clock, planned if planned is not None else self.global_clock)
+                            heapq.heappush(
+                                self.event_queue,
+                                Event(
+                                    time=wake_time,
+                                    event_type=EventType.TRUCK_READY,
+                                    truck_id=tid,
+                                    data={"reason": "socket_freed"},
+                                ),
+                            )
 
             # elif event.event_type == EventType.TRUCK_TERMINATED:
             #     self.event_handler.handle_truck_terminated(event, self.trucks)
@@ -419,10 +520,6 @@ class EventDrivenTruckEnv(gym.Env):
             target_node = truck.get_next_delivery_target()
             if target_node is None:
                 raise ValueError("No remaining deliveries for truck")
-                # No more deliveries - penalize
-                # if self.verbose:
-                #     print(f"  ERROR: No more deliveries for truck {truck.truck_id}")
-                return self.reward_config["invalid_action_penalty"]
         else:
             raise ValueError("Invalid navigation action")
 
@@ -458,14 +555,7 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Check if path is reachable
         if energy_used == float("inf"): 
-            if self.verbose:
-                print(f"  ERROR: No valid path from {current_node} to {target_node}")
-            # Penalize invalid navigation attempt (no path exists)
-            # return self.reward_config["invalid_action_penalty"]
             raise ValueError("No valid path for navigation action")
-
-        # Get the full path for visualization
-        # path = self.transport_graph.get_shortest_path(current_node, target_node)
 
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
         discharge = energy_used
@@ -493,52 +583,21 @@ class EventDrivenTruckEnv(gym.Env):
             )
             return self.reward_config["failure_penalty"]
 
-        # If navigating to a charger, calculate queue-aware waiting time
-        wait_time = 0.0
+    # Simplified: no predictive waiting during navigation; handled on arrival via waitlist
         queue_penalty = 0.0
-        if is_charger_nav:
+        if is_charger_nav and self.verbose:
             current_occupancy = len(self.charger_occupancy[target_node])
             capacity = self.charger_capacity[target_node]
+            print(f"  Going to charger @ node {target_node}")
+            print(f"    Current occupancy: {current_occupancy}/{capacity}")
 
-            # Calculate queue-aware waiting time (considers actual truck finish times)
-            wait_time = self._calculate_charger_queue_wait_time(
-                target_node, self.global_clock
-            )
-
-            if self.verbose:
-                print(f"  Going to charger @ node {target_node}")
-                print(f"    Current occupancy: {current_occupancy}/{capacity}")
-                if wait_time > 0.01:
-                    print(f"    Expected queue wait: {wait_time:.2f}h")
-                else:
-                    print(f"    Slot available immediately")
-
-            # Apply waiting time to truck
-            if wait_time > 0:
-                truck.add_waiting_time(wait_time)
-
-            # Add truck to queue for this charger
-            self.charger_queue[target_node].append(
-                (truck.truck_id, self.global_clock + travel_time, 0)  # 0 = duration TBD
-            )
-
-            # Add to charger occupancy (will be properly managed by ROUTE_COMPLETE)
-            self.charger_occupancy[target_node].append(truck.truck_id)
-
-            # Update utilization stats
-            stats = self.charger_stats[target_node]
-            stats["queue_length"] = len(self.charger_queue[target_node])
-            if (
-                len(self.charger_occupancy[target_node]) == 1
-            ):  # First truck at this charger
-                if stats["last_update_time"] > 0:
-                    stats["occupancy_time"] += (
-                        self.global_clock - stats["last_update_time"]
-                    )
-            stats["last_update_time"] = self.global_clock
-
-            # Calculate queue penalty
-            queue_penalty = -wait_time * self.reward_config["charge_penalty"]
+        # If leaving a charger to navigate elsewhere, remove from its waitlist
+        if (not is_charger_nav) and (current_node in self.charging_nodes):
+            wl = self.charger_waitlist[current_node]
+            if any(e["truck_id"] == truck.truck_id for e in wl):
+                self.charger_waitlist[current_node] = [
+                    e for e in wl if e["truck_id"] != truck.truck_id
+                ]
 
         # Schedule route completion event
         completion_time = self.global_clock + actual_travel_time
@@ -570,8 +629,7 @@ class EventDrivenTruckEnv(gym.Env):
             print(
                 f"    Battery after trip: {truck.current_battery - discharge:.1f} kWh"
             )
-            if is_charger_nav and wait_time > 0:
-                print(f"    Will wait {wait_time:.2f}h in queue at charger")
+            # Waiting at charger will be determined upon arrival via queue gating
 
         # Calculate reward (using actual travel time, not base time)
         time_penalty = -actual_travel_time * self.reward_config["time_penalty"]
@@ -583,6 +641,8 @@ class EventDrivenTruckEnv(gym.Env):
             return time_penalty + distance_penalty + delivery_bonus + queue_penalty
 
         return time_penalty + distance_penalty + queue_penalty
+
+    # (Removed legacy predictive methods: _estimate_charge_duration_for, _predict_queue_wait_time)
 
     def _apply_traffic_simulation(self, travel_time: float) -> float:
         """
@@ -609,6 +669,7 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Ensure travel time is positive (at least 1% of original)
         actual_travel_time = max(actual_travel_time, travel_time * 0.01)
+        actual_travel_time = min(actual_travel_time, travel_time * 2.0)  # Cap to 2x original
         
         if self.verbose:
             variation_percent = ((actual_travel_time - travel_time) / travel_time) * 100
@@ -658,55 +719,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         return waiting_hours
 
-    def _calculate_charger_queue_wait_time(
-        self, charger_node: int, current_time: float
-    ) -> float:
-        """
-        Calculate realistic wait time based on actual trucks in queue and their charge times.
-
-        Takes into account:
-        - Current occupancy (trucks actively charging)
-        - Queue position (trucks waiting to charge)
-        - When each truck will finish charging
-
-        Args:
-            charger_node: The charging station node
-            current_time: Current simulation time
-
-        Returns:
-            Expected waiting time in hours (0 if slot available immediately)
-        """
-        capacity = int(self.charger_capacity[charger_node])
-        current_occupancy = len(self.charger_occupancy[charger_node])
-
-        # If there's available capacity, no wait
-        if current_occupancy < capacity:
-            return 0.0
-
-        # Charger is at capacity - find when first truck will finish
-        # Get the minimum end time among all trucks currently charging
-        min_end_time = float("inf")
-        for truck_id in self.charger_occupancy[charger_node]:
-            if truck_id in self.truck_charge_end_time:
-                end_time = self.truck_charge_end_time[truck_id]
-                min_end_time = min(min_end_time, end_time)
-
-        if min_end_time == float("inf"):
-            # No charge end times recorded, use generic waiting time
-            return self._get_waiting_time(charger_node, 0.95)
-
-        # Wait until the earliest truck finishes
-        wait_time = max(0.0, min_end_time - current_time)
-
-        if self.verbose:
-            print(f"    Queue wait calculation:")
-            print(
-                f"      - Capacity: {capacity}, Currently charging: {current_occupancy}"
-            )
-            print(f"      - Earliest finish time: {min_end_time:.2f}h")
-            print(f"      - Calculated wait: {wait_time:.2f}h")
-
-        return wait_time
+    # (Removed unused _calculate_charger_queue_wait_time)
 
     def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
         """Execute charging action and schedule charge completion event."""
@@ -727,6 +740,36 @@ class EventDrivenTruckEnv(gym.Env):
             # return 0.0
 
         charger_node = truck.current_node
+
+        # Enforce waitlist eligibility (must be within available free slot set & plug time reached)
+        waitlist = self.charger_waitlist[charger_node]
+        capacity = int(self.charger_capacity[charger_node])
+        occupancy = len(self.charger_occupancy[charger_node])
+        free_slots = max(0, capacity - occupancy)
+
+        if not any(e["truck_id"] == truck.truck_id for e in waitlist):
+            # Add to waitlist if attempting to charge without prior gating
+            planned = self.global_clock if (free_slots > 0 and len(waitlist) == 0) else None
+            waitlist.append({"truck_id": truck.truck_id, "planned_plug_time": planned})
+
+        idx = next((i for i, e in enumerate(waitlist) if e["truck_id"] == truck.truck_id), 0)
+        planned = waitlist[idx]["planned_plug_time"]
+        if not ((free_slots > 0) and (idx < free_slots) and (planned is None or planned <= self.global_clock)):
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} cannot start charging yet (queue gating). Deferring.")
+            heapq.heappush(
+                self.event_queue,
+                Event(
+                    time=max(self.global_clock + 1e-3, planned if planned else self.global_clock + 1e-3),
+                    event_type=EventType.TRUCK_READY,
+                    truck_id=truck.truck_id,
+                    data={"reason": "deferred_charge_wait"},
+                ),
+            )
+            return 0.0
+
+        # Eligible: remove from waitlist
+        waitlist.pop(idx)
 
         # Get charger type and determine charge rate
         charger_type = self.charger_type[charger_node]
@@ -751,13 +794,26 @@ class EventDrivenTruckEnv(gym.Env):
         charge_end_time = self.global_clock + charge_hours
         self.truck_charge_end_time[truck.truck_id] = charge_end_time
 
-        # Update queue information
-        charger_queue = self.charger_queue[charger_node]
-        for i, (truck_id, start_time, duration) in enumerate(charger_queue):
-            if truck_id == truck.truck_id:
-                # Update this truck's entry in the queue with actual charge duration
-                charger_queue[i] = (truck_id, self.global_clock, charge_hours)
-                break
+        # At the start of charging, reflect occupancy and queue
+        if truck.truck_id not in self.charger_occupancy[charger_node]:
+            self.charger_occupancy[charger_node].append(truck.truck_id)
+        # Append to charger queue with actual start/duration
+        already_in_queue = any(
+            tid == truck.truck_id for tid, _, _ in self.charger_queue[charger_node]
+        )
+        if not already_in_queue:
+            self.charger_queue[charger_node].append(
+                (truck.truck_id, self.global_clock, charge_hours)
+            )
+        else:
+            # Update existing placeholder entry if present
+            updated = []
+            for tid, start_time, duration in self.charger_queue[charger_node]:
+                if tid == truck.truck_id:
+                    updated.append((tid, self.global_clock, charge_hours))
+                else:
+                    updated.append((tid, start_time, duration))
+            self.charger_queue[charger_node] = updated
 
         # Update utilization stats - track occupancy time and sessions
         stats = self.charger_stats[charger_node]
@@ -771,6 +827,7 @@ class EventDrivenTruckEnv(gym.Env):
         stats["total_charge_sessions"] += 1
         stats["total_trucks_served"].add(truck.truck_id)
         stats["total_charge_time"] += charge_hours
+        stats["queue_length"] = len(self.charger_queue[charger_node])
 
         # Schedule charge completion event
         completion_time = self.global_clock + charge_hours
@@ -812,6 +869,9 @@ class EventDrivenTruckEnv(gym.Env):
 
     def _check_truncated(self) -> bool:
         """Check if episode is truncated (time limit exceeded)."""
+        if self.global_clock >= self.max_time and self.verbose:
+            input('Press Enter to continue...')
+            
         return self.global_clock >= self.max_time
 
     def _get_observation(self) -> np.ndarray:
@@ -856,6 +916,13 @@ class EventDrivenTruckEnv(gym.Env):
             "trucks": [truck.get_state_dict() for truck in self.trucks],
             "truck_states": self.truck_states.copy(),
             "charger_utilization": charger_utilization,
+            # Expose simplified queue state for debugging/analysis
+            "charger_waitlist_lengths": {
+                int(node): len(self.charger_waitlist[node]) for node in self.charging_nodes
+            },
+            "charger_occupancy_counts": {
+                int(node): len(self.charger_occupancy[node]) for node in self.charging_nodes
+            },
         }
 
     def _action_to_string(self, action: int) -> str:

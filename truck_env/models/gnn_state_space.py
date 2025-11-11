@@ -138,7 +138,7 @@ class GNNStateSpace:
 
         # 1. Add all truck nodes (excluding failed trucks)
         truck_nodes_start = len(node_list)
-        truck_to_depot_idx = {}  # truck_id -> depot_idx
+        truck_to_depot_idx = {}  # truck_id -> depot_idx0
         truck_id_to_node_idx = {}  # truck_id -> node_idx (for mapping during edge creation)
         
         for truck in env.trucks:

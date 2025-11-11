@@ -519,6 +519,7 @@ class EnvironmentPlotter:
     ):
         """
         Plot queue dynamics (occupancy and waitlist) for each charging station visited.
+        Enhanced visualization with better clarity and information density.
         
         Args:
             charging_station: ChargingStation instance with queue_history
@@ -538,13 +539,33 @@ class EnvironmentPlotter:
                     print("  ⚠ No charging stations were visited during simulation")
                 return
             
+            # Sort chargers by activity level (most active first)
+            charger_activity = []
+            for node in visited_chargers:
+                history = charging_station.queue_history[node]
+                activity = len(history["truck_events"])
+                charger_activity.append((node, activity))
+            charger_activity.sort(key=lambda x: x[1], reverse=True)
+            visited_chargers = [node for node, _ in charger_activity]
+            
+            # Limit to top 10 most active chargers to keep visualization manageable
+            max_chargers_to_plot = 10
+            if len(visited_chargers) > max_chargers_to_plot:
+                if self.verbose:
+                    print(f"  📊 Plotting top {max_chargers_to_plot} most active chargers (out of {len(visited_chargers)})")
+                visited_chargers = visited_chargers[:max_chargers_to_plot]
+            
             # Create subplots: one row per charger
             n_chargers = len(visited_chargers)
-            fig, axes = plt.subplots(n_chargers, 1, figsize=(16, 4 * n_chargers), dpi=150)
+            fig, axes = plt.subplots(n_chargers, 1, figsize=(18, 3.5 * n_chargers), dpi=150)
             
             # Ensure axes is always a list
             if n_chargers == 1:
                 axes = [axes]
+            
+            # Overall title
+            fig.suptitle('Charging Station Queue Dynamics Over Time', 
+                        fontsize=16, fontweight='bold', y=0.995)
             
             for idx, charger_node in enumerate(visited_chargers):
                 ax = axes[idx]
@@ -553,6 +574,7 @@ class EnvironmentPlotter:
                 # Get charger info
                 charger_type = charging_station.charger_type[charger_node]
                 capacity = int(charging_station.charger_capacity[charger_node])
+                stats = charging_station.charger_stats[charger_node]
                 
                 # Extract time series data
                 times = np.array(history["times"])
@@ -560,49 +582,102 @@ class EnvironmentPlotter:
                 waitlist = np.array(history["waitlist"])
                 truck_events = history["truck_events"]
                 
-                # Plot occupancy and waitlist over time
-                ax.plot(times, occupancy, 'b-', linewidth=2, label='Occupancy (Charging)', marker='o', markersize=4)
-                ax.plot(times, waitlist, 'r--', linewidth=2, label='Waitlist (Waiting)', marker='s', markersize=4)
-                ax.axhline(y=capacity, color='green', linestyle=':', linewidth=2, label=f'Capacity ({capacity})')
+                # Calculate statistics
+                total_events = len(truck_events)
+                max_occupancy = occupancy.max() if len(occupancy) > 0 else 0
+                max_waitlist = waitlist.max() if len(waitlist) > 0 else 0
+                avg_occupancy = occupancy.mean() if len(occupancy) > 0 else 0
+                utilization = stats["occupancy_time"] / final_time if final_time > 0 else 0
                 
-                # Add event markers
-                event_colors = {'arrive': 'orange', 'start': 'blue', 'finish': 'purple'}
+                # Plot stacked area for better visual clarity
+                ax.fill_between(times, 0, occupancy, alpha=0.4, color='#2E86AB', 
+                               label='Actively Charging', step='post', linewidth=0)
+                ax.fill_between(times, occupancy, occupancy + waitlist, alpha=0.4, 
+                               color='#F24236', label='Waiting in Queue', step='post', linewidth=0)
+                
+                # Plot lines on top of areas
+                ax.plot(times, occupancy, color='#1A5276', linewidth=2.5, 
+                       label='Charging Trucks', marker='o', markersize=3, markevery=max(1, len(times)//20))
+                ax.plot(times, occupancy + waitlist, color='#A93226', linewidth=2.5, 
+                       linestyle='--', label='Total Trucks (Charging + Waiting)', 
+                       marker='s', markersize=3, markevery=max(1, len(times)//20))
+                
+                # Capacity line
+                ax.axhline(y=capacity, color='#27AE60', linestyle=':', linewidth=3, 
+                          label=f'Capacity Limit ({capacity})', zorder=10)
+                
+                # Add event markers on a separate axis below
+                event_y = -0.15 * (max(capacity, max_occupancy + max_waitlist) + 1)
+                event_colors = {'arrive': '#FF6B35', 'start': '#004E89', 'finish': '#9B59B6'}
                 event_markers = {'arrive': '^', 'start': 'o', 'finish': 'v'}
-                event_labels = {'arrive': 'Arrive', 'start': 'Start Charging', 'finish': 'Finish Charging'}
+                event_labels = {'arrive': '▲ Truck Arrives', 'start': '● Charging Starts', 
+                               'finish': '▼ Charging Ends'}
+                event_sizes = {'arrive': 120, 'start': 100, 'finish': 120}
                 
                 plotted_events = set()
                 for event_time, truck_id, event_type in truck_events:
                     label = event_labels[event_type] if event_type not in plotted_events else None
-                    ax.scatter(event_time, -0.3, c=event_colors[event_type], 
-                             marker=event_markers[event_type], s=100, 
-                             label=label, zorder=5, edgecolors='black', linewidths=0.5)
-                    # Add truck ID annotation
-                    ax.text(event_time, -0.5, f'T{truck_id}', ha='center', va='top', 
-                           fontsize=8, fontweight='bold')
+                    ax.scatter(event_time, event_y, c=event_colors[event_type], 
+                             marker=event_markers[event_type], s=event_sizes[event_type], 
+                             label=label, zorder=20, edgecolors='black', linewidths=1.0, alpha=0.8)
+                    
+                    # Add truck ID annotation below the event marker
+                    ax.text(event_time, event_y * 1.4, f'T{truck_id}', 
+                           ha='center', va='top', fontsize=7, fontweight='bold',
+                           color='black', bbox=dict(boxstyle='round,pad=0.3', 
+                                                    facecolor='white', alpha=0.7, 
+                                                    edgecolor='none'))
                     plotted_events.add(event_type)
                 
                 # Styling
-                ax.set_xlabel('Time (hours)', fontsize=11, fontweight='bold')
+                ax.set_xlabel('Simulation Time (hours)', fontsize=11, fontweight='bold')
                 ax.set_ylabel('Number of Trucks', fontsize=11, fontweight='bold')
-                ax.set_title(f'Charger Node {charger_node} ({charger_type}, Capacity: {capacity})',
-                           fontsize=12, fontweight='bold')
-                ax.grid(True, alpha=0.3, linestyle='--')
-                ax.legend(loc='upper right', fontsize=9, framealpha=0.95)
-                ax.set_xlim(-0.5, final_time + 0.5)
-                ax.set_ylim(-1, max(capacity + 1, max(occupancy.max() if len(occupancy) > 0 else 0,
-                                                     waitlist.max() if len(waitlist) > 0 else 0) + 1))
                 
-                # Fill areas
-                ax.fill_between(times, 0, occupancy, alpha=0.2, color='blue', label='_nolegend_')
-                ax.fill_between(times, 0, waitlist, alpha=0.2, color='red', label='_nolegend_')
+                # Enhanced title with statistics
+                title = (f'Charger #{idx+1}: Node {charger_node} | {charger_type} | '
+                        f'Capacity: {capacity} | Events: {total_events} | '
+                        f'Peak Queue: {int(max_waitlist)} | Utilization: {utilization*100:.1f}%')
+                ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
+                
+                # Grid
+                ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7)
+                ax.set_axisbelow(True)
+                
+                # Legend with better positioning
+                ax.legend(loc='upper left', fontsize=9, framealpha=0.95, 
+                         edgecolor='black', fancybox=True, shadow=True, ncol=2)
+                
+                # Set limits with padding (extra space below for truck ID labels)
+                ax.set_xlim(-1, final_time + 1)
+                y_max = max(capacity + 1, max_occupancy + max_waitlist + 1)
+                ax.set_ylim(event_y * 1.8, y_max * 1.1)  # Extra space for truck labels
+                
+                # Add horizontal grid lines at integer values
+                ax.set_yticks(range(0, int(y_max) + 1))
+                
+                # Highlight over-capacity situations (if any)
+                over_capacity = (occupancy + waitlist) > capacity
+                if over_capacity.any():
+                    for i in range(len(times) - 1):
+                        if over_capacity[i]:
+                            ax.axvspan(times[i], times[i+1] if i+1 < len(times) else final_time, 
+                                     alpha=0.1, color='red', zorder=0)
+                
+                # Add text annotation for key statistics
+                stats_text = (f'Avg Occupancy: {avg_occupancy:.2f} | '
+                             f'Sessions: {stats["total_charge_sessions"]} | '
+                             f'Total Charge Time: {stats["total_charge_time"]:.1f}h')
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                       fontsize=9, verticalalignment='top', 
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
             
-            plt.tight_layout()
+            plt.tight_layout(rect=[0, 0, 1, 0.995])
             filepath = os.path.join(self.output_dir, "charger_queue_dynamics.png")
             plt.savefig(filepath, dpi=150, bbox_inches="tight")
             plt.close()
             
             if self.verbose:
-                print(f"  ✓ Charger queue dynamics plot saved to: {filepath}")
+                print(f"  ✓ Enhanced charger queue dynamics plot saved to: {filepath}")
         
         except Exception as e:
             print(f"Error creating charger queue dynamics plot: {e}")

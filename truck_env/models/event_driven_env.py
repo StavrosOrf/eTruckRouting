@@ -282,13 +282,9 @@ class EventDrivenTruckEnv(gym.Env):
     def _advance_to_next_decision(self):
         """
         Advance simulation clock to next event that requires a decision.
-        Process events until we find a TRUCK_READY event.
+        Process events until we find a TRUCK_READY event that can actually proceed.
         """
-        max_iterations = 10000  # Safety limit
-        iterations = 0
-        
-        while self.event_queue and iterations < max_iterations:
-            iterations += 1
+        while self.event_queue:
             # Get next event
             event = heapq.heappop(self.event_queue)
 
@@ -305,6 +301,17 @@ class EventDrivenTruckEnv(gym.Env):
                         status = "complete" if truck.is_complete else "failed"
                         print(f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})")
                     continue
+                
+                # Skip if this is a stale wake event and truck is no longer waiting
+                # This can happen when a truck gets woken early (port freed) but also had
+                # a scheduled event based on predicted wait time
+                reason = event.data.get("reason", "")
+                if reason in ["recheck_gating", "recheck_after_arrival", "recheck_charge_attempt", "port_freed_early"]:
+                    current_state = self.truck_states.get(truck.truck_id, "")
+                    if current_state not in ["waiting_to_charge", "ready"]:
+                        if self.verbose:
+                            print(f"  Skipping stale TRUCK_READY for truck {truck.truck_id} (state: {current_state})")
+                        continue
                 
                 # Check if this is a charge completion event
                 reason = event.data.get("reason", "")
@@ -351,11 +358,28 @@ class EventDrivenTruckEnv(gym.Env):
                     
                     if not can_proceed:
                         # Update state to waiting_to_charge
-                        # DO NOT schedule another event - truck will be woken by wake_waiting_trucks
-                        # when a port becomes available
                         self.truck_states[truck.truck_id] = "waiting_to_charge"
-                        if self.verbose:
-                            print(f"  Truck {truck.truck_id} waiting for charge port at node {node}")
+                        
+                        # Only schedule recheck if we have a specific time
+                        # (first truck in waitlist with predicted wait time)
+                        # Otherwise, truck will be woken by wake_waiting_trucks
+                        if next_check_time is not None:
+                            heapq.heappush(
+                                self.event_queue,
+                                Event(
+                                    time=next_check_time,
+                                    event_type=EventType.TRUCK_READY,
+                                    truck_id=event.truck_id,
+                                    data={"reason": "recheck_gating"},
+                                ),
+                            )
+                            if self.verbose:
+                                print(f"  Truck {truck.truck_id} waiting for charge port at node {node}")
+                                print(f"    Will recheck at t={next_check_time:.2f}h")
+                        else:
+                            if self.verbose:
+                                print(f"  Truck {truck.truck_id} waiting for charge port at node {node}")
+                                print(f"    Will be woken when port becomes available")
                         continue
 
                 # Not at a charger or gating passed - truck is ready for decision
@@ -393,10 +417,26 @@ class EventDrivenTruckEnv(gym.Env):
                         
                         if not can_proceed:
                             # No free port - truck goes to waiting_to_charge state
-                            # Truck will be woken by wake_waiting_trucks when port becomes available
                             self.truck_states[truck.truck_id] = "waiting_to_charge"
-                            if self.verbose:
-                                print(f"  Truck {truck.truck_id} waiting for charge port at node {destination}")
+                            
+                            # Only schedule recheck if we have a specific time
+                            if next_check_time is not None:
+                                heapq.heappush(
+                                    self.event_queue,
+                                    Event(
+                                        time=next_check_time,
+                                        event_type=EventType.TRUCK_READY,
+                                        truck_id=truck.truck_id,
+                                        data={"reason": "recheck_after_arrival"},
+                                    ),
+                                )
+                                if self.verbose:
+                                    print(f"  Truck {truck.truck_id} waiting for charge port at node {destination}")
+                                    print(f"    Will recheck at t={next_check_time:.2f}h")
+                            else:
+                                if self.verbose:
+                                    print(f"  Truck {truck.truck_id} waiting for charge port at node {destination}")
+                                    print(f"    Will be woken when port becomes available")
                         else:
                             # Port available - schedule immediate TRUCK_READY
                             heapq.heappush(
@@ -419,9 +459,6 @@ class EventDrivenTruckEnv(gym.Env):
                                 data={"reason": "arrived_at_delivery"},
                             ),
                         )
-        
-        if iterations >= max_iterations:
-            raise RuntimeError(f"Event loop exceeded maximum iterations ({max_iterations}). Possible infinite loop.")
 
         # No more events - episode is over
         self.active_truck_id = None
@@ -673,10 +710,27 @@ class EventDrivenTruckEnv(gym.Env):
         
         if not can_proceed:
             # Truck wants to charge but no port available - go to waiting_to_charge state
-            # Truck will be woken by wake_waiting_trucks when port becomes available
             self.truck_states[truck.truck_id] = "waiting_to_charge"
-            if self.verbose:
-                print(f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state.")
+            
+            # Only schedule recheck if we have a specific time
+            if next_check_time is not None:
+                heapq.heappush(
+                    self.event_queue,
+                    Event(
+                        time=next_check_time,
+                        event_type=EventType.TRUCK_READY,
+                        truck_id=truck.truck_id,
+                        data={"reason": "recheck_charge_attempt"},
+                    ),
+                )
+                if self.verbose:
+                    print(f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state.")
+                    print(f"    Will recheck at t={next_check_time:.2f}h")
+            else:
+                if self.verbose:
+                    print(f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state.")
+                    print(f"    Will be woken when port becomes available")
+            
             # Small time penalty for attempting to charge when no port available
             return -0.01
 

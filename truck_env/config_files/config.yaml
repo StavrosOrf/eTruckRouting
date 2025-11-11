@@ -8,7 +8,7 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 15
+  num_trucks: 5
 
   # Number of delivery stops per truck episode
   num_stops: 3

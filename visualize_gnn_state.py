@@ -2,16 +2,19 @@
 Visualization script for GNN state representation.
 
 Creates visual plots of the GNN graph structure, showing:
-- Node types (Depots, Trucks, Deliveries, Chargers) and their features
+- Node types (Trucks, Deliveries, Chargers) and their features
 - Edge connections representing transportation network
 - Graph statistics and topology evolution
 - Feature distributions and correlations
 
-Multi-Depot GNN Design:
-- Nodes: Multiple depot nodes (one per unique truck starting position) + trucks + remaining deliveries + chargers
-- Edges: Truck↔Depot (energy, time) + Depot↔Location (energy, time) + Location↔Location (energy, time)
+Simplified GNN Design:
+- Nodes: Active trucks + undelivered deliveries + all chargers (NO depot nodes)
+- Edges: State-based truck connections + location-to-location connections
+  * READY trucks: connect to next delivery + feasible chargers
+  * ROUTING trucks: no edges (in transit)
+  * WAITING/CHARGING trucks: only to current charger
 - Edge Features: [energy_distance (kWh), time_to_traverse (hours)]
-- Dynamic: Graph shrinks as deliveries complete
+- Dynamic: Graph shrinks as deliveries complete and trucks finish
 """
 
 import sys
@@ -35,9 +38,10 @@ class GNNVisualizer:
     def __init__(self, figsize: Tuple[int, int] = (16, 12)):
         """Initialize visualizer with figure size."""
         self.figsize = figsize
-        self.node_type_names = {0: "Depot", 1: "Truck", 2: "Delivery", 3: "Charger"}
-        self.node_colors = {0: "#FFD700", 1: "#FF6B6B", 2: "#4ECDC4", 3: "#45B7D1"}
-        self.node_sizes = {0: 700, 1: 800, 2: 600, 3: 600}
+        # Updated for simplified GNN: Truck=0, Delivery=1, Charger=2 (no depot)
+        self.node_type_names = {0: "Truck", 1: "Delivery", 2: "Charger"}
+        self.node_colors = {0: "#FF6B6B", 1: "#4ECDC4", 2: "#45B7D1"}
+        self.node_sizes = {0: 800, 1: 600, 2: 600}
 
     def plot_graph_structure(self, data, env, title: str = "GNN Graph Structure"):
         """
@@ -71,15 +75,14 @@ class GNNVisualizer:
         return fig
 
     def _plot_edge_type_distribution(self, data, env, ax):
-        """Plot distribution of edge types in the multi-depot design."""
+        """Plot distribution of edge types in the simplified design."""
         edge_index = data.edge_index.cpu().numpy()
         node_types = self._extract_node_types(data, env)
 
-        # Count different edge types
+        # Count different edge types (Truck=0, Delivery=1, Charger=2)
         edge_counts = {
-            "Truck↔Depot": 0,
-            "Depot↔Delivery": 0,
-            "Depot↔Charger": 0,
+            "Truck↔Delivery": 0,
+            "Truck↔Charger": 0,
             "Charger↔Charger": 0,
             "Charger↔Delivery": 0,
             "Delivery↔Delivery": 0,
@@ -89,18 +92,16 @@ class GNNVisualizer:
             src_type = node_types[edge_index[0, i]]
             dst_type = node_types[edge_index[1, i]]
 
-            # Categorize edge
+            # Categorize edge (Truck=0, Delivery=1, Charger=2)
             if (src_type == 0 and dst_type == 1) or (src_type == 1 and dst_type == 0):
-                edge_counts["Truck↔Depot"] += 1
+                edge_counts["Truck↔Delivery"] += 1
             elif (src_type == 0 and dst_type == 2) or (src_type == 2 and dst_type == 0):
-                edge_counts["Depot↔Delivery"] += 1
-            elif (src_type == 0 and dst_type == 3) or (src_type == 3 and dst_type == 0):
-                edge_counts["Depot↔Charger"] += 1
-            elif src_type == 3 and dst_type == 3:
-                edge_counts["Charger↔Charger"] += 1
-            elif (src_type == 3 and dst_type == 2) or (src_type == 2 and dst_type == 3):
-                edge_counts["Charger↔Delivery"] += 1
+                edge_counts["Truck↔Charger"] += 1
             elif src_type == 2 and dst_type == 2:
+                edge_counts["Charger↔Charger"] += 1
+            elif (src_type == 2 and dst_type == 1) or (src_type == 1 and dst_type == 2):
+                edge_counts["Charger↔Delivery"] += 1
+            elif src_type == 1 and dst_type == 1:
                 edge_counts["Delivery↔Delivery"] += 1
 
         edge_types = list(edge_counts.keys())
@@ -110,18 +111,19 @@ class GNNVisualizer:
         ax.barh(edge_types, counts, color=colors_list, edgecolor="black", linewidth=1.5)
 
         ax.set_xlabel("Count", fontweight="bold")
-        ax.set_title("Edge Type Distribution (Multi-Depot Design)", fontweight="bold")
+        ax.set_title("Edge Type Distribution (Simplified Design)", fontweight="bold")
         ax.grid(axis="x", alpha=0.3)
 
         # Add value labels
         for i, (edge_type, count) in enumerate(zip(edge_types, counts)):
-            ax.text(
-                count + max(counts) * 0.01,
-                i,
-                str(count),
-                va="center",
-                fontweight="bold",
-            )
+            if count > 0:  # Only show non-zero counts
+                ax.text(
+                    count + max(counts + [1]) * 0.01,
+                    i,
+                    str(count),
+                    va="center",
+                    fontweight="bold",
+                )
 
     def _plot_networkx_layout(self, data, env, ax):
         """Plot graph using NetworkX layout."""
@@ -142,9 +144,9 @@ class GNNVisualizer:
             G, pos, ax=ax, edge_color="gray", alpha=0.3, arrowsize=15, width=1.5
         )
 
-        # Draw nodes by type
+        # Draw nodes by type (0=Truck, 1=Delivery, 2=Charger)
         node_types = self._extract_node_types(data, env)
-        for node_type in range(4):
+        for node_type in range(3):  # Only 3 types now
             nodes_of_type = [i for i in range(num_nodes) if node_types[i] == node_type]
             if nodes_of_type:
                 nx.draw_networkx_nodes(
@@ -260,7 +262,11 @@ class GNNVisualizer:
 
         # Correlation heatmap
         ax4 = axes[1, 1]
-        corr = np.corrcoef(x.T)
+        # Suppress warnings for features with zero variance
+        with np.errstate(divide='ignore', invalid='ignore'):
+            corr = np.corrcoef(x.T)
+            # Replace NaN values (from zero-variance features) with 0
+            corr = np.nan_to_num(corr, nan=0.0)
         im = ax4.imshow(corr, cmap="coolwarm", vmin=-1, vmax=1)
         ax4.set_xlabel("Feature Index", fontweight="bold")
         ax4.set_ylabel("Feature Index", fontweight="bold")
@@ -302,7 +308,7 @@ NODE TYPES BREAKDOWN
 ────────────────────
 """
 
-        for node_type in [0, 1, 2, 3]:
+        for node_type in [0, 1, 2]:  # Only 3 types now
             count = sum(1 for t in node_types if t == node_type)
             info_text += f"• {self.node_type_names[node_type]}: {count}\n"
 
@@ -358,12 +364,10 @@ ENVIRONMENT STATE
         # Check if node_list metadata is available
         if hasattr(data, 'node_list') and data.node_list is not None:
             for idx, (node_type, node_id) in enumerate(data.node_list):
-                if node_type == "depot":
-                    node_labels[idx] = f"D{node_id}"
-                elif node_type == "truck":
+                if node_type == "truck":
                     node_labels[idx] = f"T{node_id}"
                 elif node_type == "delivery":
-                    node_labels[idx] = f"Del{node_id}"
+                    node_labels[idx] = f"D{node_id}"
                 elif node_type == "charger":
                     node_labels[idx] = f"C{node_id}"
                 else:
@@ -443,14 +447,13 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         data_initial, env, title="Initial Graph Information"
     )
     figs.append(fig3)
-    output_dir = visualizer.save_figure(fig1, index=0)
+    output_dir = visualizer.save_figure(fig1, index=5)
     output_dir = visualizer.save_figure(fig2, index=-1)
     output_dir = visualizer.save_figure(fig3, index=-2)
 
-    input("Press Enter to continue... (initial state visualizations)")
-    
+    input("Press Enter to continue...")
     # Run steps and visualize
-    for step in range(1, num_steps + 1):
+    for step in range(1, 10):
         action = policy.get_action(env)
         if action is None:
             print("No valid action available")
@@ -465,11 +468,11 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
             data, env, title=f"GNN Graph State - Step {step}"
         )
         figs.append(fig)
-        output_dir = visualizer.save_figure(fig, index=step)
+        output_dir = visualizer.save_figure(fig, index=5)
         
         # Print some stats
         print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")
-        # input("Press Enter to continue...")
+        input("Press Enter to continue...")
 
         if done or truncated:
             print("Episode finished!")

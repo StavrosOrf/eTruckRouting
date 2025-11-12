@@ -4,19 +4,32 @@ GNN State Representation for Truck Routing Environment.
 This module provides PyTorch Geometric graph representations of the truck routing
 environment state, suitable for Graph Neural Network (GNN) agents.
 
-The graph is constructed as:
-- **Nodes**: Active Trucks + Remaining Delivery Nodes + All Charging Stations
-- **Edges**: 
-  - Truck ↔ Current Destination (delivery or charger) with energy_distance and time
-  - Charger ↔ Charger with energy_distance and time
-  - Charger ↔ Delivery with energy_distance and time
-  - Delivery ↔ Charger with energy_distance and time
-  - Delivery ↔ Delivery with energy_distance and time
+Simplified Graph Construction:
+- **Nodes**: 
+  - Active Trucks (current position, battery, state)
+  - Undelivered Delivery Nodes (position)
+  - All Charging Stations (position, occupancy, queue)
+  
+- **Edges** (only feasible connections based on truck state and battery):
+  - When truck is READY:
+    * Truck ↔ Next Delivery (if energy < current battery)
+    * Truck ↔ All Chargers (if energy < current battery)
+  - When truck is WAITING_TO_CHARGE or CHARGING:
+    * Truck ↔ Current Charger only
+  - When truck is ROUTING:
+    * Truck ↔ Destination (Charger or Delivery node being routed to)
+  - Charger ↔ Charger (always, if energy feasible)
+  - Charger ↔ Delivery (always, if energy feasible)
+  - Delivery ↔ Delivery (always, if energy feasible)
 
-Note: Complete and failed trucks are excluded from the graph.
+Note: 
+- No depot nodes
+- No padding - each node type has different number of features
+- Completed/failed trucks are excluded
+- Delivered nodes are excluded
+- Only feasible edges (energy < battery capacity)
 
-This enables GNNs to learn routing policies by reasoning over the spatial-temporal
-structure of the problem.
+This enables GNNs to learn routing policies by reasoning over feasible actions.
 """
 
 import torch
@@ -61,29 +74,19 @@ class GNNStateSpace:
         self.max_nodes_in_graph = max_nodes_in_graph
         self.device = device
 
-        # Node type constants
-        self.NODE_TYPE_DEPOT = 0
-        self.NODE_TYPE_TRUCK = 1
-        self.NODE_TYPE_DELIVERY = 2
-        self.NODE_TYPE_CHARGER = 3
+        # Node type constants (no depot)
+        self.NODE_TYPE_TRUCK = 0
+        self.NODE_TYPE_DELIVERY = 1
+        self.NODE_TYPE_CHARGER = 2
 
     def get_state_GNN(self, env) -> Data:
         """
         Convert environment state to PyTorch Geometric Data graph.
 
-        Graph Structure:
-        ================
-        Nodes:
-        - Depot (starting node): Starting location for all trucks
-        - All Trucks: Current position, battery, delivery progress
-        - All Delivery Nodes: Location (excluding already delivered)
-        - All Charging Stations: Location, occupancy, queue length
-
-        Edges (with weights):
-        - Truck → Depot: [energy_distance, time_to_traverse] to every delivery and charger
-        - Charger ↔ Charger: [energy_distance, time_to_traverse]
-        - Charger ↔ Delivery: [energy_distance, time_to_traverse]
-        - Delivery ↔ Charger: [energy_distance, time_to_traverse]
+        Simplified Graph Structure:
+        - Nodes: Trucks + Undelivered Deliveries + All Chargers
+        - Edges: Only feasible connections based on truck state and battery
+        - No padding: each node type has different feature dimensions
 
         Args:
             env: EventDrivenTruckEnv instance
@@ -95,121 +98,83 @@ class GNNStateSpace:
         # Build node list and features
         node_list = []
         node_features_list = []
-        node_index_map = {}  # node_idx -> (node_type, node_id)
         
-        # Track which delivery nodes have been delivered by any truck
+        # Track which delivery nodes have been delivered
         delivered_nodes: Set[int] = set()
         for truck in env.trucks:
-            # Get delivered deliveries (all except remaining)
             all_deliveries = set(truck.delivery_sequence[1:])  # Skip depot at index 0
             remaining_deliveries = set(truck.get_remaining_deliveries())
             delivered = all_deliveries - remaining_deliveries
             delivered_nodes.update(delivered)
 
-        # Get unique starting nodes and filter to only active depots
-        # A depot is active if at least one truck is:
-        # 1. Not complete AND not failed (still has potential to visit it)
-        # 2. Either at the depot, OR will return to it (considered as "pointing to it")
-        # 
-        # Key insight: If truck.current_node != starting_node, the truck has departed
-        # and is no longer "pointing to" this depot. Only trucks that are:
-        # - At the depot (current_node == starting_node), OR
-        # - Will eventually return to collect route_destination data pointing back
-        # should keep the depot alive in the graph.
-        #
-        # Simplest rule: Depot exists if at least one active truck is at it
-        unique_starting_nodes = {}  # starting_node_id -> depot_idx
+        # 1. Add all truck nodes (excluding failed and completed trucks)
+        truck_id_to_node_idx = {}  # truck_id -> node_idx
         
         for truck in env.trucks:
-            starting_node = truck.delivery_sequence[0]
-            
-            # Skip if truck is complete or failed
-            if truck.is_complete or truck.failed:
-                continue
-            
-            # Skip if we've already created this depot
-            if starting_node in unique_starting_nodes:
-                continue
-            
-            # Create depot node ONLY if this truck is still at the depot
-            # (not departed, even if might come back - that's handled by edges)
-            if truck.current_node == starting_node:
-                depot_idx = len(node_list)
-                unique_starting_nodes[starting_node] = depot_idx
-                node_list.append(("depot", starting_node))
-                node_features_list.append(self._get_depot_node_features(starting_node, env))
-
-        # 1. Add all truck nodes (excluding failed trucks)
-        truck_nodes_start = len(node_list)
-        truck_to_depot_idx = {}  # truck_id -> depot_idx0
-        truck_id_to_node_idx = {}  # truck_id -> node_idx (for mapping during edge creation)
-        
-        for truck in env.trucks:
-            # Skip failed and completed trucks - they should not appear in the graph
+            # Skip failed and completed trucks
             if truck.failed or truck.is_complete:
-                truck_to_depot_idx[truck.truck_id] = None
                 truck_id_to_node_idx[truck.truck_id] = None
                 continue
             
             node_idx = len(node_list)
-            node_index_map[node_idx] = ("truck", truck.truck_id)
-            node_list.append(("truck", truck.truck_id))
             truck_id_to_node_idx[truck.truck_id] = node_idx
+            node_list.append(("truck", truck.truck_id))
             
             features = self._get_truck_node_features(truck, env)
             node_features_list.append(features)
-            
-            # Map truck to its corresponding depot (if depot exists for this truck)
-            starting_node = truck.delivery_sequence[0]
-            if starting_node in unique_starting_nodes:
-                truck_to_depot_idx[truck.truck_id] = unique_starting_nodes[starting_node]
-            else:
-                # Depot not created because truck is complete/failed, so no mapping
-                truck_to_depot_idx[truck.truck_id] = None
 
-        truck_nodes_end = len(node_list)
-
-        # 2. Add all delivery nodes (excluding already delivered ones and from failed trucks)
-        delivery_nodes_start = len(node_list)
+        # 2. Add undelivered delivery nodes
         delivery_node_to_idx = {}  # delivery_node_id -> node_idx
         
-        # Collect all delivery nodes only from active (not failed, not complete) trucks
+        # Collect all delivery nodes from active trucks
         all_delivery_nodes = set()
         for truck in env.trucks:
-            # Skip failed and complete trucks - their deliveries shouldn't appear in graph
             if truck.failed or truck.is_complete:
                 continue
             all_delivery_nodes.update(truck.delivery_sequence[1:])  # Skip depot
         
+        # Add only undelivered nodes
         for delivery_node_id in sorted(all_delivery_nodes):
             if delivery_node_id not in delivered_nodes:
                 node_idx = len(node_list)
                 delivery_node_to_idx[delivery_node_id] = node_idx
-                node_index_map[node_idx] = ("delivery", delivery_node_id)
                 node_list.append(("delivery", delivery_node_id))
                 
                 features = self._get_delivery_node_features(delivery_node_id, env)
                 node_features_list.append(features)
 
-        delivery_nodes_end = len(node_list)
-
         # 3. Add all charging station nodes
-        charger_nodes_start = len(node_list)
         charger_node_to_idx = {}  # charger_node_id -> node_idx
         
         for charger_node_id in env.charging_nodes:
             node_idx = len(node_list)
             charger_node_to_idx[charger_node_id] = node_idx
-            node_index_map[node_idx] = ("charger", charger_node_id)
             node_list.append(("charger", charger_node_id))
             
             features = self._get_charger_node_features(charger_node_id, env)
             node_features_list.append(features)
 
-        charger_nodes_end = len(node_list)
-
         # Convert node features to tensor
-        x = torch.tensor(node_features_list, dtype=torch.float32, device=self.device)
+        # NOTE: PyTorch Geometric Data objects require uniform feature dimensions.
+        # We pad to max length but store node_list so GNN can identify node types
+        # and ignore padding. For truly heterogeneous features, use HeteroData instead.
+        # 
+        # Feature counts: Truck=13, Delivery=2, Charger=5
+        # Padding is added with zeros but node type (first feature) indicates meaningful features
+        
+        if node_features_list:
+            max_features = max(len(f) for f in node_features_list)
+            padded_features = []
+            for features in node_features_list:
+                padded = np.pad(features, (0, max_features - len(features)), 
+                               mode='constant', constant_values=0)
+                padded_features.append(padded)
+            # Convert to numpy array first to avoid warning
+            padded_features_array = np.array(padded_features, dtype=np.float32)
+            x = torch.tensor(padded_features_array, dtype=torch.float32, device=self.device)
+        else:
+            # No nodes in graph
+            x = torch.zeros((0, 13), dtype=torch.float32, device=self.device)
 
         # Get max truck battery capacity for feasibility checks
         max_battery_capacity = max(truck.battery_capacity for truck in env.trucks)
@@ -218,11 +183,8 @@ class GNNStateSpace:
         edge_index_list = []
         edge_features_list = []
 
-        # 4. Add edges: Truck ↔ Current Location (always connected to where it is)
-        # The truck is always at some node - this creates the edge to that node
-        # If truck is at the node, edge weight is 0 (no energy/time needed)
+        # 4. Add truck edges based on state
         for truck in env.trucks:
-            # Skip failed and completed trucks
             if truck.failed or truck.is_complete:
                 continue
             
@@ -231,56 +193,90 @@ class GNNStateSpace:
                 continue
             
             current_location = truck.current_node
-            location_idx = None
+            current_battery = truck.current_battery
             
-            # Find which node represents the current location
-            # Check if it's the depot
-            if current_location == truck.delivery_sequence[0]:
-                location_idx = truck_to_depot_idx[truck.truck_id]
-            # Check if it's a delivery node
-            elif current_location in delivery_node_to_idx:
-                location_idx = delivery_node_to_idx[current_location]
-            # Check if it's a charger node
-            elif current_location in charger_node_to_idx:
-                location_idx = charger_node_to_idx[current_location]
+            # Determine truck state
+            if truck.is_charging or truck.truck_id in env.charging_station.charger_waitlist.get(current_location, []):
+                # CHARGING or WAITING_TO_CHARGE: only connect to current charger
+                if current_location in charger_node_to_idx:
+                    charger_idx = charger_node_to_idx[current_location]
+                    # Bidirectional edge with 0 energy/time (at charger)
+                    edge_index_list.append([truck_idx, charger_idx])
+                    edge_features_list.append([0.0, 0.0])
+                    edge_index_list.append([charger_idx, truck_idx])
+                    edge_features_list.append([0.0, 0.0])
+                    
+            elif truck.route_destination is None:
+                # READY: connect to next delivery and all feasible chargers
+                
+                # Connect to next delivery (if exists and feasible)
+                next_delivery = truck.get_next_delivery_target()
+                if next_delivery is not None and next_delivery in delivery_node_to_idx:
+                    delivery_idx = delivery_node_to_idx[next_delivery]
+                    
+                    # Check if already at delivery location (0 energy/time)
+                    if next_delivery == current_location:
+                        energy, time = 0.0, 0.0
+                    else:
+                        energy = env.transport_graph.get_path_energy(current_location, next_delivery)
+                        time = env.transport_graph.get_time_distance(current_location, next_delivery)
+                    
+                    # Only add edge if energy is feasible (< current battery)
+                    if energy < current_battery and not np.isinf(energy):
+                        edge_index_list.append([truck_idx, delivery_idx])
+                        edge_features_list.append([energy, time])
+                        edge_index_list.append([delivery_idx, truck_idx])
+                        edge_features_list.append([energy, time])
+                
+                # Connect to all chargers (if feasible with current battery)
+                for charger_id, charger_idx in charger_node_to_idx.items():
+                    # Skip self-loop (truck already at this charger)
+                    if charger_id == current_location:
+                        # Add 0-weight edge to current location
+                        edge_index_list.append([truck_idx, charger_idx])
+                        edge_features_list.append([0.0, 0.0])
+                        edge_index_list.append([charger_idx, truck_idx])
+                        edge_features_list.append([0.0, 0.0])
+                        continue
+                    
+                    energy = env.transport_graph.get_path_energy(current_location, charger_id)
+                    time = env.transport_graph.get_time_distance(current_location, charger_id)
+                    
+                    # Only add edge if energy is feasible (< current battery)
+                    if energy < current_battery and not np.isinf(energy):
+                        edge_index_list.append([truck_idx, charger_idx])
+                        edge_features_list.append([energy, time])
+                        edge_index_list.append([charger_idx, truck_idx])
+                        edge_features_list.append([energy, time])
             
-            # Create bidirectional edge with 0 energy/time (truck is already there)
-            if location_idx is not None:
-                # Truck → Current Location (0 energy, 0 time - already there)
-                edge_index_list.append([truck_idx, location_idx])
-                edge_features_list.append([0.0, 0.0])
-                
-                # Current Location → Truck (0 energy, 0 time - already there)
-                edge_index_list.append([location_idx, truck_idx])
-                edge_features_list.append([0.0, 0.0])
+            else:
+                # ROUTING: connect only to destination node
+                if truck.route_destination is not None:
+                    destination = truck.route_destination
+                    
+                    # Check if destination is a delivery node
+                    if destination in delivery_node_to_idx:
+                        dest_idx = delivery_node_to_idx[destination]
+                        # Calculate remaining energy/time to destination
+                        time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
+                        # Estimate energy based on distance already covered
+                        total_energy = env.transport_graph.get_path_energy(truck.current_node, destination)
+                        # For simplicity, use 0 energy/time since truck is in transit
+                        edge_index_list.append([truck_idx, dest_idx])
+                        edge_features_list.append([0.0, time_remaining])
+                        edge_index_list.append([dest_idx, truck_idx])
+                        edge_features_list.append([0.0, time_remaining])
+                    
+                    # Check if destination is a charger node
+                    elif destination in charger_node_to_idx:
+                        dest_idx = charger_node_to_idx[destination]
+                        time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
+                        edge_index_list.append([truck_idx, dest_idx])
+                        edge_features_list.append([0.0, time_remaining])
+                        edge_index_list.append([dest_idx, truck_idx])
+                        edge_features_list.append([0.0, time_remaining])
 
-        # 5. Add edges: Depot → All Delivery Nodes (only outgoing from depot)
-        for depot_starting_node, depot_idx in unique_starting_nodes.items():
-            for delivery_id in delivery_node_to_idx.keys():
-                delivery_idx = delivery_node_to_idx[delivery_id]
-                
-                # Depot → Delivery (only outgoing)
-                energy_dist = env.transport_graph.get_path_energy(depot_starting_node, delivery_id)
-                time_to_traverse = env.transport_graph.get_time_distance(depot_starting_node, delivery_id)
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([depot_idx, delivery_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
-
-        # 6. Add edges: Depot → All Charger Nodes (only outgoing from depot)
-        for depot_starting_node, depot_idx in unique_starting_nodes.items():
-            for charger_id in env.charging_nodes:
-                if charger_id not in charger_node_to_idx:
-                    continue
-                charger_idx = charger_node_to_idx[charger_id]
-                
-                # Depot → Charger (only outgoing)
-                energy_dist = env.transport_graph.get_path_energy(depot_starting_node, charger_id)
-                time_to_traverse = env.transport_graph.get_time_distance(depot_starting_node, charger_id)
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([depot_idx, charger_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
-
-        # 7. Add edges between chargers (charger → charger)
+        # 5. Add edges between chargers (always bidirectional if feasible)
         for i, charger1_id in enumerate(env.charging_nodes):
             if charger1_id not in charger_node_to_idx:
                 continue
@@ -291,7 +287,6 @@ class GNNStateSpace:
                     continue
                 charger2_idx = charger_node_to_idx[charger2_id]
                 
-                # Add bidirectional edges
                 energy_dist = env.transport_graph.get_path_energy(charger1_id, charger2_id)
                 time_to_traverse = env.transport_graph.get_time_distance(charger1_id, charger2_id)
                 
@@ -302,7 +297,7 @@ class GNNStateSpace:
                     edge_index_list.append([charger2_idx, charger1_idx])
                     edge_features_list.append([energy_dist, time_to_traverse])
 
-                # 8. Add edges between chargers and deliveries (charger ↔ delivery)
+        # 6. Add edges between chargers and deliveries (bidirectional if feasible)
         for charger_id in env.charging_nodes:
             if charger_id not in charger_node_to_idx:
                 continue
@@ -327,7 +322,7 @@ class GNNStateSpace:
                     edge_index_list.append([delivery_idx, charger_idx])
                     edge_features_list.append([energy_dist, time_to_traverse])
 
-        # 9. Add edges between delivery nodes
+        # 7. Add edges between delivery nodes (bidirectional if feasible)
         delivery_ids = sorted(delivery_node_to_idx.keys())
         for i, delivery1_id in enumerate(delivery_ids):
             delivery1_idx = delivery_node_to_idx[delivery1_id]
@@ -335,7 +330,6 @@ class GNNStateSpace:
             for delivery2_id in delivery_ids[i+1:]:
                 delivery2_idx = delivery_node_to_idx[delivery2_id]
                 
-                # Bidirectional edges
                 energy_dist = env.transport_graph.get_path_energy(delivery1_id, delivery2_id)
                 time_to_traverse = env.transport_graph.get_time_distance(delivery1_id, delivery2_id)
                 
@@ -376,39 +370,12 @@ class GNNStateSpace:
         data.global_clock = torch.tensor([env.global_clock], device=self.device)
         data.num_trucks = torch.tensor([env.num_trucks], device=self.device)
         
-        # Store node information for visualization (node_type, node_id)
+        # Store node information for visualization
         data.node_list = node_list
 
         return data
 
     # ==================== Node Feature Functions ====================
-
-    def _get_depot_node_features(self, depot_node_id: int, env) -> list:
-        """
-        Get feature vector for a depot node.
-        
-        Features:
-        - Node type (0)
-        - Position (normalized)
-        - Padding features for consistency with truck nodes (13 total features)
-        """
-        num_nodes_norm = env.transport_graph.num_nodes
-        node_norm = depot_node_id / num_nodes_norm
-        return [
-            float(self.NODE_TYPE_DEPOT),  # Node type
-            node_norm,  # Position normalized
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding (13 features total)
-        ]
 
     def _get_truck_node_features(self, truck, env) -> list:
         """
@@ -473,82 +440,81 @@ class GNNStateSpace:
             time_to_destination,  # Time to destination (hours)
         ]
 
-    def _get_delivery_node_features(self, delivery_node_id: int, env) -> list:
+    def _get_delivery_node_features(self, node_id: int, env) -> np.ndarray:
         """
-        Get feature vector for a delivery node.
-        
+        Delivery node features (2 features total, no padding).
+
         Features:
-        - Node type (2)
-        - Position (normalized)
-        - Delivery priority / demand
-        - Assignment count (how many trucks have this in their list)
-        - Padding features for consistency with truck nodes (13 total features)
+        [0]: node_type (1 = delivery)
+        [1]: node_id (normalized by total number of nodes)
+
+        Args:
+            node_id: Delivery node ID
+            env: EventDrivenTruckEnv instance
+
+        Returns:
+            Feature vector (2 features)
         """
-        num_nodes_norm = env.transport_graph.num_nodes
-        node_norm = delivery_node_id / num_nodes_norm
-
-        # Count how many trucks have this delivery
-        assignment_count = sum(
-            1 for truck in env.trucks 
-            if delivery_node_id in truck.delivery_sequence
-        )
-
-        return [
-            float(self.NODE_TYPE_DELIVERY),  # Node type
-            node_norm,  # Position normalized
-            float(assignment_count),  # How many trucks need this delivery
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding (13 features total)
-        ]
-
-    def _get_charger_node_features(self, charger_node_id: int, env) -> list:
-        """
-        Get feature vector for a charging station node.
+        num_nodes = env.transport_graph.num_nodes
+        node_id_norm = node_id / num_nodes if num_nodes > 0 else 0.0
         
-        Features:
-        - Node type (3)
-        - Position (normalized)
-        - Occupancy rate
-        - Queue length (normalized)
-        - Charger type (Level2 vs DCFast)
-        - Padding features for consistency with truck nodes (13 total features)
-        """
-        num_nodes_norm = env.transport_graph.num_nodes
-        node_norm = charger_node_id / num_nodes_norm
-
-        occupancy = len(env.charging_station.charger_occupancy[charger_node_id])
-        capacity = env.charging_station.charger_capacity[charger_node_id]
-        occupancy_rate = occupancy / capacity if capacity > 0 else 0.0
-
-        queue_length = len(env.charging_station.charger_waitlist[charger_node_id])
-        queue_norm = min(queue_length / 5.0, 1.0)  # Normalize to 5 trucks max
-
-        charger_type = env.charging_station.charger_type[charger_node_id]
-        charger_type_id = 1.0 if charger_type == "DCFast" else 0.0
-
-        return [
-            float(self.NODE_TYPE_CHARGER),  # Node type
-            node_norm,  # Position normalized
-            occupancy_rate,  # Occupancy (0-1)
-            queue_norm,  # Queue length normalized
-            charger_type_id,  # Charger type (0=Level2, 1=DCFast)
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding
-            0.0,  # Padding (13 features total)
+        features = [
+            self.NODE_TYPE_DELIVERY,
+            node_id_norm,
         ]
+        
+        return np.array(features, dtype=np.float32)
+
+    def _get_charger_node_features(self, node_id: int, env) -> np.ndarray:
+        """
+        Charger node features (5 features total, no padding).
+
+        Features:
+        [0]: node_type (2 = charger)
+        [1]: node_id (normalized by total number of nodes)
+        [2]: charger_occupancy_rate (current_occupancy / capacity)
+        [3]: charger_queue_length (number of trucks waiting)
+        [4]: charger_type (Level2=0, Level3=1, DC_Fast=2)
+
+        Args:
+            node_id: Charger node ID
+            env: EventDrivenTruckEnv instance
+
+        Returns:
+            Feature vector (5 features)
+        """
+        num_nodes = env.transport_graph.num_nodes
+        node_id_norm = node_id / num_nodes if num_nodes > 0 else 0.0
+        
+        # Get charger info from environment
+        charger_capacity = env.charging_station.charger_capacity.get(node_id, 0)
+        charger_occupancy_list = env.charging_station.charger_occupancy.get(node_id, [])
+        charger_occupancy = len(charger_occupancy_list)  # Number of trucks currently charging
+        charger_queue = env.charging_station.charger_waitlist.get(node_id, [])
+        charger_type_str = env.charging_station.charger_type.get(node_id, "Level2")  # string
+        
+        # Normalize occupancy to [0, 1]
+        occupancy_rate = charger_occupancy / charger_capacity if charger_capacity > 0 else 0.0
+        queue_length = len(charger_queue)
+        
+        # Encode charger type as numeric value
+        # Map known charger types to numeric codes
+        charger_type_map = {
+            "Level2": 0.0,
+            "Level3": 1.0,
+            "DC_Fast": 2.0,
+        }
+        charger_type_encoded = charger_type_map.get(charger_type_str, 0.0)
+        
+        features = [
+            self.NODE_TYPE_CHARGER,
+            node_id_norm,
+            occupancy_rate,
+            queue_length,
+            charger_type_encoded,
+        ]
+        
+        return np.array(features, dtype=np.float32)
 
     # ==================== Edge Feature Functions ====================
 

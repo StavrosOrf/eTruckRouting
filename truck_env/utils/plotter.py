@@ -595,39 +595,75 @@ class EnvironmentPlotter:
                 ax.fill_between(times, occupancy, occupancy + waitlist, alpha=0.4, 
                                color='#F24236', label='Waiting in Queue', step='post', linewidth=0)
                 
-                # Plot lines on top of areas
-                ax.plot(times, occupancy, color='#1A5276', linewidth=2.5, 
-                       label='Charging Trucks', marker='o', markersize=3, markevery=max(1, len(times)//20))
-                ax.plot(times, occupancy + waitlist, color='#A93226', linewidth=2.5, 
-                       linestyle='--', label='Total Trucks (Charging + Waiting)', 
-                       marker='s', markersize=3, markevery=max(1, len(times)//20))
+                # Plot step lines on top of areas
+                ax.step(times, occupancy, where='post', color='#1A5276', linewidth=2.5, 
+                       label='Charging Trucks')
+                ax.step(times, occupancy + waitlist, where='post', color='#A93226', linewidth=2.5, 
+                       linestyle='--', label='Total Trucks (Charging + Waiting)')
                 
                 # Capacity line
                 ax.axhline(y=capacity, color='#27AE60', linestyle=':', linewidth=3, 
                           label=f'Capacity Limit ({capacity})', zorder=10)
                 
-                # Add event markers on a separate axis below
-                event_y = -0.15 * (max(capacity, max_occupancy + max_waitlist) + 1)
+                # Add event markers as triangles pointing at event times
+                # Use different colors for different event types, avoid overlapping labels
+                y_max = max(capacity + 1, max_occupancy + max_waitlist + 1)
+                
+                # Event styling - all triangles with different colors and orientations
                 event_colors = {'arrive': '#FF6B35', 'start': '#004E89', 'finish': '#9B59B6'}
-                event_markers = {'arrive': '^', 'start': 'o', 'finish': 'v'}
-                event_labels = {'arrive': '▲ Truck Arrives', 'start': '● Charging Starts', 
+                event_markers = {'arrive': '^', 'start': '^', 'finish': 'v'}  # All triangles
+                event_labels = {'arrive': '▲ Truck Arrives', 'start': '▲ Charging Starts', 
                                'finish': '▼ Charging Ends'}
-                event_sizes = {'arrive': 120, 'start': 100, 'finish': 120}
+                event_y_positions = {'arrive': -0.12 * y_max, 'start': -0.24 * y_max, 'finish': -0.12 * y_max}
+                
+                # Group events by time to handle overlaps
+                events_by_time = {}
+                for event_time, truck_id, event_type in truck_events:
+                    if event_time not in events_by_time:
+                        events_by_time[event_time] = []
+                    events_by_time[event_time].append((truck_id, event_type))
                 
                 plotted_events = set()
-                for event_time, truck_id, event_type in truck_events:
-                    label = event_labels[event_type] if event_type not in plotted_events else None
-                    ax.scatter(event_time, event_y, c=event_colors[event_type], 
-                             marker=event_markers[event_type], s=event_sizes[event_type], 
-                             label=label, zorder=20, edgecolors='black', linewidths=1.0, alpha=0.8)
+                for event_time, events_at_time in events_by_time.items():
+                    # Sort events at this time by type (arrive, start, finish)
+                    type_order = {'arrive': 0, 'start': 1, 'finish': 2}
+                    events_at_time.sort(key=lambda x: type_order[x[1]])
                     
-                    # Add truck ID annotation below the event marker
-                    ax.text(event_time, event_y * 1.4, f'T{truck_id}', 
-                           ha='center', va='top', fontsize=7, fontweight='bold',
-                           color='black', bbox=dict(boxstyle='round,pad=0.3', 
-                                                    facecolor='white', alpha=0.7, 
-                                                    edgecolor='none'))
-                    plotted_events.add(event_type)
+                    for offset_idx, (truck_id, event_type) in enumerate(events_at_time):
+                        label = event_labels[event_type] if event_type not in plotted_events else None
+                        
+                        # Get base y position for this event type
+                        y_pos = event_y_positions[event_type]
+                        
+                        # Add small horizontal offset if multiple events at same time
+                        time_offset = 0
+                        if len(events_at_time) > 1:
+                            # Spread events horizontally to avoid overlap
+                            spread = min(0.3, final_time * 0.01)  # Max 0.3 hours or 1% of total time
+                            time_offset = (offset_idx - len(events_at_time)/2 + 0.5) * spread
+                        
+                        # Plot triangle marker
+                        ax.scatter(event_time + time_offset, y_pos, 
+                                 c=event_colors[event_type], 
+                                 marker=event_markers[event_type], 
+                                 s=150, label=label, zorder=20, 
+                                 edgecolors='black', linewidths=1.2, alpha=0.9)
+                        
+                        # Add truck ID annotation - position based on event type to avoid overlap
+                        if event_type in ['arrive', 'start']:
+                            text_y = y_pos - 0.06 * y_max
+                            va = 'top'
+                        else:  # finish
+                            text_y = y_pos + 0.06 * y_max
+                            va = 'bottom'
+                        
+                        ax.text(event_time + time_offset, text_y, f'T{truck_id}', 
+                               ha='center', va=va, fontsize=8, fontweight='bold',
+                               color='black', 
+                               bbox=dict(boxstyle='round,pad=0.2', 
+                                       facecolor='white', alpha=0.8, 
+                                       edgecolor=event_colors[event_type], linewidth=1.5))
+                        plotted_events.add(event_type)
                 
                 # Styling
                 ax.set_xlabel('Simulation Time (hours)', fontsize=11, fontweight='bold')
@@ -649,8 +685,7 @@ class EnvironmentPlotter:
                 
                 # Set limits with padding (extra space below for truck ID labels)
                 ax.set_xlim(-1, final_time + 1)
-                y_max = max(capacity + 1, max_occupancy + max_waitlist + 1)
-                ax.set_ylim(event_y * 1.8, y_max * 1.1)  # Extra space for truck labels
+                ax.set_ylim(-0.35 * y_max, y_max * 1.1)  # Extra space for event markers and truck labels
                 
                 # Add horizontal grid lines at integer values
                 ax.set_yticks(range(0, int(y_max) + 1))

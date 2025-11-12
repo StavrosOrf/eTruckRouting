@@ -61,30 +61,47 @@ def create_truck(
             exclude_charging_nodes=True,
         )
         ok = True
-        prev_node = start_node
-        for node in delivery_sequence[1:]:
-            node = int(node)
-            # Energy from prev_node to this delivery
-            e_to_delivery = transport_graph.get_path_energy(prev_node, node)
-            if e_to_delivery == float('inf'):
+        
+        # Check feasibility: each delivery must be reachable from MOST chargers
+        # This ensures trucks won't get stranded at chargers unable to reach next delivery
+        for delivery_node in delivery_sequence[1:]:
+            delivery_node = int(delivery_node)
+            
+            # Find nearest charger to this delivery
+            nearest_charger, e_from_delivery_to_charger = transport_graph.get_nearest_charging_node(delivery_node)
+            if nearest_charger is None or e_from_delivery_to_charger == float('inf'):
                 ok = False
                 break
-            nearest, e_from_delivery_to_charger = transport_graph.get_nearest_charging_node(node)
-            if nearest is None or e_from_delivery_to_charger == float('inf'):
+            
+            # Count how many chargers can reach this delivery within battery capacity
+            reachable_from_count = 0
+            total_chargers = len(charging_nodes)
+            
+            # Check from start node
+            e_from_start = transport_graph.get_path_energy(start_node, delivery_node)
+            if e_from_start != float('inf') and e_from_start + e_from_delivery_to_charger <= battery_capacity:
+                reachable_from_count += 1
+            
+            # Check from each charger node
+            for charger_node in charging_nodes:
+                e_from_charger = transport_graph.get_path_energy(charger_node, delivery_node)
+                if e_from_charger != float('inf'):
+                    total_required = e_from_charger + e_from_delivery_to_charger
+                    if total_required <= battery_capacity + 1e-6:
+                        reachable_from_count += 1
+            
+            # Require that delivery is reachable from at least 30% of chargers (or at least 2 chargers)
+            min_required = max(2, int(total_chargers * 0.3))
+            if reachable_from_count < min_required:
                 ok = False
                 break
-            total_required = e_to_delivery + e_from_delivery_to_charger
-            if total_required > battery_capacity + 1e-6:
-                # This delivery violates guarantee (cannot start full and reach delivery + charger)
-                ok = False
-                break
-            prev_node = node
+        
         if ok:
             break
     else:
         raise ValueError(
-            "Failed to generate a delivery sequence where each leg (prev->delivery->nearest charger) fits battery capacity after "
-            f"{max_tries} attempts. Consider increasing battery_capacity or adjusting hop distance constraints."
+            "Failed to generate a delivery sequence where each delivery is reachable from most chargers "
+            f"after {max_tries} attempts. Consider increasing battery_capacity or adjusting hop distance constraints."
         )
 
     # Get truck specifications (single type)

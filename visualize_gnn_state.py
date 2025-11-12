@@ -276,6 +276,219 @@ class GNNVisualizer:
         plt.tight_layout()
         return fig
 
+    def plot_action_graph(self, data, env, title: str = "Action Graph - Feasible Actions"):
+        """
+        Plot action-centric view showing each truck and its feasible actions.
+        
+        Creates subplots for each active truck showing:
+        - Truck at center
+        - Next delivery node (if exists)
+        - All reachable chargers with current battery
+        - Edge weights showing energy/time costs
+        
+        Args:
+            data: PyTorch Geometric Data object
+            env: EventDrivenTruckEnv instance
+            title: Title for the plot
+        """
+        # Count active trucks
+        active_trucks = [t for t in env.trucks if not t.failed and not t.is_complete]
+        num_trucks = len(active_trucks)
+        
+        if num_trucks == 0:
+            print("No active trucks to visualize")
+            return None
+        
+        # Create subplots - one per truck
+        ncols = min(2, num_trucks)
+        nrows = (num_trucks + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(8 * ncols, 8 * nrows))
+        fig.suptitle(title, fontsize=16, fontweight="bold")
+        
+        # Ensure axes is always a list
+        if num_trucks == 1:
+            axes = [axes]
+        elif nrows == 1:
+            axes = list(axes)
+        else:
+            axes = axes.flatten()
+        
+        # Plot each truck's action graph
+        for truck_idx, truck in enumerate(active_trucks):
+            ax = axes[truck_idx]
+            self._plot_single_truck_action_graph(truck, env, data, ax)
+        
+        # Hide unused subplots
+        for idx in range(num_trucks, len(axes)):
+            axes[idx].axis('off')
+        
+        plt.tight_layout()
+        return fig
+    
+    def _plot_single_truck_action_graph(self, truck, env, data, ax):
+        """Plot action graph for a single truck."""
+        G = nx.DiGraph()
+        pos = {}
+        node_colors = []
+        node_sizes = []
+        node_labels = {}
+        
+        # Central node: truck
+        truck_node = f"T{truck.truck_id}"
+        G.add_node(truck_node)
+        pos[truck_node] = (0, 0)  # Center position
+        node_colors.append(self.node_colors[0])  # Truck color
+        node_sizes.append(1200)
+        node_labels[truck_node] = f"Truck {truck.truck_id}\n{truck.current_battery:.0f}kWh\n({truck.get_battery_percentage():.0f}%)"
+        
+        current_battery = truck.current_battery
+        current_location = truck.current_node
+        
+        # Determine truck state
+        is_charging = truck.is_charging
+        is_waiting = truck.truck_id in env.charging_station.charger_waitlist.get(current_location, [])
+        is_routing = truck.route_destination is not None
+        
+        if is_charging:
+            state_str = "CHARGING"
+        elif is_waiting:
+            state_str = "WAITING"
+        elif is_routing:
+            state_str = f"ROUTING→{truck.route_destination}"
+        else:
+            state_str = "READY"
+        
+        # Add edges and nodes based on state
+        edge_labels = {}
+        angle_step = 360 / max(1, (1 + len(env.charging_nodes)))  # Distribute nodes in circle
+        angle = 0
+        
+        if is_charging or is_waiting:
+            # Show only current charger
+            charger_node = f"C{current_location}"
+            G.add_node(charger_node)
+            angle_rad = np.radians(angle)
+            pos[charger_node] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
+            node_colors.append(self.node_colors[2])  # Charger color
+            node_sizes.append(800)
+            node_labels[charger_node] = f"Charger\n{current_location}\n(current)"
+            
+            G.add_edge(truck_node, charger_node)
+            edge_labels[(truck_node, charger_node)] = "0 kWh\n0.0 h"
+            
+        elif is_routing:
+            # Show destination
+            dest_node = truck.route_destination
+            dest_node_name = f"D{dest_node}" if dest_node not in env.charging_nodes else f"C{dest_node}"
+            G.add_node(dest_node_name)
+            angle_rad = np.radians(angle)
+            pos[dest_node_name] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
+            
+            if dest_node in env.charging_nodes:
+                node_colors.append(self.node_colors[2])  # Charger
+                node_labels[dest_node_name] = f"Charger\n{dest_node}\n(dest)"
+            else:
+                node_colors.append(self.node_colors[1])  # Delivery
+                node_labels[dest_node_name] = f"Delivery\n{dest_node}\n(dest)"
+            
+            node_sizes.append(800)
+            time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
+            G.add_edge(truck_node, dest_node_name)
+            edge_labels[(truck_node, dest_node_name)] = f"0 kWh\n{time_remaining:.1f} h"
+            
+        else:
+            # READY: show next delivery + reachable chargers
+            next_delivery = truck.get_next_delivery_target()
+            
+            # Add next delivery
+            if next_delivery is not None:
+                delivery_node = f"D{next_delivery}"
+                G.add_node(delivery_node)
+                angle_rad = np.radians(angle)
+                pos[delivery_node] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
+                node_colors.append(self.node_colors[1])  # Delivery color
+                node_sizes.append(900)
+                
+                if next_delivery == current_location:
+                    energy, time = 0.0, 0.0
+                    node_labels[delivery_node] = f"Next Delivery\n{next_delivery}\n(here)"
+                else:
+                    energy = env.transport_graph.get_path_energy(current_location, next_delivery)
+                    time = env.transport_graph.get_time_distance(current_location, next_delivery)
+                    node_labels[delivery_node] = f"Next Delivery\n{next_delivery}"
+                
+                if energy < current_battery:
+                    G.add_edge(truck_node, delivery_node)
+                    edge_labels[(truck_node, delivery_node)] = f"{energy:.0f} kWh\n{time:.1f} h"
+                else:
+                    node_labels[delivery_node] += "\n⚠️ NO ENERGY"
+                
+                angle += angle_step
+            
+            # Add reachable chargers
+            reachable_chargers = []
+            for charger_id in env.charging_nodes:
+                if charger_id == current_location:
+                    energy, time = 0.0, 0.0
+                else:
+                    energy = env.transport_graph.get_path_energy(current_location, charger_id)
+                    time = env.transport_graph.get_time_distance(current_location, charger_id)
+                
+                if energy < current_battery and not np.isinf(energy):
+                    reachable_chargers.append((charger_id, energy, time))
+            
+            # Sort by energy (closest first) and take top 10
+            reachable_chargers.sort(key=lambda x: x[1])
+            for charger_id, energy, time in reachable_chargers[:10]:
+                charger_node = f"C{charger_id}"
+                G.add_node(charger_node)
+                angle_rad = np.radians(angle)
+                pos[charger_node] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
+                node_colors.append(self.node_colors[2])  # Charger color
+                node_sizes.append(600)
+                
+                # Get charger info
+                occupancy = len(env.charging_station.charger_occupancy.get(charger_id, []))
+                capacity = env.charging_station.charger_capacity.get(charger_id, 0)
+                queue = len(env.charging_station.charger_waitlist.get(charger_id, []))
+                
+                if charger_id == current_location:
+                    node_labels[charger_node] = f"Charger {charger_id}\n(here)\n{occupancy}/{capacity}"
+                else:
+                    node_labels[charger_node] = f"C{charger_id}\n{occupancy}/{capacity}"
+                    if queue > 0:
+                        node_labels[charger_node] += f"\nQ:{queue}"
+                
+                G.add_edge(truck_node, charger_node)
+                edge_labels[(truck_node, charger_node)] = f"{energy:.0f} kWh\n{time:.1f} h"
+                
+                angle += angle_step
+        
+        # Draw the graph
+        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, ax=ax)
+        nx.draw_networkx_labels(G, pos, labels=node_labels, ax=ax, font_size=8, font_weight="bold")
+        nx.draw_networkx_edges(G, pos, ax=ax, edge_color="gray", arrows=True, 
+                              arrowsize=20, arrowstyle='->', width=2, connectionstyle="arc3,rad=0.1")
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, ax=ax, font_size=7)
+        
+        # Set title with truck info
+        ax.set_title(
+            f"Truck {truck.truck_id} - {state_str}\n"
+            f"Location: {current_location} | Battery: {current_battery:.0f}/{truck.battery_capacity:.0f} kWh | "
+            f"Deliveries: {truck.current_sequence_index}/{len(truck.delivery_sequence)-1}",
+            fontweight="bold",
+            fontsize=10
+        )
+        ax.axis('off')
+        
+        # Add legend
+        legend_elements = [
+            mpatches.Patch(color=self.node_colors[0], label='Truck'),
+            mpatches.Patch(color=self.node_colors[1], label='Delivery'),
+            mpatches.Patch(color=self.node_colors[2], label='Charger'),
+        ]
+        ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+
     def plot_graph_info_text(self, data, env, title: str = "Graph Information"):
         """
         Create a text-based information plot.
@@ -447,9 +660,25 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         data_initial, env, title="Initial Graph Information"
     )
     figs.append(fig3)
+    
+    fig4 = visualizer.plot_action_graph(
+        data_initial, env, title="Initial Action Graph - Feasible Actions"
+    )
+    if fig4 is not None:
+        figs.append(fig4)
+    
     output_dir = visualizer.save_figure(fig1, index=5)
     output_dir = visualizer.save_figure(fig2, index=-1)
     output_dir = visualizer.save_figure(fig3, index=-2)
+    if fig4 is not None:
+        output_dir = visualizer.save_figure(fig4, index=-3)
+    
+    # Close figures to free memory
+    plt.close(fig1)
+    plt.close(fig2)
+    plt.close(fig3)
+    if fig4 is not None:
+        plt.close(fig4)
 
     input("Press Enter to continue...")
     # Run steps and visualize
@@ -469,6 +698,18 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         )
         figs.append(fig)
         output_dir = visualizer.save_figure(fig, index=5)
+        
+        # Also generate action graph
+        fig_action = visualizer.plot_action_graph(
+            data, env, title=f"Action Graph - Step {step}"
+        )
+        if fig_action is not None:
+            figs.append(fig_action)
+            output_dir = visualizer.save_figure(fig_action, index=5 + step + 100)
+            plt.close(fig_action)
+        
+        # Close main figure to free memory
+        plt.close(fig)
         
         # Print some stats
         print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")

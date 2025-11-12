@@ -53,7 +53,7 @@ class EventDrivenTruckEnv(gym.Env):
     - TRUCK_ROUTING: Truck arrival at node (delivery or charger)
     """
 
-    metadata = {"render_modes": ["human"]}
+    # metadata = {"render_modes": ["human"]}
 
     def __init__(
         self,
@@ -298,6 +298,7 @@ class EventDrivenTruckEnv(gym.Env):
                 # Safety check: skip if truck is already complete or failed
                 if truck.is_complete or truck.failed:
                     if self.verbose:
+                        raise ValueError("Truck is already complete or failed")
                         status = "complete" if truck.is_complete else "failed"
                         print(f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})")
                     continue
@@ -316,10 +317,11 @@ class EventDrivenTruckEnv(gym.Env):
                 # Check if this is a charge completion event
                 reason = event.data.get("reason", "")
                 if reason == "charge_complete":
-                    charger_node = event.data.get("charger_node", int(truck.current_node))
-                    charge_amount = event.data.get("charge_amount", 0)
-                    charge_duration = event.data.get("charge_duration", 0)
-                    
+                                        
+                    charger_node = event.data['charger_node']
+                    charge_amount = event.data['charge_amount']
+                    charge_duration = event.data['charge_duration']
+
                     # Complete charging for the truck (update battery)
                     truck.finish_charging(
                         charge_amount=charge_amount,
@@ -486,6 +488,7 @@ class EventDrivenTruckEnv(gym.Env):
         if self.verbose:
             print(f"\n{'='*80}")
             print(f"STEP at t={self.global_clock:.2f}h - Truck {self.active_truck_id}")
+            print(f"Current Node: {truck.current_node}, SoC: {truck.get_battery_percentage():.1f}%")
             print(f"Action: {self._action_to_string(action)} ({action})")
             print(f"Event Queue: {self.event_queue}")
             print(f"{'='*80}")

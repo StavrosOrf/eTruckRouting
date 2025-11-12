@@ -81,8 +81,26 @@ class HeuristicPolicy:
     def get_action(self, env) -> int:
         """Return best action index for current state.
 
+        Args:
+            env: The environment instance (NOT the observation array)
+
         Delegates to the unified decision maker and logs the decision.
+        
+        Note: This policy requires the full environment object, not just the observation.
         """
+        # Defensive check to ensure we received an environment, not an observation
+        if isinstance(env, np.ndarray):
+            raise TypeError(
+                "HeuristicPolicy.get_action() expects the environment object, not the observation array.\n"
+                "Usage: action = policy.get_action(env)  # NOT policy.get_action(obs)"
+            )
+        
+        if not hasattr(env, 'active_truck_id'):
+            raise TypeError(
+                f"HeuristicPolicy.get_action() expects an environment object with 'active_truck_id' attribute.\n"
+                f"Received object of type: {type(env).__name__}"
+            )
+        
         action, explanation = self._decide_action(env)
         truck_id = env.active_truck_id
         if truck_id is not None:

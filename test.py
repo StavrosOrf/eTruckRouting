@@ -31,14 +31,14 @@ def evaluate_env(seed: int = 42):
         # action = 20  
         # Use heuristic policy to get action
         
-        # action = policy.get_action(obs)
+        action = policy.get_action(env)  # Pass env, not obs
         obs, reward, done, truncated, info = env.step(action)
         total_reward += reward
         total_steps += 1
 
         print("\n--- Step Result ---")
         print(f"action taken: {action}")
-        print("Observation:", obs)
+        # print("Observation:", obs)
         print("Reward:", reward)
         print("Done:", done, " | Truncated:", truncated)
         # input("Press Enter to continue...")

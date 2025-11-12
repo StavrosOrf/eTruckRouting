@@ -206,9 +206,10 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-/visualizations/
-/results/
+visualizations/
+results/
 uv.lock
 /truck_env/data/vis_data/
 truck_env/models/event_driven_env.py
 gnn_plots/
+wandb/

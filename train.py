@@ -253,20 +253,45 @@ def train(args):
         
         # Select action
         if t < args.start_timesteps:
-            # Random action for initial exploration
+            # Random action for initial exploration (use legacy integer format)
             action = env.action_space.sample()
         else:
-            # Select action with exploration noise
-            raw_action = policy.select_action(gnn_state, expl_noise=args.expl_noise)
-            # Map node index to valid action (clip to action space)
-            action = int(raw_action) % env.action_space.n
+            # Select action with exploration noise (returns tuple format from GNN)
+            action = policy.select_action(gnn_state, expl_noise=args.expl_noise)
+            # action is now a tuple: (node_id, charging_duration, is_charging)
         
-        # Perform action
+        # Perform action (env.step handles both integer and tuple formats)
         next_obs, reward, done, truncated, info = env.step(action)
         next_gnn_state = gnn_state_space.get_state_GNN(env)
         
         # Store transition in replay buffer
-        replay_buffer.add(gnn_state, action, next_gnn_state, reward, float(done))
+        # For tuple actions, replay buffer expects (action_idx, charging_duration)
+        if isinstance(action, tuple):
+            node_id, charging_duration, is_charging = action
+            # We need to convert back to action_idx for storage
+            # The replay buffer and training use action indices internally
+            # Get action_idx from the state's action_to_node_map
+            if hasattr(gnn_state, 'action_to_node_map'):
+                # Find which action index corresponds to this (node_id, is_charging) pair
+                action_idx = None
+                for idx, (mapped_node, mapped_is_charging) in enumerate(gnn_state.action_to_node_map):
+                    if mapped_node == node_id and mapped_is_charging == is_charging:
+                        action_idx = idx
+                        break
+                
+                if action_idx is None:
+                    # Fallback: shouldn't happen but handle gracefully
+                    action_idx = 0
+                    if args.verbose:
+                        print(f"Warning: Could not find action_idx for (node={node_id}, is_charging={is_charging})")
+                
+                replay_buffer.add(gnn_state, (action_idx, charging_duration), next_gnn_state, reward, float(done))
+            else:
+                # Fallback for states without action_to_node_map
+                replay_buffer.add(gnn_state, (0, charging_duration), next_gnn_state, reward, float(done))
+        else:
+            # Legacy integer action
+            replay_buffer.add(gnn_state, action, next_gnn_state, reward, float(done))
         
         gnn_state = next_gnn_state
         episode_reward += reward

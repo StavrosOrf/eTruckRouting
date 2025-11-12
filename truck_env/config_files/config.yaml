@@ -59,7 +59,7 @@ rewards:
   time_multiplier: 1.0
 
   # Bonus for completing all deliveries
-  completion_bonus: 1000.0
+  delivery_bonus: 1000.0
 
   # Penalty for battery failure
   failure_penalty: -1000.0

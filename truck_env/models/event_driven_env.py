@@ -525,15 +525,20 @@ class EventDrivenTruckEnv(gym.Env):
         # No more events - episode is over
         self.active_truck_id = None
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: Union[int, Tuple[int, float, bool]]) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
         Execute one step for the active truck.
 
         Args:
-            action: Discrete action for the active truck
-                    - 0 to num_charging_nodes-1: Go to charging station
-                    - num_charging_nodes: Go to next delivery
-                    - num_charging_nodes+1 to end: Charge for 1-4 hours at current location
+            action: Action for the active truck. Can be either:
+                    - Integer (legacy format): 
+                      * 0 to num_charging_nodes-1: Go to charging station
+                      * num_charging_nodes: Go to next delivery
+                      * num_charging_nodes+1 to end: Charge for 1-4 hours at current location
+                    - Tuple (new GNN format): (node_id, charging_duration, is_charging)
+                      * node_id: Target node to navigate to or charge at
+                      * charging_duration: Hours to charge (only used if is_charging=True)
+                      * is_charging: Whether this is a charging action
 
         Returns:
             observation, reward, terminated, truncated, info
@@ -544,6 +549,15 @@ class EventDrivenTruckEnv(gym.Env):
 
         truck = self.trucks[self.active_truck_id]
         reward = 0.0
+        
+        # Decode action format
+        if isinstance(action, tuple):
+            # New GNN format: (node_id, charging_duration, is_charging)
+            node_id, charging_duration, is_charging = action
+            action_str = f"{'CHARGE' if is_charging else 'ROUTE'} at node {node_id}, charge={charging_duration:.2f}h"
+        else:
+            # Legacy integer format
+            action_str = self._action_to_string(action)
 
         if self.verbose:
             print(f"\n{'='*80}")
@@ -551,7 +565,7 @@ class EventDrivenTruckEnv(gym.Env):
             print(
                 f"Current Node: {truck.current_node}, SoC: {truck.get_battery_percentage():.1f}%"
             )
-            print(f"Action: {self._action_to_string(action)} ({action})")
+            print(f"Action: {action_str}")
             print(f"Event Queue: {self.event_queue}")
             print(f"{'='*80}")
 
@@ -562,16 +576,27 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  Adding waiting penalty from queue: {self.waiting_penalty_buffer:.2f}")
             self.waiting_penalty_buffer = 0.0  # Clear the buffer
 
-        # Decode and execute action
-        if action < self.num_navigation_actions:
-            # Navigation action
-            reward += self._execute_navigation_action(truck, action)
+        # Execute action based on format
+        if isinstance(action, tuple):
+            # New GNN format
+            node_id, charging_duration, is_charging = action
+            if is_charging:
+                # Charging action at specified node
+                reward += self._execute_charge_action_gnn(truck, node_id, charging_duration)
+            else:
+                # Navigation action to specified node
+                reward += self._execute_navigation_action_gnn(truck, node_id)
         else:
-            # Charging action
-            charge_idx = action - self.num_navigation_actions
-            charge_durations = self.charging_config["charge_durations"]
-            charge_hours = charge_durations[charge_idx]
-            reward += self._execute_charge_action(truck, charge_hours)
+            # Legacy integer format
+            if action < self.num_navigation_actions:
+                # Navigation action
+                reward += self._execute_navigation_action(truck, action)
+            else:
+                # Charging action
+                charge_idx = action - self.num_navigation_actions
+                charge_durations = self.charging_config["charge_durations"]
+                charge_hours = charge_durations[charge_idx]
+                reward += self._execute_charge_action(truck, charge_hours)
 
         # Accumulate reward
         self.episode_reward += reward
@@ -884,6 +909,233 @@ class EventDrivenTruckEnv(gym.Env):
         # Calculate reward (penalty for time spent charging only, no queue penalty)
         # charge_penalty = -charge_hours * self.reward_config["charge_penalty"]
         return -charge_hours
+
+    def _execute_navigation_action_gnn(self, truck: Truck, target_node: int) -> float:
+        """
+        Execute navigation action from GNN agent (new format).
+        
+        Args:
+            truck: Truck to execute action for
+            target_node: Node ID to navigate to
+            
+        Returns:
+            Reward for this action
+        """
+        # Convert to int if needed
+        if hasattr(target_node, "item"):
+            target_node = int(target_node.item())
+        else:
+            target_node = int(target_node)
+        
+        current_node = int(truck.current_node)
+        
+        # Check if already at target
+        if current_node == target_node:
+            if self.verbose:
+                print(f"  Already at target node {target_node}")
+            # If at a charger, default to charging for 1 hour
+            if target_node in self.charging_nodes:
+                return self._execute_charge_action_gnn(truck, target_node, 1.0)
+            else:
+                # At delivery - just return small penalty for wasted action
+                return -0.01
+        
+        # Calculate energy and time for the trip
+        energy_used = self.transport_graph.get_path_energy(current_node, target_node)
+        
+        # Check if path is reachable
+        if energy_used == float("inf"):
+            if self.verbose:
+                print(f"  ERROR: No valid path from {current_node} to {target_node}")
+            truck.failed = True
+            self.truck_states[truck.truck_id] = "failed"
+            return self.reward_config["failure_penalty"]
+        
+        travel_time = self.transport_graph.get_time_distance(current_node, target_node)
+        discharge = energy_used
+        distance = travel_time * truck.base_speed
+        
+        # Apply traffic simulation
+        actual_travel_time = self._apply_traffic_simulation(travel_time)
+        
+        # Check if truck can make it
+        if discharge > truck.current_battery:
+            if self.verbose:
+                print(f"  ERROR: Insufficient battery ({truck.current_battery:.1f} kWh < {discharge:.1f} kWh needed)")
+            truck.failed = True
+            self.truck_states[truck.truck_id] = "failed"
+            return self.reward_config["failure_penalty"]
+        
+        # Check if this is navigation to a charger vs delivery
+        is_charger_nav = target_node in self.charging_nodes
+        next_delivery = truck.get_next_delivery_target()
+        is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+        
+        # If leaving a charger to navigate elsewhere, remove from waitlist
+        if (not is_charger_nav) and (current_node in self.charging_nodes):
+            self.charging_station.remove_from_waitlist(truck.truck_id, current_node)
+            self.charging_station.wake_waiting_trucks(
+                charger_node=current_node,
+                global_clock=self.global_clock,
+                event_queue=self.event_queue,
+                EventType=EventType,
+                Event=Event,
+            )
+        
+        # Schedule truck routing event
+        completion_time = self.global_clock + actual_travel_time
+        heapq.heappush(
+            self.event_queue,
+            Event(
+                time=completion_time,
+                event_type=EventType.TRUCK_ROUTING,
+                truck_id=truck.truck_id,
+                data={
+                    "destination": target_node,
+                    "distance": distance,
+                    "travel_time": actual_travel_time,
+                    "discharge": discharge,
+                },
+            ),
+        )
+        
+        # Update truck state
+        self.truck_states[truck.truck_id] = "routing"
+        truck.route_destination = target_node
+        truck.route_arrival_time = completion_time
+        
+        if self.verbose:
+            print(f"  Routing to node {target_node}")
+            print(f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h")
+            print(f"    Battery: {truck.current_battery:.1f} → {truck.current_battery - discharge:.1f} kWh")
+            print(f"    Will arrive at t={completion_time:.2f}h")
+        
+        # Calculate reward
+        time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
+        
+        # Bonus if this is a delivery
+        if is_delivery_nav:
+            delivery_bonus = self.reward_config["delivery_bonus"]
+            return time_penalty + delivery_bonus
+        
+        return time_penalty
+
+    def _execute_charge_action_gnn(self, truck: Truck, charger_node: int, charge_hours: float) -> float:
+        """
+        Execute charging action from GNN agent (new format).
+        
+        Args:
+            truck: Truck to execute action for
+            charger_node: Charger node ID (should match truck's current location)
+            charge_hours: Hours to charge
+            
+        Returns:
+            Reward for this action
+        """
+        # Convert to int if needed
+        if hasattr(charger_node, "item"):
+            charger_node = int(charger_node.item())
+        else:
+            charger_node = int(charger_node)
+        
+        # Validate truck is at a charger
+        if truck.current_node not in self.charging_nodes:
+            if self.verbose:
+                print(f"  ERROR: Truck not at charging station (current: {truck.current_node})")
+            # Navigate to next delivery instead
+            next_delivery = truck.get_next_delivery_target()
+            if next_delivery is not None:
+                return self._execute_navigation_action_gnn(truck, next_delivery)
+            return -0.01
+        
+        # Validate charger_node matches current location
+        if charger_node != truck.current_node:
+            if self.verbose:
+                print(f"  WARNING: Charger node {charger_node} doesn't match current {truck.current_node}")
+                print(f"  Using current location {truck.current_node}")
+            charger_node = truck.current_node
+        
+        # Check charger gating
+        can_proceed, next_check_time = self.charging_station.check_charger_gating(
+            truck_id=truck.truck_id,
+            charger_node=charger_node,
+            global_clock=self.global_clock,
+        )
+        
+        if not can_proceed:
+            # Should not happen if GNN action selection is correct
+            if self.verbose:
+                print(f"  ERROR: Cannot charge - no free port")
+            self.truck_states[truck.truck_id] = "waiting_to_charge"
+            if truck.truck_id not in self.waiting_start_times:
+                self.waiting_start_times[truck.truck_id] = self.global_clock
+            if next_check_time is not None:
+                heapq.heappush(
+                    self.event_queue,
+                    Event(
+                        time=next_check_time,
+                        event_type=EventType.TRUCK_READY,
+                        truck_id=truck.truck_id,
+                        data={"reason": "recheck_charge_attempt_gnn"},
+                    ),
+                )
+            return -0.01
+        
+        # Get charger configuration
+        charger_type = self.charging_station.charger_type[charger_node]
+        charging_config = self.config["charging"]
+        
+        if charger_type == "DCFast":
+            charger_config = charging_config["dcfast"]
+        else:  # Level2
+            charger_config = charging_config["level2"]
+        
+        charge_rate = charger_config["charge_rate"]  # kW
+        efficiency = charger_config["efficiency"]
+        
+        # Calculate actual charge amount and duration
+        max_charge = truck.battery_capacity - truck.current_battery
+        requested_charge = charge_hours * charge_rate * efficiency
+        charge_amount = min(requested_charge, max_charge)
+        actual_charge_hours = charge_amount / (charge_rate * efficiency)
+        
+        # Start charging
+        self.charging_station.start_charging(
+            truck_id=truck.truck_id,
+            charger_node=charger_node,
+            charge_hours=actual_charge_hours,
+            global_clock=self.global_clock,
+        )
+        
+        # Schedule charge completion
+        completion_time = self.global_clock + actual_charge_hours
+        heapq.heappush(
+            self.event_queue,
+            Event(
+                time=completion_time,
+                event_type=EventType.TRUCK_READY,
+                truck_id=truck.truck_id,
+                data={
+                    "reason": "charge_complete",
+                    "charge_amount": charge_amount,
+                    "charge_duration": actual_charge_hours,
+                    "charger_node": charger_node,
+                },
+            ),
+        )
+        
+        # Update truck state
+        self.truck_states[truck.truck_id] = "charging"
+        truck.start_charging(self.global_clock)
+        
+        if self.verbose:
+            print(f"  Charging for {actual_charge_hours:.2f}h")
+            print(f"    Will charge {charge_amount:.1f} kWh")
+            print(f"    Battery: {truck.current_battery:.1f} → {truck.current_battery + charge_amount:.1f} kWh")
+            print(f"    Will complete at t={completion_time:.2f}h")
+        
+        # Return time penalty
+        return -actual_charge_hours
 
     def _check_terminated(self) -> bool:
         """Check if episode is terminated (all trucks done)."""

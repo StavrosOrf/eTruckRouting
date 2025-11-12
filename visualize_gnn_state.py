@@ -447,10 +447,13 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     output_dir = visualizer.save_figure(fig2, index=-1)
     output_dir = visualizer.save_figure(fig3, index=-2)
 
+    input("Press Enter to continue... (initial state visualizations)")
+    
     # Run steps and visualize
-    for step in range(1, 20):
+    for step in range(1, num_steps + 1):
         action = policy.get_action(env)
         if action is None:
+            print("No valid action available")
             break
 
         obs, reward, done, truncated, info = env.step(action)
@@ -461,12 +464,15 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         fig = visualizer.plot_graph_structure(
             data, env, title=f"GNN Graph State - Step {step}"
         )
-        # figs.append(fig)
-
-        output_dir = visualizer.save_figure(fig, index=5)
-        input("Press Enter to continue...")
+        figs.append(fig)
+        output_dir = visualizer.save_figure(fig, index=step)
+        
+        # Print some stats
+        print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")
+        # input("Press Enter to continue...")
 
         if done or truncated:
+            print("Episode finished!")
             break
 
     # Save all figures

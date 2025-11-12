@@ -5,15 +5,18 @@ This module provides PyTorch Geometric graph representations of the truck routin
 environment state, suitable for Graph Neural Network (GNN) agents.
 
 The graph is constructed as:
-- **Nodes**: Depot nodes (one per unique truck starting position) + All Trucks + All Delivery Nodes (excluding delivered) + All Charging Stations
+- **Nodes**: Active Trucks + Remaining Delivery Nodes + All Charging Stations
 - **Edges**: 
-  - Truck ↔ Corresponding Depot with energy_distance and time to every delivery and charger
+  - Truck ↔ Current Destination (delivery or charger) with energy_distance and time
   - Charger ↔ Charger with energy_distance and time
   - Charger ↔ Delivery with energy_distance and time
   - Delivery ↔ Charger with energy_distance and time
+  - Delivery ↔ Delivery with energy_distance and time
+
+Note: Complete and failed trucks are excluded from the graph.
 
 This enables GNNs to learn routing policies by reasoning over the spatial-temporal
-structure of the problem, with depot nodes representing the starting points for trucks.
+structure of the problem.
 """
 
 import torch
@@ -142,8 +145,8 @@ class GNNStateSpace:
         truck_id_to_node_idx = {}  # truck_id -> node_idx (for mapping during edge creation)
         
         for truck in env.trucks:
-            # Skip failed trucks - they should not appear in the graph
-            if truck.failed:
+            # Skip failed and completed trucks - they should not appear in the graph
+            if truck.failed or truck.is_complete:
                 truck_to_depot_idx[truck.truck_id] = None
                 truck_id_to_node_idx[truck.truck_id] = None
                 continue
@@ -215,71 +218,41 @@ class GNNStateSpace:
         edge_index_list = []
         edge_features_list = []
 
-        # 4. Add edges: Truck ↔ Destination (always bidirectional)
-        # Trucks always have edges to their destination:
-        # - At depot: edges to depot
-        # - On route: edges to destination (charger or delivery)
-        # - Departed but no route set: edges to next delivery target
-        # Skip failed trucks - they have no node_idx
+        # 4. Add edges: Truck ↔ Current Location (always connected to where it is)
+        # The truck is always at some node - this creates the edge to that node
+        # If truck is at the node, edge weight is 0 (no energy/time needed)
         for truck in env.trucks:
-            # Skip failed trucks
-            if truck.failed:
+            # Skip failed and completed trucks
+            if truck.failed or truck.is_complete:
                 continue
             
             truck_idx = truck_id_to_node_idx[truck.truck_id]
             if truck_idx is None:
                 continue
             
-            dest_node_id = None
+            current_location = truck.current_node
+            location_idx = None
             
-            # Determine destination based on truck state (in priority order)
-            if truck.route_destination is not None:
-                # 1. Truck is on an active route
-                dest_node_id = truck.route_destination
-            elif truck.current_node == truck.delivery_sequence[0]:
-                # 2. Truck is at depot - connect to depot
-                dest_node_id = truck.delivery_sequence[0]
-            else:
-                # 3. Truck has departed but no active route - connect to next delivery
-                next_delivery = truck.get_next_delivery_target()
-                if next_delivery is not None:
-                    dest_node_id = next_delivery
+            # Find which node represents the current location
+            # Check if it's the depot
+            if current_location == truck.delivery_sequence[0]:
+                location_idx = truck_to_depot_idx[truck.truck_id]
+            # Check if it's a delivery node
+            elif current_location in delivery_node_to_idx:
+                location_idx = delivery_node_to_idx[current_location]
+            # Check if it's a charger node
+            elif current_location in charger_node_to_idx:
+                location_idx = charger_node_to_idx[current_location]
             
-            # If we have a destination, add bidirectional edges to it
-            if dest_node_id is not None:
-                dest_idx = None
+            # Create bidirectional edge with 0 energy/time (truck is already there)
+            if location_idx is not None:
+                # Truck → Current Location (0 energy, 0 time - already there)
+                edge_index_list.append([truck_idx, location_idx])
+                edge_features_list.append([0.0, 0.0])
                 
-                # Check if destination is the depot
-                if dest_node_id == truck.delivery_sequence[0]:
-                    # Destination is depot
-                    depot_idx = truck_to_depot_idx[truck.truck_id]
-                    if depot_idx is not None:
-                        dest_idx = depot_idx
-                
-                # Check if destination is a delivery node
-                elif dest_node_id in delivery_node_to_idx:
-                    dest_idx = delivery_node_to_idx[dest_node_id]
-                
-                # Check if destination is a charger node
-                elif dest_node_id in charger_node_to_idx:
-                    dest_idx = charger_node_to_idx[dest_node_id]
-                
-                # Add bidirectional edges if destination found
-                if dest_idx is not None:
-                    # Truck → Destination
-                    energy_to_dest = env.transport_graph.get_path_energy(truck.current_node, dest_node_id)
-                    time_to_dest = env.transport_graph.get_time_distance(truck.current_node, dest_node_id)
-                    if energy_to_dest <= max_battery_capacity and not np.isinf(energy_to_dest):
-                        edge_index_list.append([truck_idx, dest_idx])
-                        edge_features_list.append([energy_to_dest, time_to_dest])
-                    
-                    # Destination → Truck (but NOT if destination is a depot - depots have no incoming edges)
-                    if dest_node_id != truck.delivery_sequence[0]:  # Not a depot
-                        energy_from_dest = env.transport_graph.get_path_energy(dest_node_id, truck.current_node)
-                        time_from_dest = env.transport_graph.get_time_distance(dest_node_id, truck.current_node)
-                        if energy_from_dest <= max_battery_capacity and not np.isinf(energy_from_dest):
-                            edge_index_list.append([dest_idx, truck_idx])
-                            edge_features_list.append([energy_from_dest, time_from_dest])
+                # Current Location → Truck (0 energy, 0 time - already there)
+                edge_index_list.append([location_idx, truck_idx])
+                edge_features_list.append([0.0, 0.0])
 
         # 5. Add edges: Depot → All Delivery Nodes (only outgoing from depot)
         for depot_starting_node, depot_idx in unique_starting_nodes.items():
@@ -417,7 +390,7 @@ class GNNStateSpace:
         Features:
         - Node type (0)
         - Position (normalized)
-        - Padding features for consistency
+        - Padding features for consistency with truck nodes (13 total features)
         """
         num_nodes_norm = env.transport_graph.num_nodes
         node_norm = depot_node_id / num_nodes_norm
@@ -432,7 +405,9 @@ class GNNStateSpace:
             0.0,  # Padding
             0.0,  # Padding
             0.0,  # Padding
-            0.0,  # Padding (11 features total)
+            0.0,  # Padding
+            0.0,  # Padding
+            0.0,  # Padding (13 features total)
         ]
 
     def _get_truck_node_features(self, truck, env) -> list:
@@ -444,12 +419,11 @@ class GNNStateSpace:
         - Current position (normalized)
         - Battery level (kWh)
         - Battery percentage (0-100)
-        - Is charging
+        - Truck state (one-hot encoded: ready, routing, waiting_to_charge, charging)
         - Deliveries completed
         - Deliveries remaining
         - Time elapsed
         - Distance traveled
-        - Is active (not failed)
         - Time to destination (hours, 0 if not on route)
         """
         num_nodes_norm = env.transport_graph.num_nodes
@@ -463,17 +437,39 @@ class GNNStateSpace:
         if truck.route_arrival_time is not None and truck.route_destination is not None:
             time_to_destination = max(0.0, truck.route_arrival_time - env.global_clock)
 
+        # Determine truck state (one-hot encoding)
+        # States: ready, routing, waiting_to_charge, charging
+        # Note: complete and failed trucks are already filtered out before feature extraction
+        is_ready = 0.0
+        is_routing = 0.0
+        is_waiting_to_charge = 0.0
+        is_charging = 0.0
+        
+        if truck.is_charging:
+            is_charging = 1.0
+        elif truck.truck_id in env.charging_station.charger_waitlist.get(truck.current_node, []):
+            # Truck is in a charger queue, waiting to charge
+            is_waiting_to_charge = 1.0
+        elif truck.route_destination is not None and truck.route_arrival_time is not None:
+            # Truck is actively routing to a destination
+            is_routing = 1.0
+        else:
+            # Truck is ready for action (at a node, not charging, not routing)
+            is_ready = 1.0
+
         return [
             float(self.NODE_TYPE_TRUCK),  # Node type
             current_node_norm,  # Position normalized
             truck.current_battery,  # Battery level (kWh)
             truck.get_battery_percentage(),  # Battery percentage (0-100)
-            float(truck.is_charging),  # Is currently charging
+            is_ready,  # State: ready (one-hot)
+            is_routing,  # State: routing (one-hot)
+            is_waiting_to_charge,  # State: waiting_to_charge (one-hot)
+            is_charging,  # State: charging (one-hot)
             float(deliveries_done),  # Deliveries completed
             float(deliveries_remaining),  # Deliveries remaining
             truck.total_time_elapsed,  # Time elapsed (hours)
             truck.total_distance_traveled,  # Distance traveled (km)
-            float(not truck.failed),  # Truck is active (not failed)
             time_to_destination,  # Time to destination (hours)
         ]
 
@@ -486,7 +482,7 @@ class GNNStateSpace:
         - Position (normalized)
         - Delivery priority / demand
         - Assignment count (how many trucks have this in their list)
-        - Padding features for consistency
+        - Padding features for consistency with truck nodes (13 total features)
         """
         num_nodes_norm = env.transport_graph.num_nodes
         node_norm = delivery_node_id / num_nodes_norm
@@ -508,7 +504,9 @@ class GNNStateSpace:
             0.0,  # Padding
             0.0,  # Padding
             0.0,  # Padding
-            0.0,  # Padding (11 features total)
+            0.0,  # Padding
+            0.0,  # Padding
+            0.0,  # Padding (13 features total)
         ]
 
     def _get_charger_node_features(self, charger_node_id: int, env) -> list:
@@ -521,19 +519,19 @@ class GNNStateSpace:
         - Occupancy rate
         - Queue length (normalized)
         - Charger type (Level2 vs DCFast)
-        - Padding features for consistency
+        - Padding features for consistency with truck nodes (13 total features)
         """
         num_nodes_norm = env.transport_graph.num_nodes
         node_norm = charger_node_id / num_nodes_norm
 
-        occupancy = len(env.charger_occupancy[charger_node_id])
-        capacity = env.charger_capacity[charger_node_id]
+        occupancy = len(env.charging_station.charger_occupancy[charger_node_id])
+        capacity = env.charging_station.charger_capacity[charger_node_id]
         occupancy_rate = occupancy / capacity if capacity > 0 else 0.0
 
-        queue_length = len(env.charger_queue[charger_node_id])
+        queue_length = len(env.charging_station.charger_waitlist[charger_node_id])
         queue_norm = min(queue_length / 5.0, 1.0)  # Normalize to 5 trucks max
 
-        charger_type = env.charger_type[charger_node_id]
+        charger_type = env.charging_station.charger_type[charger_node_id]
         charger_type_id = 1.0 if charger_type == "DCFast" else 0.0
 
         return [
@@ -547,7 +545,9 @@ class GNNStateSpace:
             0.0,  # Padding
             0.0,  # Padding
             0.0,  # Padding
-            0.0,  # Padding (11 features total)
+            0.0,  # Padding
+            0.0,  # Padding
+            0.0,  # Padding (13 features total)
         ]
 
     # ==================== Edge Feature Functions ====================

@@ -39,7 +39,7 @@ class EventDrivenTruckEnv(gym.Env):
 
     Single-agent paradigm: controls whichever truck is currently active.
     Time advances to the next event, and step() is called when a truck needs a decision.
-    
+
     STATE MACHINE:
     - ready: Truck can make a decision (navigate or charge)
     - routing: Truck is en route to destination
@@ -47,7 +47,7 @@ class EventDrivenTruckEnv(gym.Env):
     - charging: Truck is actively charging
     - complete: All deliveries done
     - failed: Ran out of battery or infeasible action
-    
+
     EVENT TYPES:
     - TRUCK_READY: Truck needs a decision (after arrival/charge/wait)
     - TRUCK_ROUTING: Truck arrival at node (delivery or charger)
@@ -119,10 +119,10 @@ class EventDrivenTruckEnv(gym.Env):
         self.charging_config = self.config["charging"]
 
         # Traffic simulation settings
-        self.traffic_config = self.config['traffic']
-        self.enable_traffic = self.traffic_config['enable_traffic']
-        self.traffic_std_factor = self.traffic_config['std_dev_factor']
-        self.traffic_max_std = self.traffic_config['max_std_dev_hours']
+        self.traffic_config = self.config["traffic"]
+        self.enable_traffic = self.traffic_config["enable_traffic"]
+        self.traffic_std_factor = self.traffic_config["std_dev_factor"]
+        self.traffic_max_std = self.traffic_config["max_std_dev_hours"]
 
         # Load graph and initialize transportation network
         graph = get_graph(self.config)
@@ -294,52 +294,64 @@ class EventDrivenTruckEnv(gym.Env):
             # Process event
             if event.event_type == EventType.TRUCK_READY:
                 truck = self.trucks[event.truck_id]
-                
+
                 # Safety check: skip if truck is already complete or failed
                 if truck.is_complete or truck.failed:
                     if self.verbose:
                         raise ValueError("Truck is already complete or failed")
                         status = "complete" if truck.is_complete else "failed"
-                        print(f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})")
+                        print(
+                            f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
+                        )
                     continue
-                
+
                 # Skip if this is a stale wake event and truck is no longer waiting
                 # This can happen when a truck gets woken early (port freed) but also had
                 # a scheduled event based on predicted wait time
                 reason = event.data.get("reason", "")
-                if reason in ["recheck_gating", "recheck_after_arrival", "recheck_charge_attempt", "port_freed_early"]:
+                if reason in [
+                    "recheck_gating",
+                    "recheck_after_arrival",
+                    "recheck_charge_attempt",
+                    "port_freed_early",
+                ]:
                     current_state = self.truck_states.get(truck.truck_id, "")
                     if current_state not in ["waiting_to_charge", "ready"]:
                         if self.verbose:
-                            print(f"  Skipping stale TRUCK_READY for truck {truck.truck_id} (state: {current_state})")
+                            print(
+                                f"  Skipping stale TRUCK_READY for truck {truck.truck_id} (state: {current_state})"
+                            )
                         continue
-                
+
                 # Check if this is a charge completion event
                 reason = event.data.get("reason", "")
                 if reason == "charge_complete":
-                                        
-                    charger_node = event.data['charger_node']
-                    charge_amount = event.data['charge_amount']
-                    charge_duration = event.data['charge_duration']
+
+                    charger_node = event.data["charger_node"]
+                    charge_amount = event.data["charge_amount"]
+                    charge_duration = event.data["charge_duration"]
 
                     # Complete charging for the truck (update battery)
                     truck.finish_charging(
-                        charge_amount=charge_amount,
-                        charge_duration=charge_duration
+                        charge_amount=charge_amount, charge_duration=charge_duration
                     )
-                    
+
                     # Finish charging via charging station manager
                     self.charging_station.finish_charging(
                         truck_id=truck.truck_id,
                         charger_node=charger_node,
                         global_clock=self.global_clock,
                     )
-                    
+
                     if self.verbose:
                         print(f"  Truck {truck.truck_id} finished charging")
-                        print(f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)")
-                        print(f"    Charged: {charge_amount:.1f} kWh in {charge_duration:.2f}h")
-                    
+                        print(
+                            f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)"
+                        )
+                        print(
+                            f"    Charged: {charge_amount:.1f} kWh in {charge_duration:.2f}h"
+                        )
+
                     # Wake trucks waiting at this charger
                     self.charging_station.wake_waiting_trucks(
                         charger_node=charger_node,
@@ -348,20 +360,22 @@ class EventDrivenTruckEnv(gym.Env):
                         EventType=EventType,
                         Event=Event,
                     )
-                
+
                 # Charger gating: enforce FCFS waitlist with capacity ports
                 node = int(truck.current_node)
                 if node in self.charging_nodes:
-                    can_proceed, next_check_time = self.charging_station.check_charger_gating(
-                        truck_id=truck.truck_id,
-                        charger_node=node,
-                        global_clock=self.global_clock,
+                    can_proceed, next_check_time = (
+                        self.charging_station.check_charger_gating(
+                            truck_id=truck.truck_id,
+                            charger_node=node,
+                            global_clock=self.global_clock,
+                        )
                     )
-                    
+
                     if not can_proceed:
                         # Update state to waiting_to_charge
                         self.truck_states[truck.truck_id] = "waiting_to_charge"
-                        
+
                         # Only schedule recheck if we have a specific time
                         # (first truck in waitlist with predicted wait time)
                         # Otherwise, truck will be woken by wake_waiting_trucks
@@ -376,11 +390,15 @@ class EventDrivenTruckEnv(gym.Env):
                                 ),
                             )
                             if self.verbose:
-                                print(f"  Truck {truck.truck_id} waiting for charge port at node {node}")
+                                print(
+                                    f"  Truck {truck.truck_id} waiting for charge port at node {node}"
+                                )
                                 print(f"    Will recheck at t={next_check_time:.2f}h")
                         else:
                             if self.verbose:
-                                print(f"  Truck {truck.truck_id} waiting for charge port at node {node}")
+                                print(
+                                    f"  Truck {truck.truck_id} waiting for charge port at node {node}"
+                                )
                                 print(f"    Will be woken when port becomes available")
                         continue
 
@@ -392,7 +410,7 @@ class EventDrivenTruckEnv(gym.Env):
             elif event.event_type == EventType.TRUCK_ROUTING:
                 # Handle truck arrival at destination
                 destination = event.data["destination"]
-                
+
                 # First, update the truck's physical state (position, battery, etc.)
                 self.event_handler.handle_truck_routing(
                     event,
@@ -403,24 +421,26 @@ class EventDrivenTruckEnv(gym.Env):
                     self.global_clock,
                     self.enable_plotting,
                 )
-                
+
                 # Check the truck's state after arrival
                 truck = self.trucks[event.truck_id]
-                
+
                 # Only schedule TRUCK_READY if truck is not complete or failed
                 if not (truck.is_complete or truck.failed):
                     # If truck arrived at a charger, check if port is available
                     if destination in self.charging_nodes:
-                        can_proceed, next_check_time = self.charging_station.check_charger_gating(
-                            truck_id=truck.truck_id,
-                            charger_node=destination,
-                            global_clock=self.global_clock,
+                        can_proceed, next_check_time = (
+                            self.charging_station.check_charger_gating(
+                                truck_id=truck.truck_id,
+                                charger_node=destination,
+                                global_clock=self.global_clock,
+                            )
                         )
-                        
+
                         if not can_proceed:
                             # No free port - truck goes to waiting_to_charge state
                             self.truck_states[truck.truck_id] = "waiting_to_charge"
-                            
+
                             # Only schedule recheck if we have a specific time
                             if next_check_time is not None:
                                 heapq.heappush(
@@ -433,12 +453,20 @@ class EventDrivenTruckEnv(gym.Env):
                                     ),
                                 )
                                 if self.verbose:
-                                    print(f"  Truck {truck.truck_id} waiting for charge port at node {destination}")
-                                    print(f"    Will recheck at t={next_check_time:.2f}h")
+                                    print(
+                                        f"  Truck {truck.truck_id} waiting for charge port at node {destination}"
+                                    )
+                                    print(
+                                        f"    Will recheck at t={next_check_time:.2f}h"
+                                    )
                             else:
                                 if self.verbose:
-                                    print(f"  Truck {truck.truck_id} waiting for charge port at node {destination}")
-                                    print(f"    Will be woken when port becomes available")
+                                    print(
+                                        f"  Truck {truck.truck_id} waiting for charge port at node {destination}"
+                                    )
+                                    print(
+                                        f"    Will be woken when port becomes available"
+                                    )
                         else:
                             # Port available - schedule immediate TRUCK_READY
                             heapq.heappush(
@@ -488,7 +516,9 @@ class EventDrivenTruckEnv(gym.Env):
         if self.verbose:
             print(f"\n{'='*80}")
             print(f"STEP at t={self.global_clock:.2f}h - Truck {self.active_truck_id}")
-            print(f"Current Node: {truck.current_node}, SoC: {truck.get_battery_percentage():.1f}%")
+            print(
+                f"Current Node: {truck.current_node}, SoC: {truck.get_battery_percentage():.1f}%"
+            )
             print(f"Action: {self._action_to_string(action)} ({action})")
             print(f"Event Queue: {self.event_queue}")
             print(f"{'='*80}")
@@ -567,9 +597,9 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Calculate energy used for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
-        
+
         # Check if path is reachable
-        if energy_used == float("inf"): 
+        if energy_used == float("inf"):
             raise ValueError("No valid path for navigation action")
 
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
@@ -592,9 +622,13 @@ class EventDrivenTruckEnv(gym.Env):
 
         queue_penalty = 0.0
         if is_charger_nav and self.verbose:
-            charger_info = self.charging_station.get_charger_info(target_node, self.global_clock)
+            charger_info = self.charging_station.get_charger_info(
+                target_node, self.global_clock
+            )
             print(f"  Going to charger @ node {target_node}")
-            print(f"    Current occupancy: {charger_info['current_occupancy']}/{charger_info['capacity']}")
+            print(
+                f"    Current occupancy: {charger_info['current_occupancy']}/{charger_info['capacity']}"
+            )
 
         # If leaving a charger to navigate elsewhere, remove from its waitlist and wake others
         if (not is_charger_nav) and (current_node in self.charging_nodes):
@@ -632,7 +666,9 @@ class EventDrivenTruckEnv(gym.Env):
 
         if self.verbose:
             print(f"  Routing to node {target_node}")
-            print(f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h (base: {travel_time:.2f}h)")
+            print(
+                f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h (base: {travel_time:.2f}h)"
+            )
             print(f"    Will arrive at t={completion_time:.2f}h")
             print(f"    Current Battery: {truck.current_battery:.1f} kWh")
             print(
@@ -654,34 +690,38 @@ class EventDrivenTruckEnv(gym.Env):
     def _apply_traffic_simulation(self, travel_time: float) -> float:
         """
         Apply traffic simulation to travel time using normal distribution.
-        
+
         Args:
             travel_time: Base travel time from the graph (hours)
-            
+
         Returns:
             Travel time with traffic variation applied (hours)
         """
         if not self.enable_traffic or travel_time <= 0:
             return travel_time
-        
+
         # Calculate standard deviation
         std_dev = travel_time * self.traffic_std_factor
-        
+
         # Cap the std_dev if max is specified
         if self.traffic_max_std > 0:
             std_dev = min(std_dev, self.traffic_max_std)
-        
+
         # Sample from normal distribution N(mean=travel_time, std=std_dev)
         actual_travel_time = np.random.normal(loc=travel_time, scale=std_dev)
-        
+
         # Ensure travel time is positive (at least 1% of original)
         actual_travel_time = max(actual_travel_time, travel_time * 0.01)
-        actual_travel_time = min(actual_travel_time, travel_time * 2.0)  # Cap to 2x original
-        
+        actual_travel_time = min(
+            actual_travel_time, travel_time * 2.0
+        )  # Cap to 2x original
+
         if self.verbose:
             variation_percent = ((actual_travel_time - travel_time) / travel_time) * 100
-            print(f"    Traffic simulation: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%)")
-        
+            print(
+                f"    Traffic simulation: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%)"
+            )
+
         return actual_travel_time
 
     def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
@@ -689,18 +729,14 @@ class EventDrivenTruckEnv(gym.Env):
         # Check if at a charging station
         if truck.current_node not in self.charging_nodes:
             # go to next delivery instead
-            
+
             if self.verbose:
                 print(f"  Truck {truck.truck_id} not at charging station")
                 print(f"  Executing navigation to next delivery instead")
-                
+
             return self._execute_navigation_action(
                 truck, action=self.num_charging_nodes
             )
-            # raise ValueError("Truck not at a charging station for charging action")
-            # if self.verbose:
-            #     print(f"  ERROR: Truck {truck.truck_id} not at charging station")
-            # return 0.0
 
         charger_node = truck.current_node
 
@@ -710,11 +746,11 @@ class EventDrivenTruckEnv(gym.Env):
             charger_node=charger_node,
             global_clock=self.global_clock,
         )
-        
+
         if not can_proceed:
             # Truck wants to charge but no port available - go to waiting_to_charge state
             self.truck_states[truck.truck_id] = "waiting_to_charge"
-            
+
             # Only schedule recheck if we have a specific time
             if next_check_time is not None:
                 heapq.heappush(
@@ -727,13 +763,17 @@ class EventDrivenTruckEnv(gym.Env):
                     ),
                 )
                 if self.verbose:
-                    print(f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state.")
+                    print(
+                        f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state."
+                    )
                     print(f"    Will recheck at t={next_check_time:.2f}h")
             else:
                 if self.verbose:
-                    print(f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state.")
+                    print(
+                        f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state."
+                    )
                     print(f"    Will be woken when port becomes available")
-            
+
             # Small time penalty for attempting to charge when no port available
             return -0.01
 
@@ -755,6 +795,8 @@ class EventDrivenTruckEnv(gym.Env):
             charge_hours * charge_rate * efficiency,
             truck.battery_capacity - truck.current_battery,
         )
+
+        charge_hours = charge_amount / (charge_rate * efficiency)
 
         # Start charging via charging station manager
         self.charging_station.start_charging(
@@ -810,8 +852,8 @@ class EventDrivenTruckEnv(gym.Env):
     def _check_truncated(self) -> bool:
         """Check if episode is truncated (time limit exceeded)."""
         if self.global_clock >= self.max_time and self.verbose:
-            input('Press Enter to continue...')
-            
+            input("Press Enter to continue...")
+
         return self.global_clock >= self.max_time
 
     def _get_observation(self) -> np.ndarray:
@@ -832,7 +874,9 @@ class EventDrivenTruckEnv(gym.Env):
         any_failed = any(truck.failed for truck in self.trucks)
 
         # Get charger utilization statistics from charging station manager
-        charger_utilization = self.charging_station.get_utilization_stats(self.global_clock)
+        charger_utilization = self.charging_station.get_utilization_stats(
+            self.global_clock
+        )
 
         return {
             "global_clock": self.global_clock,
@@ -851,11 +895,11 @@ class EventDrivenTruckEnv(gym.Env):
             "charger_utilization": charger_utilization,
             # Expose simplified queue state for debugging/analysis
             "charger_waitlist_lengths": {
-                int(node): len(self.charging_station.charger_waitlist[node]) 
+                int(node): len(self.charging_station.charger_waitlist[node])
                 for node in self.charging_nodes
             },
             "charger_occupancy_counts": {
-                int(node): len(self.charging_station.charger_occupancy[node]) 
+                int(node): len(self.charging_station.charger_occupancy[node])
                 for node in self.charging_nodes
             },
         }
@@ -881,27 +925,29 @@ class EventDrivenTruckEnv(gym.Env):
                 self.global_clock,
                 self.truck_initial_plans,
             )
-            
+
             # Generate charging queue visualizations
             self.plotter.plot_charger_queue_dynamics(
                 self.charging_station,
                 self.transport_graph,
                 self.global_clock,
             )
-            
+
             self.plotter.plot_charger_utilization_heatmap(
                 self.charging_station,
                 self.transport_graph,
                 self.global_clock,
             )
-            
+
             self.plotter.plot_charger_statistics_summary(
                 self.charging_station,
                 self.transport_graph,
             )
 
             # Print and save statistics
-            charger_util = self.charging_station.get_utilization_stats(self.global_clock)
+            charger_util = self.charging_station.get_utilization_stats(
+                self.global_clock
+            )
 
             self.stats_collector.print_statistics(
                 self.trucks,

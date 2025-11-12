@@ -8,7 +8,7 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 20
+  num_trucks: 200
 
   # Number of delivery stops per truck episode
   num_stops: 3
@@ -56,28 +56,14 @@ charging:
 # ---------------
 rewards:
   # Time-based reward coefficient (negative per hour spent)
-  time_penalty: -1.0
-
-  # Distance-based penalty coefficient (negative per km traveled)
-  distance_penalty: -0.1
-
-  # Charging time penalty (negative per hour charging)
-  charge_penalty: -2.0
-
-  # Bonus for completing a delivery
-  delivery_bonus: 50.0
+  time_multiplier: 1.0
 
   # Bonus for completing all deliveries
   completion_bonus: 1000.0
 
   # Penalty for battery failure
-  failure_penalty: -500.0
+  failure_penalty: -1000.0
 
-  # Penalty for invalid action (no path, illegal move)
-  invalid_action_penalty: -10.0
-
-  # Penalty for insufficient battery
-  insufficient_battery_penalty: -50.0
 
 
 # Graph/Network Settings

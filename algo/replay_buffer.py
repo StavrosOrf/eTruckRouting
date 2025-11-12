@@ -25,14 +25,14 @@ class ReplayBuffer:
         self.max_size = max_size
         self.ptr = 0
 
-    def add(self, state: Any, action: np.ndarray, next_state: Any, 
+    def add(self, state: Any, action: Any, next_state: Any, 
             reward: float, done: bool):
         """
         Add a transition to the buffer.
         
         Args:
             state: Current state (GNN state object)
-            action: Action taken
+            action: Action taken - can be (node_index, charging_duration) tuple or just node_index
             next_state: Next state (GNN state object)
             reward: Reward received
             done: Whether episode terminated
@@ -42,8 +42,27 @@ class ReplayBuffer:
             state = state.to('cpu')
         if hasattr(next_state, 'to'):
             next_state = next_state.to('cpu')
+        
+        # Handle action format - can be (node_idx, charging_duration) or just node_idx
+        if isinstance(action, tuple):
+            action_idx, charging_duration = action
+        else:
+            action_idx = action
+            charging_duration = 0.0  # Default charging duration
+        
+        # Convert action index to numpy if needed
+        if isinstance(action_idx, (int, np.integer)):
+            action_idx = np.array(action_idx, dtype=np.int64)
+        elif not isinstance(action_idx, np.ndarray):
+            action_idx = np.array(action_idx)
+        
+        # Ensure charging duration is scalar
+        if isinstance(charging_duration, np.ndarray):
+            charging_duration = float(charging_duration.item())
+        else:
+            charging_duration = float(charging_duration)
             
-        data = (state, action, next_state, reward, done)
+        data = (state, action_idx, charging_duration, next_state, reward, done)
         
         if len(self.storage) == self.max_size:
             self.storage[self.ptr] = data
@@ -54,6 +73,7 @@ class ReplayBuffer:
     def sample(self, batch_size: int, device: torch.device = None):
         """
         Sample a batch of transitions from the buffer.
+        Handles variable-sized action vectors from HeteroData graphs.
         
         Args:
             batch_size: Number of transitions to sample
@@ -61,6 +81,7 @@ class ReplayBuffer:
             
         Returns:
             Tuple of (states, actions, next_states, rewards, not_dones)
+            Note: actions will be a single tensor with all actions concatenated
         """
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,28 +91,31 @@ class ReplayBuffer:
         
         states = []
         actions = []
+        charging_durations = []
         next_states = []
         rewards = []
         not_dones = []
         
         for i in ind:
-            s, a, ns, r, d = self.storage[i]
+            s, a, cd, ns, r, d = self.storage[i]
             states.append(s)
             actions.append(a)
+            charging_durations.append(cd)
             next_states.append(ns)
             rewards.append(r)
             not_dones.append(1.0 - float(d))
         
-        # Convert actions to tensor
-        actions = torch.FloatTensor(actions).to(device)
-        if actions.dim() == 0:
-            actions = actions.unsqueeze(0)
+        # Convert to tensors
+        actions_array = np.array(actions, dtype=np.int64)
+        actions = torch.LongTensor(actions_array).to(device).squeeze()
         
-        # Convert rewards and not_dones to tensors
+        charging_durations_array = np.array(charging_durations, dtype=np.float32)
+        charging_durations = torch.FloatTensor(charging_durations_array).unsqueeze(1).to(device)
+        
         rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)
         not_dones = torch.FloatTensor(not_dones).unsqueeze(1).to(device)
         
-        # Batch the GNN states
+        # Batch the GNN states (HeteroData)
         state_batch = Batch.from_data_list(states)
         next_state_batch = Batch.from_data_list(next_states)
         
@@ -99,7 +123,7 @@ class ReplayBuffer:
         state_batch = state_batch.to(device)
         next_state_batch = next_state_batch.to(device)
         
-        return state_batch, actions, next_state_batch, rewards, not_dones
+        return state_batch, actions, charging_durations, next_state_batch, rewards, not_dones
 
     def __len__(self) -> int:
         """Return current size of buffer."""

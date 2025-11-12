@@ -36,7 +36,7 @@ import torch
 import numpy as np
 from typing import Optional, Dict, Tuple, Set
 
-from torch_geometric.data import Data
+from torch_geometric.data import Data, HeteroData
 
 
 class GNNStateSpace:
@@ -79,25 +79,29 @@ class GNNStateSpace:
         self.NODE_TYPE_DELIVERY = 1
         self.NODE_TYPE_CHARGER = 2
 
-    def get_state_GNN(self, env) -> Data:
+    def get_state_GNN(self, env) -> HeteroData:
         """
-        Convert environment state to PyTorch Geometric Data graph.
+        Convert environment state to PyTorch Geometric HeteroData graph.
 
-        Simplified Graph Structure:
-        - Nodes: Trucks + Undelivered Deliveries + All Chargers
-        - Edges: Only feasible connections based on truck state and battery
-        - No padding: each node type has different feature dimensions
+        Heterogeneous Graph Structure:
+        - Node types: 'truck', 'delivery', 'charger' (no padding!)
+        - Edge types: ('truck', 'to', 'delivery'), ('delivery', 'to', 'truck'), etc.
+        - Edge features: [energy, time] for each edge type
 
         Args:
             env: EventDrivenTruckEnv instance
 
         Returns:
-            torch_geometric.data.Data graph
+            torch_geometric.data.HeteroData graph
         """
-
-        # Build node list and features
-        node_list = []
-        node_features_list = []
+        
+        # Initialize HeteroData
+        data = HeteroData()
+        
+        # Track node mappings for edge construction
+        truck_id_to_idx = {}  # truck_id -> index in truck node list
+        delivery_node_to_idx = {}  # delivery_node_id -> index in delivery node list
+        charger_node_to_idx = {}  # charger_node_id -> index in charger node list
         
         # Track which delivery nodes have been delivered
         delivered_nodes: Set[int] = set()
@@ -107,24 +111,30 @@ class GNNStateSpace:
             delivered = all_deliveries - remaining_deliveries
             delivered_nodes.update(delivered)
 
-        # 1. Add all truck nodes (excluding failed and completed trucks)
-        truck_id_to_node_idx = {}  # truck_id -> node_idx
+        # 1. Build truck nodes (excluding failed and completed trucks)
+        truck_features_list = []
         
         for truck in env.trucks:
             # Skip failed and completed trucks
             if truck.failed or truck.is_complete:
-                truck_id_to_node_idx[truck.truck_id] = None
+                truck_id_to_idx[truck.truck_id] = None
                 continue
             
-            node_idx = len(node_list)
-            truck_id_to_node_idx[truck.truck_id] = node_idx
-            node_list.append(("truck", truck.truck_id))
+            idx = len(truck_features_list)
+            truck_id_to_idx[truck.truck_id] = idx
             
             features = self._get_truck_node_features(truck, env)
-            node_features_list.append(features)
-
-        # 2. Add undelivered delivery nodes
-        delivery_node_to_idx = {}  # delivery_node_id -> node_idx
+            truck_features_list.append(features)
+        
+        if truck_features_list:
+            # Convert to numpy array first to avoid warning
+            truck_features_array = np.array(truck_features_list, dtype=np.float32)
+            data['truck'].x = torch.tensor(truck_features_array, dtype=torch.float32, device=self.device)
+        else:
+            data['truck'].x = torch.zeros((0, 13), dtype=torch.float32, device=self.device)
+        
+        # 2. Build delivery nodes (only undelivered)
+        delivery_features_list = []
         
         # Collect all delivery nodes from active trucks
         all_delivery_nodes = set()
@@ -136,59 +146,67 @@ class GNNStateSpace:
         # Add only undelivered nodes
         for delivery_node_id in sorted(all_delivery_nodes):
             if delivery_node_id not in delivered_nodes:
-                node_idx = len(node_list)
-                delivery_node_to_idx[delivery_node_id] = node_idx
-                node_list.append(("delivery", delivery_node_id))
+                idx = len(delivery_features_list)
+                delivery_node_to_idx[delivery_node_id] = idx
                 
                 features = self._get_delivery_node_features(delivery_node_id, env)
-                node_features_list.append(features)
-
-        # 3. Add all charging station nodes
-        charger_node_to_idx = {}  # charger_node_id -> node_idx
+                delivery_features_list.append(features)
+        
+        if delivery_features_list:
+            # Convert to numpy array first to avoid warning
+            delivery_features_array = np.array(delivery_features_list, dtype=np.float32)
+            data['delivery'].x = torch.tensor(delivery_features_array, dtype=torch.float32, device=self.device)
+        else:
+            data['delivery'].x = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
+        
+        # 3. Build charger nodes (all chargers)
+        charger_features_list = []
         
         for charger_node_id in env.charging_nodes:
-            node_idx = len(node_list)
-            charger_node_to_idx[charger_node_id] = node_idx
-            node_list.append(("charger", charger_node_id))
+            idx = len(charger_features_list)
+            charger_node_to_idx[charger_node_id] = idx
             
             features = self._get_charger_node_features(charger_node_id, env)
-            node_features_list.append(features)
-
-        # Convert node features to tensor
-        # NOTE: PyTorch Geometric Data objects require uniform feature dimensions.
-        # We pad to max length but store node_list so GNN can identify node types
-        # and ignore padding. For truly heterogeneous features, use HeteroData instead.
-        # 
-        # Feature counts: Truck=13, Delivery=2, Charger=5
-        # Padding is added with zeros but node type (first feature) indicates meaningful features
+            charger_features_list.append(features)
         
-        if node_features_list:
-            max_features = max(len(f) for f in node_features_list)
-            padded_features = []
-            for features in node_features_list:
-                padded = np.pad(features, (0, max_features - len(features)), 
-                               mode='constant', constant_values=0)
-                padded_features.append(padded)
+        if charger_features_list:
             # Convert to numpy array first to avoid warning
-            padded_features_array = np.array(padded_features, dtype=np.float32)
-            x = torch.tensor(padded_features_array, dtype=torch.float32, device=self.device)
+            charger_features_array = np.array(charger_features_list, dtype=np.float32)
+            data['charger'].x = torch.tensor(charger_features_array, dtype=torch.float32, device=self.device)
         else:
-            # No nodes in graph
-            x = torch.zeros((0, 13), dtype=torch.float32, device=self.device)
+            data['charger'].x = torch.zeros((0, 5), dtype=torch.float32, device=self.device)
 
         # Get max truck battery capacity for feasibility checks
         max_battery_capacity = max(truck.battery_capacity for truck in env.trucks)
 
-        # Build edge list and edge features
-        edge_index_list = []
-        edge_features_list = []
+        # Build edges by type
+        # Edge types we'll create:
+        # - ('truck', 'to', 'delivery')
+        # - ('delivery', 'to', 'truck')
+        # - ('truck', 'to', 'charger')
+        # - ('charger', 'to', 'truck')
+        # - ('truck', 'to', 'truck')
+        # - ('charger', 'to', 'charger')
+        # - ('charger', 'to', 'delivery')
+        # - ('delivery', 'to', 'delivery')
+        
+        edge_dict = {
+            ('truck', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+            ('delivery', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
+            ('truck', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
+            ('charger', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
+            ('truck', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
+            ('charger', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
+            ('charger', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+            ('delivery', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+        }
 
         # 4. Add truck edges based on state
         for truck in env.trucks:
             if truck.failed or truck.is_complete:
                 continue
             
-            truck_idx = truck_id_to_node_idx[truck.truck_id]
+            truck_idx = truck_id_to_idx[truck.truck_id]
             if truck_idx is None:
                 continue
             
@@ -201,10 +219,10 @@ class GNNStateSpace:
                 if current_location in charger_node_to_idx:
                     charger_idx = charger_node_to_idx[current_location]
                     # Bidirectional edge with 0 energy/time (at charger)
-                    edge_index_list.append([truck_idx, charger_idx])
-                    edge_features_list.append([0.0, 0.0])
-                    edge_index_list.append([charger_idx, truck_idx])
-                    edge_features_list.append([0.0, 0.0])
+                    edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
+                    edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, 0.0])
+                    edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                    edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
                     
             elif truck.route_destination is None:
                 # READY: connect to next delivery and all feasible chargers
@@ -223,20 +241,20 @@ class GNNStateSpace:
                     
                     # Only add edge if energy is feasible (< current battery)
                     if energy < current_battery and not np.isinf(energy):
-                        edge_index_list.append([truck_idx, delivery_idx])
-                        edge_features_list.append([energy, time])
-                        edge_index_list.append([delivery_idx, truck_idx])
-                        edge_features_list.append([energy, time])
+                        edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, delivery_idx])
+                        edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy, time])
+                        edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
+                        edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy, time])
                 
                 # Connect to all chargers (if feasible with current battery)
                 for charger_id, charger_idx in charger_node_to_idx.items():
                     # Skip self-loop (truck already at this charger)
                     if charger_id == current_location:
                         # Add 0-weight edge to current location
-                        edge_index_list.append([truck_idx, charger_idx])
-                        edge_features_list.append([0.0, 0.0])
-                        edge_index_list.append([charger_idx, truck_idx])
-                        edge_features_list.append([0.0, 0.0])
+                        edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
+                        edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, 0.0])
+                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
                         continue
                     
                     energy = env.transport_graph.get_path_energy(current_location, charger_id)
@@ -244,37 +262,32 @@ class GNNStateSpace:
                     
                     # Only add edge if energy is feasible (< current battery)
                     if energy < current_battery and not np.isinf(energy):
-                        edge_index_list.append([truck_idx, charger_idx])
-                        edge_features_list.append([energy, time])
-                        edge_index_list.append([charger_idx, truck_idx])
-                        edge_features_list.append([energy, time])
+                        edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
+                        edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([energy, time])
+                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([energy, time])
             
             else:
                 # ROUTING: connect only to destination node
                 if truck.route_destination is not None:
                     destination = truck.route_destination
+                    time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
                     
                     # Check if destination is a delivery node
                     if destination in delivery_node_to_idx:
                         dest_idx = delivery_node_to_idx[destination]
-                        # Calculate remaining energy/time to destination
-                        time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
-                        # Estimate energy based on distance already covered
-                        total_energy = env.transport_graph.get_path_energy(truck.current_node, destination)
-                        # For simplicity, use 0 energy/time since truck is in transit
-                        edge_index_list.append([truck_idx, dest_idx])
-                        edge_features_list.append([0.0, time_remaining])
-                        edge_index_list.append([dest_idx, truck_idx])
-                        edge_features_list.append([0.0, time_remaining])
+                        edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, dest_idx])
+                        edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([0.0, time_remaining])
+                        edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
+                        edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining])
                     
                     # Check if destination is a charger node
                     elif destination in charger_node_to_idx:
                         dest_idx = charger_node_to_idx[destination]
-                        time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
-                        edge_index_list.append([truck_idx, dest_idx])
-                        edge_features_list.append([0.0, time_remaining])
-                        edge_index_list.append([dest_idx, truck_idx])
-                        edge_features_list.append([0.0, time_remaining])
+                        edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, dest_idx])
+                        edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, time_remaining])
+                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
+                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining])
 
         # 5. Add edges between chargers (always bidirectional if feasible)
         for i, charger1_id in enumerate(env.charging_nodes):
@@ -291,11 +304,11 @@ class GNNStateSpace:
                 time_to_traverse = env.transport_graph.get_time_distance(charger1_id, charger2_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([charger1_idx, charger2_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
+                    edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger1_idx, charger2_idx])
+                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist, time_to_traverse])
                     
-                    edge_index_list.append([charger2_idx, charger1_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
+                    edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger2_idx, charger1_idx])
+                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist, time_to_traverse])
 
         # 6. Add edges between chargers and deliveries (bidirectional if feasible)
         for charger_id in env.charging_nodes:
@@ -311,16 +324,35 @@ class GNNStateSpace:
                 time_to_traverse = env.transport_graph.get_time_distance(charger_id, delivery_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([charger_idx, delivery_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
+                    edge_dict[('charger', 'to', 'delivery')]['edge_index'].append([charger_idx, delivery_idx])
+                    edge_dict[('charger', 'to', 'delivery')]['edge_attr'].append([energy_dist, time_to_traverse])
+                
+                # Delivery → Charger (reverse direction)
+                # Note: This is delivery->charger but we don't have that edge type defined
+                # We'll add it to charger->delivery with reversed indices
+                # Actually, we should add ('delivery', 'to', 'charger') edge type
+                # But to keep it simple, let's add the reverse edge to the existing type
+                # NO - we need proper bidirectionality, so let's add the reverse edge properly
+
+        # Add missing edge type for delivery->charger
+        if ('delivery', 'to', 'charger') not in edge_dict:
+            edge_dict[('delivery', 'to', 'charger')] = {'edge_index': [], 'edge_attr': []}
+        
+        for delivery_id in delivery_node_to_idx.keys():
+            delivery_idx = delivery_node_to_idx[delivery_id]
+            
+            for charger_id in env.charging_nodes:
+                if charger_id not in charger_node_to_idx:
+                    continue
+                charger_idx = charger_node_to_idx[charger_id]
                 
                 # Delivery → Charger
                 energy_dist = env.transport_graph.get_path_energy(delivery_id, charger_id)
                 time_to_traverse = env.transport_graph.get_time_distance(delivery_id, charger_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([delivery_idx, charger_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
+                    edge_dict[('delivery', 'to', 'charger')]['edge_index'].append([delivery_idx, charger_idx])
+                    edge_dict[('delivery', 'to', 'charger')]['edge_attr'].append([energy_dist, time_to_traverse])
 
         # 7. Add edges between delivery nodes (bidirectional if feasible)
         delivery_ids = sorted(delivery_node_to_idx.keys())
@@ -334,44 +366,122 @@ class GNNStateSpace:
                 time_to_traverse = env.transport_graph.get_time_distance(delivery1_id, delivery2_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    edge_index_list.append([delivery1_idx, delivery2_idx])
-                    edge_features_list.append([energy_dist, time_to_traverse])
+                    edge_dict[('delivery', 'to', 'delivery')]['edge_index'].append([delivery1_idx, delivery2_idx])
+                    edge_dict[('delivery', 'to', 'delivery')]['edge_attr'].append([energy_dist, time_to_traverse])
                     
-                    edge_index_list.append([delivery2_idx, delivery1_idx])
                     energy_dist_back = env.transport_graph.get_path_energy(delivery2_id, delivery1_id)
                     time_to_traverse_back = env.transport_graph.get_time_distance(delivery2_id, delivery1_id)
-                    edge_features_list.append([energy_dist_back, time_to_traverse_back])
+                    edge_dict[('delivery', 'to', 'delivery')]['edge_index'].append([delivery2_idx, delivery1_idx])
+                    edge_dict[('delivery', 'to', 'delivery')]['edge_attr'].append([energy_dist_back, time_to_traverse_back])
 
-        # Convert to tensors
-        if edge_index_list:
-            edge_index = torch.tensor(
-                np.array(edge_index_list).T, dtype=torch.long, device=self.device
-            )
-            edge_attr = torch.tensor(
-                edge_features_list, dtype=torch.float32, device=self.device
-            )
-        else:
-            edge_index = torch.zeros((2, 0), dtype=torch.long, device=self.device)
-            edge_attr = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
-
-        # Create PyTorch Geometric Data object
-        data = Data(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            num_nodes=len(node_list),
-        )
+        # Convert edge lists to tensors and add to HeteroData
+        for edge_type, edges in edge_dict.items():
+            if len(edges['edge_index']) > 0:
+                edge_index = torch.tensor(
+                    np.array(edges['edge_index']).T, dtype=torch.long, device=self.device
+                )
+                edge_attr = torch.tensor(
+                    edges['edge_attr'], dtype=torch.float32, device=self.device
+                )
+                data[edge_type].edge_index = edge_index
+                data[edge_type].edge_attr = edge_attr
+            else:
+                # Empty edge type
+                data[edge_type].edge_index = torch.zeros((2, 0), dtype=torch.long, device=self.device)
+                data[edge_type].edge_attr = torch.zeros((0, 2), dtype=torch.float32, device=self.device)
 
         # Add metadata
-        data.active_truck_id = torch.tensor(
+        data['truck'].active_truck_id = torch.tensor(
             [env.active_truck_id if env.active_truck_id is not None else -1],
             device=self.device,
         )
         data.global_clock = torch.tensor([env.global_clock], device=self.device)
         data.num_trucks = torch.tensor([env.num_trucks], device=self.device)
         
-        # Store node information for visualization
-        data.node_list = node_list
+        # Build discrete action space for active truck
+        # Actions: [next_delivery, charger_0, charger_1, ..., charger_N, charge_here]
+        # feasible_action_mask marks which actions are valid
+        # action_to_node_map maps action_idx -> (node_id, is_charging_action)
+        
+        action_to_node_map = []  # List of (node_id, is_charging_action) tuples
+        feasible_action_mask = []
+        can_charge_here = False
+        
+        # Build node_id_to_type mapping: node_id -> (node_type_str, local_idx_in_type)
+        node_id_to_type = {}
+        
+        # Map truck IDs to their local indices in truck features
+        for truck_id, local_idx in truck_id_to_idx.items():
+            if local_idx is not None:
+                node_id_to_type[truck_id] = ('truck', local_idx)
+        
+        # Map delivery IDs to their local indices in delivery features
+        for delivery_id, local_idx in delivery_node_to_idx.items():
+            if local_idx is not None:
+                node_id_to_type[delivery_id] = ('delivery', local_idx)
+        
+        # Map charger IDs to their local indices in charger features
+        for charger_id, local_idx in charger_node_to_idx.items():
+            if local_idx is not None:
+                node_id_to_type[charger_id] = ('charger', local_idx)
+        
+        if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
+            active_truck_idx = truck_id_to_idx[env.active_truck_id]
+            if active_truck_idx is not None:
+                active_truck = env.trucks[env.active_truck_id]
+                current_battery = active_truck.current_battery
+                current_location = active_truck.current_node
+                battery_pct = active_truck.get_battery_percentage()
+                
+                # Action 0: Go to next delivery (if exists and feasible)
+                next_delivery = active_truck.get_next_delivery_target()
+                if next_delivery is not None:
+                    energy = env.transport_graph.get_path_energy(current_location, next_delivery)
+                    is_feasible = energy < current_battery and not np.isinf(energy)
+                    action_to_node_map.append((next_delivery, False))
+                    feasible_action_mask.append(is_feasible)
+                else:
+                    # No delivery left - add dummy action
+                    action_to_node_map.append((-1, False))
+                    feasible_action_mask.append(False)
+                
+                # Actions 1 to N: Go to charger i
+                for charger_id in sorted(charger_node_to_idx.keys()):
+                    if charger_id == current_location:
+                        # Skip current location in routing actions
+                        continue
+                    energy = env.transport_graph.get_path_energy(current_location, charger_id)
+                    is_feasible = energy < current_battery and not np.isinf(energy)
+                    action_to_node_map.append((charger_id, False))
+                    feasible_action_mask.append(is_feasible)
+                
+                # Last action: Charge at current location (if at charger and battery not full)
+                if current_location in charger_node_to_idx:
+                    # Check if battery is not full (allow charging if < 95% to avoid precision issues)
+                    can_charge = battery_pct < 95.0
+                    can_charge_here = can_charge
+                    action_to_node_map.append((current_location, True))
+                    feasible_action_mask.append(can_charge)
+                else:
+                    # Not at charger - can't charge
+                    action_to_node_map.append((-1, True))
+                    feasible_action_mask.append(False)
+        
+        # Convert to tensors
+        data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
+        data.feasible_action_mask = torch.tensor(feasible_action_mask, dtype=torch.bool, device=self.device)
+        data.can_charge_here = can_charge_here
+        data.node_id_to_type = node_id_to_type  # For Actor to map actions to node embeddings
+        
+        # Store metadata for debugging
+        data.num_actions = len(action_to_node_map)
+        
+        # Store node type offsets for easy indexing
+        data.node_type_offsets = {
+            'truck': 0,
+            'delivery': len(truck_features_list),
+            'charger': len(truck_features_list) + len(delivery_features_list)
+        }
 
         return data
 
@@ -554,23 +664,29 @@ class GNNStateSpace:
         }
 
     @staticmethod
-    def graph_to_numpy(data: Data) -> Dict:
-        """Convert PyTorch Geometric Data to numpy for inspection."""
-        return {
-            "x": data.x.cpu().numpy(),
-            "edge_index": data.edge_index.cpu().numpy(),
-            "edge_attr": data.edge_attr.cpu().numpy() if data.edge_attr is not None else None,
-            "num_nodes": data.num_nodes,
-        }
+    def graph_to_numpy(data: HeteroData) -> Dict:
+        """Convert PyTorch Geometric HeteroData to numpy for inspection."""
+        result = {}
+        
+        # Node features
+        for node_type in data.node_types:
+            result[f'{node_type}_x'] = data[node_type].x.cpu().numpy()
+        
+        # Edge features
+        for edge_type in data.edge_types:
+            result[f'{edge_type}_edge_index'] = data[edge_type].edge_index.cpu().numpy()
+            result[f'{edge_type}_edge_attr'] = data[edge_type].edge_attr.cpu().numpy()
+        
+        return result
 
     @staticmethod
-    def visualize_graph_info(data: Data):
-        """Print information about the graph."""
-        print(f"PyTorch Geometric Data Graph")
-        print(f"  - Nodes: {data.num_nodes}")
-        print(f"  - Node features: {data.x.shape}")
-        print(f"  - Edges: {data.edge_index.shape[1]}")
-        if data.edge_attr is not None:
-            print(f"  - Edge features: {data.edge_attr.shape}")
-        else:
-            print(f"  - Edge features: None")
+    def visualize_graph_info(data: HeteroData):
+        """Print information about the heterogeneous graph."""
+        print(f"PyTorch Geometric HeteroData Graph")
+        print(f"Node types:")
+        for node_type in data.node_types:
+            print(f"  - {node_type}: {data[node_type].x.shape[0]} nodes, {data[node_type].x.shape[1]} features")
+        print(f"Edge types:")
+        for edge_type in data.edge_types:
+            num_edges = data[edge_type].edge_index.shape[1]
+            print(f"  - {edge_type}: {num_edges} edges")

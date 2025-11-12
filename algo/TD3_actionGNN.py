@@ -67,11 +67,8 @@ class TD3_ActionGNN(object):
         # Initialize actor network
         self.actor = Actor(
             max_action,
-            feature_dim=fx_dim,
-            GNN_hidden_dim=fx_GNN_hidden_dim,
-            fx_node_sizes=fx_node_sizes,
-            discrete_actions=discrete_actions,
-            num_gcn_layers=actor_num_gcn_layers,
+            hidden_dim=fx_GNN_hidden_dim,
+            num_layers=actor_num_gcn_layers,
             device=self.device
         ).to(self.device)
 
@@ -80,12 +77,9 @@ class TD3_ActionGNN(object):
 
         # Initialize critic network
         self.critic = Critic(
-            feature_dim=fx_dim,
-            GNN_hidden_dim=fx_GNN_hidden_dim,
+            hidden_dim=fx_GNN_hidden_dim,
             mlp_hidden_dim=mlp_hidden_dim,
-            fx_node_sizes=fx_node_sizes,
-            discrete_actions=discrete_actions,
-            num_gcn_layers=critic_num_gcn_layers,
+            num_layers=critic_num_gcn_layers,
             device=self.device
         ).to(self.device)
 
@@ -105,33 +99,67 @@ class TD3_ActionGNN(object):
 
     def select_action(self, state, expl_noise=0, **kwargs):
         """
-        Select action using current policy.
+        Select action using current policy with softmax over feasible actions.
         
         Args:
-            state: GNN state object (PyTorch Geometric Data)
-            expl_noise: Exploration noise (std of Gaussian)
+            state: GNN state object (HeteroData with feasible_action_mask and action_to_node_map)
+            expl_noise: Exploration noise (temperature for softmax)
             
         Returns:
-            Single discrete action (node index)
+            Tuple of (node_id, charging_duration, is_charging_action) or (action_idx, charging_duration) if no map
         """
         state = state.to(self.device)
 
         with torch.no_grad():
-            action_logits = self.actor(state)
+            action_logits, charging_duration = self.actor(state)  # Already masked in forward pass
 
-        # Add exploration noise
-        if expl_noise > 0:
-            noise = torch.randn_like(action_logits) * expl_noise
-            action_logits = action_logits + noise
-
-        # Select action with highest score
-        action_idx = torch.argmax(action_logits).item()
+        # Apply softmax over feasible actions only
+        if hasattr(state, 'feasible_action_mask'):
+            mask = state.feasible_action_mask
+            
+            # Set infeasible actions to -inf before softmax
+            masked_logits = torch.where(
+                mask,
+                action_logits,
+                torch.tensor(float('-inf'), device=self.device)
+            )
+            
+            # Softmax with temperature (expl_noise acts as inverse temperature)
+            if expl_noise > 0:
+                temperature = 1.0 + expl_noise
+                probs = F.softmax(masked_logits / temperature, dim=0)
+                # Sample from distribution
+                action_idx = torch.multinomial(probs, 1).item()
+            else:
+                # Greedy selection
+                action_idx = torch.argmax(masked_logits).item()
+        else:
+            # Fallback: no masking
+            if expl_noise > 0:
+                noise = torch.randn_like(action_logits) * expl_noise
+                action_logits = action_logits + noise
+            action_idx = torch.argmax(action_logits).item()
         
-        return action_idx
+        # Extract charging duration (scalar value)
+        charge_dur = charging_duration.squeeze().item()
+        
+        # If action_to_node_map exists, translate action_idx to (node_id, is_charging_action)
+        if hasattr(state, 'action_to_node_map'):
+            if action_idx < len(state.action_to_node_map):
+                node_id, is_charging = state.action_to_node_map[action_idx]
+                return node_id, charge_dur, is_charging
+            else:
+                # Fallback if index out of range
+                print(f"Warning: action_idx {action_idx} out of range for action_to_node_map (size {len(state.action_to_node_map)})")
+                return action_idx, charge_dur, False
+        
+        # Legacy return format (action_idx, charging_duration)
+        return action_idx, charge_dur
 
     def train(self, replay_buffer, batch_size=256):
         """
         Train actor and critic networks using replay buffer.
+        Handles variable-sized actions per graph in batch.
         
         Args:
             replay_buffer: Replay buffer with experience tuples
@@ -143,25 +171,43 @@ class TD3_ActionGNN(object):
         self.total_it += 1
 
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(
+        # Now returns: (state, action_idx, charging_duration, next_state, reward, not_done)
+        state, action, charging_duration, next_state, reward, not_done = replay_buffer.sample(
             batch_size, device=self.device)
 
         with torch.no_grad():
             # Select next action with target policy
-            next_action_logits = self.actor_target(next_state)
+            next_action_logits, next_charging_duration = self.actor_target(next_state)
             
             # Add clipped noise for target policy smoothing
             noise = (torch.randn_like(next_action_logits) * self.policy_noise).clamp(
                 -self.noise_clip, self.noise_clip)
             next_action_logits = next_action_logits + noise
+            
+            # Also add noise to charging duration
+            charge_noise = (torch.randn_like(next_charging_duration) * self.policy_noise).clamp(
+                -self.noise_clip, self.noise_clip)
+            next_charging_duration = (next_charging_duration + charge_noise).clamp(0, 10.0)
+            
+            # Apply feasibility mask if available (for action selection)
+            if hasattr(next_state, 'feasible_action_mask'):
+                mask = next_state.feasible_action_mask
+                next_action_logits = torch.where(
+                    mask,
+                    next_action_logits,
+                    torch.tensor(-1e9, device=self.device)
+                )
+            
+            # Convert logits to action indices for target Q
+            next_action_idx = torch.argmax(next_action_logits.view(batch_size, -1), dim=1)
 
             # Compute target Q value
-            target_Q1, target_Q2 = self.critic_target(next_state, next_action_logits.unsqueeze(1))
+            target_Q1, target_Q2 = self.critic_target(next_state, next_action_idx, next_charging_duration)
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = reward + not_done * self.discount * target_Q
 
         # Get current Q estimates
-        current_Q1, current_Q2 = self.critic(state, action.unsqueeze(1))
+        current_Q1, current_Q2 = self.critic(state, action, charging_duration)
 
         # Compute critic loss
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
@@ -175,8 +221,12 @@ class TD3_ActionGNN(object):
         if self.total_it % self.policy_freq == 0:
 
             # Compute actor loss
-            actor_output = self.actor(state)
-            actor_loss = -self.critic.Q1(state, actor_output.unsqueeze(1)).mean()
+            actor_logits, actor_charging = self.actor(state)
+            
+            # Convert logits to action indices
+            actor_action_idx = torch.argmax(actor_logits.view(batch_size, -1), dim=1)
+            
+            actor_loss = -self.critic.Q1(state, actor_action_idx, actor_charging).mean()
 
             # Optimize the actor
             self.actor_optimizer.zero_grad()

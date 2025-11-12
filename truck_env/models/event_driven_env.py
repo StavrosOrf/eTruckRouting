@@ -186,6 +186,8 @@ class EventDrivenTruckEnv(gym.Env):
             {}
         )  # truck_id -> "active", "routing", "charging", "complete", "failed"
         self.episode_reward = 0.0
+        self.waiting_start_times = {}  # Track when trucks enter waiting_to_charge state
+        self.waiting_penalty_buffer = 0.0  # Buffer for waiting penalty to apply on next step
 
     def reset(
         self, seed: Optional[int] = None, options: Optional[Dict] = None
@@ -200,6 +202,8 @@ class EventDrivenTruckEnv(gym.Env):
         self.global_clock = 0.0
         self.event_queue = []
         self.episode_reward = 0.0
+        self.waiting_start_times = {}  # Reset waiting time tracking
+        self.waiting_penalty_buffer = 0.0  # Reset waiting penalty buffer
 
         # Reset charging station state
         self.charging_station.reset()
@@ -297,12 +301,12 @@ class EventDrivenTruckEnv(gym.Env):
 
                 # Safety check: skip if truck is already complete or failed
                 if truck.is_complete or truck.failed:
-                    if self.verbose:
-                        raise ValueError("Truck is already complete or failed")
-                        status = "complete" if truck.is_complete else "failed"
-                        print(
-                            f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
-                        )
+                    # if self.verbose:
+                    raise ValueError("Truck is already complete or failed")
+                    status = "complete" if truck.is_complete else "failed"
+                    print(
+                        f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
+                    )
                     continue
 
                 # Skip if this is a stale wake event and truck is no longer waiting
@@ -373,8 +377,13 @@ class EventDrivenTruckEnv(gym.Env):
                     )
 
                     if not can_proceed:
+                        # raise ValueError("Truck cannot proceed to charge due to gating failure")
                         # Update state to waiting_to_charge
                         self.truck_states[truck.truck_id] = "waiting_to_charge"
+                        
+                        # Track when truck starts waiting (if not already tracked)
+                        if truck.truck_id not in self.waiting_start_times:
+                            self.waiting_start_times[truck.truck_id] = self.global_clock
 
                         # Only schedule recheck if we have a specific time
                         # (first truck in waitlist with predicted wait time)
@@ -403,6 +412,25 @@ class EventDrivenTruckEnv(gym.Env):
                         continue
 
                 # Not at a charger or gating passed - truck is ready for decision
+                # Calculate waiting penalty if truck was waiting
+                if truck.truck_id in self.waiting_start_times:
+                    waiting_duration = self.global_clock - self.waiting_start_times[truck.truck_id]
+                    if waiting_duration > 0:
+                        # Calculate time penalty for waiting
+                        waiting_penalty = -waiting_duration * self.reward_config["time_multiplier"]
+                        self.waiting_penalty_buffer = waiting_penalty
+                        
+                        # Update truck's waiting time stat
+                        truck.add_waiting_time(waiting_duration)
+                        
+                        if self.verbose:
+                            print(f"  Truck {truck.truck_id} finished waiting")
+                            print(f"    Waited: {waiting_duration:.2f}h")
+                            print(f"    Waiting penalty (to be applied on next action): {waiting_penalty:.2f}")
+                    
+                    # Clear waiting start time
+                    del self.waiting_start_times[truck.truck_id]
+                
                 self.active_truck_id = event.truck_id
                 self.truck_states[truck.truck_id] = "ready"
                 return
@@ -440,6 +468,10 @@ class EventDrivenTruckEnv(gym.Env):
                         if not can_proceed:
                             # No free port - truck goes to waiting_to_charge state
                             self.truck_states[truck.truck_id] = "waiting_to_charge"
+                            
+                            # Track when truck starts waiting (if not already tracked)
+                            if truck.truck_id not in self.waiting_start_times:
+                                self.waiting_start_times[truck.truck_id] = self.global_clock
 
                             # Only schedule recheck if we have a specific time
                             if next_check_time is not None:
@@ -523,16 +555,23 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"Event Queue: {self.event_queue}")
             print(f"{'='*80}")
 
+        # Add any buffered waiting penalty from previous wait
+        if self.waiting_penalty_buffer != 0.0:
+            reward += self.waiting_penalty_buffer
+            if self.verbose:
+                print(f"  Adding waiting penalty from queue: {self.waiting_penalty_buffer:.2f}")
+            self.waiting_penalty_buffer = 0.0  # Clear the buffer
+
         # Decode and execute action
         if action < self.num_navigation_actions:
             # Navigation action
-            reward = self._execute_navigation_action(truck, action)
+            reward += self._execute_navigation_action(truck, action)
         else:
             # Charging action
             charge_idx = action - self.num_navigation_actions
             charge_durations = self.charging_config["charge_durations"]
             charge_hours = charge_durations[charge_idx]
-            reward = self._execute_charge_action(truck, charge_hours)
+            reward += self._execute_charge_action(truck, charge_hours)
 
         # Accumulate reward
         self.episode_reward += reward
@@ -677,15 +716,15 @@ class EventDrivenTruckEnv(gym.Env):
             # Waiting at charger will be determined upon arrival via queue gating
 
         # Calculate reward (using actual travel time, not base time)
-        time_penalty = -actual_travel_time * self.reward_config["time_penalty"]
-        distance_penalty = -distance * self.reward_config["distance_penalty"]
+        time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
+        # distance_penalty = -distance * self.reward_config["distance_penalty"]
 
         # Bonus if this is a delivery
         if target_node == truck.get_next_delivery_target():
             delivery_bonus = self.reward_config["delivery_bonus"]
-            return time_penalty + distance_penalty + delivery_bonus + queue_penalty
+            return time_penalty + delivery_bonus
 
-        return time_penalty + distance_penalty + queue_penalty
+        return time_penalty
 
     def _apply_traffic_simulation(self, travel_time: float) -> float:
         """
@@ -748,8 +787,14 @@ class EventDrivenTruckEnv(gym.Env):
         )
 
         if not can_proceed:
+            raise ValueError("Truck cannot start charging due to gating failure")
+            # This should not happen because gating is checked before truck becomes ready
             # Truck wants to charge but no port available - go to waiting_to_charge state
             self.truck_states[truck.truck_id] = "waiting_to_charge"
+            
+            # Track when truck starts waiting (if not already tracked)
+            if truck.truck_id not in self.waiting_start_times:
+                self.waiting_start_times[truck.truck_id] = self.global_clock
 
             # Only schedule recheck if we have a specific time
             if next_check_time is not None:
@@ -782,6 +827,7 @@ class EventDrivenTruckEnv(gym.Env):
         charging_config = self.config["charging"]
 
         if charger_type == "DCFast":
+            raise NotImplementedError("DCFast charging not implemented yet")
             charger_config = charging_config["dcfast"]
             charge_rate = charger_config["charge_rate"]  # kW
             efficiency = charger_config["efficiency"]
@@ -836,8 +882,8 @@ class EventDrivenTruckEnv(gym.Env):
             )
 
         # Calculate reward (penalty for time spent charging only, no queue penalty)
-        charge_penalty = -charge_hours * self.reward_config["charge_penalty"]
-        return charge_penalty
+        # charge_penalty = -charge_hours * self.reward_config["charge_penalty"]
+        return -charge_hours
 
     def _check_terminated(self) -> bool:
         """Check if episode is terminated (all trucks done)."""

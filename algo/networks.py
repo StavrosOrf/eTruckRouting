@@ -1,303 +1,551 @@
 """
 Neural Network architectures for TD3 Action-GNN agent.
-Includes Actor and Critic networks using Graph Convolutional Networks.
-Works with PyTorch Geometric Data objects from GNNStateSpace.
+Uses Heterogeneous Graph Neural Networks to handle different node types
+(trucks, deliveries, chargers) and edge features (energy, time).
 """
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_mean_pool
-from torch_geometric.data import Data
+from torch_geometric.nn import MessagePassing, global_mean_pool
+from torch_geometric.data import HeteroData
+from torch_geometric.utils import softmax
+
+
+class MLP(nn.Module):
+    """Multi-layer perceptron with LayerNorm."""
+    
+    def __init__(self, in_dim, hidden_dim, out_dim, num_layers=2, use_layer_norm=True):
+        super().__init__()
+        layers = []
+        current_dim = in_dim
+        
+        for i in range(num_layers - 1):
+            layers.append(nn.Linear(current_dim, hidden_dim))
+            if use_layer_norm:
+                layers.append(nn.LayerNorm(hidden_dim))
+            layers.append(nn.ReLU())
+            current_dim = hidden_dim
+            
+        layers.append(nn.Linear(current_dim, out_dim))
+        self.net = nn.Sequential(*layers)
+        
+    def forward(self, x):
+        return self.net(x)
+
+
+class EdgeConditionedConv(MessagePassing):
+    """
+    Message passing layer that conditions on edge features.
+    For heterogeneous graphs: takes (x_src, x_dst) and edge features.
+    Message from node j to node i: MLP(concat(h_i, h_j, edge_attr))
+    """
+    
+    def __init__(self, in_channels, out_channels, edge_dim, aggr='add'):
+        super().__init__(aggr=aggr)
+        
+        # MLP for message computation: takes [h_i, h_j, edge_attr]
+        self.message_mlp = MLP(
+            in_dim=2 * in_channels + edge_dim,
+            hidden_dim=out_channels,
+            out_dim=out_channels,
+            num_layers=2
+        )
+        
+        # Update MLP: takes [h_i, aggregated_messages]
+        self.update_mlp = MLP(
+            in_dim=in_channels + out_channels,
+            hidden_dim=out_channels,
+            out_dim=out_channels,
+            num_layers=1
+        )
+        
+    def forward(self, x, edge_index, edge_attr, size=None):
+        """
+        Args:
+            x: Tuple of (x_src, x_dst) for heterogeneous, or single tensor for homogeneous
+            edge_index: Edge connectivity [2, num_edges]
+            edge_attr: Edge features [num_edges, edge_dim]
+            size: Tuple (num_src_nodes, num_dst_nodes) for heterogeneous graphs
+        """
+        # Handle both homogeneous and heterogeneous cases
+        if isinstance(x, tuple):
+            x_src, x_dst = x
+        else:
+            x_src = x_dst = x
+            
+        return self.propagate(edge_index, x=(x_src, x_dst), edge_attr=edge_attr, size=size)
+    
+    def message(self, x_i, x_j, edge_attr):
+        """Compute messages from j to i."""
+        # Concatenate: target node (i), source node (j), edge features
+        msg_input = torch.cat([x_i, x_j, edge_attr], dim=-1)
+        return self.message_mlp(msg_input)
+    
+    def update(self, aggr_out, x):
+        """Update node features."""
+        # x here is x_dst (target nodes)
+        if isinstance(x, tuple):
+            x = x[1]  # Get destination features
+        update_input = torch.cat([x, aggr_out], dim=-1)
+        return self.update_mlp(update_input)
+
+
+class HeteroInteractionLayer(nn.Module):
+    """
+    One layer of heterogeneous graph interaction.
+    Processes different edge types with separate EdgeConditionedConv layers.
+    """
+    
+    def __init__(self, node_channels_dict, edge_dim, hidden_dim):
+        """
+        Args:
+            node_channels_dict: Dict mapping node type -> input feature dim
+                                e.g., {'truck': 64, 'delivery': 64, 'charger': 64}
+            edge_dim: Dimension of edge features (2 for energy, time)
+            hidden_dim: Output dimension for all node types
+        """
+        super().__init__()
+        
+        self.node_types = list(node_channels_dict.keys())
+        self.convs = nn.ModuleDict()
+        
+        # Define edge types (bidirectional)
+        self.edge_types = [
+            ('truck', 'to', 'delivery'),
+            ('delivery', 'to', 'truck'),
+            ('truck', 'to', 'charger'),
+            ('charger', 'to', 'truck'),
+            ('charger', 'to', 'charger'),
+            ('truck', 'to', 'truck'),
+            ('delivery', 'to', 'delivery'),
+            ('charger', 'to', 'delivery'),
+        ]
+        
+        # Create conv layer for each edge type
+        for src, rel, dst in self.edge_types:
+            in_channels = node_channels_dict[src]
+            conv = EdgeConditionedConv(in_channels, hidden_dim, edge_dim)
+            self.convs[f'{src}__{rel}__{dst}'] = conv
+            
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        """
+        Args:
+            x_dict: Dict mapping node type -> features
+            edge_index_dict: Dict mapping edge type -> edge_index
+            edge_attr_dict: Dict mapping edge type -> edge_attr
+            
+        Returns:
+            Updated x_dict with same keys
+        """
+        out_dict = {node_type: [] for node_type in self.node_types}
+        
+        # Apply convolutions for each edge type
+        for edge_type in self.edge_types:
+            src, rel, dst = edge_type
+            conv_key = f'{src}__{rel}__{dst}'
+            
+            if edge_type not in edge_index_dict:
+                continue
+                
+            edge_index = edge_index_dict[edge_type]
+            edge_attr = edge_attr_dict[edge_type]
+            
+            # Skip empty edge types
+            if edge_index.shape[1] == 0:
+                continue
+            
+            # Get source and destination node features
+            x_src = x_dict[src]
+            x_dst = x_dict[dst]
+            
+            # Apply edge-conditioned convolution with both src and dst features
+            # Pass size to specify (num_src_nodes, num_dst_nodes)
+            size = (x_src.shape[0], x_dst.shape[0])
+            out = self.convs[conv_key]((x_src, x_dst), edge_index, edge_attr, size=size)
+            
+            # Messages target the destination node type
+            out_dict[dst].append(out)
+        
+        # Aggregate messages for each node type (mean aggregation)
+        x_dict_out = {}
+        for node_type in self.node_types:
+            if len(out_dict[node_type]) > 0:
+                # Average all incoming messages
+                x_dict_out[node_type] = torch.stack(out_dict[node_type]).mean(dim=0)
+            else:
+                # No incoming messages, keep original features (projected to hidden_dim)
+                x_dict_out[node_type] = x_dict[node_type]
+                
+        return x_dict_out
+
+
+class HeteroGNN_Actor(nn.Module):
+    """
+    Heterogeneous GNN Actor for action selection.
+    Outputs:
+    - Node selection scores (discrete action over nodes)
+    - Charging duration (continuous action, used only when charger selected)
+    """
+    
+    def __init__(self, 
+                 node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+                 edge_dim=2,
+                 hidden_dim=64,
+                 num_layers=3,
+                 max_charging_duration=10.0,
+                 device='cpu'):
+        super().__init__()
+        
+        self.device = device
+        self.node_types = list(node_feature_dims.keys())
+        self.max_charging_duration = max_charging_duration
+        
+        # Input projection for each node type (to hidden_dim)
+        self.input_projections = nn.ModuleDict({
+            node_type: nn.Linear(dim, hidden_dim)
+            for node_type, dim in node_feature_dims.items()
+        })
+        
+        # Heterogeneous interaction layers
+        self.layers = nn.ModuleList()
+        node_channels = {nt: hidden_dim for nt in self.node_types}
+        
+        for _ in range(num_layers):
+            self.layers.append(
+                HeteroInteractionLayer(node_channels, edge_dim, hidden_dim)
+            )
+            
+        # Output heads for each node type (score per node)
+        self.output_heads = nn.ModuleDict({
+            node_type: nn.Linear(hidden_dim, 1)
+            for node_type in self.node_types
+        })
+        
+        # Charging duration head (continuous action)
+        # Input: pooled graph features
+        self.charging_duration_head = nn.Sequential(
+            nn.Linear(hidden_dim * len(self.node_types), hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()  # Output in [0, 1], will scale to [0, max_charging_duration]
+        )
+        
+    def forward(self, data, return_mapper=False):
+        """
+        Args:
+            data: HeteroData object
+            return_mapper: Compatibility flag
+            
+        Returns:
+            Tuple of (action_scores, charging_duration)
+            - action_scores: Scores for discrete actions [next_delivery, charger_0, ..., charger_N, charge_here]
+            - charging_duration: Continuous value in [0, max_charging_duration]
+        """
+        # Input projection
+        x_dict = {
+            node_type: F.relu(self.input_projections[node_type](data[node_type].x))
+            for node_type in self.node_types
+            if node_type in data.node_types
+        }
+        
+        # Extract edge indices and attributes
+        edge_index_dict = {
+            edge_type: data[edge_type].edge_index
+            for edge_type in data.edge_types
+        }
+        
+        edge_attr_dict = {
+            edge_type: data[edge_type].edge_attr
+            for edge_type in data.edge_types
+        }
+        
+        # Apply heterogeneous layers
+        for layer in self.layers:
+            x_dict = layer(x_dict, edge_index_dict, edge_attr_dict)
+            x_dict = {k: F.relu(v) for k, v in x_dict.items()}
+        
+        # Compute charging duration (global graph feature)
+        # Pool features from all node types
+        pooled_features = []
+        for node_type in self.node_types:
+            if node_type in x_dict:
+                # Mean pooling over nodes of this type
+                if hasattr(data[node_type], 'batch'):
+                    batch = data[node_type].batch
+                else:
+                    batch = torch.zeros(x_dict[node_type].shape[0], 
+                                      dtype=torch.long, device=self.device)
+                pooled = global_mean_pool(x_dict[node_type], batch)
+                pooled_features.append(pooled)
+        
+        # Concatenate pooled features
+        if pooled_features:
+            graph_embedding = torch.cat(pooled_features, dim=-1)
+            # Predict charging duration in [0, max_charging_duration]
+            charging_duration = self.charging_duration_head(graph_embedding) * self.max_charging_duration
+        else:
+            charging_duration = torch.zeros(1, 1, device=self.device)
+        
+        # Build action scores based on action_to_node_map
+        # Strategy: Compute scores for all nodes first, then index by action_to_node_map
+        if hasattr(data, 'action_to_node_map'):
+            # Compute scores for all nodes
+            scores_dict = {}
+            for node_type in x_dict.keys():
+                scores_dict[node_type] = self.output_heads[node_type](x_dict[node_type]).squeeze(-1)
+            
+            # Build a global node indexing: node_id -> (node_type, local_idx)
+            # This requires node_id_to_type mapping from data
+            if hasattr(data, 'node_id_to_type'):
+                num_actions = len(data.action_to_node_map)
+                action_scores = torch.zeros(num_actions, device=self.device)
+                
+                for action_idx, (node_id, is_charging) in enumerate(data.action_to_node_map):
+                    # Handle dummy nodes (e.g., node_id = -1 for infeasible actions)
+                    if node_id == -1 or node_id not in data.node_id_to_type:
+                        # Use a low score for dummy/infeasible nodes
+                        action_scores[action_idx] = -1.0
+                        continue
+                    
+                    # Get node type and local index for this node_id
+                    node_type, local_idx = data.node_id_to_type[node_id]
+                    
+                    if is_charging:
+                        # For charging action, use graph embedding instead of node score
+                        # This distinguishes "route to charger" from "charge at charger"
+                        action_scores[action_idx] = self.output_heads['charger'](graph_embedding).squeeze()
+                    else:
+                        # Routing action - use the node's score
+                        action_scores[action_idx] = scores_dict[node_type][local_idx]
+            else:
+                # Fallback: Simple concatenation (assume delivery nodes come first, then chargers)
+                # This won't distinguish routing vs charging properly but will work for initial testing
+                scores_list = []
+                for node_type in self.node_types:
+                    if node_type in scores_dict:
+                        scores_list.append(scores_dict[node_type])
+                all_node_scores = torch.cat(scores_list, dim=0)
+                
+                # Map actions to nodes
+                num_actions = len(data.action_to_node_map)
+                action_scores = torch.zeros(num_actions, device=self.device)
+                
+                for action_idx, (node_id, is_charging) in enumerate(data.action_to_node_map):
+                    if node_id == -1:
+                        action_scores[action_idx] = -1.0
+                        continue
+                    
+                    if is_charging:
+                        # Use graph embedding for charging action
+                        action_scores[action_idx] = graph_embedding[0, 0] if graph_embedding.numel() > 0 else 0.0
+                    else:
+                        # Use node score if in range
+                        if node_id < len(all_node_scores):
+                            action_scores[action_idx] = all_node_scores[node_id]
+            
+            # Apply masking if feasible_action_mask is provided
+            if hasattr(data, 'feasible_action_mask'):
+                mask = data.feasible_action_mask
+                action_scores = torch.where(mask, action_scores, torch.tensor(-1e9, device=self.device))
+            
+            # Apply tanh for bounded actions
+            action_scores = torch.tanh(action_scores)
+        else:
+            # Fallback: old behavior with all nodes
+            scores_dict = {
+                node_type: self.output_heads[node_type](x_dict[node_type])
+                for node_type in x_dict.keys()
+            }
+            
+            scores_list = []
+            for node_type in self.node_types:
+                if node_type in scores_dict:
+                    scores_list.append(scores_dict[node_type])
+                    
+            action_scores = torch.cat(scores_list, dim=0).squeeze(-1)
+            
+            # Apply masking if feasible_action_mask is provided
+            if hasattr(data, 'feasible_action_mask'):
+                mask = data.feasible_action_mask
+                action_scores = torch.where(mask, action_scores, torch.tensor(-1e9, device=self.device))
+            
+            action_scores = torch.tanh(action_scores)
+        
+        if return_mapper:
+            return (action_scores, charging_duration), None, torch.arange(len(action_scores), device=self.device)
+        return action_scores, charging_duration
+
+
+class HeteroGNN_Critic(nn.Module):
+    """
+    Heterogeneous GNN Critic for Q-value estimation.
+    Takes state and action (node_index + charging_duration), outputs Q-value.
+    """
+    
+    def __init__(self,
+                 node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+                 edge_dim=2,
+                 hidden_dim=64,
+                 num_layers=3,
+                 mlp_hidden_dim=256,
+                 device='cpu'):
+        super().__init__()
+        
+        self.device = device
+        self.node_types = list(node_feature_dims.keys())
+        
+        # Input projection for each node type (feature + action_indicator + charging_duration)
+        # action_indicator: 1 if this node is selected, 0 otherwise
+        # charging_duration: global feature added to all nodes
+        self.input_projections = nn.ModuleDict({
+            node_type: nn.Linear(dim + 2, hidden_dim)  # +2 for action_indicator and charging_duration
+            for node_type, dim in node_feature_dims.items()
+        })
+        
+        # Heterogeneous interaction layers
+        self.layers = nn.ModuleList()
+        node_channels = {nt: hidden_dim for nt in self.node_types}
+        
+        for _ in range(num_layers):
+            self.layers.append(
+                HeteroInteractionLayer(node_channels, edge_dim, hidden_dim)
+            )
+            
+        # MLP for Q-value estimation from graph embedding
+        self.q_net = MLP(
+            in_dim=hidden_dim * len(self.node_types),  # Pooled features from all types
+            hidden_dim=mlp_hidden_dim,
+            out_dim=1,
+            num_layers=3
+        )
+        
+    def forward(self, data, action, charging_duration=None):
+        """
+        Args:
+            data: HeteroData object (possibly batched)
+            action: Action tensor - [batch_size] of action indices
+            charging_duration: Optional charging duration [batch_size, 1]
+            
+        Returns:
+            Q-value estimate [batch_size, 1]
+        """
+        # Get batch information
+        has_batch = hasattr(data['truck'], 'batch')
+        
+        if has_batch:
+            batch_size = data['truck'].batch.max().item() + 1
+        else:
+            batch_size = 1
+        
+        # Handle action format - convert to tensor if needed
+        if isinstance(action, int):
+            action = torch.tensor([action], dtype=torch.long, device=self.device)
+        elif not isinstance(action, torch.Tensor):
+            action = torch.tensor(action, device=self.device)
+        
+        # Now check action dtype
+        if action.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
+            # Action indices - normalize to [0, 1] range
+            action_feature = action.float().unsqueeze(-1) / 500.0  # Rough normalization
+        else:
+            action_feature = action.unsqueeze(-1) if action.dim() == 1 else action
+        
+        # Handle charging duration (default to 0 if not provided)
+        if charging_duration is None:
+            charging_duration = torch.zeros(batch_size, 1, device=self.device)
+        elif charging_duration.dim() == 1:
+            charging_duration = charging_duration.unsqueeze(-1)
+        
+        # Replicate action and charging duration to all nodes in each graph
+        x_dict = {}
+        for node_type in self.node_types:
+            if node_type not in data.node_types:
+                continue
+            
+            num_nodes = data[node_type].x.shape[0]
+            
+            if has_batch:
+                # Expand action to match number of nodes
+                node_batch = data[node_type].batch
+                # For each node, get its corresponding action and charging duration from the batch
+                node_actions = action_feature[node_batch]
+                node_charging = charging_duration[node_batch]
+            else:
+                # Single graph - repeat action and charging duration for all nodes
+                node_actions = action_feature.repeat(num_nodes, 1)
+                node_charging = charging_duration.repeat(num_nodes, 1)
+            
+            # Concatenate node features with action indicator and charging duration
+            x_with_action = torch.cat([data[node_type].x, node_actions, node_charging], dim=-1)
+            x_dict[node_type] = F.relu(self.input_projections[node_type](x_with_action))
+            
+        # Extract edge indices and attributes
+        edge_index_dict = {
+            edge_type: data[edge_type].edge_index
+            for edge_type in data.edge_types
+        }
+        
+        edge_attr_dict = {
+            edge_type: data[edge_type].edge_attr
+            for edge_type in data.edge_types
+        }
+        
+        # Apply heterogeneous layers
+        for layer in self.layers:
+            x_dict = layer(x_dict, edge_index_dict, edge_attr_dict)
+            x_dict = {k: F.relu(v) for k, v in x_dict.items()}
+            
+        # Global pooling for each node type
+        pooled_features = []
+        for node_type in self.node_types:
+            if node_type in x_dict:
+                # Mean pooling over nodes of this type
+                if has_batch:
+                    batch_idx = data[node_type].batch
+                else:
+                    batch_idx = torch.zeros(x_dict[node_type].shape[0], 
+                                      dtype=torch.long, device=self.device)
+                pooled = global_mean_pool(x_dict[node_type], batch_idx)
+                pooled_features.append(pooled)
+                
+        # Concatenate pooled features from all node types
+        graph_embedding = torch.cat(pooled_features, dim=-1)
+        
+        # Estimate Q-value
+        q_value = self.q_net(graph_embedding)
+        return q_value
 
 
 class Actor(nn.Module):
-    """
-    Actor network using GCN for graph-based state representation.
-    Outputs action logits for each node (action is selecting a node).
-    """
+    """Wrapper for HeteroGNN_Actor to maintain compatibility with TD3."""
     
-    def __init__(self,
-                 max_action: float,
-                 feature_dim: int = 8,
-                 GNN_hidden_dim: int = 32,
-                 num_gcn_layers: int = 3,
-                 discrete_actions: int = 1,
-                 device: torch.device = torch.device('cpu'),
-                 **kwargs):  # Accept fx_node_sizes for compatibility but don't use it
-        """
-        Initialize Actor network.
-        
-        Args:
-            max_action: Maximum action value
-            feature_dim: Dimension of node feature embeddings
-            GNN_hidden_dim: Hidden dimension for GNN layers
-            num_gcn_layers: Number of GCN layers (3, 4, 5, or 6)
-            discrete_actions: Number of discrete actions
-            device: Device to run network on
-        """
-        super(Actor, self).__init__()
-
-        self.device = device
-        self.feature_dim = feature_dim
-        self.discrete_actions = discrete_actions
-        self.num_gcn_layers = num_gcn_layers
-
-        # Input embedding layer (input features are variable but we'll use max)
-        # Max features = 13 (truck nodes have most features)
-        self.input_embedding = nn.Linear(13, feature_dim)
-
-        # GCN layers to extract features
-        self.gcn_conv = GCNConv(feature_dim, GNN_hidden_dim)
-        
-        if num_gcn_layers == 3:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, feature_dim)
-            ])
-        elif num_gcn_layers == 4:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, feature_dim)
-            ])
-        elif num_gcn_layers == 5:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, GNN_hidden_dim),
-                GCNConv(GNN_hidden_dim, feature_dim)
-            ])
-        elif num_gcn_layers == 6:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, 3*GNN_hidden_dim),
-                GCNConv(3*GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, feature_dim)
-            ])
-        else:
-            raise ValueError(
-                f"Number of Actor GCN layers not supported, use 3, 4, 5, or 6!")
-
-        self.gcn_last = GCNConv(feature_dim, 1)  # Output score for each node
+    def __init__(self, max_action=1.0, device='cpu', **kwargs):
+        super().__init__()
+        self.actor = HeteroGNN_Actor(device=device, **kwargs)
         self.max_action = max_action
-
-    def forward(self, state: Data, return_mapper: bool = False):
-        """
-        Forward pass through the actor network.
-        
-        Args:
-            state: PyTorch Geometric Data object with graph structure
-            return_mapper: Whether to return action mapper (for compatibility)
-            
-        Returns:
-            Action values (logits for each node)
-        """
-        x = state.x
-        edge_index = state.edge_index
-        
-        # Embed input features
-        embedded_x = self.input_embedding(x)
-        embedded_x = F.relu(embedded_x)
-
-        # Apply GCN layers
-        x = self.gcn_conv(embedded_x, edge_index)
-        x = F.relu(x)
-
-        for layer in self.gcn_layers:
-            x = layer(x, edge_index)
-            x = F.relu(x)
-
-        x = self.gcn_last(x, edge_index)
-
-        # Bound output to action space
-        x = self.max_action * torch.tanh(x)
-
-        # Flatten to get action scores for each node
-        x = x.reshape(-1)
-        
-        if return_mapper:
-            # For compatibility with old interface
-            # Return dummy values for valid_action_indexes and ev_indexes
-            return x, None, torch.arange(len(x), device=x.device)
-        else:
-            return x
-
-
-class Critic_GNN(nn.Module):
-    """
-    Critic network using GCN for graph-based state-action value estimation.
-    """
-    
-    def __init__(self,
-                 feature_dim: int = 8,
-                 GNN_hidden_dim: int = 32,
-                 mlp_hidden_dim: int = 256,
-                 discrete_actions: int = 1,
-                 num_gcn_layers: int = 3,
-                 device: torch.device = torch.device('cpu'),
-                 **kwargs):  # Accept fx_node_sizes for compatibility
-        """
-        Initialize Critic network.
-        
-        Args:
-            feature_dim: Dimension of node feature embeddings
-            GNN_hidden_dim: Hidden dimension for GNN layers
-            mlp_hidden_dim: Hidden dimension for MLP layers
-            discrete_actions: Number of discrete actions
-            num_gcn_layers: Number of GCN layers (3, 4, or 5)
-            device: Device to run network on
-        """
-        super(Critic_GNN, self).__init__()
-
         self.device = device
-        self.feature_dim = feature_dim
-        self.discrete_actions = discrete_actions
         
-        # Input embedding (13 max features + 1 for action)
-        self.input_embedding = nn.Linear(14, feature_dim)
-
-        # GCN layers (state + action concatenated at input level)
-        self.gcn_conv = GCNConv(feature_dim, GNN_hidden_dim)
-        
-        if num_gcn_layers == 3:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, 3*GNN_hidden_dim)
-            ])
-            mlp_layer_features = 3*GNN_hidden_dim
-            
-        elif num_gcn_layers == 4:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, 3*GNN_hidden_dim),
-                GCNConv(3*GNN_hidden_dim, 2*GNN_hidden_dim)
-            ])            
-            mlp_layer_features = 2*GNN_hidden_dim
-            
-        elif num_gcn_layers == 5:
-            self.gcn_layers = nn.ModuleList([
-                GCNConv(GNN_hidden_dim, 2*GNN_hidden_dim),
-                GCNConv(2*GNN_hidden_dim, 3*GNN_hidden_dim),
-                GCNConv(3*GNN_hidden_dim, 4*GNN_hidden_dim),
-                GCNConv(4*GNN_hidden_dim, 3*GNN_hidden_dim)
-            ])
-            mlp_layer_features = 3*GNN_hidden_dim
-            
-        else:
-            raise ValueError(
-                f"Number of Critic GCN layers not supported, use 3, 4, or 5!")
-
-        # MLP for Q-value estimation
-        self.l1 = nn.Linear(mlp_layer_features, mlp_hidden_dim)
-        self.l2 = nn.Linear(mlp_hidden_dim, mlp_hidden_dim)
-        self.l3 = nn.Linear(mlp_hidden_dim, 1)
-
-    def forward(self, state: Data, action: torch.Tensor):
-        """
-        Forward pass through critic network.
-        
-        Args:
-            state: PyTorch Geometric Data object with graph structure
-            action: Action tensor (node action scores)
-            
-        Returns:
-            Q-value estimate
-        """
-        x = state.x
-        edge_index = state.edge_index
-
-        # Concatenate action to state features
-        # Action should have same number of nodes
-        if action.dim() == 1:
-            action = action.unsqueeze(1)
-        
-        # Pad action to match number of nodes if needed
-        if action.shape[0] != x.shape[0]:
-            # Repeat action for all nodes (broadcast)
-            action = action.repeat(x.shape[0], 1)[:x.shape[0], :]
-        
-        state_action = torch.cat([x, action], dim=1)
-
-        # Embed concatenated features
-        embedded_x = self.input_embedding(state_action)
-        embedded_x = F.relu(embedded_x)
-
-        # Apply GCN layers
-        x = self.gcn_conv(embedded_x, edge_index)
-        x = F.relu(x)
-
-        for layer in self.gcn_layers:
-            x = layer(x, edge_index)
-            x = F.relu(x)
-
-        # Create batch mask for pooling
-        if hasattr(state, 'batch'):
-            batch = state.batch
-        else:
-            # Single graph - all nodes belong to batch 0
-            batch = torch.zeros(x.shape[0], dtype=torch.long, device=self.device)
-
-        # Graph pooling
-        pooled_embedding = global_mean_pool(x, batch=batch)
-
-        # MLP for Q-value
-        x = F.relu(self.l1(pooled_embedding))
-        x = F.relu(self.l2(x))
-        x = self.l3(x)
-
-        return x
+    def forward(self, state, return_mapper=False):
+        scores, charging_duration = self.actor(state, return_mapper=return_mapper)
+        if return_mapper:
+            (scores, charging_duration), _, mapper = (scores, charging_duration), None, torch.arange(len(scores), device=self.device)
+            return (self.max_action * scores, charging_duration), None, mapper
+        return self.max_action * scores, charging_duration
 
 
 class Critic(nn.Module):
-    """
-    Twin Critic networks for TD3 (Q1 and Q2).
-    """
+    """Twin critics for TD3."""
     
-    def __init__(self,
-                 feature_dim: int = 8,
-                 GNN_hidden_dim: int = 32,
-                 mlp_hidden_dim: int = 256,
-                 discrete_actions: int = 1,
-                 num_gcn_layers: int = 3,
-                 device: torch.device = torch.device('cpu'),
-                 **kwargs):
-        """
-        Initialize twin critic networks.
-        
-        Args:
-            feature_dim: Dimension of node feature embeddings
-            GNN_hidden_dim: Hidden dimension for GNN layers
-            mlp_hidden_dim: Hidden dimension for MLP layers
-            discrete_actions: Number of discrete actions
-            num_gcn_layers: Number of GCN layers
-            device: Device to run network on
-        """
-        super(Critic, self).__init__()
-
+    def __init__(self, device='cpu', **kwargs):
+        super().__init__()
+        self.q1 = HeteroGNN_Critic(device=device, **kwargs)
+        self.q2 = HeteroGNN_Critic(device=device, **kwargs)
         self.device = device
-        self.feature_dim = feature_dim
-
-        self.q1 = Critic_GNN(
-            feature_dim=feature_dim,
-            GNN_hidden_dim=GNN_hidden_dim,
-            mlp_hidden_dim=mlp_hidden_dim,
-            discrete_actions=discrete_actions,
-            num_gcn_layers=num_gcn_layers,
-            device=device
-        )
-
-        self.q2 = Critic_GNN(
-            feature_dim=feature_dim,
-            GNN_hidden_dim=GNN_hidden_dim,
-            mlp_hidden_dim=mlp_hidden_dim,
-            discrete_actions=discrete_actions,
-            num_gcn_layers=num_gcn_layers,
-            device=device
-        )
-
-    def forward(self, state: Data, action: torch.Tensor):
-        """Forward pass through both critics."""
-        return self.q1(state, action), self.q2(state, action)
-
-    def Q1(self, state: Data, action: torch.Tensor):
-        """Forward pass through first critic only."""
-        return self.q1(state, action)
+        
+    def forward(self, state, action, charging_duration=None):
+        return self.q1(state, action, charging_duration), self.q2(state, action, charging_duration)
+    
+    def Q1(self, state, action, charging_duration=None):
+        return self.q1(state, action, charging_duration)

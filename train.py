@@ -28,7 +28,7 @@ def parse_args():
     env_group = parser.add_argument_group('Environment')
     env_group.add_argument('--config', type=str, default='truck_env/config_files/config.yaml',
                           help='Path to environment config file')
-    env_group.add_argument('--num-trucks', type=int, default=None,
+    env_group.add_argument('--num-trucks', type=int, default=1,
                           help='Number of trucks (overrides config)')
     env_group.add_argument('--num-stops', type=int, default=None,
                           help='Number of delivery stops per truck (overrides config)')
@@ -45,15 +45,13 @@ def parse_args():
                             help='Maximum number of training episodes')
     train_group.add_argument('--max-timesteps', type=int, default=1000000,
                             help='Maximum number of timesteps')
-    train_group.add_argument('--eval-freq', type=int, default=5000,
+    train_group.add_argument('--eval-freq', type=int, default=100,
                             help='Evaluation frequency (in timesteps)')
     train_group.add_argument('--eval-episodes', type=int, default=10,
                             help='Number of episodes for evaluation')
-    train_group.add_argument('--save-freq', type=int, default=50000,
-                            help='Model save frequency (in timesteps)')
-    train_group.add_argument('--batch-size', type=int, default=256,
+    train_group.add_argument('--batch-size', type=int, default=64,
                             help='Batch size for training')
-    train_group.add_argument('--start-timesteps', type=int, default=25000,
+    train_group.add_argument('--start-timesteps', type=int, default=300,
                             help='Timesteps before training starts (random policy)')
     train_group.add_argument('--buffer-size', type=int, default=1000000,
                             help='Replay buffer size')
@@ -98,8 +96,6 @@ def parse_args():
                           help='Experiment name (auto-generated if not provided)')
     log_group.add_argument('--no-wandb', action='store_true',
                           help='Disable wandb logging')
-    log_group.add_argument('--save-dir', type=str, default='./models',
-                          help='Directory to save models')
     log_group.add_argument('--verbose', action='store_true',
                           help='Enable verbose output')
     
@@ -162,6 +158,8 @@ def train(args):
     if args.exp_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         args.exp_name = f"TD3_GNN_{timestamp}"
+        
+    group_name = f"{config['environment']['num_trucks']}trucks_{config['environment']['num_stops']}stops"
     
     # Initialize wandb
     if not args.no_wandb:
@@ -169,6 +167,7 @@ def train(args):
             project=args.wandb_project,
             entity=args.wandb_entity,
             name=args.exp_name,
+            group=group_name,
             config=vars(args)
         )
     
@@ -223,9 +222,13 @@ def train(args):
     # Initialize replay buffer
     replay_buffer = ReplayBuffer(max_size=args.buffer_size)
     
-    # Create save directory
-    os.makedirs(args.save_dir, exist_ok=True)
-    save_path = os.path.join(args.save_dir, args.exp_name)
+    # Create save directory with proper structure: {project}/saved_models/{run_id}/
+    save_dir = os.path.join("saved_models", args.exp_name)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "model")
+    
+    # Track best model
+    best_eval_reward = -float('inf')
     
     # Training loop
     total_timesteps = 0
@@ -296,7 +299,12 @@ def train(args):
                 })
             
             if args.verbose or episode_num % 10 == 0:
-                print(f"Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
+                
+                if t >= args.start_timesteps:
+                    print(f"Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
+                      f"Success={info.get('all_complete', False)}, Timestep={total_timesteps}")
+                else:
+                    print(f"[Collecting] Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
                       f"Success={info.get('all_complete', False)}")
             
             # Reset environment
@@ -307,7 +315,7 @@ def train(args):
             episode_num += 1
         
         # Evaluate policy
-        if (t + 1) % args.eval_freq == 0:
+        if (t + 1) % args.eval_freq == 0 and t >= args.start_timesteps:
             eval_results = evaluate_policy(env, policy, gnn_state_space, 
                                          args.eval_episodes, args.seed + 1000)
             
@@ -315,6 +323,13 @@ def train(args):
             print(f"Evaluation at timestep {total_timesteps}")
             print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")
             print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
+            
+            # Save best model
+            if eval_results['mean_reward'] > best_eval_reward:
+                best_eval_reward = eval_results['mean_reward']
+                policy.save(f"{save_path}_best")
+                print(f"🌟 New best model saved! Reward: {best_eval_reward:.2f}")
+            
             print(f"{'='*80}\n")
             
             if not args.no_wandb:
@@ -322,17 +337,16 @@ def train(args):
                     'eval/mean_reward': eval_results['mean_reward'],
                     'eval/std_reward': eval_results['std_reward'],
                     'eval/success_rate': eval_results['success_rate'],
+                    'eval/best_reward': best_eval_reward,
                     'eval/timestep': total_timesteps
                 })
-        
-        # Save model
-        if (t + 1) % args.save_freq == 0:
-            policy.save(f"{save_path}_step_{total_timesteps}")
-            print(f"Model saved at timestep {total_timesteps}")
     
-    # Final save
+    # Final save of the last model
     policy.save(f"{save_path}_final")
-    print(f"\nTraining completed. Final model saved to {save_path}_final")
+    print(f"\nTraining completed.")
+    print(f"Final model saved to: {save_path}_final")
+    print(f"Best model saved to: {save_path}_best (Reward: {best_eval_reward:.2f})")
+    print(f"Save directory: {save_dir}")
     
     # Close environment and wandb
     env.close()

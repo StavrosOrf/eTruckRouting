@@ -39,6 +39,8 @@ class TD3_ActionGNN(object):
             discrete_actions=1,
             actor_num_gcn_layers=3,
             critic_num_gcn_layers=3,
+            min_charging_duration=0.5,
+            max_charging_duration=10.0,
             **kwargs
     ):
         """
@@ -60,6 +62,8 @@ class TD3_ActionGNN(object):
             discrete_actions: Number of discrete actions
             actor_num_gcn_layers: Number of GCN layers in actor
             critic_num_gcn_layers: Number of GCN layers in critic
+            min_charging_duration: Minimum charging duration (hours)
+            max_charging_duration: Maximum charging duration (hours)
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.discrete_actions = discrete_actions
@@ -69,6 +73,8 @@ class TD3_ActionGNN(object):
             max_action,
             hidden_dim=fx_GNN_hidden_dim,
             num_layers=actor_num_gcn_layers,
+            min_charging_duration=min_charging_duration,
+            max_charging_duration=max_charging_duration,
             device=self.device
         ).to(self.device)
 
@@ -94,6 +100,8 @@ class TD3_ActionGNN(object):
         self.policy_noise = policy_noise
         self.noise_clip = noise_clip
         self.policy_freq = policy_freq
+        self.min_charging_duration = min_charging_duration
+        self.max_charging_duration = max_charging_duration
 
         self.total_it = 0
 
@@ -185,25 +193,26 @@ class TD3_ActionGNN(object):
             # Also add noise to charging duration
             charge_noise = (torch.randn_like(next_charging_duration) * self.policy_noise).clamp(
                 -self.noise_clip, self.noise_clip)
-            next_charging_duration = (next_charging_duration + charge_noise).clamp(0, 10.0)
+            next_charging_duration = (next_charging_duration + charge_noise).clamp(
+                self.min_charging_duration, self.max_charging_duration)
             
             # Convert logits to action indices for target Q
             # For batched states, we need to handle variable action dimensions
-            # Since we can't batch variable-sized tensors, we process individually
-            if hasattr(next_state, 'ptr'):
-                # Batched graph
-                batch_size = len(next_state.ptr) - 1
-                next_action_idx = torch.zeros(batch_size, dtype=torch.long, device=self.device)
-                
-                # For batched graphs, we need action indices per graph
-                # This is complex with variable actions - simplified approach
-                # Assume action_logits are already properly sized
-                if next_action_logits.dim() == 1:
-                    # Single action vector - assume batch_size repeats
-                    next_action_idx = torch.argmax(next_action_logits).unsqueeze(0).repeat(batch_size)
-                else:
-                    # Multiple action vectors
-                    next_action_idx = torch.argmax(next_action_logits, dim=-1)
+            # Determine if this is a batch by checking if node types have ptr
+            is_batched = False
+            batch_size = 1
+            
+            # Check first node type for batching info
+            for node_type in next_state.node_types:
+                if hasattr(next_state[node_type], 'ptr'):
+                    is_batched = True
+                    batch_size = len(next_state[node_type].ptr) - 1
+                    break
+            
+            if is_batched and batch_size > 1:
+                # Batched graphs - action_logits is concatenated across all graphs
+                # Take argmax as best action (simplified - doesn't separate per graph properly)
+                next_action_idx = torch.argmax(next_action_logits).unsqueeze(0).repeat(batch_size)
             else:
                 # Single graph
                 next_action_idx = torch.argmax(next_action_logits).unsqueeze(0)
@@ -231,22 +240,48 @@ class TD3_ActionGNN(object):
             # The actor learns to produce good raw scores; masking is only applied during action selection
             actor_logits, actor_charging = self.actor(state, apply_mask=False)
             
-            # For batched graphs, action_logits is concatenated across all graphs
-            # We need to select one action per graph in the batch
-            # Use argmax to get the best action for each graph
-            if hasattr(state, 'ptr'):
-                # Batched graph - but action_logits is concatenated, not separated by graph
-                # Simplified: just take argmax over all (treats batch as single graph for now)
-                # This is a limitation but works for the loss computation
-                actor_action_idx = torch.argmax(actor_logits).unsqueeze(0)
-                if actor_charging.shape[0] > 1:
-                    # Multiple graphs - use first graph's charging duration
-                    actor_charging = actor_charging[0:1]
+            # For batched graphs with variable action spaces, properly handle per-graph actions
+            # Check if this is a batch by looking at node-level ptr attributes
+            is_batched = False
+            batch_size = 1
+            
+            for node_type in state.node_types:
+                if hasattr(state[node_type], 'ptr'):
+                    is_batched = True
+                    batch_size = len(state[node_type].ptr) - 1
+                    break
+            
+            if is_batched and batch_size > 1:
+                # Batched graphs - we have multiple graphs with potentially different action spaces
+                
+                # Assume equal distribution of actions across graphs (approximation)
+                # Better solution would store num_actions per graph in state metadata
+                total_actions = actor_logits.shape[0]
+                actions_per_graph = total_actions // batch_size if batch_size > 0 else total_actions
+                
+                # Select best action from each graph's action subset
+                actor_actions = []
+                for i in range(batch_size):
+                    start_idx = i * actions_per_graph
+                    end_idx = (i + 1) * actions_per_graph if i < batch_size - 1 else total_actions
+                    graph_logits = actor_logits[start_idx:end_idx]
+                    
+                    if graph_logits.numel() > 0:
+                        best_action = torch.argmax(graph_logits)
+                        # Store global action index (relative to concatenated logits)
+                        actor_actions.append(start_idx + best_action)
+                    else:
+                        # Fallback for empty graph
+                        actor_actions.append(torch.tensor(0, device=self.device))
+                
+                actor_action_idx = torch.stack(actor_actions) if actor_actions else torch.tensor([0], device=self.device)
             else:
                 # Single graph
                 actor_action_idx = torch.argmax(actor_logits).unsqueeze(0)
             
-            actor_loss = -self.critic.Q1(state, actor_action_idx, actor_charging).mean()
+            # Compute Q-value for selected actions
+            actor_Q = self.critic.Q1(state, actor_action_idx, actor_charging)
+            actor_loss = -actor_Q.mean()
 
             # Optimize the actor
             self.actor_optimizer.zero_grad()

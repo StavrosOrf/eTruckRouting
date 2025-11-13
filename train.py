@@ -46,7 +46,9 @@ def parse_args():
                             help='Maximum number of training episodes')
     train_group.add_argument('--max-timesteps', type=int, default=1000000,
                             help='Maximum number of timesteps')
-    train_group.add_argument('--eval-freq', type=int, default=100,
+    train_group.add_argument('--max-episode-steps', type=int, default=200,
+                            help='Maximum steps per episode (prevents infinite episodes)')
+    train_group.add_argument('--eval-freq', type=int, default=500,
                             help='Evaluation frequency (in timesteps)')
     train_group.add_argument('--eval-episodes', type=int, default=5,
                             help='Number of episodes for evaluation')
@@ -86,6 +88,10 @@ def parse_args():
                           help='Number of GCN layers in critic')
     net_group.add_argument('--lr', type=float, default=3e-4,
                           help='Learning rate for both actor and critic')
+    net_group.add_argument('--min-charging-duration', type=float, default=0.5,
+                          help='Minimum charging duration in hours')
+    net_group.add_argument('--max-charging-duration', type=float, default=10.0,
+                          help='Maximum charging duration in hours')
     
     # Logging and output
     log_group = parser.add_argument_group('Logging')
@@ -103,7 +109,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
+def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_steps=200):
     """Evaluate the current policy."""
     eval_rewards = []
     eval_success_rate = []
@@ -111,10 +117,11 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
     for episode in range(eval_episodes):
         obs, info = env.reset(seed=seed + episode)
         episode_reward = 0
+        episode_steps = 0
         done = False
         truncated = False
         
-        while not (done or truncated):
+        while not (done or truncated) and episode_steps < max_steps:
             # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
             
@@ -129,6 +136,7 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
             # Take action
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
+            episode_steps += 1
         
         eval_rewards.append(episode_reward)
         eval_success_rate.append(1.0 if info.get('all_complete', False) else 0.0)
@@ -229,7 +237,9 @@ def train(args):
         lr=args.lr,
         discrete_actions=action_dim,
         actor_num_gcn_layers=args.actor_gcn_layers,
-        critic_num_gcn_layers=args.critic_gcn_layers
+        critic_num_gcn_layers=args.critic_gcn_layers,
+        min_charging_duration=args.min_charging_duration,
+        max_charging_duration=args.max_charging_duration
     )
     
     # Initialize replay buffer
@@ -258,6 +268,7 @@ def train(args):
     print(f"{'='*80}")
     print(f"Environment: {config['environment']['num_trucks']} trucks, {config['environment']['num_stops']} stops")
     print(f"Max timesteps: {args.max_timesteps}")
+    print(f"Max steps per episode: {args.max_episode_steps}")
     print(f"Replay buffer size: {args.buffer_size}")
     print(f"Batch size: {args.batch_size}")
     print(f"{'='*80}\n")
@@ -307,6 +318,12 @@ def train(args):
         episode_reward += reward
         total_timesteps += 1
         
+        # Check if episode reached maximum steps
+        if episode_timesteps >= args.max_episode_steps:
+            truncated = True
+            if args.verbose:
+                print(f"Episode {episode_num} truncated at {episode_timesteps} steps (max={args.max_episode_steps})")
+        
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
             critic_loss, actor_loss = policy.train(replay_buffer, args.batch_size)
@@ -353,7 +370,7 @@ def train(args):
         # Evaluate policy
         if (t + 1) % args.eval_freq == 0 and t >= args.start_timesteps:
             eval_results = evaluate_policy(eval_env, policy, gnn_state_space, 
-                                         args.eval_episodes, args.seed + 1000)
+                                         args.eval_episodes, args.seed + 1000, args.max_episode_steps)
             
             print(f"\n{'='*80}")
             print(f"Evaluation at timestep {total_timesteps}")

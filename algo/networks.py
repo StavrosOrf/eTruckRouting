@@ -194,12 +194,14 @@ class HeteroGNN_Actor(nn.Module):
                  edge_dim=2,
                  hidden_dim=64,
                  num_layers=3,
+                 min_charging_duration=0.5,
                  max_charging_duration=10.0,
                  device='cpu'):
         super().__init__()
         
         self.device = device
         self.node_types = list(node_feature_dims.keys())
+        self.min_charging_duration = min_charging_duration
         self.max_charging_duration = max_charging_duration
         
         # Input projection for each node type (to hidden_dim)
@@ -285,8 +287,11 @@ class HeteroGNN_Actor(nn.Module):
             max_batch_idx = -1
             for node_type in self.node_types:
                 if node_type in x_dict and hasattr(data[node_type], 'batch'):
-                    node_max = int(data[node_type].batch.max().item())
-                    max_batch_idx = max(max_batch_idx, node_max)
+                    batch_tensor = data[node_type].batch
+                    # Only compute max if batch tensor is non-empty
+                    if batch_tensor.numel() > 0:
+                        node_max = int(batch_tensor.max().item())
+                        max_batch_idx = max(max_batch_idx, node_max)
             
             if max_batch_idx >= 0:
                 batch_size = max_batch_idx + 1
@@ -300,10 +305,18 @@ class HeteroGNN_Actor(nn.Module):
                 # Mean pooling over nodes of this type
                 if hasattr(data[node_type], 'batch'):
                     batch = data[node_type].batch
-                    pooled = global_mean_pool(x_dict[node_type], batch, size=batch_size)
+                    # Only pool if there are nodes of this type
+                    if x_dict[node_type].shape[0] > 0:
+                        pooled = global_mean_pool(x_dict[node_type], batch, size=batch_size)
+                    else:
+                        # No nodes of this type - create zero pooling
+                        pooled = torch.zeros(batch_size, x_dict[node_type].shape[1], device=self.device)
                 else:
                     # Single graph - just mean over all nodes
-                    pooled = x_dict[node_type].mean(dim=0, keepdim=True)
+                    if x_dict[node_type].shape[0] > 0:
+                        pooled = x_dict[node_type].mean(dim=0, keepdim=True)
+                    else:
+                        pooled = torch.zeros(1, x_dict[node_type].shape[1], device=self.device)
                     # Ensure correct batch size
                     if pooled.shape[0] < batch_size:
                         pooled = pooled.repeat(batch_size, 1)
@@ -312,10 +325,11 @@ class HeteroGNN_Actor(nn.Module):
         graph_embedding = None
         if pooled_features:
             graph_embedding = torch.cat(pooled_features, dim=-1)
-            # Predict charging duration in [0, max_charging_duration]
-            charging_duration = self.charging_duration_head(graph_embedding) * self.max_charging_duration
+            # Predict charging duration: map sigmoid [0,1] to [min_charging_duration, max_charging_duration]
+            sigmoid_output = self.charging_duration_head(graph_embedding)
+            charging_duration = self.min_charging_duration + sigmoid_output * (self.max_charging_duration - self.min_charging_duration)
         else:
-            charging_duration = torch.zeros(batch_size, 1, device=self.device)
+            charging_duration = torch.full((batch_size, 1), self.min_charging_duration, device=self.device)
         
         # Prepare scalar score for charging actions (fall back to zero if embedding missing)
         if graph_embedding is not None and graph_embedding.numel() > 0:
@@ -477,8 +491,10 @@ class HeteroGNN_Critic(nn.Module):
             max_batch_idx = -1
             for node_type in self.node_types:
                 if node_type in data.node_types and hasattr(data[node_type], 'batch'):
-                    node_max = int(data[node_type].batch.max().item())
-                    max_batch_idx = max(max_batch_idx, node_max)
+                    batch_tensor = data[node_type].batch
+                    if batch_tensor.numel() > 0:
+                        node_max = int(batch_tensor.max().item())
+                        max_batch_idx = max(max_batch_idx, node_max)
             batch_size = max_batch_idx + 1 if max_batch_idx >= 0 else 1
         else:
             batch_size = 1

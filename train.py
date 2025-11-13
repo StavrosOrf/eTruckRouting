@@ -115,10 +115,10 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
         truncated = False
         
         while not (done or truncated):
-            # Get GNN state
+            # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
             
-            # Select action without exploration noise
+            # Select action without exploration noise (greedy)
             raw_action = policy.select_action(gnn_state, expl_noise=0)
             if isinstance(raw_action, tuple):
                 action = raw_action
@@ -181,7 +181,7 @@ def train(args):
     # Create training and evaluation environments (evaluation env stays isolated)
     env = EventDrivenTruckEnv(
         config=config,
-        verbose=args.verbose,
+        verbose=False,
         enable_plotting=False,
         run_id=args.exp_name
     )
@@ -265,16 +265,12 @@ def train(args):
     for t in range(args.max_timesteps):
         episode_timesteps += 1
         
-        # Select action
-        if t < args.start_timesteps:
-            # Random action for initial exploration (use legacy integer format)
-            action = env.action_space.sample()
-        else:
-            # Select action with exploration noise (returns tuple format from GNN)
-            action = policy.select_action(gnn_state, expl_noise=args.expl_noise)
-            # action is now a tuple: (node_id, charging_duration, is_charging)
+                
+        action = policy.select_action(gnn_state, expl_noise=args.expl_noise)
+        # action is now a tuple: (node_id, charging_duration, is_charging)
         
         # Perform action (env.step handles both integer and tuple formats)
+        # print(f"Taking action: {action}, step: {t}")
         next_obs, reward, done, truncated, info = env.step(action)
         next_gnn_state = gnn_state_space.get_state_GNN(env)
         
@@ -316,13 +312,14 @@ def train(args):
             critic_loss, actor_loss = policy.train(replay_buffer, args.batch_size)
             
             # Log training metrics
-            if not args.no_wandb and t % 100 == 0:  # Log every 100 steps
+            if not args.no_wandb:  # Log every 100 steps
                 log_dict = {
                     'train/critic_loss': critic_loss,
                     'train/timestep': total_timesteps
                 }
                 if actor_loss is not None:
                     log_dict['train/actor_loss'] = actor_loss
+                    
                 wandb.log(log_dict)
         
         # Episode ended

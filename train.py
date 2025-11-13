@@ -3,6 +3,7 @@ Training loop for the TD3 Action-GNN agent using wandb to log results.
 """
 
 import argparse
+import copy
 import os
 import sys
 import numpy as np
@@ -30,9 +31,9 @@ def parse_args():
                           help='Path to environment config file')
     env_group.add_argument('--num-trucks', type=int, default=1,
                           help='Number of trucks (overrides config)')
-    env_group.add_argument('--num-stops', type=int, default=None,
+    env_group.add_argument('--num-stops', type=int, default=3,
                           help='Number of delivery stops per truck (overrides config)')
-    env_group.add_argument('--max-time', type=float, default=None,
+    env_group.add_argument('--max-time', type=float, default=200.0,
                           help='Maximum simulation time in hours (overrides config)')
     env_group.add_argument('--enable-traffic', action='store_true',
                           help='Enable traffic simulation')
@@ -47,9 +48,9 @@ def parse_args():
                             help='Maximum number of timesteps')
     train_group.add_argument('--eval-freq', type=int, default=100,
                             help='Evaluation frequency (in timesteps)')
-    train_group.add_argument('--eval-episodes', type=int, default=10,
+    train_group.add_argument('--eval-episodes', type=int, default=5,
                             help='Number of episodes for evaluation')
-    train_group.add_argument('--batch-size', type=int, default=64,
+    train_group.add_argument('--batch-size', type=int, default=32,
                             help='Batch size for training')
     train_group.add_argument('--start-timesteps', type=int, default=300,
                             help='Timesteps before training starts (random policy)')
@@ -119,8 +120,11 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
             
             # Select action without exploration noise
             raw_action = policy.select_action(gnn_state, expl_noise=0)
-            # Map node index to valid action (clip to action space)
-            action = int(raw_action) % env.action_space.n
+            if isinstance(raw_action, tuple):
+                action = raw_action
+            else:
+                # Map node index to valid action (clip to action space)
+                action = int(raw_action) % env.action_space.n
             
             # Take action
             obs, reward, done, truncated, info = env.step(action)
@@ -163,20 +167,29 @@ def train(args):
     
     # Initialize wandb
     if not args.no_wandb:
-        wandb.init(
+        _run = wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
             name=args.exp_name,
             group=group_name,
-            config=vars(args)
+            config=vars(args),
+            save_code=True
         )
+        #log code files
+        _run.log_code(".")
     
-    # Create environment
+    # Create training and evaluation environments (evaluation env stays isolated)
     env = EventDrivenTruckEnv(
         config=config,
         verbose=args.verbose,
         enable_plotting=False,
         run_id=args.exp_name
+    )
+    eval_env = EventDrivenTruckEnv(
+        config=copy.deepcopy(config),
+        verbose=False,
+        enable_plotting=False,
+        run_id=f"{args.exp_name}_eval"
     )
     
     # Initialize GNN state space
@@ -228,7 +241,8 @@ def train(args):
     save_path = os.path.join(save_dir, "model")
     
     # Track best model
-    best_eval_reward = -float('inf')
+    best_eval_reward = None
+    best_model_path = None
     
     # Training loop
     total_timesteps = 0
@@ -323,14 +337,14 @@ def train(args):
                     'train/timestep': total_timesteps
                 })
             
-            if args.verbose or episode_num % 10 == 0:
+            # if args.verbose or episode_num % 10 == 0:
                 
-                if t >= args.start_timesteps:
-                    print(f"Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
-                      f"Success={info.get('all_complete', False)}, Timestep={total_timesteps}")
-                else:
-                    print(f"[Collecting] Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
-                      f"Success={info.get('all_complete', False)}")
+            if t >= args.start_timesteps:
+                print(f"Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
+                    f"Success={info.get('all_complete', False)}, Timestep={total_timesteps}")
+            else:
+                print(f"[Collecting] Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
+                    f"Success={info.get('all_complete', False)}")
             
             # Reset environment
             obs, info = env.reset(seed=args.seed + episode_num + 1)
@@ -341,7 +355,7 @@ def train(args):
         
         # Evaluate policy
         if (t + 1) % args.eval_freq == 0 and t >= args.start_timesteps:
-            eval_results = evaluate_policy(env, policy, gnn_state_space, 
+            eval_results = evaluate_policy(eval_env, policy, gnn_state_space, 
                                          args.eval_episodes, args.seed + 1000)
             
             print(f"\n{'='*80}")
@@ -350,9 +364,10 @@ def train(args):
             print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
             
             # Save best model
-            if eval_results['mean_reward'] > best_eval_reward:
+            if best_eval_reward is None or eval_results['mean_reward'] > best_eval_reward:
                 best_eval_reward = eval_results['mean_reward']
-                policy.save(f"{save_path}_best")
+                best_model_path = f"{save_path}_best"
+                policy.save(best_model_path)
                 print(f"🌟 New best model saved! Reward: {best_eval_reward:.2f}")
             
             print(f"{'='*80}\n")
@@ -365,16 +380,25 @@ def train(args):
                     'eval/best_reward': best_eval_reward,
                     'eval/timestep': total_timesteps
                 })
+        if episode_num >= args.max_episodes:
+            if args.verbose:
+                print(f"Reached max episodes ({args.max_episodes}). Ending training loop.")
+            break
     
     # Final save of the last model
-    policy.save(f"{save_path}_final")
+    final_model_path = f"{save_path}_final"
+    policy.save(final_model_path)
     print(f"\nTraining completed.")
-    print(f"Final model saved to: {save_path}_final")
-    print(f"Best model saved to: {save_path}_best (Reward: {best_eval_reward:.2f})")
+    print(f"Final model saved to: {final_model_path}")
+    if best_model_path is not None and best_eval_reward is not None:
+        print(f"Best model saved to: {best_model_path} (Reward: {best_eval_reward:.2f})")
+    else:
+        print("Best model not saved (evaluation not run or no improvement).")
     print(f"Save directory: {save_dir}")
     
     # Close environment and wandb
     env.close()
+    eval_env.close()
     if not args.no_wandb:
         wandb.finish()
 

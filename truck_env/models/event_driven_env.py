@@ -22,7 +22,7 @@ import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from truck_env.utils.utils import get_graph, load_config
+from truck_env.utils.utils import get_graph, load_config, check_navigation_feasibility
 from truck_env.models.transportation_graph import TransportationGraph
 from truck_env.models.truck import Truck
 from truck_env.models.event_handlers import EventType, Event, EventHandler
@@ -683,6 +683,23 @@ class EventDrivenTruckEnv(gym.Env):
             truck.failed = True
             self.truck_states[truck.truck_id] = "failed"
             return self.reward_config["failure_penalty"]
+        
+        # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
+        if not is_charger_nav and target_node == truck.get_next_delivery_target():
+            is_feasible = check_navigation_feasibility(
+                truck=truck,
+                target_node=target_node,
+                discharge=discharge,
+                transport_graph=self.transport_graph,
+                charging_nodes=self.charging_nodes,
+                verbose=self.verbose
+            )
+            
+            if not is_feasible:
+                # Truck will fail - mark as failed
+                truck.failed = True
+                self.truck_states[truck.truck_id] = "failed"
+                return self.reward_config["failure_penalty"]
 
         queue_penalty = 0.0
         if is_charger_nav and self.verbose:
@@ -970,6 +987,22 @@ class EventDrivenTruckEnv(gym.Env):
         is_charger_nav = target_node in self.charging_nodes
         next_delivery = truck.get_next_delivery_target()
         is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+        
+        # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
+        if is_delivery_nav:
+            is_feasible = check_navigation_feasibility(
+                truck=truck,
+                target_node=target_node,
+                discharge=discharge,
+                transport_graph=self.transport_graph,
+                charging_nodes=self.charging_nodes,
+                verbose=self.verbose
+            )
+            
+            if not is_feasible:
+                truck.failed = True
+                self.truck_states[truck.truck_id] = "failed"
+                return self.reward_config["failure_penalty"]
         
         # If leaving a charger to navigate elsewhere, remove from waitlist
         if (not is_charger_nav) and (current_node in self.charging_nodes):

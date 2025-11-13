@@ -231,12 +231,19 @@ class HeteroGNN_Actor(nn.Module):
             nn.Linear(hidden_dim, 1),
             nn.Sigmoid()  # Output in [0, 1], will scale to [0, max_charging_duration]
         )
+        # Charging action head uses global context (routing heads operate per-node)
+        self.charge_action_head = nn.Sequential(
+            nn.Linear(hidden_dim * len(self.node_types), hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
         
-    def forward(self, data, return_mapper=False):
+    def forward(self, data, return_mapper=False, apply_mask=True):
         """
         Args:
             data: HeteroData object
             return_mapper: Compatibility flag
+            apply_mask: If True, apply feasibility mask to action scores
             
         Returns:
             Tuple of (action_scores, charging_duration)
@@ -268,25 +275,57 @@ class HeteroGNN_Actor(nn.Module):
         
         # Compute charging duration (global graph feature)
         # Pool features from all node types
+        # Determine the batch size from the batch attribute - use max across all node types
+        batch_size = None
+        if hasattr(data, 'batch'):
+            # Single graph case
+            batch_size = 1
+        else:
+            # Batched graphs - determine batch size from all node types
+            max_batch_idx = -1
+            for node_type in self.node_types:
+                if node_type in x_dict and hasattr(data[node_type], 'batch'):
+                    node_max = int(data[node_type].batch.max().item())
+                    max_batch_idx = max(max_batch_idx, node_max)
+            
+            if max_batch_idx >= 0:
+                batch_size = max_batch_idx + 1
+        
+        if batch_size is None:
+            batch_size = 1
+        
         pooled_features = []
         for node_type in self.node_types:
             if node_type in x_dict:
                 # Mean pooling over nodes of this type
                 if hasattr(data[node_type], 'batch'):
                     batch = data[node_type].batch
+                    pooled = global_mean_pool(x_dict[node_type], batch, size=batch_size)
                 else:
-                    batch = torch.zeros(x_dict[node_type].shape[0], 
-                                      dtype=torch.long, device=self.device)
-                pooled = global_mean_pool(x_dict[node_type], batch)
+                    # Single graph - just mean over all nodes
+                    pooled = x_dict[node_type].mean(dim=0, keepdim=True)
+                    # Ensure correct batch size
+                    if pooled.shape[0] < batch_size:
+                        pooled = pooled.repeat(batch_size, 1)
                 pooled_features.append(pooled)
         
-        # Concatenate pooled features
+        graph_embedding = None
         if pooled_features:
             graph_embedding = torch.cat(pooled_features, dim=-1)
             # Predict charging duration in [0, max_charging_duration]
             charging_duration = self.charging_duration_head(graph_embedding) * self.max_charging_duration
         else:
-            charging_duration = torch.zeros(1, 1, device=self.device)
+            charging_duration = torch.zeros(batch_size, 1, device=self.device)
+        
+        # Prepare scalar score for charging actions (fall back to zero if embedding missing)
+        if graph_embedding is not None and graph_embedding.numel() > 0:
+            raw_charge_score = self.charge_action_head(graph_embedding).squeeze()
+            if raw_charge_score.ndim == 0:
+                charge_action_value = raw_charge_score
+            else:
+                charge_action_value = raw_charge_score.reshape(-1)[0]
+        else:
+            charge_action_value = torch.tensor(0.0, device=self.device)
         
         # Build action scores based on action_to_node_map
         # Strategy: Compute scores for all nodes first, then index by action_to_node_map
@@ -313,9 +352,8 @@ class HeteroGNN_Actor(nn.Module):
                     node_type, local_idx = data.node_id_to_type[node_id]
                     
                     if is_charging:
-                        # For charging action, use graph embedding instead of node score
-                        # This distinguishes "route to charger" from "charge at charger"
-                        action_scores[action_idx] = self.output_heads['charger'](graph_embedding).squeeze()
+                        # For charging action, use global charge head instead of node score
+                        action_scores[action_idx] = charge_action_value
                     else:
                         # Routing action - use the node's score
                         action_scores[action_idx] = scores_dict[node_type][local_idx]
@@ -338,15 +376,15 @@ class HeteroGNN_Actor(nn.Module):
                         continue
                     
                     if is_charging:
-                        # Use graph embedding for charging action
-                        action_scores[action_idx] = graph_embedding[0, 0] if graph_embedding.numel() > 0 else 0.0
+                        # Use global charge score for charging actions
+                        action_scores[action_idx] = charge_action_value
                     else:
                         # Use node score if in range
                         if node_id < len(all_node_scores):
                             action_scores[action_idx] = all_node_scores[node_id]
             
-            # Apply masking if feasible_action_mask is provided
-            if hasattr(data, 'feasible_action_mask'):
+            # Apply masking if feasible_action_mask is provided AND apply_mask is True
+            if apply_mask and hasattr(data, 'feasible_action_mask'):
                 mask = data.feasible_action_mask
                 action_scores = torch.where(mask, action_scores, torch.tensor(-1e9, device=self.device))
             
@@ -366,8 +404,8 @@ class HeteroGNN_Actor(nn.Module):
                     
             action_scores = torch.cat(scores_list, dim=0).squeeze(-1)
             
-            # Apply masking if feasible_action_mask is provided
-            if hasattr(data, 'feasible_action_mask'):
+            # Apply masking if feasible_action_mask is provided AND apply_mask is True
+            if apply_mask and hasattr(data, 'feasible_action_mask'):
                 mask = data.feasible_action_mask
                 action_scores = torch.where(mask, action_scores, torch.tensor(-1e9, device=self.device))
             
@@ -431,11 +469,17 @@ class HeteroGNN_Critic(nn.Module):
         Returns:
             Q-value estimate [batch_size, 1]
         """
-        # Get batch information
+        # Get batch information - use max batch index across all node types
         has_batch = hasattr(data['truck'], 'batch')
         
         if has_batch:
-            batch_size = data['truck'].batch.max().item() + 1
+            # Find max batch index across all node types
+            max_batch_idx = -1
+            for node_type in self.node_types:
+                if node_type in data.node_types and hasattr(data[node_type], 'batch'):
+                    node_max = int(data[node_type].batch.max().item())
+                    max_batch_idx = max(max_batch_idx, node_max)
+            batch_size = max_batch_idx + 1 if max_batch_idx >= 0 else 1
         else:
             batch_size = 1
         
@@ -445,18 +489,29 @@ class HeteroGNN_Critic(nn.Module):
         elif not isinstance(action, torch.Tensor):
             action = torch.tensor(action, device=self.device)
         
-        # Now check action dtype
-        if action.dtype in [torch.long, torch.int, torch.int32, torch.int64]:
-            # Action indices - normalize to [0, 1] range
-            action_feature = action.float().unsqueeze(-1) / 500.0  # Rough normalization
-        else:
-            action_feature = action.unsqueeze(-1) if action.dim() == 1 else action
+        # Ensure action is the right shape [batch_size]
+        if action.dim() == 0:
+            action = action.unsqueeze(0)
+        if action.shape[0] != batch_size:
+            # If single action given, repeat for batch
+            if action.shape[0] == 1:
+                action = action.repeat(batch_size)
+        
+        # Normalize action indices to [0, 1] range for feature concatenation
+        action_feature = action.float().unsqueeze(-1) / 100.0  # Rough normalization
         
         # Handle charging duration (default to 0 if not provided)
         if charging_duration is None:
             charging_duration = torch.zeros(batch_size, 1, device=self.device)
         elif charging_duration.dim() == 1:
             charging_duration = charging_duration.unsqueeze(-1)
+        elif charging_duration.dim() == 0:
+            charging_duration = charging_duration.unsqueeze(0).unsqueeze(0)
+        
+        # Ensure charging_duration is [batch_size, 1]
+        if charging_duration.shape[0] != batch_size:
+            if charging_duration.shape[0] == 1:
+                charging_duration = charging_duration.repeat(batch_size, 1)
         
         # Replicate action and charging duration to all nodes in each graph
         x_dict = {}
@@ -504,10 +559,11 @@ class HeteroGNN_Critic(nn.Module):
                 # Mean pooling over nodes of this type
                 if has_batch:
                     batch_idx = data[node_type].batch
+                    pooled = global_mean_pool(x_dict[node_type], batch_idx, size=batch_size)
                 else:
                     batch_idx = torch.zeros(x_dict[node_type].shape[0], 
                                       dtype=torch.long, device=self.device)
-                pooled = global_mean_pool(x_dict[node_type], batch_idx)
+                    pooled = global_mean_pool(x_dict[node_type], batch_idx, size=batch_size)
                 pooled_features.append(pooled)
                 
         # Concatenate pooled features from all node types
@@ -527,8 +583,8 @@ class Actor(nn.Module):
         self.max_action = max_action
         self.device = device
         
-    def forward(self, state, return_mapper=False):
-        scores, charging_duration = self.actor(state, return_mapper=return_mapper)
+    def forward(self, state, return_mapper=False, apply_mask=True):
+        scores, charging_duration = self.actor(state, return_mapper=return_mapper, apply_mask=apply_mask)
         if return_mapper:
             (scores, charging_duration), _, mapper = (scores, charging_duration), None, torch.arange(len(scores), device=self.device)
             return (self.max_action * scores, charging_duration), None, mapper

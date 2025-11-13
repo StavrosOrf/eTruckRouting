@@ -111,11 +111,19 @@ class TD3_ActionGNN(object):
         state = state.to(self.device)
 
         with torch.no_grad():
-            action_logits, charging_duration = self.actor(state)  # Already masked in forward pass
+            # Apply mask during exploration
+            action_logits, charging_duration = self.actor(state, apply_mask=True)
 
         # Apply softmax over feasible actions only
         if hasattr(state, 'feasible_action_mask'):
             mask = state.feasible_action_mask
+            
+            # Check if there are any feasible actions
+            if not mask.any():
+                # No feasible actions - return first action as fallback
+                print("Warning: No feasible actions found in select_action")
+                raise ValueError("No feasible actions found in select_action")
+                return 0, 0.0, False
             
             # Set infeasible actions to -inf before softmax
             masked_logits = torch.where(
@@ -176,8 +184,8 @@ class TD3_ActionGNN(object):
             batch_size, device=self.device)
 
         with torch.no_grad():
-            # Select next action with target policy
-            next_action_logits, next_charging_duration = self.actor_target(next_state)
+            # Select next action with target policy (no mask for continuous values)
+            next_action_logits, next_charging_duration = self.actor_target(next_state, apply_mask=False)
             
             # Add clipped noise for target policy smoothing
             noise = (torch.randn_like(next_action_logits) * self.policy_noise).clamp(
@@ -189,17 +197,26 @@ class TD3_ActionGNN(object):
                 -self.noise_clip, self.noise_clip)
             next_charging_duration = (next_charging_duration + charge_noise).clamp(0, 10.0)
             
-            # Apply feasibility mask if available (for action selection)
-            if hasattr(next_state, 'feasible_action_mask'):
-                mask = next_state.feasible_action_mask
-                next_action_logits = torch.where(
-                    mask,
-                    next_action_logits,
-                    torch.tensor(-1e9, device=self.device)
-                )
-            
             # Convert logits to action indices for target Q
-            next_action_idx = torch.argmax(next_action_logits.view(batch_size, -1), dim=1)
+            # For batched states, we need to handle variable action dimensions
+            # Since we can't batch variable-sized tensors, we process individually
+            if hasattr(next_state, 'ptr'):
+                # Batched graph
+                batch_size = len(next_state.ptr) - 1
+                next_action_idx = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+                
+                # For batched graphs, we need action indices per graph
+                # This is complex with variable actions - simplified approach
+                # Assume action_logits are already properly sized
+                if next_action_logits.dim() == 1:
+                    # Single action vector - assume batch_size repeats
+                    next_action_idx = torch.argmax(next_action_logits).unsqueeze(0).repeat(batch_size)
+                else:
+                    # Multiple action vectors
+                    next_action_idx = torch.argmax(next_action_logits, dim=-1)
+            else:
+                # Single graph
+                next_action_idx = torch.argmax(next_action_logits).unsqueeze(0)
 
             # Compute target Q value
             target_Q1, target_Q2 = self.critic_target(next_state, next_action_idx, next_charging_duration)
@@ -220,11 +237,21 @@ class TD3_ActionGNN(object):
         # Delayed policy updates
         if self.total_it % self.policy_freq == 0:
 
-            # Compute actor loss
-            actor_logits, actor_charging = self.actor(state)
+            # Compute actor loss (no mask for gradient flow)
+            actor_logits, actor_charging = self.actor(state, apply_mask=False)
             
             # Convert logits to action indices
-            actor_action_idx = torch.argmax(actor_logits.view(batch_size, -1), dim=1)
+            # Handle both single and batched states
+            if hasattr(state, 'ptr'):
+                # Batched graph
+                batch_size = len(state.ptr) - 1
+                if actor_logits.dim() == 1:
+                    actor_action_idx = torch.argmax(actor_logits).unsqueeze(0).repeat(batch_size)
+                else:
+                    actor_action_idx = torch.argmax(actor_logits, dim=-1)
+            else:
+                # Single graph
+                actor_action_idx = torch.argmax(actor_logits).unsqueeze(0)
             
             actor_loss = -self.critic.Q1(state, actor_action_idx, actor_charging).mean()
 

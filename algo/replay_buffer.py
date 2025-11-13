@@ -116,8 +116,17 @@ class ReplayBuffer:
         not_dones = torch.FloatTensor(not_dones).unsqueeze(1).to(device)
         
         # Batch the GNN states (HeteroData)
-        state_batch = Batch.from_data_list(states)
-        next_state_batch = Batch.from_data_list(next_states)
+        # Exclude metadata attributes that shouldn't be batched
+        exclude_keys = [
+            'action_to_node_map',
+            'node_id_to_type',
+            'can_charge_here',
+            'node_type_offsets',
+            'num_actions',
+            'feasible_action_mask',
+        ]
+        state_batch = Batch.from_data_list(states, exclude_keys=exclude_keys)
+        next_state_batch = Batch.from_data_list(next_states, exclude_keys=exclude_keys)
         
         # Move everything to device
         state_batch = state_batch.to(device)

@@ -58,6 +58,88 @@ def map_charger_type(charger_type_str: str) -> str:
         return charger_type_str
 
 
+def check_navigation_feasibility(
+    truck,
+    target_node: int,
+    discharge: float,
+    transport_graph,
+    charging_nodes: list,
+    verbose: bool = False
+) -> bool:
+    """
+    Check if navigating to a delivery point will leave truck with feasible actions.
+    Should only be called for navigation to non-terminal delivery points.
+    
+    Args:
+        truck: Truck object
+        target_node: Delivery node to navigate to
+        discharge: Energy needed to reach target_node
+        transport_graph: TransportationGraph object
+        charging_nodes: List of charging station node IDs
+        verbose: Whether to print debug information
+        
+    Returns:
+        True if truck will have at least one feasible action after arrival, False otherwise
+    """
+    # Check if this is the last delivery
+    remaining_after_target = [d for d in truck.get_remaining_deliveries() if d != target_node]
+    
+    if not remaining_after_target:
+        # This is the last delivery - always feasible
+        return True
+    
+    # Simulate battery state after arrival
+    battery_after_arrival = truck.current_battery - discharge
+    
+    # Check 1: Can reach any charger from target with remaining battery?
+    can_reach_charger = False
+    for charger_node in charging_nodes:
+        energy_to_charger = transport_graph.get_path_energy(target_node, int(charger_node))
+        if energy_to_charger != float('inf') and energy_to_charger <= battery_after_arrival:
+            can_reach_charger = True
+            break
+    
+    if can_reach_charger:
+        return True
+    
+    # Check 2: Can complete all remaining deliveries from target?
+    temp_battery = battery_after_arrival
+    temp_node = target_node
+    can_complete_remaining = True
+    
+    for delivery_node in remaining_after_target:
+        energy_needed = transport_graph.get_path_energy(temp_node, delivery_node)
+        if energy_needed == float('inf') or energy_needed > temp_battery:
+            can_complete_remaining = False
+            break
+        temp_battery -= energy_needed
+        temp_node = delivery_node
+    
+    if can_complete_remaining:
+        return True
+    
+    # Check 3: Can reach next delivery and then a charger?
+    if remaining_after_target:
+        next_delivery = remaining_after_target[0]
+        energy_to_next = transport_graph.get_path_energy(target_node, next_delivery)
+        
+        if energy_to_next != float('inf') and energy_to_next <= battery_after_arrival:
+            battery_after_next = battery_after_arrival - energy_to_next
+            
+            for charger_node in charging_nodes:
+                energy_to_charger = transport_graph.get_path_energy(next_delivery, int(charger_node))
+                if energy_to_charger != float('inf') and energy_to_charger <= battery_after_next:
+                    return True
+    
+    # No feasible action found
+    if verbose:
+        print(f"  ERROR: Navigation to delivery {target_node} will leave truck with no feasible actions")
+        print(f"    Battery after arrival: {battery_after_arrival:.1f} kWh")
+        print(f"    Remaining deliveries: {remaining_after_target}")
+    
+    return False
+
+
 def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     """
     Load and build the road network graph from JSON files.

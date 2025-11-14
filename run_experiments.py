@@ -42,7 +42,7 @@ ppo_configs = [
 ]
 
 # Sweep name for grouping in wandb
-sweep_name = "PPO_Hyperparameter_Sweep"
+sweep_name = "PPO_Hyperparameter_Sweep_num_trucks_" + str(num_trucks) + "_stops_" + str(num_stops)
 
 # Fixed hyperparameters for this sweep
 learning_rate = 3e-4

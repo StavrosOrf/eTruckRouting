@@ -84,10 +84,10 @@ class GNNStateSpace:
         }
         
         # Feature dimensions (calculated from feature extraction methods)
-        # Truck: 13 features, Delivery: 3 features, Charger: 4 features, Edge: 2 features
-        self._truck_feature_dim = 13
+        # Truck: 10 features, Delivery: 3 features, Charger: 5 features, Edge: 2 features
+        self._truck_feature_dim = 10
         self._delivery_feature_dim = 3
-        self._charger_feature_dim = 4
+        self._charger_feature_dim = 5
         self._edge_feature_dim = 2
 
     def get_state_GNN(self, env) -> HeteroData:
@@ -557,19 +557,40 @@ class GNNStateSpace:
         
         Features (all normalized):
         - Node type (normalized by number of node types)
-        - Current position (normalized by number of trucks)
-        - Battery level (normalized by capacity, 0-1)
-        - Battery percentage (normalized, 0-1)
-        - Truck state (one-hot encoded: ready, routing, waiting_to_charge, charging)
+        - Current position (normalized by total number of nodes)
+        - Current battery SoC estimate (normalized by capacity, 0-1) - accounts for energy consumed during routing
+        - Is active truck (1.0 if this is the truck we control, 0.0 otherwise)
         - Deliveries completed (normalized by total deliveries)
         - Deliveries remaining (normalized by total deliveries)
         - Time elapsed (normalized by max simulation time)
         - Distance traveled (normalized by dividing by 1000)
-        - Time to destination (normalized by max simulation time)
+        - Time to destination (normalized by max simulation time) - 0 if not routing
+        - Time to finish charging (normalized by max simulation time) - 0 if not charging
         """
         # Normalize current position by total number of nodes in the graph
         num_nodes = env.transport_graph.num_nodes
         current_node_norm = truck.current_node / num_nodes if num_nodes > 0 else 0.0
+
+        # Estimate current SoC (State of Charge)
+        # If truck is routing, estimate battery based on progress
+        estimated_battery = truck.current_battery
+        if truck.route_destination is not None and truck.route_arrival_time is not None:
+            # Calculate energy consumed during current route
+            time_elapsed_on_route = env.global_clock - (truck.route_arrival_time - 
+                                    env.transport_graph.get_time_distance(truck.current_node, truck.route_destination))
+            if time_elapsed_on_route > 0:
+                total_route_time = env.transport_graph.get_time_distance(truck.current_node, truck.route_destination)
+                total_route_energy = env.transport_graph.get_path_energy(truck.current_node, truck.route_destination)
+                if total_route_time > 0:
+                    progress = min(1.0, time_elapsed_on_route / total_route_time)
+                    energy_consumed = progress * total_route_energy
+                    estimated_battery = max(0.0, truck.current_battery - energy_consumed)
+        
+        # Normalize battery SoC
+        battery_soc_norm = estimated_battery / truck.battery_capacity if truck.battery_capacity > 0 else 0.0
+
+        # Is this the active truck we control?
+        is_active_truck = 1.0 if truck.truck_id == env.active_truck_id else 0.0
 
         # Normalize deliveries by total number of deliveries for this truck
         total_deliveries = len(truck.delivery_sequence) - 1  # Exclude depot
@@ -580,43 +601,25 @@ class GNNStateSpace:
         
         # Calculate time to destination if truck is on route (normalized)
         time_to_destination = 0.0
-        if truck.route_arrival_time is not None and truck.route_destination is not None:
+        if truck.route_destination is not None and truck.route_arrival_time is not None:
             time_to_destination = max(0.0, truck.route_arrival_time - env.global_clock) / self.max_time
 
-        # Determine truck state (one-hot encoding)
-        # States: ready, routing, waiting_to_charge, charging
-        # Note: complete and failed trucks are already filtered out before feature extraction
-        is_ready = 0.0
-        is_routing = 0.0
-        is_waiting_to_charge = 0.0
-        is_charging = 0.0
-        
-        if truck.is_charging:
-            is_charging = 1.0
-        elif truck.truck_id in env.charging_station.charger_waitlist.get(truck.current_node, []):
-            # Truck is in a charger queue, waiting to charge
-            is_waiting_to_charge = 1.0
-        elif truck.route_destination is not None and truck.route_arrival_time is not None:
-            # Truck is actively routing to a destination
-            is_routing = 1.0
-        else:
-            # Truck is ready for action (at a node, not charging, not routing)
-            is_ready = 1.0
+        # Calculate time to finish charging (normalized)
+        time_to_finish_charging = 0.0
+        if truck.is_charging and truck.charge_completion_time is not None:
+            time_to_finish_charging = max(0.0, (truck.charge_completion_time - env.global_clock) / self.max_time)
 
         return [
             float(self.NODE_TYPE_TRUCK) / len(self.node_type_order),  # Node type
-            current_node_norm,  # Position normalized by num_trucks
-            truck.current_battery / truck.battery_capacity,  # Battery level normalized (0-1)
-            truck.get_battery_percentage() / 100.0,  # Battery percentage normalized (0-1)
-            is_ready,  # State: ready (one-hot)
-            is_routing,  # State: routing (one-hot)
-            is_waiting_to_charge,  # State: waiting_to_charge (one-hot)
-            is_charging,  # State: charging (one-hot)
-            deliveries_done_norm,  # Deliveries completed (normalized)
-            deliveries_remaining_norm,  # Deliveries remaining (normalized)
-            truck.total_time_elapsed / self.max_time,  # Time elapsed (normalized)
-            truck.total_distance_traveled / 1000.0,  # Distance traveled (normalized by 1000)
-            time_to_destination,  # Time to destination (normalized)
+            current_node_norm,  # Current position
+            battery_soc_norm,  # Estimated current SoC
+            is_active_truck,  # Is this the active truck we control
+            deliveries_done_norm,  # Deliveries completed
+            deliveries_remaining_norm,  # Deliveries remaining
+            truck.total_time_elapsed / self.max_time,  # Time elapsed
+            truck.total_distance_traveled / 1000.0,  # Distance traveled
+            time_to_destination,  # Time to destination (0 if not routing)
+            time_to_finish_charging,  # Time to finish charging (0 if not charging)
         ]
 
     def _get_delivery_node_features(self, node_id: int, env) -> np.ndarray:
@@ -626,7 +629,7 @@ class GNNStateSpace:
         Features (all normalized):
         [0]: node_type (normalized by number of node types)
         [1]: node_id (normalized by total number of nodes)
-        [2]: delivery_sequence_index (relative position in remaining deliveries, normalized by max stops)
+        [2]: delivery_sequence_index (position in active truck's remaining deliveries, normalized by max stops)
 
         Args:
             node_id: Delivery node ID
@@ -638,26 +641,19 @@ class GNNStateSpace:
         num_nodes = env.transport_graph.num_nodes
         node_id_norm = node_id / num_nodes if num_nodes > 0 else 0.0
         
-        # Calculate delivery sequence index directly
-        # Find the minimum position across all active trucks
-        min_index = float('inf')
+        # Calculate delivery sequence index for the active truck only
+        delivery_sequence_index = 0
         
-        for truck in env.trucks:
-            # Skip failed and completed trucks
-            if truck.failed or truck.is_complete:
-                continue
+        if env.active_truck_id is not None:
+            active_truck = next((t for t in env.trucks if t.truck_id == env.active_truck_id), None)
+            if active_truck and not active_truck.failed and not active_truck.is_complete:
+                # Get remaining deliveries for active truck
+                remaining_deliveries = active_truck.get_remaining_deliveries()
                 
-            # Get remaining deliveries for this truck
-            remaining_deliveries = truck.get_remaining_deliveries()
-            
-            # Check if node_id is in remaining deliveries
-            if node_id in remaining_deliveries:
-                # Find its position (1-based index)
-                position = remaining_deliveries.index(node_id) + 1
-                min_index = min(min_index, position)
-        
-        # Return 0 if node not found in any truck's sequence
-        delivery_sequence_index = int(min_index) if min_index != float('inf') else 0
+                # Check if node_id is in remaining deliveries
+                if node_id in remaining_deliveries:
+                    # Find its position (1-based index)
+                    delivery_sequence_index = remaining_deliveries.index(node_id) + 1
         
         # Normalize by max stops per truck
         delivery_sequence_index_norm = delivery_sequence_index / self.num_stops if self.num_stops > 0 else 0.0
@@ -672,20 +668,21 @@ class GNNStateSpace:
 
     def _get_charger_node_features(self, node_id: int, env) -> np.ndarray:
         """
-        Charger node features (4 features total, no padding).
+        Charger node features (5 features total, no padding).
 
         Features (all normalized):
         [0]: node_type (normalized by number of node types)
         [1]: node_id (normalized by number of charging stations)
         [2]: charger_occupancy_rate (current_occupancy / capacity, 0-1)
         [3]: charger_queue_length (normalized by number of trucks)
+        [4]: time_for_queue_to_empty (normalized by max simulation time)
 
         Args:
             node_id: Charger node ID
             env: EventDrivenTruckEnv instance
 
         Returns:
-            Feature vector (4 features)
+            Feature vector (5 features)
         """
         node_id_norm = node_id / self.num_charging_nodes if self.num_charging_nodes > 0 else 0.0
         
@@ -701,11 +698,39 @@ class GNNStateSpace:
         # Normalize queue length by number of trucks
         queue_length_norm = len(charger_queue) / self.num_trucks if self.num_trucks > 0 else 0.0
         
+        # Estimate time for queue to empty
+        # Sum up remaining charging times for trucks currently charging + estimate for trucks in queue
+        time_to_empty = 0.0
+        
+        # Add remaining time for trucks currently charging
+        for truck_id in charger_occupancy_list:
+            truck = next((t for t in env.trucks if t.truck_id == truck_id), None)
+            if truck and truck.charge_completion_time is not None:
+                time_to_empty = max(time_to_empty, truck.charge_completion_time - env.global_clock)
+        
+        # Estimate time for queued trucks (assume average charging time)
+        # Each truck in queue will take approximately full charge time / charger_capacity (parallel charging)
+        if len(charger_queue) > 0 and charger_capacity > 0:
+            # Rough estimate: average time to charge from 0 to full capacity
+            avg_charge_time = 0.0
+            truck_sample = env.trucks[0] if env.trucks else None
+            if truck_sample:
+                # Estimate based on charging rate and battery capacity
+                charging_rate = env.charging_station.charging_rates.get(node_id, 1.0)
+                avg_charge_time = truck_sample.battery_capacity / charging_rate if charging_rate > 0 else 0.0
+            
+            # Time for queue = current charging completion + (queue_length * avg_charge_time / capacity)
+            queue_wait_time = (len(charger_queue) * avg_charge_time) / charger_capacity
+            time_to_empty += queue_wait_time
+        
+        time_to_empty_norm = time_to_empty / self.max_time if self.max_time > 0 else 0.0
+        
         features = [
             self.NODE_TYPE_CHARGER / len(self.node_type_order),  # Node type normalized
             node_id_norm,
             occupancy_rate,
             queue_length_norm,
+            time_to_empty_norm,  # Time for queue to empty
         ]
         
         return np.array(features, dtype=np.float32)

@@ -27,10 +27,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
     parser.add_argument("--config", type=str, default="truck_env/config_files/config.yaml",
                         help="Path to the environment config file.")
-    parser.add_argument("--seed", type=int, default=0, help="Environment RNG seed.")
-    parser.add_argument("--num-trucks", type=int, default=1,
+    parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
+    parser.add_argument("--num-trucks", type=int, default=2,
                         help="Override number of trucks from the config.")
-    parser.add_argument("--num-stops", type=int, default=None,
+    parser.add_argument("--num-stops", type=int, default=3,
                         help="Override number of delivery stops from the config.")
     parser.add_argument("--max-time", type=float, default=None,
                         help="Override maximum simulation time from the config.")
@@ -51,13 +51,19 @@ def clone_env(env: EventDrivenTruckEnv) -> EventDrivenTruckEnv:
 
 
 def compute_navigation_stats(env: EventDrivenTruckEnv, src: int, dst: Optional[int]) -> Dict[str, Optional[float]]:
-    """Compute travel energy (kWh) from src to dst if defined."""
+    """Compute travel energy (kWh) and time (h) from src to dst if defined."""
     if dst is None:
-        return {"energy": None}
+        return {"energy": None, "time": None}
+    # If src and dst are the same, no travel needed
+    if src == dst:
+        return {"energy": 0.0, "time": 0.0}
     energy = env.transport_graph.get_path_energy(src, dst)
+    travel_time = env.transport_graph.get_time_distance(src, dst)
     if np.isinf(energy):
         energy = None
-    return {"energy": energy}
+    if np.isinf(travel_time):
+        travel_time = None
+    return {"energy": energy, "time": travel_time}
 
 
 def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
@@ -68,6 +74,7 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
     truck = env.trucks[env.active_truck_id]
     current_node = int(truck.current_node)
     charge_durations = env.charging_config["charge_durations"]
+    current_time = env.global_clock
     actions = []
 
     for action_idx in range(env.action_space.n):
@@ -82,6 +89,22 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
             reason = None if feasible else "Insufficient battery or unreachable path"
             action_type = "route:charger"
             charge_hours = None
+            
+            # Estimate arrival time and potential wait
+            arrival_time = current_time + nav_stats["time"] if nav_stats["time"] is not None else None
+            queue_length = len(env.charging_station.charger_waitlist.get(target_node, []))
+            occupancy = len(env.charging_station.charger_occupancy.get(target_node, []))
+            capacity = env.charging_station.charger_capacity.get(target_node, 1)
+            available_ports = capacity - occupancy
+            
+            # Estimate wait time (rough approximation)
+            if available_ports > 0:
+                estimated_wait = 0.0
+            else:
+                # Assume average charging session is the median charge duration
+                avg_charge_time = np.median(charge_durations) if charge_durations else 1.0
+                estimated_wait = (queue_length + 1) * avg_charge_time / capacity
+            
         elif action_idx == env.num_charging_nodes:
             target_node = truck.get_next_delivery_target()
             nav_stats = compute_navigation_stats(env, current_node, target_node)
@@ -89,9 +112,13 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
             reason = None if feasible else "No deliveries left or too expensive"
             action_type = "route:delivery"
             charge_hours = None
+            arrival_time = current_time + nav_stats["time"] if nav_stats["time"] is not None else None
+            queue_length = None
+            estimated_wait = None
+            
         else:
             target_node = current_node
-            nav_stats = {"energy": None}
+            nav_stats = {"energy": None, "time": None}
             charge_idx = action_idx - env.num_navigation_actions
             charge_hours = charge_durations[charge_idx]
             can_charge_here = target_node in env.charging_nodes
@@ -103,6 +130,9 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
             elif not not_full:
                 reason = "Battery already full"
             action_type = f"charge({charge_hours}h)"
+            arrival_time = None
+            queue_length = None
+            estimated_wait = None
 
         label = env._action_to_string(action_idx)
         if charge_hours is not None:
@@ -117,6 +147,9 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
             "navigation": nav_stats,
             "feasible": feasible,
             "infeasible_reason": reason,
+            "arrival_time": arrival_time,
+            "queue_length": queue_length,
+            "estimated_wait": estimated_wait,
         })
 
     return actions
@@ -202,35 +235,57 @@ def print_state_statistics(env: EventDrivenTruckEnv) -> None:
 
     info = env._get_info()
 
-    print("\n" + "=" * 90)
+    print("\n" + "=" * 120)
     print(f"Global clock: {info['global_clock']:.2f}h | Episode reward: {info['episode_reward']:.2f}")
     print(f"Events queued: {info['events_pending']} | Active truck: {info['active_truck_id']}")
-    print("-" * 90)
+    print("-" * 120)
     print("Truck status:")
     for truck_state in info["trucks"]:
+        truck_id = truck_state['truck_id']
+        truck = env.trucks[truck_id]
+        
         flag = ""
+        time_info = ""
+        
         if truck_state["failed"]:
             flag = "FAILED"
         elif truck_state["is_complete"]:
             flag = "COMPLETE"
         elif truck_state["is_charging"]:
             flag = "CHARGING"
+            if truck.charge_end_time is not None:
+                time_remaining = truck.charge_end_time - env.global_clock
+                time_info = f"(finishes in {time_remaining:.2f}h at {truck.charge_end_time:.2f}h)"
+        elif truck.route_destination is not None and truck.route_arrival_time is not None:
+            flag = "ROUTING"
+            time_to_arrival = truck.route_arrival_time - env.global_clock
+            dest_type = "charger" if truck.route_destination in env.charging_nodes else "delivery"
+            time_info = f"(to {dest_type} node {truck.route_destination}, arrives in {time_to_arrival:.2f}h at {truck.route_arrival_time:.2f}h)"
         else:
-            flag = "ACTIVE"
+            flag = "READY"
 
         print(
-            f"  Truck {truck_state['truck_id']:2d} | {flag:<8} | node={truck_state['current_node']:4d} "
+            f"  Truck {truck_state['truck_id']:2d} | {flag:<8} {time_info:<55} | node={truck_state['current_node']:4d} "
             f"| next_delivery={truck_state['next_delivery_target']:4d} "
             f"| battery={truck_state['current_battery']:.1f}/{truck_state['battery_capacity']:.1f} "
             f"({truck_state['battery_percentage']:.1f}%) | remaining={truck_state['deliveries_remaining']}"
         )
 
-    print("-" * 90)
-    print("Charger queues (waitlist lengths):")
-    for node, wait_len in info["charger_waitlist_lengths"].items():
-        occ = info["charger_occupancy_counts"].get(node, 0)
-        print(f"  Charger {int(node):4d} | waiting={wait_len} | occupied_ports={occ}")
-    print("=" * 90 + "\n")
+    print("-" * 120)
+    print("Charger queues (waitlist lengths & occupancy):")
+    for node in env.charging_nodes:
+        node = int(node)
+        wait_len = len(env.charging_station.charger_waitlist.get(node, []))
+        occ = len(env.charging_station.charger_occupancy.get(node, []))
+        cap = env.charging_station.charger_capacity.get(node, 1)
+        available = cap - occ
+        
+        # List trucks in queue
+        queue_trucks = env.charging_station.charger_waitlist.get(node, [])
+        queue_str = f"queue: [{', '.join(str(t) for t in queue_trucks)}]" if queue_trucks else "queue: []"
+        
+        print(f"  Charger {node:4d} | available={available}/{cap} | waiting={wait_len} | {queue_str}")
+    print("=" * 120 + "\n")
 
 
 def format_sim_result(action: Dict) -> str:
@@ -251,24 +306,36 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
         print("No actions available.")
         return
 
-    header = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'Type':<16} {'Description':<28} {'Target':<8} {'ΔEnergy(kWh)':<13} {'Sim reward/status'}"
+    header = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'Type':<16} {'Description':<28} {'Target':<8} {'ΔEnergy':<9} {'TravelTime':<11} {'ArrivalAt':<11} {'EstWait':<9} {'Sim reward/status'}"
     print(header)
     print("-" * len(header))
 
     for action in actions:
         nav_energy = action["navigation"]["energy"]
-        energy_str = f"{nav_energy:>8.1f}" if nav_energy is not None else "   N/A"
+        nav_time = action["navigation"]["time"]
+        energy_str = f"{nav_energy:>6.1f}kWh" if nav_energy is not None else "   N/A"
+        time_str = f"{nav_time:>6.2f}h" if nav_time is not None else "   N/A"
+        arrival_str = f"{action['arrival_time']:>6.2f}h" if action['arrival_time'] is not None else "   N/A"
+        wait_str = f"{action['estimated_wait']:>5.2f}h" if action['estimated_wait'] is not None else "  N/A"
+        
         target = action["target"] if action["target"] is not None else "-"
         feasible = "yes" if action["feasible"] else "no"
         heur_mark = "*" if heuristic_idx is not None and action["index"] == heuristic_idx else ""
         desc = action["label"]
         sim_summary = format_sim_result(action)
+        
         print(
             f"{action['index']:<4} {heur_mark:<2} {feasible:<5} {action['type']:<16} "
-            f"{desc:<28} {str(target):<8} {energy_str:<13} {sim_summary}"
+            f"{desc:<28} {str(target):<8} {energy_str:<9} {time_str:<11} {arrival_str:<11} {wait_str:<9} {sim_summary}"
         )
+        
+        # Show additional context for infeasible actions
         if not action["feasible"] and action["infeasible_reason"]:
             print(f"      ↳ reason: {action['infeasible_reason']}")
+        
+        # Show queue info for charger navigation actions
+        if action['type'] == 'route:charger' and action['queue_length'] is not None and action['queue_length'] > 0:
+            print(f"      ↳ queue: {action['queue_length']} trucks waiting")
 
     print()
 
@@ -351,7 +418,7 @@ if __name__ == "__main__":
     env = EventDrivenTruckEnv(
         config=config,
         verbose=args.env_verbose,
-        enable_plotting=False,
+        enable_plotting=True,
         run_id="interactive_debugger",
     )
 

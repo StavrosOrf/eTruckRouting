@@ -1,0 +1,68 @@
+# Grid search configuration for systematic hyperparameter exploration
+# This explores a smaller, more focused parameter space
+
+program: train.py
+method: grid
+metric:
+  name: eval/mean_reward
+  goal: maximize
+
+parameters:
+  # Environment - test different problem sizes
+  num-trucks:
+    value: 1
+  num-stops:
+    values: [3, 5]
+  max-time:
+    value: 200.0
+  max-episode-steps:
+    value: 200
+  
+  # Core TD3 parameters
+  batch-size:
+    values: [32, 64]
+  discount:
+    values: [0.99, 0.995]
+  tau:
+    values: [0.005, 0.01]
+  policy-freq:
+    values: [2]
+  lr:
+    values: [3e-4, 1e-3]
+  
+  # Network architecture
+  gnn-hidden-dim:
+    values: [32, 64]
+  mlp-hidden-dim:
+    values: [256]
+  actor-gcn-layers:
+    values: [3, 4]
+  critic-gcn-layers:
+    values: [3]
+  
+  # Exploration
+  expl-noise:
+    values: [0.1, 0.15]
+  
+  # Charging parameters
+  min-charging-duration:
+    values: [0.5]
+  max-charging-duration:
+    values: [10.0]
+  
+  # Training config
+  max-episodes:
+    value: 500
+  max-timesteps:
+    value: 50000
+  eval-freq:
+    value: 500
+  start-timesteps:
+    value: 300
+  buffer-size:
+    value: 1000000
+  seed:
+    values: [42, 123, 456]
+  
+  wandb-project:
+    value: evpr-td3-gnn-grid-search

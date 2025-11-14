@@ -41,6 +41,7 @@ class TD3_ActionGNN(object):
             critic_num_gcn_layers=3,
             min_charging_duration=0.5,
             max_charging_duration=10.0,
+            device=None,
             **kwargs
     ):
         """
@@ -64,8 +65,9 @@ class TD3_ActionGNN(object):
             critic_num_gcn_layers: Number of GCN layers in critic
             min_charging_duration: Minimum charging duration (hours)
             max_charging_duration: Maximum charging duration (hours)
+            device: Device to use (cuda/cpu). If None, auto-detect.
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.discrete_actions = discrete_actions
 
         # Initialize actor network

@@ -50,7 +50,7 @@ def parse_args():
                             help='Maximum steps per episode (prevents infinite episodes)')
     train_group.add_argument('--eval-freq', type=int, default=500,
                             help='Evaluation frequency (in timesteps)')
-    train_group.add_argument('--eval-episodes', type=int, default=5,
+    train_group.add_argument('--eval-episodes', type=int, default=10,
                             help='Number of episodes for evaluation')
     train_group.add_argument('--batch-size', type=int, default=32,
                             help='Batch size for training')
@@ -88,7 +88,7 @@ def parse_args():
                           help='Number of GCN layers in critic')
     net_group.add_argument('--lr', type=float, default=3e-4,
                           help='Learning rate for both actor and critic')
-    net_group.add_argument('--min-charging-duration', type=float, default=0.5,
+    net_group.add_argument('--min-charging-duration', type=float, default=1,
                           help='Minimum charging duration in hours')
     net_group.add_argument('--max-charging-duration', type=float, default=10.0,
                           help='Maximum charging duration in hours')
@@ -110,9 +110,15 @@ def parse_args():
 
 
 def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_steps=200):
-    """Evaluate the current policy."""
+    """Evaluate the current policy and collect detailed metrics."""
     eval_rewards = []
     eval_success_rate = []
+    eval_episode_lengths = []
+    eval_total_charging_time = []
+    eval_num_charging_actions = []
+    eval_num_delivery_actions = []
+    eval_total_distance = []
+    eval_episode_time = []
     
     for episode in range(eval_episodes):
         obs, info = env.reset(seed=seed + episode)
@@ -120,6 +126,11 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         episode_steps = 0
         done = False
         truncated = False
+        
+        # Episode-specific metrics
+        charging_time = 0.0
+        num_charging = 0
+        num_delivery = 0
         
         while not (done or truncated) and episode_steps < max_steps:
             # Get GNN state from the CORRECT environment (eval_env, not train env)
@@ -129,6 +140,14 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
             raw_action = policy.select_action(gnn_state, expl_noise=0)
             if isinstance(raw_action, tuple):
                 action = raw_action
+                node_id, charging_duration, is_charging = action
+                
+                # Track action types
+                if is_charging:
+                    num_charging += 1
+                    charging_time += charging_duration
+                else:
+                    num_delivery += 1
             else:
                 # Map node index to valid action (clip to action space)
                 action = int(raw_action) % env.action_space.n
@@ -138,13 +157,37 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
             episode_reward += reward
             episode_steps += 1
         
+        # Collect episode metrics
         eval_rewards.append(episode_reward)
         eval_success_rate.append(1.0 if info.get('all_complete', False) else 0.0)
+        eval_episode_lengths.append(episode_steps)
+        eval_total_charging_time.append(charging_time)
+        eval_num_charging_actions.append(num_charging)
+        eval_num_delivery_actions.append(num_delivery)
+        
+        # Extract additional info from environment if available
+        if hasattr(env, 'current_time'):
+            eval_episode_time.append(env.current_time)
+        
+        # Calculate total distance traveled (sum across all trucks)
+        total_distance = 0.0
+        if hasattr(env, 'trucks'):
+            for truck in env.trucks:
+                if hasattr(truck, 'total_distance_traveled'):
+                    total_distance += truck.total_distance_traveled
+        eval_total_distance.append(total_distance)
     
     return {
         'mean_reward': np.mean(eval_rewards),
         'std_reward': np.std(eval_rewards),
-        'success_rate': np.mean(eval_success_rate)
+        'success_rate': np.mean(eval_success_rate),
+        'mean_episode_length': np.mean(eval_episode_lengths),
+        'mean_charging_time': np.mean(eval_total_charging_time),
+        'mean_num_charging_actions': np.mean(eval_num_charging_actions),
+        'mean_num_delivery_actions': np.mean(eval_num_delivery_actions),
+        'mean_total_distance': np.mean(eval_total_distance),
+        'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0,
+        'charging_to_delivery_ratio': np.mean(eval_num_charging_actions) / max(np.mean(eval_num_delivery_actions), 1.0)
     }
 
 
@@ -376,6 +419,12 @@ def train(args):
             print(f"Evaluation at timestep {total_timesteps}")
             print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")
             print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
+            print(f"Episode Length: {eval_results['mean_episode_length']:.1f} steps")
+            print(f"Charging Time: {eval_results['mean_charging_time']:.2f} hours")
+            print(f"Actions - Charging: {eval_results['mean_num_charging_actions']:.1f}, Delivery: {eval_results['mean_num_delivery_actions']:.1f}")
+            print(f"Distance Traveled: {eval_results['mean_total_distance']:.1f} km")
+            if eval_results['mean_episode_time'] > 0:
+                print(f"Episode Time: {eval_results['mean_episode_time']:.2f} hours")
             
             # Save best model
             if best_eval_reward is None or eval_results['mean_reward'] > best_eval_reward:
@@ -392,6 +441,13 @@ def train(args):
                     'eval/std_reward': eval_results['std_reward'],
                     'eval/success_rate': eval_results['success_rate'],
                     'eval/best_reward': best_eval_reward,
+                    'eval/episode_length': eval_results['mean_episode_length'],
+                    'eval/charging_time': eval_results['mean_charging_time'],
+                    'eval/num_charging_actions': eval_results['mean_num_charging_actions'],
+                    'eval/num_delivery_actions': eval_results['mean_num_delivery_actions'],
+                    'eval/total_distance': eval_results['mean_total_distance'],
+                    'eval/episode_time': eval_results['mean_episode_time'],
+                    'eval/charging_delivery_ratio': eval_results['charging_to_delivery_ratio'],
                     'eval/timestep': total_timesteps
                 })
         if episode_num >= args.max_episodes:

@@ -170,7 +170,8 @@ def test_actor_forward_single():
         lr=3e-4,
         discrete_actions=env.action_space.n,
         actor_num_gcn_layers=3,
-        critic_num_gcn_layers=3
+        critic_num_gcn_layers=3,
+        device=torch.device('cpu')
     )
     
     env.reset(seed=42)
@@ -228,7 +229,8 @@ def test_actor_forward_batched():
         lr=3e-4,
         discrete_actions=env.action_space.n,
         actor_num_gcn_layers=3,
-        critic_num_gcn_layers=3
+        critic_num_gcn_layers=3,
+        device=torch.device('cpu')
     )
     
     # Collect states with different action counts
@@ -318,7 +320,8 @@ def test_critic_forward_batched():
         lr=3e-4,
         discrete_actions=env.action_space.n,
         actor_num_gcn_layers=3,
-        critic_num_gcn_layers=3
+        critic_num_gcn_layers=3,
+        device=torch.device('cpu')
     )
     
     # Collect states
@@ -404,7 +407,8 @@ def test_actor_gradient_flow():
         lr=3e-4,
         discrete_actions=env.action_space.n,
         actor_num_gcn_layers=3,
-        critic_num_gcn_layers=3
+        critic_num_gcn_layers=3,
+        device=torch.device('cpu')
     )
     
     # Collect transitions

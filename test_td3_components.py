@@ -48,7 +48,7 @@ class TestChargingDurationMapping:
         max_dur = 10.0
         
         actor = HeteroGNN_Actor(
-            node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+            node_feature_dims={'truck': 13, 'delivery': 3, 'charger': 4},
             hidden_dim=32,
             num_layers=2,
             min_charging_duration=min_dur,
@@ -114,7 +114,7 @@ class TestActionSelection:
         policy = TD3_ActionGNN(
             action_dim=30,
             max_action=1.0,
-            fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+            fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
             fx_GNN_hidden_dim=32,
             mlp_hidden_dim=128,
             discrete_actions=30,
@@ -168,7 +168,7 @@ class TestActionSelection:
         policy = TD3_ActionGNN(
             action_dim=30,
             max_action=1.0,
-            fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+            fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
             fx_GNN_hidden_dim=32,
             discrete_actions=30
         )
@@ -261,7 +261,7 @@ class TestNetworkForwardPass:
         from torch_geometric.data import HeteroData
         
         actor = HeteroGNN_Actor(
-            node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+            node_feature_dims={'truck': 13, 'delivery': 3, 'charger': 4},
             hidden_dim=32,
             num_layers=2,
             device='cpu'
@@ -307,7 +307,7 @@ class TestNetworkForwardPass:
         from torch_geometric.data import HeteroData
         
         critic = HeteroGNN_Critic(
-            node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+            node_feature_dims={'truck': 13, 'delivery': 3, 'charger': 4},
             hidden_dim=32,
             num_layers=2,
             device='cpu'
@@ -370,7 +370,7 @@ class TestTrainingUpdate:
         policy = TD3_ActionGNN(
             action_dim=30,
             max_action=1.0,
-            fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+            fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
             fx_GNN_hidden_dim=32,
             mlp_hidden_dim=128,
             discrete_actions=30
@@ -418,7 +418,7 @@ class TestTrainingUpdate:
         policy = TD3_ActionGNN(
             action_dim=30,
             max_action=1.0,
-            fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+            fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
             fx_GNN_hidden_dim=32,
             mlp_hidden_dim=128,
             discrete_actions=30,
@@ -475,7 +475,7 @@ class TestParameterUpdates:
         policy = TD3_ActionGNN(
             action_dim=30,
             max_action=1.0,
-            fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+            fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
             fx_GNN_hidden_dim=32,
             mlp_hidden_dim=128,
             discrete_actions=30,

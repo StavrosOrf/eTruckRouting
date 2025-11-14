@@ -41,7 +41,7 @@ def test_training_integration():
     policy = TD3_ActionGNN(
         action_dim=env.action_space.n,
         max_action=1.0,
-        fx_node_sizes={'ev': 13, 'cs': 5, 'tr': 2},
+        fx_node_sizes={'ev': 13, 'cs': 4, 'tr': 3},
         fx_GNN_hidden_dim=32,
         mlp_hidden_dim=128,
         lr=3e-4,

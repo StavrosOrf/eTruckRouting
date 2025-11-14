@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from algo.TD3_actionGNN import TD3_ActionGNN
+from algo.PPO_actionGNN import PPOActionGNN
 from algo.replay_buffer import ReplayBuffer
 from truck_env.utils.utils import load_config
 
@@ -24,6 +25,8 @@ from truck_env.utils.utils import load_config
 def parse_args():
     """Parse command line arguments for training hyperparameters."""
     parser = argparse.ArgumentParser(description='Train TD3 Action-GNN agent for Electric Truck Routing')
+    parser.add_argument('--algo', type=str, choices=['td3', 'ppo'], default='ppo',
+                        help='Choose which RL algorithm to run')
     
     # Environment parameters
     env_group = parser.add_argument_group('Environment')
@@ -42,7 +45,7 @@ def parse_args():
     train_group = parser.add_argument_group('Training')
     train_group.add_argument('--seed', type=int, default=0,
                             help='Random seed for reproducibility')
-    train_group.add_argument('--max-episodes', type=int, default=1000,
+    train_group.add_argument('--max-episodes', type=int, default=100_000,
                             help='Maximum number of training episodes')
     train_group.add_argument('--max-timesteps', type=int, default=1000000,
                             help='Maximum number of timesteps')
@@ -75,12 +78,31 @@ def parse_args():
                           help='Exploration noise (std of Gaussian)')
     td3_group.add_argument('--target-action-temp', type=float, default=1.5,
                           help='Temperature for sampling target actions (>0)')
+
+    # PPO hyperparameters
+    ppo_group = parser.add_argument_group('PPO Algorithm')
+    ppo_group.add_argument('--ppo-steps-per-update', type=int, default=128,
+                           help='Number of timesteps collected before each PPO update')
+    ppo_group.add_argument('--ppo-epochs', type=int, default=5,
+                           help='Number of gradient epochs per PPO update')
+    ppo_group.add_argument('--ppo-minibatch-size', type=int, default=256,
+                           help='Minibatch size for PPO updates')
+    ppo_group.add_argument('--gae-lambda', type=float, default=0.95,
+                           help='GAE lambda parameter')
+    ppo_group.add_argument('--ppo-clip', type=float, default=0.2,
+                           help='Clipping coefficient for PPO')
+    ppo_group.add_argument('--ppo-entropy-coef', type=float, default=0.01,
+                           help='Entropy bonus coefficient')
+    ppo_group.add_argument('--ppo-value-coef', type=float, default=0.5,
+                           help='Value loss coefficient')
+    ppo_group.add_argument('--ppo-max-grad-norm', type=float, default=0.5,
+                           help='Gradient clipping value for PPO')
     
     # Network architecture
     net_group = parser.add_argument_group('Network Architecture')
-    net_group.add_argument('--feature-dim', type=int, default=8,
+    net_group.add_argument('--feature-dim', type=int, default=32,
                           help='Feature dimension for node embeddings')
-    net_group.add_argument('--gnn-hidden-dim', type=int, default=32,
+    net_group.add_argument('--gnn-hidden-dim', type=int, default=64,
                           help='Hidden dimension for GNN layers')
     net_group.add_argument('--mlp-hidden-dim', type=int, default=256,
                           help='Hidden dimension for MLP layers in critic')
@@ -103,6 +125,8 @@ def parse_args():
                           help='Wandb entity (username or team)')
     log_group.add_argument('--exp-name', type=str, default=None,
                           help='Experiment name (auto-generated if not provided)')
+    log_group.add_argument('--group-name', type=str, default=None,
+                          help='Wandb group name for organizing related experiments')
     log_group.add_argument('--no-wandb', action='store_true',
                           help='Disable wandb logging')
     log_group.add_argument('--diag-log-freq', type=int, default=1000,
@@ -119,8 +143,8 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
     eval_success_rate = []
     eval_episode_lengths = []
     eval_total_charging_time = []
-    eval_num_charging_actions = []
-    eval_num_delivery_actions = []
+    eval_num_charging_sessions = []
+    eval_waiting_time = []
     eval_total_distance = []
     eval_episode_time = []
     
@@ -131,11 +155,6 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         done = False
         truncated = False
         
-        # Episode-specific metrics
-        charging_time = 0.0
-        num_charging = 0
-        num_delivery = 0
-        
         while not (done or truncated) and episode_steps < max_steps:
             # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -144,14 +163,6 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
             raw_action = policy.select_action(gnn_state, expl_noise=0)
             if isinstance(raw_action, tuple):
                 action = raw_action
-                node_id, charging_duration, is_charging = action
-                
-                # Track action types
-                if is_charging:
-                    num_charging += 1
-                    charging_time += charging_duration
-                else:
-                    num_delivery += 1
             else:
                 # Map node index to valid action (clip to action space)
                 action = int(raw_action) % env.action_space.n
@@ -161,25 +172,30 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
             episode_reward += reward
             episode_steps += 1
         
-        # Collect episode metrics
+        # Collect episode metrics from environment info
         eval_rewards.append(episode_reward)
         eval_success_rate.append(1.0 if info.get('all_complete', False) else 0.0)
         eval_episode_lengths.append(episode_steps)
-        eval_total_charging_time.append(charging_time)
-        eval_num_charging_actions.append(num_charging)
-        eval_num_delivery_actions.append(num_delivery)
         
-        # Extract additional info from environment if available
-        if hasattr(env, 'current_time'):
-            eval_episode_time.append(env.current_time)
-        
-        # Calculate total distance traveled (sum across all trucks)
+        # Extract metrics from truck states in info (these are episode-specific)
+        total_charging_time = 0.0
+        num_charging_sessions = 0
+        total_waiting_time = 0.0
         total_distance = 0.0
-        if hasattr(env, 'trucks'):
-            for truck in env.trucks:
-                if hasattr(truck, 'total_distance_traveled'):
-                    total_distance += truck.total_distance_traveled
+        
+        for truck_info in info.get('trucks', []):
+            total_charging_time += truck_info.get('total_charging_time', 0.0)
+            num_charging_sessions += truck_info.get('num_charging_sessions', 0)
+            total_waiting_time += truck_info.get('waiting_time', 0.0)
+            total_distance += truck_info.get('total_distance', 0.0)
+        
+        eval_total_charging_time.append(total_charging_time)
+        eval_num_charging_sessions.append(num_charging_sessions)
+        eval_waiting_time.append(total_waiting_time)
         eval_total_distance.append(total_distance)
+        
+        # Get episode time from global clock
+        eval_episode_time.append(info.get('global_clock', 0.0))
     
     return {
         'mean_reward': np.mean(eval_rewards),
@@ -187,15 +203,14 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         'success_rate': np.mean(eval_success_rate),
         'mean_episode_length': np.mean(eval_episode_lengths),
         'mean_charging_time': np.mean(eval_total_charging_time),
-        'mean_num_charging_actions': np.mean(eval_num_charging_actions),
-        'mean_num_delivery_actions': np.mean(eval_num_delivery_actions),
+        'mean_num_charging_sessions': np.mean(eval_num_charging_sessions),
+        'mean_waiting_time': np.mean(eval_waiting_time),
         'mean_total_distance': np.mean(eval_total_distance),
-        'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0,
-        'charging_to_delivery_ratio': np.mean(eval_num_charging_actions) / max(np.mean(eval_num_delivery_actions), 1.0)
+        'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0
     }
 
 
-def train(args):
+def train_td3(args):
     """Main training loop."""
     
     # Set seeds for reproducibility
@@ -218,7 +233,11 @@ def train(args):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         args.exp_name = f"TD3_GNN_{timestamp}"
         
-    group_name = f"{config['environment']['num_trucks']}trucks_{config['environment']['num_stops']}stops"
+    # Use user-provided group name or default to environment configuration
+    if args.group_name is not None:
+        group_name = args.group_name
+    else:
+        group_name = f"{config['environment']['num_trucks']}trucks_{config['environment']['num_stops']}stops"
     
     # Initialize wandb
     if not args.no_wandb:
@@ -263,8 +282,8 @@ def train(args):
     # Adjust based on your actual GNN state implementation
     fx_node_sizes = {
         'ev': 13,  # Truck features
-        'cs': 5,   # Charger features
-        'tr': 2,   # Delivery features
+        'cs': 4,   # Charger features (node_type, node_id, occupancy_rate, queue_length_norm)
+        'tr': 3,   # Delivery features (node_type, node_id, delivery_sequence_index)
         'env': 1   # Environment features (if any)
     }
     
@@ -436,7 +455,8 @@ def train(args):
             print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
             print(f"Episode Length: {eval_results['mean_episode_length']:.1f} steps")
             print(f"Charging Time: {eval_results['mean_charging_time']:.2f} hours")
-            print(f"Actions - Charging: {eval_results['mean_num_charging_actions']:.1f}, Delivery: {eval_results['mean_num_delivery_actions']:.1f}")
+            print(f"Charging Sessions: {eval_results['mean_num_charging_sessions']:.1f}")
+            print(f"Waiting Time: {eval_results['mean_waiting_time']:.2f} hours")
             print(f"Distance Traveled: {eval_results['mean_total_distance']:.1f} km")
             if eval_results['mean_episode_time'] > 0:
                 print(f"Episode Time: {eval_results['mean_episode_time']:.2f} hours")
@@ -458,11 +478,10 @@ def train(args):
                     'eval/best_reward': best_eval_reward,
                     'eval/episode_length': eval_results['mean_episode_length'],
                     'eval/charging_time': eval_results['mean_charging_time'],
-                    'eval/num_charging_actions': eval_results['mean_num_charging_actions'],
-                    'eval/num_delivery_actions': eval_results['mean_num_delivery_actions'],
+                    'eval/num_charging_sessions': eval_results['mean_num_charging_sessions'],
+                    'eval/waiting_time': eval_results['mean_waiting_time'],
                     'eval/total_distance': eval_results['mean_total_distance'],
                     'eval/episode_time': eval_results['mean_episode_time'],
-                    'eval/charging_delivery_ratio': eval_results['charging_to_delivery_ratio'],
                     'eval/timestep': total_timesteps
                 })
         if episode_num >= args.max_episodes:
@@ -486,6 +505,228 @@ def train(args):
     eval_env.close()
     if not args.no_wandb:
         wandb.finish()
+
+
+def train_ppo(args):
+    """PPO training loop using the GNN state representation."""
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    config = load_config(args.config)
+    if args.num_trucks is not None:
+        config['environment']['num_trucks'] = args.num_trucks
+    if args.num_stops is not None:
+        config['environment']['num_stops'] = args.num_stops
+    if args.max_time is not None:
+        config['environment']['max_time'] = args.max_time
+    if args.enable_traffic:
+        config['traffic']['enable_traffic'] = True
+
+    if args.exp_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.exp_name = f"PPO_GNN_{timestamp}"
+
+    # Use user-provided group name or default to environment configuration
+    if args.group_name is not None:
+        group_name = args.group_name
+    else:
+        group_name = f"{config['environment']['num_trucks']}trucks_{config['environment']['num_stops']}stops"
+
+    if not args.no_wandb:
+        _run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.exp_name,
+            group=group_name,
+            config=vars(args),
+            save_code=True
+        )
+        _run.log_code(".")
+
+    env = EventDrivenTruckEnv(
+        config=config,
+        verbose=False,
+        enable_plotting=False,
+        run_id=args.exp_name
+    )
+    eval_env = EventDrivenTruckEnv(
+        config=copy.deepcopy(config),
+        verbose=False,
+        enable_plotting=False,
+        run_id=f"{args.exp_name}_eval"
+    )
+
+    gnn_state_space = GNNStateSpace(
+        num_trucks=config['environment']['num_trucks'],
+        num_stops=config['environment']['num_stops'],
+        max_time=config['environment']['max_time'],
+        num_charging_nodes=env.num_charging_nodes
+    )
+
+    action_dim = env.action_space.n
+    node_feature_dims = {
+        'truck': 13,
+        'delivery': 3,  # node_type, node_id, delivery_sequence_index
+        'charger': 4  # node_type, node_id, occupancy_rate, queue_length_norm
+    }
+
+    policy = PPOActionGNN(
+        action_dim=action_dim,
+        node_feature_dims=node_feature_dims,
+        hidden_dim=args.gnn_hidden_dim,
+        num_layers=args.actor_gcn_layers,
+        mlp_dim=args.mlp_hidden_dim,
+        lr=args.lr,
+        gamma=args.discount,
+        gae_lambda=args.gae_lambda,
+        clip_coef=args.ppo_clip,
+        value_coef=args.ppo_value_coef,
+        entropy_coef=args.ppo_entropy_coef,
+        max_grad_norm=args.ppo_max_grad_norm,
+        ppo_epochs=args.ppo_epochs,
+        minibatch_size=args.ppo_minibatch_size
+    )
+
+    save_dir = os.path.join("saved_models", args.exp_name)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "ppo_model")
+    best_eval_reward = None
+    best_model_path = None
+
+    total_timesteps = 0
+    episode_num = 0
+    episode_reward = 0.0
+    episode_timesteps = 0
+
+    obs, info = env.reset(seed=args.seed)
+    gnn_state = gnn_state_space.get_state_GNN(env)
+
+    print(f"\n{'='*80}")
+    print(f"Starting PPO Training: {args.exp_name}")
+    print(f"{'='*80}")
+    print(f"Environment: {config['environment']['num_trucks']} trucks, {config['environment']['num_stops']} stops")
+    print(f"Max timesteps: {args.max_timesteps}")
+    print(f"Steps per PPO update: {args.ppo_steps_per_update}")
+    print(f"Minibatch size: {args.ppo_minibatch_size}")
+    print(f"{'='*80}\n")
+
+    for t in range(args.max_timesteps):
+        episode_timesteps += 1
+
+        action, logprob, value = policy.act(gnn_state)
+        next_obs, reward, done, truncated, info = env.step(action)
+        next_gnn_state = gnn_state_space.get_state_GNN(env)
+
+        done_flag = done or truncated
+        if episode_timesteps >= args.max_episode_steps:
+            done_flag = True
+            truncated = True
+
+        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value)
+
+        gnn_state = next_gnn_state
+        episode_reward += reward
+        total_timesteps += 1
+
+        if (t + 1) % args.ppo_steps_per_update == 0:
+            last_value = policy.value(gnn_state)
+            update_stats = policy.update(last_value)
+            if update_stats and not args.no_wandb:
+                wandb.log({
+                    'train/policy_loss': update_stats.get('policy_loss', 0.0),
+                    'train/value_loss': update_stats.get('value_loss', 0.0),
+                    'train/entropy': update_stats.get('entropy', 0.0),
+                    'train/timestep': total_timesteps
+                })
+
+        if done_flag:
+            if not args.no_wandb:
+                wandb.log({
+                    'train/episode_reward': episode_reward,
+                    'train/episode_length': episode_timesteps,
+                    'train/episode': episode_num,
+                    'train/success': 1.0 if info.get('all_complete', False) else 0.0,
+                    'train/timestep': total_timesteps
+                })
+
+            print(f"PPO Episode {episode_num}: Reward={episode_reward:.2f}, "
+                  f"Steps={episode_timesteps}, Success={info.get('all_complete', False)}")
+
+            obs, info = env.reset(seed=args.seed + episode_num + 1)
+            gnn_state = gnn_state_space.get_state_GNN(env)
+            episode_reward = 0.0
+            episode_timesteps = 0
+            episode_num += 1
+
+            if episode_num >= args.max_episodes:
+                if args.verbose:
+                    print(f"Reached max episodes ({args.max_episodes}). Ending PPO training loop.")
+                break
+
+        if (t + 1) % args.eval_freq == 0:
+            eval_results = evaluate_policy(eval_env, policy, gnn_state_space,
+                                           args.eval_episodes, args.seed + 1000, args.max_episode_steps)
+
+            print(f"\n{'='*80}")
+            print(f"PPO Evaluation at timestep {total_timesteps}")
+            print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")
+            print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
+            print(f"Episode Length: {eval_results['mean_episode_length']:.1f} steps")
+            print(f"Charging Time: {eval_results['mean_charging_time']:.2f} hours")
+            print(f"Charging Sessions: {eval_results['mean_num_charging_sessions']:.1f}")
+            print(f"Waiting Time: {eval_results['mean_waiting_time']:.2f} hours")
+            print(f"Distance Traveled: {eval_results['mean_total_distance']:.1f} km")
+            if eval_results['mean_episode_time'] > 0:
+                print(f"Episode Time: {eval_results['mean_episode_time']:.2f} hours")
+
+            if best_eval_reward is None or eval_results['mean_reward'] > best_eval_reward:
+                best_eval_reward = eval_results['mean_reward']
+                best_model_path = f"{save_path}_best"
+                policy.save(best_model_path)
+                print(f"🌟 New best PPO model saved! Reward: {best_eval_reward:.2f}")
+
+            print(f"{'='*80}\n")
+
+            if not args.no_wandb:
+                wandb.log({
+                    'eval/mean_reward': eval_results['mean_reward'],
+                    'eval/std_reward': eval_results['std_reward'],
+                    'eval/success_rate': eval_results['success_rate'],
+                    'eval/best_reward': best_eval_reward,
+                    'eval/episode_length': eval_results['mean_episode_length'],
+                    'eval/charging_time': eval_results['mean_charging_time'],
+                    'eval/num_charging_sessions': eval_results['mean_num_charging_sessions'],
+                    'eval/waiting_time': eval_results['mean_waiting_time'],
+                    'eval/total_distance': eval_results['mean_total_distance'],
+                    'eval/episode_time': eval_results['mean_episode_time'],
+                    'eval/timestep': total_timesteps
+                })
+
+    if len(policy.buffer.rewards) > 0:
+        last_value = policy.value(gnn_state)
+        policy.update(last_value)
+
+    final_model_path = f"{save_path}_final"
+    policy.save(final_model_path)
+    print(f"\nPPO training completed.")
+    print(f"Final PPO model saved to: {final_model_path}")
+    if best_model_path is not None and best_eval_reward is not None:
+        print(f"Best PPO model saved to: {best_model_path} (Reward: {best_eval_reward:.2f})")
+    else:
+        print("Best PPO model not saved (evaluation not run or no improvement).")
+    print(f"Save directory: {save_dir}")
+
+    env.close()
+    eval_env.close()
+    if not args.no_wandb:
+        wandb.finish()
+
+
+def train(args):
+    if args.algo == 'td3':
+        train_td3(args)
+    else:
+        train_ppo(args)
 
 
 if __name__ == "__main__":

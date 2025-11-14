@@ -821,6 +821,17 @@ class EventDrivenTruckEnv(gym.Env):
 
         charger_node = truck.current_node
 
+        # If battery already essentially full, redirect to next delivery
+        battery_deficit = truck.battery_capacity - truck.current_battery
+        if battery_deficit <= 1e-3:
+            next_delivery = truck.get_next_delivery_target()
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} battery full; skipping charge action")
+            if next_delivery is not None:
+                return self._execute_navigation_action(truck, action=self.num_charging_nodes)
+            # Nothing left to do, no reward/penalty
+            return 0.0
+
         # Check if truck can start charging (enforce waitlist eligibility)
         can_proceed, next_check_time = self.charging_station.check_charger_gating(
             truck_id=truck.truck_id,
@@ -1088,6 +1099,16 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  Using current location {truck.current_node}")
             charger_node = truck.current_node
         
+        # If battery full, go to next delivery instead
+        battery_deficit = truck.battery_capacity - truck.current_battery
+        if battery_deficit <= 1e-3:
+            next_delivery = truck.get_next_delivery_target()
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} battery full; rerouting instead of charging")
+            if next_delivery is not None:
+                return self._execute_navigation_action_gnn(truck, next_delivery)
+            return 0.0
+
         # Check charger gating
         can_proceed, next_check_time = self.charging_station.check_charger_gating(
             truck_id=truck.truck_id,
@@ -1243,6 +1264,40 @@ class EventDrivenTruckEnv(gym.Env):
             num_navigation_actions=self.num_navigation_actions,
             charging_nodes=self.charging_nodes,
         )
+
+    def get_delivery_sequence_index(self, node_id: int) -> int:
+        """
+        Get the relative delivery sequence index for a given delivery node.
+        
+        Returns the minimum index across all trucks that have this node in their
+        remaining delivery sequence. Index 1 means it's the next delivery, 
+        index 2 means there's one delivery before it, etc.
+        
+        Args:
+            node_id: Delivery node ID
+            
+        Returns:
+            Relative sequence index (1-based), or 0 if node is not in any truck's
+            remaining delivery sequence or if all trucks are complete/failed
+        """
+        min_index = float('inf')
+        
+        for truck in self.trucks:
+            # Skip failed and completed trucks
+            if truck.failed or truck.is_complete:
+                continue
+                
+            # Get remaining deliveries for this truck
+            remaining_deliveries = truck.get_remaining_deliveries()
+            
+            # Check if node_id is in remaining deliveries
+            if node_id in remaining_deliveries:
+                # Find its position (1-based index)
+                position = remaining_deliveries.index(node_id) + 1
+                min_index = min(min_index, position)
+        
+        # Return 0 if node not found in any truck's sequence
+        return int(min_index) if min_index != float('inf') else 0
 
     def close(self):
         """Clean up resources and generate final visualizations."""

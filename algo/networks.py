@@ -190,7 +190,7 @@ class HeteroGNN_Actor(nn.Module):
     """
     
     def __init__(self, 
-                 node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+                 node_feature_dims={'truck': 13, 'delivery': 3, 'charger': 4},
                  edge_dim=2,
                  hidden_dim=64,
                  num_layers=3,
@@ -398,7 +398,7 @@ class HeteroGNN_Critic(nn.Module):
     """
     
     def __init__(self,
-                 node_feature_dims={'truck': 13, 'delivery': 2, 'charger': 5},
+                 node_feature_dims={'truck': 13, 'delivery': 3, 'charger': 4},
                  edge_dim=2,
                  hidden_dim=64,
                  num_layers=3,

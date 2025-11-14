@@ -52,11 +52,11 @@ def parse_args():
                             help='Evaluation frequency (in timesteps)')
     train_group.add_argument('--eval-episodes', type=int, default=10,
                             help='Number of episodes for evaluation')
-    train_group.add_argument('--batch-size', type=int, default=32,
+    train_group.add_argument('--batch-size', type=int, default=256,
                             help='Batch size for training')
-    train_group.add_argument('--start-timesteps', type=int, default=300,
+    train_group.add_argument('--start-timesteps', type=int, default=5000,
                             help='Timesteps before training starts (random policy)')
-    train_group.add_argument('--buffer-size', type=int, default=1000000,
+    train_group.add_argument('--buffer-size', type=int, default=500000,
                             help='Replay buffer size')
     
     # TD3 hyperparameters
@@ -73,6 +73,8 @@ def parse_args():
                           help='Frequency of delayed policy updates')
     td3_group.add_argument('--expl-noise', type=float, default=0.1,
                           help='Exploration noise (std of Gaussian)')
+    td3_group.add_argument('--target-action-temp', type=float, default=1.5,
+                          help='Temperature for sampling target actions (>0)')
     
     # Network architecture
     net_group = parser.add_argument_group('Network Architecture')
@@ -103,6 +105,8 @@ def parse_args():
                           help='Experiment name (auto-generated if not provided)')
     log_group.add_argument('--no-wandb', action='store_true',
                           help='Disable wandb logging')
+    log_group.add_argument('--diag-log-freq', type=int, default=1000,
+                          help='How often (timesteps) to log action/Q diagnostics')
     log_group.add_argument('--verbose', action='store_true',
                           help='Enable verbose output')
     
@@ -282,7 +286,8 @@ def train(args):
         actor_num_gcn_layers=args.actor_gcn_layers,
         critic_num_gcn_layers=args.critic_gcn_layers,
         min_charging_duration=args.min_charging_duration,
-        max_charging_duration=args.max_charging_duration
+        max_charging_duration=args.max_charging_duration,
+        target_action_temperature=args.target_action_temp
     )
     
     # Initialize replay buffer
@@ -381,6 +386,16 @@ def train(args):
                     log_dict['train/actor_loss'] = actor_loss
                     
                 wandb.log(log_dict)
+
+            if ((not args.no_wandb) or args.verbose) and (total_timesteps % args.diag_log_freq == 0):
+                diag_metrics = policy.get_action_diagnostics(gnn_state)
+                diag_metrics['train/timestep'] = total_timesteps
+                if not args.no_wandb:
+                    wandb.log(diag_metrics)
+                if args.verbose:
+                    print(f"Diag@{total_timesteps}: top1={diag_metrics['diag/top1_logit']:.3f}, "
+                          f"gap={diag_metrics['diag/top_gap']:.3f}, entropy={diag_metrics['diag/action_entropy']:.3f}, "
+                          f"Qbest={diag_metrics['diag/q_best']:.3f}")
         
         # Episode ended
         if done or truncated:

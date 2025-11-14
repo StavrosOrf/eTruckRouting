@@ -78,6 +78,10 @@ class GNNStateSpace:
         self.NODE_TYPE_TRUCK = 0
         self.NODE_TYPE_DELIVERY = 1
         self.NODE_TYPE_CHARGER = 2
+        self.node_type_order = ['truck', 'delivery', 'charger']
+        self.node_type_to_code = {
+            node_type: idx for idx, node_type in enumerate(self.node_type_order)
+        }
 
     def get_state_GNN(self, env) -> HeteroData:
         """
@@ -405,6 +409,9 @@ class GNNStateSpace:
         
         action_to_node_map = []  # List of (node_id, is_charging_action) tuples
         feasible_action_mask = []
+        action_node_types = []  # Encoded node type per discrete action
+        action_local_indices = []  # Local index inside node type tensor
+        action_is_charging = []
         can_charge_here = False
         
         # Build node_id_to_type mapping: node_id -> (node_type_str, local_idx_in_type)
@@ -425,6 +432,18 @@ class GNNStateSpace:
             if local_idx is not None:
                 node_id_to_type[charger_id] = ('charger', local_idx)
         
+        def _append_action_metadata(node_id: int, is_charging_action: bool):
+            """Store metadata for action mapping to node embeddings."""
+            if node_id == -1 or node_id not in node_id_to_type:
+                action_node_types.append(-1)
+                action_local_indices.append(-1)
+            else:
+                node_type, local_idx = node_id_to_type[node_id]
+                node_type_code = self.node_type_to_code.get(node_type, -1)
+                action_node_types.append(node_type_code)
+                action_local_indices.append(local_idx)
+            action_is_charging.append(bool(is_charging_action))
+
         if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
             active_truck_idx = truck_id_to_idx[env.active_truck_id]
             if active_truck_idx is not None:
@@ -440,11 +459,13 @@ class GNNStateSpace:
                     is_feasible = energy < current_battery and not np.isinf(energy)
                     action_to_node_map.append((next_delivery, False))
                     feasible_action_mask.append(is_feasible)
+                    _append_action_metadata(next_delivery, False)
                 else:
                     # No delivery left - add dummy action
                     action_to_node_map.append((-1, False))
                     feasible_action_mask.append(False)
-                
+                    _append_action_metadata(-1, False)
+
                 # Actions 1 to N: Go to charger i
                 for charger_id in sorted(charger_node_to_idx.keys()):
                     if charger_id == current_location:
@@ -454,7 +475,8 @@ class GNNStateSpace:
                     is_feasible = energy < current_battery and not np.isinf(energy)
                     action_to_node_map.append((charger_id, False))
                     feasible_action_mask.append(is_feasible)
-                
+                    _append_action_metadata(charger_id, False)
+
                 # Last action: Charge at current location (if at charger and battery not full)
                 if current_location in charger_node_to_idx:
                     # Check if battery is not full (allow charging if < 95% to avoid precision issues)
@@ -462,19 +484,29 @@ class GNNStateSpace:
                     can_charge_here = can_charge
                     action_to_node_map.append((current_location, True))
                     feasible_action_mask.append(can_charge)
+                    _append_action_metadata(current_location, True)
                 else:
                     # Not at charger - can't charge
                     action_to_node_map.append((-1, True))
                     feasible_action_mask.append(False)
-        
+                    _append_action_metadata(-1, True)
+
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
         data.feasible_action_mask = torch.tensor(feasible_action_mask, dtype=torch.bool, device=self.device)
+        if action_node_types:
+            data.action_node_type = torch.tensor(action_node_types, dtype=torch.long, device=self.device)
+            data.action_local_index = torch.tensor(action_local_indices, dtype=torch.long, device=self.device)
+            data.action_is_charging = torch.tensor(action_is_charging, dtype=torch.bool, device=self.device)
+        else:
+            data.action_node_type = torch.zeros((0,), dtype=torch.long, device=self.device)
+            data.action_local_index = torch.zeros((0,), dtype=torch.long, device=self.device)
+            data.action_is_charging = torch.zeros((0,), dtype=torch.bool, device=self.device)
         data.can_charge_here = can_charge_here
         data.node_id_to_type = node_id_to_type  # For Actor to map actions to node embeddings
-        
+
         # Store metadata for debugging
-        data.num_actions = len(action_to_node_map)
+        data.num_actions = torch.tensor(len(action_to_node_map), dtype=torch.long, device=self.device)
         
         # Store node type offsets for easy indexing
         data.node_type_offsets = {

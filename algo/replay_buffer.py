@@ -107,8 +107,10 @@ class ReplayBuffer:
         
         # Convert to tensors
         actions_array = np.array(actions, dtype=np.int64)
-        actions = torch.LongTensor(actions_array).to(device).squeeze()
-        
+        actions = torch.LongTensor(actions_array).to(device)
+        if actions.dim() == 0:
+            actions = actions.unsqueeze(0)
+
         charging_durations_array = np.array(charging_durations, dtype=np.float32)
         charging_durations = torch.FloatTensor(charging_durations_array).unsqueeze(1).to(device)
         
@@ -120,23 +122,11 @@ class ReplayBuffer:
         exclude_keys = [
             'action_to_node_map',
             'node_id_to_type',
-            'can_charge_here',
             'node_type_offsets',
-            'num_actions',
-            'feasible_action_mask',  # Variable length - handle manually below
+            'can_charge_here',
         ]
         state_batch = Batch.from_data_list(states, exclude_keys=exclude_keys)
         next_state_batch = Batch.from_data_list(next_states, exclude_keys=exclude_keys)
-        
-        # Manually concatenate feasible_action_mask for batched graphs
-        # Each graph has a different number of actions, so we concat them
-        state_masks = [s.feasible_action_mask for s in states if hasattr(s, 'feasible_action_mask')]
-        next_state_masks = [s.feasible_action_mask for s in next_states if hasattr(s, 'feasible_action_mask')]
-        
-        if state_masks:
-            state_batch.feasible_action_mask = torch.cat(state_masks, dim=0)
-        if next_state_masks:
-            next_state_batch.feasible_action_mask = torch.cat(next_state_masks, dim=0)
         
         # Move everything to device
         state_batch = state_batch.to(device)

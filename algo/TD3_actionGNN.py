@@ -41,6 +41,7 @@ class TD3_ActionGNN(object):
             critic_num_gcn_layers=3,
             min_charging_duration=0.5,
             max_charging_duration=10.0,
+            target_action_temperature=1.0,
             device=None,
             **kwargs
     ):
@@ -65,6 +66,7 @@ class TD3_ActionGNN(object):
             critic_num_gcn_layers: Number of GCN layers in critic
             min_charging_duration: Minimum charging duration (hours)
             max_charging_duration: Maximum charging duration (hours)
+            target_action_temperature: Temperature for sampling target actions (>0)
             device: Device to use (cuda/cpu). If None, auto-detect.
         """
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -104,6 +106,7 @@ class TD3_ActionGNN(object):
         self.policy_freq = policy_freq
         self.min_charging_duration = min_charging_duration
         self.max_charging_duration = max_charging_duration
+        self.target_action_temperature = target_action_temperature
 
         self.total_it = 0
 
@@ -123,6 +126,10 @@ class TD3_ActionGNN(object):
         with torch.no_grad():
             # Apply mask during exploration
             action_logits, charging_duration = self.actor(state, apply_mask=True)
+
+        # Exploration noise directly on logits
+        if expl_noise > 0:
+            action_logits = action_logits + torch.randn_like(action_logits) * expl_noise
 
         # Apply softmax over feasible actions only
         mask = state.feasible_action_mask
@@ -184,8 +191,8 @@ class TD3_ActionGNN(object):
             batch_size, device=self.device)
 
         with torch.no_grad():
-            # Select next action with target policy (no mask for continuous values)
-            next_action_logits, next_charging_duration = self.actor_target(next_state, apply_mask=False)
+            # Select next action with target policy (respect feasibility mask)
+            next_action_logits, next_charging_duration = self.actor_target(next_state, apply_mask=True)
             
             # Add clipped noise for target policy smoothing
             noise = (torch.randn_like(next_action_logits) * self.policy_noise).clamp(
@@ -198,26 +205,16 @@ class TD3_ActionGNN(object):
             next_charging_duration = (next_charging_duration + charge_noise).clamp(
                 self.min_charging_duration, self.max_charging_duration)
             
-            # Convert logits to action indices for target Q
-            # For batched states, we need to handle variable action dimensions
-            # Determine if this is a batch by checking if node types have ptr
-            is_batched = False
-            batch_size = 1
-            
-            # Check first node type for batching info
-            for node_type in next_state.node_types:
-                if hasattr(next_state[node_type], 'ptr'):
-                    is_batched = True
-                    batch_size = len(next_state[node_type].ptr) - 1
-                    break
-            
-            if is_batched and batch_size > 1:
-                # Batched graphs - action_logits is concatenated across all graphs
-                # Take argmax as best action (simplified - doesn't separate per graph properly)
-                next_action_idx = torch.argmax(next_action_logits).unsqueeze(0).repeat(batch_size)
-            else:
-                # Single graph
-                next_action_idx = torch.argmax(next_action_logits).unsqueeze(0)
+            infeasible_fill = torch.tensor(-1e9, device=self.device)
+            next_action_logits = torch.where(next_state.feasible_action_mask, next_action_logits, infeasible_fill)
+
+            next_counts, next_offsets = self._get_action_layout(next_state)
+            next_action_idx = self._sample_actions(
+                next_action_logits,
+                next_counts,
+                next_offsets,
+                temperature=self.target_action_temperature
+            )
 
             # Compute target Q value
             target_Q1, target_Q2 = self.critic_target(next_state, next_action_idx, next_charging_duration)
@@ -238,48 +235,9 @@ class TD3_ActionGNN(object):
         # Delayed policy updates
         if self.total_it % self.policy_freq == 0:
 
-            # Compute actor loss WITHOUT masking during training
-            # The actor learns to produce good raw scores; masking is only applied during action selection
-            actor_logits, actor_charging = self.actor(state, apply_mask=False)
-            
-            # For batched graphs with variable action spaces, properly handle per-graph actions
-            # Check if this is a batch by looking at node-level ptr attributes
-            is_batched = False
-            batch_size = 1
-            
-            for node_type in state.node_types:
-                if hasattr(state[node_type], 'ptr'):
-                    is_batched = True
-                    batch_size = len(state[node_type].ptr) - 1
-                    break
-            
-            if is_batched and batch_size > 1:
-                # Batched graphs - we have multiple graphs with potentially different action spaces
-                
-                # Assume equal distribution of actions across graphs (approximation)
-                # Better solution would store num_actions per graph in state metadata
-                total_actions = actor_logits.shape[0]
-                actions_per_graph = total_actions // batch_size if batch_size > 0 else total_actions
-                
-                # Select best action from each graph's action subset
-                actor_actions = []
-                for i in range(batch_size):
-                    start_idx = i * actions_per_graph
-                    end_idx = (i + 1) * actions_per_graph if i < batch_size - 1 else total_actions
-                    graph_logits = actor_logits[start_idx:end_idx]
-                    
-                    if graph_logits.numel() > 0:
-                        best_action = torch.argmax(graph_logits)
-                        # Store global action index (relative to concatenated logits)
-                        actor_actions.append(start_idx + best_action)
-                    else:
-                        # Fallback for empty graph
-                        actor_actions.append(torch.tensor(0, device=self.device))
-                
-                actor_action_idx = torch.stack(actor_actions) if actor_actions else torch.tensor([0], device=self.device)
-            else:
-                # Single graph
-                actor_action_idx = torch.argmax(actor_logits).unsqueeze(0)
+            actor_logits, actor_charging = self.actor(state, apply_mask=True)
+            state_counts, state_offsets = self._get_action_layout(state)
+            actor_action_idx = self._select_best_actions(actor_logits, state_counts, state_offsets)
             
             # Compute Q-value for selected actions
             actor_Q = self.critic.Q1(state, actor_action_idx, actor_charging)
@@ -302,6 +260,114 @@ class TD3_ActionGNN(object):
             return critic_loss.item(), actor_loss.item()
 
         return critic_loss.item(), None
+
+    def _get_action_layout(self, data):
+        """Return per-graph action counts and cumulative offsets."""
+        if not hasattr(data, 'num_actions'):
+            raise ValueError("State is missing num_actions metadata")
+        counts = data.num_actions
+        if isinstance(counts, torch.Tensor):
+            if counts.dim() == 0:
+                counts = counts.unsqueeze(0)
+            counts = counts.to(torch.long).to(self.device)
+        else:
+            counts = torch.tensor([int(counts)], dtype=torch.long, device=self.device)
+        if counts.numel() == 0:
+            return counts, counts
+        offsets = torch.cumsum(
+            torch.cat([counts.new_zeros(1), counts[:-1]]), dim=0
+        )
+        return counts, offsets
+
+    def _select_best_actions(self, logits, counts, offsets):
+        """Pick argmax action index for each graph given concatenated logits."""
+        best_actions = []
+        num_graphs = counts.shape[0]
+        for i in range(num_graphs):
+            count = int(counts[i].item())
+            if count <= 0:
+                best_actions.append(torch.tensor(0, dtype=torch.long, device=logits.device))
+                continue
+            start = int(offsets[i].item())
+            end = start + count
+            graph_logits = logits[start:end]
+            if graph_logits.numel() == 0:
+                best_actions.append(torch.tensor(0, dtype=torch.long, device=logits.device))
+            else:
+                best_actions.append(torch.argmax(graph_logits))
+        if best_actions:
+            return torch.stack(best_actions)
+        return torch.empty((0,), dtype=torch.long, device=logits.device)
+
+    def _sample_actions(self, logits, counts, offsets, temperature=1.0):
+        """Sample action indices per graph using softmax distribution."""
+        sampled = []
+        num_graphs = counts.shape[0]
+        temperature = max(temperature, 1e-3)
+        for i in range(num_graphs):
+            count = int(counts[i].item())
+            start = int(offsets[i].item()) if counts.numel() > 0 else 0
+            if count <= 0:
+                sampled.append(torch.tensor(0, dtype=torch.long, device=logits.device))
+                continue
+            end = start + count
+            graph_logits = logits[start:end]
+            if graph_logits.numel() == 0:
+                sampled.append(torch.tensor(0, dtype=torch.long, device=logits.device))
+                continue
+            probs = torch.softmax(graph_logits / temperature, dim=0)
+            action_idx = torch.multinomial(probs, 1).squeeze(0)
+            sampled.append(action_idx)
+        if sampled:
+            return torch.stack(sampled)
+        return torch.empty((0,), dtype=torch.long, device=logits.device)
+
+    def get_action_diagnostics(self, state):
+        """Return diagnostic metrics for current state (logits/Q stats)."""
+        state = state.to(self.device)
+        with torch.no_grad():
+            logits, charging = self.actor(state, apply_mask=True)
+            counts, offsets = self._get_action_layout(state)
+            diag = {
+                'diag/top1_logit': 0.0,
+                'diag/top_gap': 0.0,
+                'diag/action_entropy': 0.0,
+                'diag/q_best': 0.0
+            }
+            if logits.numel() == 0 or counts.sum() == 0:
+                return diag
+
+            top1_vals = []
+            gaps = []
+            entropies = []
+            num_graphs = counts.shape[0]
+            for i in range(num_graphs):
+                count = int(counts[i].item())
+                if count <= 0:
+                    continue
+                start = int(offsets[i].item())
+                end = start + count
+                graph_logits = logits[start:end]
+                probs = torch.softmax(graph_logits, dim=0)
+                entropies.append(-(probs * torch.log(probs + 1e-8)).sum())
+                topk = torch.topk(graph_logits, k=min(3, count)).values
+                top1_vals.append(topk[0])
+                if topk.numel() > 1:
+                    gaps.append(topk[0] - topk[1])
+
+            if top1_vals:
+                diag['diag/top1_logit'] = torch.stack(top1_vals).mean().item()
+            if gaps:
+                diag['diag/top_gap'] = torch.stack(gaps).mean().item()
+            if entropies:
+                diag['diag/action_entropy'] = torch.stack(entropies).mean().item()
+
+            best_idx = self._select_best_actions(logits, counts, offsets)
+            if best_idx.numel() > 0:
+                q_best = self.critic.Q1(state, best_idx, charging)
+                diag['diag/q_best'] = q_best.mean().item()
+
+            return diag
 
     def save(self, filename):
         """

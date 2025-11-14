@@ -52,6 +52,22 @@ def _parse_value(value: str) -> Any:
     return value
 
 
+class Dumper:
+    pass
+
+
+class SafeDumper(Dumper):
+    pass
+
+
+class Loader:
+    pass
+
+
+class SafeLoader(Loader):
+    pass
+
+
 def safe_load(stream) -> Dict[str, Any]:
     if hasattr(stream, "read"):
         text = stream.read()
@@ -90,6 +106,19 @@ def safe_load(stream) -> Dict[str, Any]:
 
 def load(stream):
     return safe_load(stream)
+
+
+def dump(data, stream=None, Dumper=Dumper):
+    import json
+    text = json.dumps(data, indent=2)
+    if stream is None:
+        return text
+    stream.write(text)
+    return text
+
+
+def safe_dump(data, stream=None, **kwargs):
+    return dump(data, stream, Dumper=SafeDumper)
 
 
 __all__ = ["safe_load", "load"]

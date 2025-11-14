@@ -137,6 +137,50 @@ def parse_args():
     return parser.parse_args()
 
 
+def compute_action_mask(env):
+    """Return boolean mask (True=feasible) for the discrete env action space."""
+    num_actions = env.action_space.n
+    mask = np.zeros(num_actions, dtype=bool)
+
+    if env.active_truck_id is None:
+        return mask
+
+    truck = env.trucks[env.active_truck_id]
+    if truck.failed or truck.is_complete:
+        return mask
+
+    current_node = int(truck.current_node)
+    battery = float(truck.current_battery)
+
+    # Charger navigation actions (0 .. num_charging_nodes-1)
+    for idx, charger_node in enumerate(env.charging_nodes):
+        if idx >= env.num_charging_nodes:
+            break
+        charger_node = int(charger_node)
+        energy = env.transport_graph.get_path_energy(current_node, charger_node)
+        feasible = (not np.isinf(energy)) and (energy <= battery)
+        mask[idx] = feasible
+
+    # Next delivery action
+    next_delivery = truck.get_next_delivery_target()
+    delivery_idx = env.num_charging_nodes
+    if next_delivery is not None:
+        energy = env.transport_graph.get_path_energy(current_node, int(next_delivery))
+        mask[delivery_idx] = (not np.isinf(energy)) and (energy <= battery)
+    else:
+        mask[delivery_idx] = False
+
+    # Charging actions
+    can_charge_here = (current_node in env.charging_nodes) and (truck.get_battery_percentage() < 95.0)
+    charge_start = env.num_navigation_actions
+    for i in range(env.num_charge_actions):
+        mask[charge_start + i] = can_charge_here
+
+    if not mask.any():
+        mask[delivery_idx] = True
+    return mask
+
+
 def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_steps=200):
     """Evaluate the current policy and collect detailed metrics."""
     eval_rewards = []
@@ -158,9 +202,10 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         while not (done or truncated) and episode_steps < max_steps:
             # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
+            action_mask = compute_action_mask(env)
             
             # Select action without exploration noise (greedy)
-            raw_action = policy.select_action(gnn_state, expl_noise=0)
+            raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
             if isinstance(raw_action, tuple):
                 action = raw_action
             else:
@@ -613,7 +658,9 @@ def train_ppo(args):
     for t in range(args.max_timesteps):
         episode_timesteps += 1
 
-        action, logprob, value = policy.act(gnn_state)
+        mask_np = compute_action_mask(env)
+        mask_tensor = torch.tensor(mask_np, dtype=torch.bool)
+        action, logprob, value = policy.act(gnn_state, action_mask=mask_tensor)
         next_obs, reward, done, truncated, info = env.step(action)
         next_gnn_state = gnn_state_space.get_state_GNN(env)
 
@@ -622,7 +669,7 @@ def train_ppo(args):
             done_flag = True
             truncated = True
 
-        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value)
+        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value, mask_tensor)
 
         gnn_state = next_gnn_state
         episode_reward += reward

@@ -131,6 +131,7 @@ class PPOActorCritic(nn.Module):
             num_layers=num_layers,
             device=device,
         )
+        self.action_dim = action_dim
         encoder_dim = hidden_dim * len(node_feature_dims)
 
         self.policy_head = nn.Sequential(
@@ -145,11 +146,37 @@ class PPOActorCritic(nn.Module):
             nn.Linear(mlp_dim, 1),
         )
 
-    def forward(self, data: HeteroData):
+    def forward(self, data: HeteroData, action_mask: torch.Tensor = None):
         embedding = self.encoder(data)
         logits = self.policy_head(embedding)
+        logits = self._apply_action_mask(logits, action_mask)
         value = self.value_head(embedding).squeeze(-1)
         return logits, value
+
+    def _apply_action_mask(self, logits: torch.Tensor, action_mask: torch.Tensor = None) -> torch.Tensor:
+        if action_mask is None:
+            return logits
+        mask = action_mask
+        if not isinstance(mask, torch.Tensor):
+            mask = torch.tensor(mask)
+        mask = mask.to(dtype=torch.bool, device=logits.device)
+
+        if logits.dim() == 1:
+            mask = mask.view(-1)
+            if mask.numel() != logits.numel():
+                mask = mask[: logits.numel()]
+            if not mask.any():
+                return logits
+            return torch.where(mask, logits, torch.full_like(logits, -1e9))
+
+        batch_size = logits.size(0)
+        action_dim = logits.size(1)
+        mask = mask.view(-1, action_dim)
+        masked = torch.where(mask, logits, torch.full_like(logits, -1e9))
+        invalid_rows = (~mask).all(dim=-1)
+        if invalid_rows.any():
+            masked[invalid_rows] = logits[invalid_rows]
+        return masked
 
 
 @dataclass
@@ -175,6 +202,7 @@ class RolloutBuffer:
         reward: float,
         done: bool,
         value: float,
+        action_mask: torch.Tensor,
     ):
         self.states.append(state.to("cpu"))
         self.actions.append(action)
@@ -182,6 +210,10 @@ class RolloutBuffer:
         self.rewards.append(reward)
         self.dones.append(done)
         self.values.append(value)
+        if isinstance(action_mask, torch.Tensor):
+            self.action_masks.append(action_mask.to(torch.bool).cpu())
+        else:
+            self.action_masks.append(torch.tensor(action_mask, dtype=torch.bool))
 
     def compute_returns_and_advantages(
         self, gamma: float, gae_lambda: float, last_value: float
@@ -230,6 +262,7 @@ class RolloutBuffer:
         self.rewards: List[float] = []
         self.dones: List[bool] = []
         self.values: List[float] = []
+        self.action_masks: List[torch.Tensor] = []
 
 
 class PPOActionGNN:
@@ -276,10 +309,13 @@ class PPOActionGNN:
 
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr)
         self.buffer = RolloutBuffer()
+        self.action_dim = action_dim
 
-    def act(self, state: HeteroData):
+    def act(self, state: HeteroData, action_mask: torch.Tensor = None):
         state = state.to(self.device)
-        logits, value = self.policy(state)
+        if action_mask is not None:
+            action_mask = action_mask.to(self.device)
+        logits, value = self.policy(state, action_mask=action_mask)
         dist = Categorical(logits=logits)
         action = dist.sample()
         logprob = dist.log_prob(action)
@@ -290,12 +326,15 @@ class PPOActionGNN:
         state: HeteroData,
         deterministic: bool = True,
         expl_noise: float = None,
+        action_mask: torch.Tensor = None,
         **kwargs,
     ):
         if expl_noise is not None:
             deterministic = expl_noise == 0
         state = state.to(self.device)
-        logits, _ = self.policy(state)
+        if action_mask is not None:
+            action_mask = torch.as_tensor(action_mask, dtype=torch.bool).to(self.device)
+        logits, _ = self.policy(state, action_mask=action_mask)
         if deterministic:
             action = torch.argmax(logits, dim=-1)
         else:
@@ -334,8 +373,9 @@ class PPOActionGNN:
                 mb_old_logprobs = logprobs[mb_idx].to(self.device)
                 mb_returns = returns[mb_idx].to(self.device)
                 mb_advantages = advantages[mb_idx].to(self.device)
+                mb_masks = torch.stack([self.buffer.action_masks[i] for i in mb_idx]).to(self.device)
 
-                logits, values = self.policy(state_batch)
+                logits, values = self.policy(state_batch, action_mask=mb_masks)
                 dist = Categorical(logits=logits)
                 new_logprobs = dist.log_prob(mb_actions)
                 entropy = dist.entropy().mean()

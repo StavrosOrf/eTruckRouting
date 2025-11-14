@@ -711,13 +711,9 @@ class GNNStateSpace:
         # Estimate time for queued trucks (assume average charging time)
         # Each truck in queue will take approximately full charge time / charger_capacity (parallel charging)
         if len(charger_queue) > 0 and charger_capacity > 0:
-            # Rough estimate: average time to charge from 0 to full capacity
-            avg_charge_time = 0.0
-            truck_sample = env.trucks[0] if env.trucks else None
-            if truck_sample:
-                # Estimate based on charging rate and battery capacity
-                charging_rate = env.charging_station.charging_rates.get(node_id, 1.0)
-                avg_charge_time = truck_sample.battery_capacity / charging_rate if charging_rate > 0 else 0.0
+            # Rough estimate: average time to charge (use a typical full charge time estimate)
+            # Most trucks charge between 1-10 hours, use 5 hours as typical average
+            avg_charge_time = 5.0  # hours (typical average for a partial charge)
             
             # Time for queue = current charging completion + (queue_length * avg_charge_time / capacity)
             queue_wait_time = (len(charger_queue) * avg_charge_time) / charger_capacity

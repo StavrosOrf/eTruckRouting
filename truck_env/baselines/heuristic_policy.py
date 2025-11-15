@@ -101,13 +101,24 @@ class HeuristicPolicy:
                 f"Received object of type: {type(env).__name__}"
             )
         
-        action, explanation = self._decide_action(env)
-        truck_id = env.active_truck_id
-        if truck_id is not None:
-            self.log_decision(truck_id, action, explanation)
-        if self.verbose and explanation:
-            print(explanation)
-        return action
+        try:
+            action, explanation = self._decide_action(env)
+            truck_id = env.active_truck_id
+            if truck_id is not None:
+                self.log_decision(truck_id, action, explanation)
+            if self.verbose and explanation:
+                print(explanation)
+            return action
+        except ValueError as e:
+            # Infeasible routing detected - fall back to random action
+            print(f"\n⚠️  ALERT: Heuristic policy encountered infeasible routing!")
+            print(f"    Error: {e}")
+            print(f"    Falling back to RANDOM action selection\n")
+            action = env.action_space.sample()
+            truck_id = env.active_truck_id
+            if truck_id is not None:
+                self.log_decision(truck_id, action, f"RANDOM (infeasible routing): {e}")
+            return action
 
     def _navigate_to_delivery(self, delivery_node: int, env) -> int:
         """
@@ -303,42 +314,7 @@ class HeuristicPolicy:
         # Feasibility check with full battery (starting at current node with full charge)
         full_required = energy_to_delivery + energy_deliv_to_chg
         
-        # If current routing is infeasible, try to find an alternative charger
         if full_required > battery_capacity + 1e-6:
-            # This route from current node is infeasible
-            # If we're at a charger, try to find a better charger that CAN reach the delivery
-            if current_node in charging_nodes:
-                # Find a charger that can reach the delivery
-                best_charger = None
-                best_charger_energy = float('inf')
-                
-                for charger_node in charging_nodes:
-                    if charger_node == current_node:
-                        continue  # Already know this one doesn't work
-                    
-                    # Energy from this charger to delivery
-                    e_to_delivery_from_charger = graph.get_path_energy(charger_node, next_delivery)
-                    if e_to_delivery_from_charger == float('inf'):
-                        continue
-                    
-                    # Total energy needed from this charger
-                    total_from_charger = e_to_delivery_from_charger + energy_deliv_to_chg
-                    
-                    if total_from_charger <= battery_capacity + 1e-6:
-                        # This charger can reach the delivery! Find the closest one
-                        e_to_charger = graph.get_path_energy(current_node, charger_node)
-                        if e_to_charger < best_charger_energy:
-                            best_charger = charger_node
-                            best_charger_energy = e_to_charger
-                
-                if best_charger is not None:
-                    # Navigate to the better charger
-                    action = self._navigate_to_charger(best_charger, env)
-                    expl.append(f"  - Current charger cannot reach delivery {next_delivery}")
-                    expl.append(f"  - Navigating to alternative charger @ node {best_charger} that CAN reach delivery")
-                    return action, "\n".join(expl)
-            
-            # No alternative found - this is truly infeasible
             raise ValueError(
                 "Infeasible routing: energy required (current→delivery→nearest charger) exceeds battery capacity. "
                 f"required={full_required:.2f} kWh, capacity={battery_capacity:.2f} kWh, current_node={current_node}, delivery={next_delivery}"

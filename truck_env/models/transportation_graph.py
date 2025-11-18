@@ -379,9 +379,29 @@ class TransportationGraph:
         """
         if node in self.charging_nodes:
             node_data = self.graph.nodes[node]
+            # Prefer derived info from charger_type dict if present
+            types_dict = node_data.get("charger_type") or {}
+            if isinstance(types_dict, dict) and types_dict:
+                try:
+                    # Sum capacities across types
+                    total_capacity = int(sum(int(v) for v in types_dict.values()))
+                except Exception:
+                    total_capacity = sum(
+                        int(v) if isinstance(v, (int, float, str)) and str(v).isdigit() else 0
+                        for v in types_dict.values()
+                    )
+                # Choose dominant type (largest count) for waiting-time lookup compatibility
+                dominant_type = None
+                if types_dict:
+                    dominant_type = max(types_dict.items(), key=lambda kv: int(kv[1]))[0]
+                return {
+                    "station_type": dominant_type or node_data.get("station_type", "Level2"),
+                    "total_capacity": max(0, int(total_capacity)),
+                }
+            # Fallback to any pre-stored fields
             return {
                 "station_type": node_data.get("station_type", "Level2"),
-                "total_capacity": node_data.get("total_capacity", 1.0),
+                "total_capacity": int(node_data.get("total_capacity", 1)),
             }
         return {}
 

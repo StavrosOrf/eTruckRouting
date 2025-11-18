@@ -18,6 +18,7 @@ from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from algo.TD3_actionGNN import TD3_ActionGNN
 from algo.PPO_actionGNN import PPOActionGNN
+from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from algo.replay_buffer import ReplayBuffer
 from truck_env.utils.utils import load_config
 
@@ -25,8 +26,8 @@ from truck_env.utils.utils import load_config
 def parse_args():
     """Parse command line arguments for training hyperparameters."""
     parser = argparse.ArgumentParser(description='Train TD3 Action-GNN agent for Electric Truck Routing')
-    parser.add_argument('--algo', type=str, choices=['td3', 'ppo'], default='ppo',
-                        help='Choose which RL algorithm to run')
+    parser.add_argument('--algo', type=str, choices=['td3', 'ppo', 'ppo-variable'], default='ppo',
+                        help='Choose which RL algorithm to run (ppo-variable enables the action-graph variant)')
     
     # Environment parameters
     env_group = parser.add_argument_group('Environment')
@@ -209,8 +210,9 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
             if isinstance(raw_action, tuple):
                 action = raw_action
             else:
-                # Map node index to valid action (clip to action space)
-                action = int(raw_action) % env.action_space.n
+                action = int(raw_action)
+                if not isinstance(policy, PPOVariableActionGNN):
+                    action %= env.action_space.n
             
             # Take action
             obs, reward, done, truncated, info = env.step(action)
@@ -609,13 +611,36 @@ def train_ppo(args):
     )
 
     action_dim = env.action_space.n
-    node_feature_dims = {
-        'truck': 10,  # Reduced from 13
-        'delivery': 3,  # node_type, node_id, delivery_sequence_index
-        'charger': 5  # Increased from 4, now includes time_for_queue_to_empty
-    }
 
-    policy = PPOActionGNN(
+    save_dir = os.path.join("saved_models", args.exp_name)
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "ppo_model")
+    best_eval_reward = None
+    best_model_path = None
+
+    total_timesteps = 0
+    episode_num = 0
+    episode_reward = 0.0
+    episode_timesteps = 0
+
+    obs, info = env.reset(seed=args.seed)
+    gnn_state = gnn_state_space.get_state_GNN(env)
+    if not hasattr(gnn_state, 'feasible_action_mask'):
+        raise ValueError("GNN state missing feasible_action_mask attribute required for PPO training.")
+
+    node_feature_dims = {}
+    for node_type in gnn_state.node_types:
+        features = gnn_state[node_type].x
+        if features.dim() == 1:
+            feature_dim = int(features.numel())
+        else:
+            feature_dim = int(features.shape[-1])
+        node_feature_dims[node_type] = feature_dim
+
+    PolicyCls = PPOVariableActionGNN if args.algo == 'ppo-variable' else PPOActionGNN
+    policy_variant = "Variable Action" if args.algo == 'ppo-variable' else "Standard"
+
+    policy = PolicyCls(
         action_dim=action_dim,
         node_feature_dims=node_feature_dims,
         hidden_dim=args.gnn_hidden_dim,
@@ -632,22 +657,8 @@ def train_ppo(args):
         minibatch_size=args.ppo_minibatch_size
     )
 
-    save_dir = os.path.join("saved_models", args.exp_name)
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "ppo_model")
-    best_eval_reward = None
-    best_model_path = None
-
-    total_timesteps = 0
-    episode_num = 0
-    episode_reward = 0.0
-    episode_timesteps = 0
-
-    obs, info = env.reset(seed=args.seed)
-    gnn_state = gnn_state_space.get_state_GNN(env)
-
     print(f"\n{'='*80}")
-    print(f"Starting PPO Training: {args.exp_name}")
+    print(f"Starting PPO Training ({policy_variant}): {args.exp_name}")
     print(f"{'='*80}")
     print(f"Environment: {config['environment']['num_trucks']} trucks, {config['environment']['num_stops']} stops")
     print(f"Max timesteps: {args.max_timesteps}")

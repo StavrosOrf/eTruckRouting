@@ -74,10 +74,43 @@ class GNNVisualizer:
         plt.tight_layout()
         return fig
 
+    def verify_charger_capacity_features(self, data, env, tol: float = 1e-3):
+        """Verify charger occupancy_rate feature matches env occupancy/capacity.
+
+        Logs mismatches to stdout for quick debugging.
+        """
+        try:
+            if 'charger' not in getattr(data, 'node_types', []):
+                return
+            x_ch = data['charger'].x.detach().cpu().numpy()
+            node_id_to_type = getattr(data, 'node_id_to_type', {})
+            mismatches = 0
+            for charger_id in env.charging_nodes:
+                mapping = node_id_to_type.get(charger_id)
+                if not mapping or mapping[0] != 'charger':
+                    continue
+                local_idx = int(mapping[1])
+                if local_idx < 0 or local_idx >= x_ch.shape[0]:
+                    continue
+                feature_rate = float(x_ch[local_idx, 2]) if x_ch.shape[1] > 2 else None
+                capacity = int(env.charging_station.charger_capacity.get(charger_id, 0))
+                occupancy = len(env.charging_station.charger_occupancy.get(charger_id, []))
+                expected_rate = (occupancy / capacity) if capacity > 0 else 0.0
+                if feature_rate is None:
+                    continue
+                if abs(feature_rate - expected_rate) > tol:
+                    print(f"[VERIFY] Mismatch for charger {charger_id}: feature_rate={feature_rate:.3f}, expected={expected_rate:.3f} (occ={occupancy}/{capacity})")
+                    mismatches += 1
+            if mismatches == 0:
+                print("[VERIFY] Charger occupancy_rate features match env occupancy/capacity.")
+        except Exception as e:
+            print(f"[VERIFY] Error during charger feature verification: {e}")
+
     def _plot_edge_type_distribution(self, data, env, ax):
         """Plot distribution of edge types in the simplified design."""
-        edge_index = data.edge_index.cpu().numpy()
-        node_types = self._extract_node_types(data, env)
+        hv = self._homogeneous_view(data)
+        edge_index = hv["edge_index"]
+        node_types = hv["node_types"]
 
         # Count different edge types (Truck=0, Delivery=1, Charger=2)
         edge_counts = {
@@ -127,9 +160,10 @@ class GNNVisualizer:
 
     def _plot_networkx_layout(self, data, env, ax):
         """Plot graph using NetworkX layout."""
-        # Convert to NetworkX graph
-        edge_index = data.edge_index.cpu().numpy()
-        num_nodes = data.num_nodes
+        # Build homogeneous view of HeteroData for visualization
+        hv = self._homogeneous_view(data)
+        edge_index = hv["edge_index"]
+        num_nodes = hv["num_nodes"]
 
         G = nx.DiGraph()
         G.add_nodes_from(range(num_nodes))
@@ -144,9 +178,13 @@ class GNNVisualizer:
             G, pos, ax=ax, edge_color="gray", alpha=0.3, arrowsize=15, width=1.5
         )
 
-        # Draw nodes by type (0=Truck, 1=Delivery, 2=Charger)
-        node_types = self._extract_node_types(data, env)
-        for node_type in range(3):  # Only 3 types now
+        # Get charger details for type information
+        charger_details = env.transport_graph.get_charger_details()
+        node_types = hv["node_types"]
+        node_labels_info = hv["labels"]
+        
+        # Draw trucks and deliveries
+        for node_type in [0, 1]:  # Truck and Delivery
             nodes_of_type = [i for i in range(num_nodes) if node_types[i] == node_type]
             if nodes_of_type:
                 nx.draw_networkx_nodes(
@@ -158,10 +196,56 @@ class GNNVisualizer:
                     label=self.node_type_names[node_type],
                     ax=ax,
                 )
+        
+        # Draw chargers by type (Level2, DCFast, Mixed)
+        charger_nodes = [i for i in range(num_nodes) if node_types[i] == 2]
+        level2_nodes = []
+        dcfast_nodes = []
+        mixed_nodes = []
+        
+        for idx in charger_nodes:
+            # Extract charger node ID from label
+            label = node_labels_info.get(idx, "")
+            if label.startswith('C'):
+                charger_id = int(label[1:])  # Remove 'C' prefix
+                if charger_id in charger_details:
+                    types = charger_details[charger_id].get('types', {})
+                    has_level2 = 'Level2' in types
+                    has_dcfast = 'DCFast' in types
+                    
+                    if has_level2 and has_dcfast:
+                        mixed_nodes.append(idx)
+                    elif has_level2:
+                        level2_nodes.append(idx)
+                    elif has_dcfast:
+                        dcfast_nodes.append(idx)
+        
+        # Draw Level2 chargers (green)
+        if level2_nodes:
+            nx.draw_networkx_nodes(
+                G, pos, nodelist=level2_nodes,
+                node_color='green', node_size=self.node_sizes[2],
+                label='Charger (Level2)', ax=ax
+            )
+        
+        # Draw DCFast chargers (red)
+        if dcfast_nodes:
+            nx.draw_networkx_nodes(
+                G, pos, nodelist=dcfast_nodes,
+                node_color='red', node_size=self.node_sizes[2],
+                label='Charger (DCFast)', ax=ax
+            )
+        
+        # Draw Mixed chargers (purple)
+        if mixed_nodes:
+            nx.draw_networkx_nodes(
+                G, pos, nodelist=mixed_nodes,
+                node_color='purple', node_size=self.node_sizes[2],
+                label='Charger (Mixed)', ax=ax
+            )
 
         # Build and draw node labels with real IDs
-        node_labels = self._build_node_labels(data)
-        nx.draw_networkx_labels(G, pos, labels=node_labels, ax=ax, font_size=7, font_weight="bold")
+        nx.draw_networkx_labels(G, pos, labels=node_labels_info, ax=ax, font_size=7, font_weight="bold")
 
         ax.set_title("Graph Network Layout", fontweight="bold")
         ax.legend(loc="upper left", fontsize=10)
@@ -169,15 +253,16 @@ class GNNVisualizer:
 
     def _plot_node_distribution(self, data, ax):
         """Plot distribution of node types."""
-        node_types = self._extract_node_types_tensor(data)
-        unique_types, counts = node_types.unique(return_counts=True)
+        hv = self._homogeneous_view(data)
+        node_types_np = np.array(hv["node_types"], dtype=int)
+        unique_vals, counts = np.unique(node_types_np, return_counts=True)
 
-        type_names = [self.node_type_names[t.item()] for t in unique_types]
-        colors = [self.node_colors[t.item()] for t in unique_types]
+        type_names = [self.node_type_names[int(t)] for t in unique_vals]
+        colors = [self.node_colors[int(t)] for t in unique_vals]
 
         ax.bar(
             type_names,
-            counts.numpy(),
+            counts,
             color=colors,
             alpha=0.8,
             edgecolor="black",
@@ -188,12 +273,13 @@ class GNNVisualizer:
         ax.grid(axis="y", alpha=0.3)
 
         # Add value labels on bars
-        for i, (name, count) in enumerate(zip(type_names, counts.numpy())):
+        for i, (name, count) in enumerate(zip(type_names, counts)):
             ax.text(i, count + 0.1, str(count), ha="center", fontweight="bold")
 
     def _plot_node_features_heatmap(self, data, ax):
         """Plot heatmap of node features."""
-        x = data.x.cpu().numpy()
+        hv = self._homogeneous_view(data)
+        x = hv["x"]
 
         # Normalize for better visualization
         x_norm = (x - x.min(axis=0)) / (x.max(axis=0) - x.min(axis=0) + 1e-8)
@@ -218,7 +304,8 @@ class GNNVisualizer:
             data: PyTorch Geometric Data object
             title: Title for the plot
         """
-        x = data.x.cpu().numpy()
+        hv = self._homogeneous_view(data)
+        x = hv["x"]
         num_features = x.shape[1]
 
         fig, axes = plt.subplots(2, 2, figsize=self.figsize)
@@ -371,7 +458,20 @@ class GNNVisualizer:
             pos[charger_node] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
             node_colors.append(self.node_colors[2])  # Charger color
             node_sizes.append(800)
-            node_labels[charger_node] = f"Charger\n{current_location}\n(current)"
+            
+            # Get charger type
+            charger_details = env.transport_graph.get_charger_details()
+            charger_type_str = ""
+            if current_location in charger_details:
+                types = charger_details[current_location].get('types', {})
+                if 'Level2' in types and 'DCFast' in types:
+                    charger_type_str = " Mixed"
+                elif 'Level2' in types:
+                    charger_type_str = " Level2"
+                elif 'DCFast' in types:
+                    charger_type_str = " DCFast"
+            
+            node_labels[charger_node] = f"Charger\n{current_location}{charger_type_str}\n(current)"
             
             G.add_edge(truck_node, charger_node)
             edge_labels[(truck_node, charger_node)] = "0 kWh\n0.0 h"
@@ -386,7 +486,20 @@ class GNNVisualizer:
             
             if dest_node in env.charging_nodes:
                 node_colors.append(self.node_colors[2])  # Charger
-                node_labels[dest_node_name] = f"Charger\n{dest_node}\n(dest)"
+                
+                # Get charger type
+                charger_details = env.transport_graph.get_charger_details()
+                charger_type_str = ""
+                if dest_node in charger_details:
+                    types = charger_details[dest_node].get('types', {})
+                    if 'Level2' in types and 'DCFast' in types:
+                        charger_type_str = " Mixed"
+                    elif 'Level2' in types:
+                        charger_type_str = " Level2"
+                    elif 'DCFast' in types:
+                        charger_type_str = " DCFast"
+                
+                node_labels[dest_node_name] = f"Charger\n{dest_node}{charger_type_str}\n(dest)"
             else:
                 node_colors.append(self.node_colors[1])  # Delivery
                 node_labels[dest_node_name] = f"Delivery\n{dest_node}\n(dest)"
@@ -438,13 +551,33 @@ class GNNVisualizer:
                     reachable_chargers.append((charger_id, energy, time))
             
             # Sort by energy (closest first) and take top 10
+            # Get charger details for type information
+            charger_details = env.transport_graph.get_charger_details()
+            
+            # Sort by energy (closest first) and take top 10
             reachable_chargers.sort(key=lambda x: x[1])
             for charger_id, energy, time in reachable_chargers[:10]:
                 charger_node = f"C{charger_id}"
                 G.add_node(charger_node)
                 angle_rad = np.radians(angle)
                 pos[charger_node] = (2 * np.cos(angle_rad), 2 * np.sin(angle_rad))
-                node_colors.append(self.node_colors[2])  # Charger color
+                
+                # Get charger type and set color accordingly
+                charger_color = self.node_colors[2]  # Default blue
+                charger_type_str = ""
+                if charger_id in charger_details:
+                    types = charger_details[charger_id].get('types', {})
+                    if 'Level2' in types and 'DCFast' in types:
+                        charger_color = 'purple'
+                        charger_type_str = " M"  # Mixed
+                    elif 'Level2' in types:
+                        charger_color = 'green'
+                        charger_type_str = " L2"
+                    elif 'DCFast' in types:
+                        charger_color = 'red'
+                        charger_type_str = " DC"
+                
+                node_colors.append(charger_color)
                 node_sizes.append(600)
                 
                 # Get charger info
@@ -453,9 +586,9 @@ class GNNVisualizer:
                 queue = len(env.charging_station.charger_waitlist.get(charger_id, []))
                 
                 if charger_id == current_location:
-                    node_labels[charger_node] = f"Charger {charger_id}\n(here)\n{occupancy}/{capacity}"
+                    node_labels[charger_node] = f"Charger {charger_id}{charger_type_str}\n(here)\n{occupancy}/{capacity}"
                 else:
-                    node_labels[charger_node] = f"C{charger_id}\n{occupancy}/{capacity}"
+                    node_labels[charger_node] = f"C{charger_id}{charger_type_str}\n{occupancy}/{capacity}"
                     if queue > 0:
                         node_labels[charger_node] += f"\nQ:{queue}"
                 
@@ -501,9 +634,11 @@ class GNNVisualizer:
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.axis("off")
 
-        # Gather statistics
-        node_types = self._extract_node_types(data, env)
-        edge_index = data.edge_index.cpu().numpy()
+        # Gather statistics using homogeneous view
+        hv = self._homogeneous_view(data)
+        node_types = hv["node_types"]
+        edge_index = hv["edge_index"]
+        x = hv["x"]
 
         info_text = f"""
 {'='*60}
@@ -512,10 +647,10 @@ class GNNVisualizer:
 
 GRAPH STRUCTURE
 ───────────────
-• Total Nodes: {data.num_nodes}
-• Total Edges: {data.num_edges}
-• Node Features: {data.x.shape}
-• Edge Features: {data.edge_attr.shape if data.edge_attr is not None else 'None'}
+• Total Nodes: {len(node_types)}
+• Total Edges: {edge_index.shape[1]}
+• Node Features (padded): {x.shape}
+• Edge Features: 2 (energy, time)
 
 NODE TYPES BREAKDOWN
 ────────────────────
@@ -528,18 +663,18 @@ NODE TYPES BREAKDOWN
         info_text += f"""
 FEATURE STATISTICS
 ──────────────────
-• Node Feature Dimension: {data.x.shape[1]} (type, position, battery/occupancy, etc.)
-• Total Node Features: {data.x.numel():,}
-• Feature Mean: {data.x.mean():.4f}
-• Feature Std: {data.x.std():.4f}
-• Feature Min: {data.x.min():.4f}
-• Feature Max: {data.x.max():.4f}
+• Node Feature Dimension (padded): {x.shape[1]} (type-specific padded)
+• Total Node Features: {x.size:,}
+• Feature Mean: {x.mean():.4f}
+• Feature Std: {x.std():.4f}
+• Feature Min: {x.min():.4f}
+• Feature Max: {x.max():.4f}
 
 EDGE STATISTICS
 ───────────────
-• Total Edges: {data.num_edges}
-• Avg Degree: {2 * data.num_edges / data.num_nodes:.2f}
-• Edge Features: {data.edge_attr.shape if data.edge_attr is not None else 'N/A'}
+• Total Edges: {edge_index.shape[1]}
+• Avg Degree: {2 * edge_index.shape[1] / max(1, len(node_types)):.2f}
+• Edge Features: 2 (energy, time)
   - Dimension 0: Energy Distance (kWh)
   - Dimension 1: Time to Traverse (hours)
 
@@ -565,37 +700,140 @@ ENVIRONMENT STATE
         return fig
 
     def _extract_node_types(self, data, env) -> List[int]:
-        """Extract node types from graph structure (first feature dimension)."""
-        # Node types are stored in the first feature dimension
-        node_types = data.x[:, 0].int().tolist()
-        return node_types
+        """Extract node types in homogeneous ordering: trucks, deliveries, chargers."""
+        n_truck = data['truck'].x.shape[0] if hasattr(data, '__getitem__') and 'truck' in data.node_types else 0
+        n_delivery = data['delivery'].x.shape[0] if hasattr(data, '__getitem__') and 'delivery' in data.node_types else 0
+        n_charger = data['charger'].x.shape[0] if hasattr(data, '__getitem__') and 'charger' in data.node_types else 0
+        return [0] * n_truck + [1] * n_delivery + [2] * n_charger
 
     def _build_node_labels(self, data) -> Dict[int, str]:
-        """Build node labels with real IDs from node_list metadata."""
-        node_labels = {}
-        
-        # Check if node_list metadata is available
-        if hasattr(data, 'node_list') and data.node_list is not None:
-            for idx, (node_type, node_id) in enumerate(data.node_list):
-                if node_type == "truck":
-                    node_labels[idx] = f"T{node_id}"
-                elif node_type == "delivery":
-                    node_labels[idx] = f"D{node_id}"
-                elif node_type == "charger":
-                    node_labels[idx] = f"C{node_id}"
-                else:
-                    node_labels[idx] = str(idx)
-        else:
-            # Fallback to just indices if metadata not available
-            for i in range(data.num_nodes):
-                node_labels[i] = str(i)
-        
-        return node_labels
+        """Build node labels using `node_id_to_type` and homogeneous ordering."""
+        labels: Dict[int, str] = {}
+        # Determine counts per type
+        n_truck = data['truck'].x.shape[0] if 'truck' in data.node_types else 0
+        n_delivery = data['delivery'].x.shape[0] if 'delivery' in data.node_types else 0
+        n_charger = data['charger'].x.shape[0] if 'charger' in data.node_types else 0
+        off_truck = 0
+        off_delivery = off_truck + n_truck
+        off_charger = off_delivery + n_delivery
+
+        # Build reverse map: (type, local_idx) -> node_id
+        reverse_map: Dict[Tuple[str, int], int] = {}
+        if hasattr(data, 'node_id_to_type') and isinstance(data.node_id_to_type, dict):
+            for nid, (tstr, lidx) in data.node_id_to_type.items():
+                reverse_map[(tstr, int(lidx))] = int(nid)
+
+        # Trucks
+        for i in range(n_truck):
+            node_id = reverse_map.get(('truck', i), i)
+            labels[off_truck + i] = f"T{node_id}"
+        # Deliveries
+        for i in range(n_delivery):
+            node_id = reverse_map.get(('delivery', i), i)
+            labels[off_delivery + i] = f"D{node_id}"
+        # Chargers
+        for i in range(n_charger):
+            node_id = reverse_map.get(('charger', i), i)
+            labels[off_charger + i] = f"C{node_id}"
+        return labels
 
     def _extract_node_types_tensor(self, data) -> torch.Tensor:
-        """Extract first feature (node type) from node features."""
-        # First feature is the node type (0, 1, 2, or 3)
-        return data.x[:, 0]
+        """Return node types tensor in homogeneous ordering."""
+        types = self._extract_node_types(data, None)
+        if len(types) == 0:
+            return torch.zeros((0,), dtype=torch.long)
+        return torch.tensor(types, dtype=torch.long)
+
+    def _homogeneous_view(self, data):
+        """Construct a homogeneous view (x, edge_index, node_types, labels) from HeteroData.
+
+        - Node order: trucks -> deliveries -> chargers
+        - x is padded to max feature dimension across node types
+        - edge_index indices are shifted by type offsets
+        """
+        # Counts per type
+        node_types_present = getattr(data, 'node_types', [])
+        n_truck = data['truck'].x.shape[0] if 'truck' in node_types_present else 0
+        n_delivery = data['delivery'].x.shape[0] if 'delivery' in node_types_present else 0
+        n_charger = data['charger'].x.shape[0] if 'charger' in node_types_present else 0
+        off_truck = 0
+        off_delivery = off_truck + n_truck
+        off_charger = off_delivery + n_delivery
+        num_nodes = n_truck + n_delivery + n_charger
+
+        # Features (pad to max dim)
+        dims = []
+        xs = []
+        for t in ['truck', 'delivery', 'charger']:
+            if t in node_types_present:
+                xt = data[t].x.detach().cpu().numpy()
+                xs.append(xt)
+                dims.append(xt.shape[1] if xt.size else 0)
+            else:
+                xs.append(np.zeros((0, 0), dtype=np.float32))
+                dims.append(0)
+        max_dim = max(dims + [0])
+        padded_blocks = []
+        for xt in xs:
+            if xt.size == 0:
+                padded = np.zeros((0, max_dim), dtype=np.float32)
+            else:
+                pad_width = max_dim - xt.shape[1]
+                if pad_width > 0:
+                    padded = np.concatenate([xt, np.zeros((xt.shape[0], pad_width), dtype=xt.dtype)], axis=1)
+                else:
+                    padded = xt
+            padded_blocks.append(padded)
+        x = np.concatenate(padded_blocks, axis=0) if num_nodes > 0 else np.zeros((0, max_dim), dtype=np.float32)
+
+        # Node types list
+        node_types = [0] * n_truck + [1] * n_delivery + [2] * n_charger
+
+        # Labels
+        labels = self._build_node_labels(data)
+
+        # Edges: concatenate all edge types with shifted indices
+        edges_src = []
+        edges_dst = []
+        edge_attrs = []
+        def shift_for(ntype: str) -> int:
+            return off_truck if ntype == 'truck' else (off_delivery if ntype == 'delivery' else off_charger)
+
+        if hasattr(data, 'edge_types'):
+            for (src_t, _, dst_t) in data.edge_types:
+                ei = data[(src_t, 'to', dst_t)].edge_index
+                if ei is None:
+                    continue
+                ei = ei.detach().cpu().numpy()
+                if ei.shape[1] == 0:
+                    continue
+                src_off = shift_for(src_t)
+                dst_off = shift_for(dst_t)
+                edges_src.append(ei[0] + src_off)
+                edges_dst.append(ei[1] + dst_off)
+                ea = data[(src_t, 'to', dst_t)].edge_attr
+                if ea is not None:
+                    edge_attrs.append(ea.detach().cpu().numpy())
+        if edges_src:
+            src = np.concatenate(edges_src, axis=0)
+            dst = np.concatenate(edges_dst, axis=0)
+            edge_index = np.vstack([src, dst])
+        else:
+            edge_index = np.zeros((2, 0), dtype=np.int64)
+
+        if edge_attrs:
+            edge_attr = np.concatenate(edge_attrs, axis=0)
+        else:
+            edge_attr = np.zeros((0, 2), dtype=np.float32)
+
+        return {
+            "x": x,
+            "edge_index": edge_index,
+            "edge_attr": edge_attr,
+            "node_types": node_types,
+            "labels": labels,
+            "num_nodes": num_nodes,
+        }
 
     def save_figure(
         self, fig: List, index: int, output_dir: str = "/home/sorfanouda/EVPR/gnn_plots"
@@ -646,6 +884,11 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     # Plot initial state
     print(f"\nGenerating visualization for initial state...")
     data_initial = gnn_state.get_state_GNN(env)
+    # Verify charger capacity-derived features
+    try:
+        visualizer.verify_charger_capacity_features(data_initial, env)
+    except Exception as e:
+        print(f"[VERIFY] Skipped charger feature verification: {e}")
     fig1 = visualizer.plot_graph_structure(
         data_initial, env, title="Initial GNN Graph State"
     )
@@ -667,7 +910,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     if fig4 is not None:
         figs.append(fig4)
     
-    output_dir = visualizer.save_figure(fig1, index=5)
+    output_dir = visualizer.save_figure(fig1, index=0)
     output_dir = visualizer.save_figure(fig2, index=-1)
     output_dir = visualizer.save_figure(fig3, index=-2)
     if fig4 is not None:
@@ -680,7 +923,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     if fig4 is not None:
         plt.close(fig4)
 
-    input("Press Enter to continue...")
+    # input("Press Enter to continue...")
     # Run steps and visualize
     for step in range(1, 10):
         action = policy.get_action(env)
@@ -697,7 +940,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
             data, env, title=f"GNN Graph State - Step {step}"
         )
         figs.append(fig)
-        output_dir = visualizer.save_figure(fig, index=5)
+        output_dir = visualizer.save_figure(fig, index=step)
         
         # Also generate action graph
         fig_action = visualizer.plot_action_graph(
@@ -713,7 +956,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         
         # Print some stats
         print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")
-        input("Press Enter to continue...")
+        # input("Press Enter to continue...")
 
         if done or truncated:
             print("Episode finished!")

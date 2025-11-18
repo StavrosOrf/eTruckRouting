@@ -904,8 +904,8 @@ class EventDrivenTruckEnv(gym.Env):
         charging_config = self.config["charging"]
 
         if charger_type == "DCFast":
-            raise NotImplementedError("DCFast charging not implemented yet")
-            charger_config = charging_config["dcfast"]
+            # Temporary fallback: use Level2 parameters until DCFast is implemented
+            charger_config = charging_config["level2"]
             charge_rate = charger_config["charge_rate"]  # kW
             efficiency = charger_config["efficiency"]
         else:  # Level2

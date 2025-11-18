@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="truck_env/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
-    parser.add_argument("--num-trucks", type=int, default=2,
+    parser.add_argument("--num-trucks", type=int, default=1,
                         help="Override number of trucks from the config.")
     parser.add_argument("--num-stops", type=int, default=3,
                         help="Override number of delivery stops from the config.")

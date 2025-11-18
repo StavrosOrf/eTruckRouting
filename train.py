@@ -326,8 +326,8 @@ def train_td3(args):
     # Define feature sizes for different node types
     # Adjust based on your actual GNN state implementation
     fx_node_sizes = {
-        'ev': 10,  # Truck features (reduced from 13)
-        'cs': 5,   # Charger features (increased from 4, now includes time_for_queue_to_empty)
+        'ev': 13,  # Truck features
+        'cs': 4,   # Charger features (node_type, node_id, occupancy_rate, queue_length_norm)
         'tr': 3,   # Delivery features (node_type, node_id, delivery_sequence_index)
         'env': 1   # Environment features (if any)
     }
@@ -610,9 +610,9 @@ def train_ppo(args):
 
     action_dim = env.action_space.n
     node_feature_dims = {
-        'truck': 10,  # Reduced from 13
+        'truck': 13,
         'delivery': 3,  # node_type, node_id, delivery_sequence_index
-        'charger': 5  # Increased from 4, now includes time_for_queue_to_empty
+        'charger': 4  # node_type, node_id, occupancy_rate, queue_length_norm
     }
 
     policy = PPOActionGNN(

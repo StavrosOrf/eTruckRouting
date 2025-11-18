@@ -87,6 +87,10 @@ class ChargingStation:
             }
             for node in charging_nodes
         }
+        # Tracking for trucks that just finished charging and immediately become ready again
+        # Allows them to take a subsequent charge action without artificial wait insertion
+        self.just_finished_truck: Optional[int] = None
+        self.last_finish_time: float = 0.0
 
     def reset(self):
         """Reset all charging station state for a new episode."""
@@ -114,6 +118,9 @@ class ChargingStation:
             }
             for node in self.charging_nodes
         }
+        # Reset immediate re-charge tracking
+        self.just_finished_truck = None
+        self.last_finish_time = 0.0
 
     def get_waiting_time(self, charger_node: int, current_utilization: float) -> float:
         """
@@ -214,20 +221,30 @@ class ChargingStation:
             (i for i, e in enumerate(waitlist) if e["truck_id"] == truck_id), None
         )
 
+        # Immediate re-charge scenario: truck just finished charging and is ready again
+        if (
+            self.just_finished_truck is not None
+            and truck_id == self.just_finished_truck
+            and abs(global_clock - self.last_finish_time) < 1e-9
+        ):
+            # Clear marker and allow immediate action without lookup delay
+            self.just_finished_truck = None
+            ensure_in_waitlist(truck_id, planned=global_clock)
+            return True, None
+
         if idx is None:
             # New arrival at charger
-            if free_slots > 0 and len(waitlist) == 0:
-                # Scenario 1: No other truck is waiting at any port
-                # Use lookup table to predict wait time
-                util = occupancy / float(capacity) if capacity > 0 else 0.0
+            if free_slots > 0 and len(waitlist) == 0 and occupancy == 0:
+                # Scenario 1: Charger completely empty - use lookup table
+                util = 0.0
                 wait_h = self.get_waiting_time(charger_node, util)
                 if wait_h > 0:
                     plug_time = global_clock + wait_h
                     ensure_in_waitlist(truck_id, planned=plug_time)
-                    return False, plug_time  # Schedule event at predicted time
+                    return False, plug_time
                 else:
                     ensure_in_waitlist(truck_id, planned=global_clock)
-                    return True, None  # Can proceed immediately
+                    return True, None
             elif capacity == 1 and occupancy > 0:
                 # Scenario 2: Single-port charger with truck already charging
                 # Truck will ONLY be woken when the charging truck finishes
@@ -360,7 +377,11 @@ class ChargingStation:
         # Clean up charge end time tracking
         if truck_id in self.truck_charge_end_time:
             del self.truck_charge_end_time[truck_id]
-        
+
+        # Mark truck as just finished to allow immediate subsequent charge attempt
+        self.just_finished_truck = truck_id
+        self.last_finish_time = global_clock
+
         # Record finish charging event
         self._record_queue_state(charger_node, global_clock, truck_id, 'finish')
 

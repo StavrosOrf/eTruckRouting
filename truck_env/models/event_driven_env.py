@@ -132,6 +132,30 @@ class EventDrivenTruckEnv(gym.Env):
         self.charging_nodes = self.transport_graph.get_charging_nodes()
         self.num_charging_nodes = len(self.charging_nodes)
 
+        # If verbose, print charger summary loaded into the simulation
+        if self.verbose:
+            try:
+                charger_details = self.transport_graph.get_charger_details()
+                # Aggregate counts by type
+                agg: Dict[str, int] = {}
+                for info in charger_details.values():
+                    for t, c in info.get("types", {}).items():
+                        agg[t] = agg.get(t, 0) + int(c)
+
+                print("Charger inventory loaded:")
+                print(f"  - Charger nodes: {self.num_charging_nodes}")
+                if agg:
+                    by_type = ", ".join([f"{k}={v}" for k, v in sorted(agg.items())])
+                    print(f"  - Totals by type: {by_type}")
+                # List each charger node (internal_id -> original_id : types)
+                for nid in sorted(charger_details.keys()):
+                    info = charger_details[nid]
+                    types = info.get("types", {})
+                    types_str = ", ".join([f"{k}:{v}" for k, v in sorted(types.items())]) or "(none)"
+                    print(f"    • node {nid} (orig {info.get('original_id')}): {types_str}")
+            except Exception as e:
+                print(f"[Env] Warning: failed to print charger summary: {e}")
+
         # Initialize charging station manager
         waiting_time_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),

@@ -124,6 +124,21 @@ class TransportationGraph:
         """Return list of all charging station nodes."""
         return self.charging_nodes.copy()
 
+    def get_charger_details(self) -> Dict[int, Dict[str, object]]:
+        """Return details for each charger node.
+
+        Returns a dict keyed by internal node id with values:
+        { 'original_id': <original node id>, 'types': {type: count, ...} }
+        """
+        details: Dict[int, Dict[str, object]] = {}
+        for node in self.charging_nodes:
+            data = self.graph.nodes[node]
+            details[node] = {
+                "original_id": data.get("original_id", node),
+                "types": data.get("charger_type", {}) or {},
+            }
+        return details
+
     def get_all_nodes(self) -> List[int]:
         """Return list of all nodes in the graph."""
         return list(self.graph.nodes())

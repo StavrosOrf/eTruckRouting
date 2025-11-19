@@ -547,6 +547,11 @@ class GNNStateSpace:
             'charger': len(truck_features_list) + len(delivery_features_list)
         }
 
+        # Build action graph features: [normalized_action_type, resulting_soc]
+        data.action_graph_features = self._build_action_graph_features(
+            env, action_to_node_map, action_is_charging, active_truck_idx if env.active_truck_id in truck_id_to_idx else None
+        )
+
         return data
 
     # ==================== Node Feature Functions ====================
@@ -728,6 +733,64 @@ class GNNStateSpace:
         time_to_traverse_norm = time_to_traverse / self.max_time
         
         return [energy_dist_norm, time_to_traverse_norm]
+
+    def _build_action_graph_features(
+        self, env, action_to_node_map: list, action_is_charging: list, active_truck_idx: int
+    ) -> torch.Tensor:
+        """
+        Build action graph features: [normalized_action_type, resulting_soc]
+        
+        Action types:
+        - 1/3: routing to delivery node
+        - 2/3: routing to charger node
+        - 3/3: charging at current location
+        
+        Resulting SOC: battery level after taking the action (normalized 0-1)
+        """
+        if not action_to_node_map:
+            return torch.zeros((0, 2), dtype=torch.float32, device=self.device)
+        
+        # Get active truck info
+        current_battery = 0.0
+        battery_capacity = 1.0
+        current_location = -1
+        
+        if env.active_truck_id is not None and env.active_truck_id < len(env.trucks):
+            active_truck = env.trucks[env.active_truck_id]
+            current_battery = active_truck.current_battery
+            battery_capacity = active_truck.battery_capacity
+            current_location = active_truck.current_node
+        
+        features = []
+        for action_idx, (node_id, is_charging) in enumerate(action_to_node_map):
+            # Determine action type
+            if action_is_charging[action_idx]:
+                action_type_norm = 3.0 / 3.0  # Charging action
+                # After charging, battery will be at 100%
+                resulting_soc = 1.0
+            else:
+                # Check if node is a delivery or charger
+                is_delivery_node = node_id not in env.charging_nodes if node_id >= 0 else False
+                
+                if is_delivery_node:
+                    action_type_norm = 1.0 / 3.0  # Routing to delivery
+                else:
+                    action_type_norm = 2.0 / 3.0  # Routing to charger
+                
+                # Calculate resulting SOC after routing
+                if node_id >= 0 and current_location >= 0:
+                    energy_consumed = env.transport_graph.get_path_energy(current_location, node_id)
+                    if not np.isinf(energy_consumed) and battery_capacity > 0:
+                        resulting_soc = max(0.0, (current_battery - energy_consumed) / battery_capacity)
+                    else:
+                        resulting_soc = 0.0
+                else:
+                    # Invalid action or no path
+                    resulting_soc = 0.0
+            
+            features.append([action_type_norm, resulting_soc])
+        
+        return torch.tensor(features, dtype=torch.float32, device=self.device)
 
     # ==================== Utility Functions ====================
 

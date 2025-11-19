@@ -6,10 +6,7 @@ from typing import Dict, Iterable
 import torch
 from torch_geometric.data import HeteroData
 
-from algo.PPO_VariableActionGNN import (
-    ActionGraphHead,
-    PPOVariableActionGNN,
-)
+from algo.PPO_VariableActionGNN import ActionGraphHead, PPOVariableActionGNN
 
 
 NODE_DIMS = {
@@ -26,7 +23,7 @@ def _make_state(
 ) -> HeteroData:
     data = HeteroData()
     for node_type, dim in node_dims.items():
-        x = torch.randn(1, dim)
+        x = torch.randn(2, dim)
         data[node_type].x = x
         data[node_type].batch = torch.zeros(x.size(0), dtype=torch.long)
     mask = torch.zeros(num_actions, dtype=torch.bool)
@@ -34,6 +31,22 @@ def _make_state(
         mask[idx] = True
     data.feasible_action_mask = mask
     data.num_actions = torch.tensor(num_actions)
+    data.action_is_charging = torch.zeros(num_actions, dtype=torch.bool)
+    if num_actions > 0:
+        data.action_is_charging[-1] = True
+    data.action_local_index = torch.arange(num_actions, dtype=torch.long)
+    data.action_to_node_map = [(idx, bool(data.action_is_charging[idx].item())) for idx in range(num_actions)]
+    data.node_id_to_type = {idx: ('delivery', 0) for idx in range(num_actions)}
+    data.active_truck_id = torch.tensor([0])
+    # Add precomputed action graph features
+    action_graph_features = []
+    for idx in range(num_actions):
+        is_charging = bool(data.action_is_charging[idx].item())
+        if is_charging:
+            action_graph_features.append([1.0, 1.0])  # charging: type=3/3, soc=1.0
+        else:
+            action_graph_features.append([0.333, 0.9])  # delivery: type=1/3, soc=0.9
+    data.action_graph_features = torch.tensor(action_graph_features, dtype=torch.float32)
     return data
 
 
@@ -55,12 +68,17 @@ class VariableActionGNNTests(unittest.TestCase):
         self.assertEqual(action, 2)
 
     def test_action_graph_head_ptr_builder(self):
-        head = ActionGraphHead(encoder_dim=12, mlp_dim=8)
+        head = ActionGraphHead(
+            encoder_dim=12,
+            mlp_dim=8,
+            action_feature_dim=self.policy.action_feature_dim,
+        )
         embedding = torch.randn(2, 12)
-        counts = [2, 3]
-        output = head(embedding, counts)
+        action_features = torch.randn(5, self.policy.action_feature_dim)
+        ptr = torch.tensor([0, 2, 5])
+        output = head(embedding, action_features, ptr)
         self.assertEqual(output.ptr.tolist(), [0, 2, 5])
-        self.assertEqual(output.logits.numel(), sum(counts))
+        self.assertEqual(output.logits.numel(), 5)
 
     def test_update_handles_variable_batches(self):
         masks = [

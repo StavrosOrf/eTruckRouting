@@ -1,7 +1,7 @@
 """PPO variant with variable-sized discrete action spaces via an action graph head."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -34,60 +34,62 @@ class ActionGraphOutput:
 class ActionGraphHead(nn.Module):
     """Two-layer GCN over fully connected feasible action graphs."""
 
-    def __init__(self, encoder_dim: int, mlp_dim: int):
+    def __init__(self, encoder_dim: int, mlp_dim: int, action_feature_dim: int):
         super().__init__()
         self.state_proj = nn.Linear(encoder_dim, mlp_dim)
+        self.action_proj = nn.Linear(action_feature_dim, mlp_dim)
         self.gcn_layers = nn.ModuleList([
             GCNConv(mlp_dim, mlp_dim, add_self_loops=True),
             GCNConv(mlp_dim, mlp_dim, add_self_loops=True),
         ])
-        self.logit_layer = nn.Linear(mlp_dim, 1)
 
-    def forward(self, embedding: torch.Tensor, feasible_counts: Sequence[int]) -> ActionGraphOutput:
+    def forward(
+        self,
+        embedding: torch.Tensor,
+        action_features: torch.Tensor,
+        ptr: torch.Tensor,
+    ) -> ActionGraphOutput:
         if embedding.dim() == 1:
             embedding = embedding.unsqueeze(0)
-        batch_size = embedding.size(0)
-        if len(feasible_counts) != batch_size:
-            raise ValueError(
-                f"Mismatch between embeddings ({batch_size}) and feasible counts ({len(feasible_counts)})"
-            )
+        state_repr = F.relu(self.state_proj(embedding))
+        if action_features.numel() == 0:
+            return ActionGraphOutput(logits=action_features.new_zeros((0,)), ptr=ptr)
 
-        projected = F.relu(self.state_proj(embedding))
-        counts = [max(int(count), 0) for count in feasible_counts]
-        total_nodes = sum(counts)
-        ptr = torch.zeros(batch_size + 1, dtype=torch.long, device=embedding.device)
-        if total_nodes == 0:
-            return ActionGraphOutput(logits=projected.new_zeros((0,)), ptr=ptr)
-
-        action_features = projected.new_zeros((total_nodes, projected.size(-1)))
-        edge_indices: List[torch.Tensor] = []
-        cursor = 0
-        for idx, count in enumerate(counts):
-            ptr[idx + 1] = ptr[idx] + count
-            if count == 0:
-                continue
-            node_features = projected[idx].unsqueeze(0).repeat(count, 1)
-            action_features[cursor : cursor + count] = node_features
-            node_range = torch.arange(cursor, cursor + count, device=embedding.device)
-            if count > 1:
-                src = node_range.repeat_interleave(count)
-                dst = node_range.repeat(count)
-                mask = src != dst
-                if mask.any():
-                    edge_indices.append(torch.stack([src[mask], dst[mask]], dim=0))
-            cursor += count
-
-        if edge_indices:
-            edge_index = torch.cat(edge_indices, dim=1)
-        else:
-            edge_index = torch.zeros((2, 0), dtype=torch.long, device=embedding.device)
-
-        x = action_features
+        x = F.relu(self.action_proj(action_features))
+        edge_index = self._build_fully_connected_edges(ptr, action_features.device)
         for conv in self.gcn_layers:
             x = F.relu(conv(x, edge_index)) if x.numel() > 0 else x
 
-        logits = self.logit_layer(x).squeeze(-1)
+        logits = x.new_zeros(x.size(0))
+        batch_size = state_repr.size(0)
+        for i in range(batch_size):
+            start = ptr[i].item()
+            end = ptr[i + 1].item()
+            if end <= start:
+                continue
+            logits[start:end] = (x[start:end] * state_repr[i]).sum(dim=-1)
+
         return ActionGraphOutput(logits=logits, ptr=ptr)
+
+    @staticmethod
+    def _build_fully_connected_edges(ptr: torch.Tensor, device: torch.device) -> torch.Tensor:
+        if ptr.numel() <= 1:
+            return torch.zeros((2, 0), dtype=torch.long, device=device)
+        edges = []
+        for i in range(ptr.numel() - 1):
+            start = int(ptr[i].item())
+            end = int(ptr[i + 1].item())
+            count = end - start
+            if count <= 1:
+                continue
+            node_range = torch.arange(start, end, device=device)
+            src = node_range[:-1]
+            dst = node_range[1:]
+            edges.append(torch.stack([src, dst], dim=0))
+            edges.append(torch.stack([dst, src], dim=0))
+        if not edges:
+            return torch.zeros((2, 0), dtype=torch.long, device=device)
+        return torch.cat(edges, dim=1)
 
 
 class PPOVariableActorCritic(nn.Module):
@@ -97,6 +99,7 @@ class PPOVariableActorCritic(nn.Module):
         self,
         action_dim: int,
         node_feature_dims: Dict[str, int],
+        action_feature_dim: int,
         edge_dim: int = 2,
         hidden_dim: int = 64,
         num_layers: int = 3,
@@ -113,7 +116,7 @@ class PPOVariableActorCritic(nn.Module):
         )
         self.action_dim = action_dim
         encoder_dim = hidden_dim * len(node_feature_dims)
-        self.action_head = ActionGraphHead(encoder_dim, mlp_dim)
+        self.action_head = ActionGraphHead(encoder_dim, mlp_dim, action_feature_dim)
         self.value_head = nn.Sequential(
             nn.Linear(encoder_dim, mlp_dim),
             nn.ReLU(),
@@ -121,10 +124,13 @@ class PPOVariableActorCritic(nn.Module):
         )
 
     def forward(
-        self, data: HeteroData, feasible_counts: Sequence[int]
+        self,
+        data: HeteroData,
+        action_features: torch.Tensor,
+        ptr: torch.Tensor,
     ) -> Tuple[ActionGraphOutput, torch.Tensor]:
         embedding = self.encoder(data)
-        action_output = self.action_head(embedding, feasible_counts)
+        action_output = self.action_head(embedding, action_features, ptr)
         value = self.value_head(embedding).squeeze(-1)
         return action_output, value
 
@@ -223,10 +229,13 @@ class PPOVariableActionGNN:
         self.ppo_epochs = ppo_epochs
         self.minibatch_size = minibatch_size
         self.action_dim = action_dim
+        self.node_feature_dims = node_feature_dims
+        self.action_feature_dim = 2  # [normalized_action_type, resulting_soc]
 
         self.policy = PPOVariableActorCritic(
             action_dim=action_dim,
             node_feature_dims=node_feature_dims,
+            action_feature_dim=self.action_feature_dim,
             edge_dim=edge_dim,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -239,9 +248,9 @@ class PPOVariableActionGNN:
 
     def act(self, state: HeteroData, action_mask: torch.Tensor = None, **_):
         _, feasible_idx = self._prepare_feasible_actions(state, action_mask, device=self.device)
-        counts = [int(feasible_idx.numel())]
+        action_features, ptr = self._build_action_graph_inputs([state], [feasible_idx], device=self.device)
         data = state.to(self.device)
-        action_output, value = self.policy(data, counts)
+        action_output, value = self.policy(data, action_features, ptr)
         start = action_output.ptr[0].item()
         end = action_output.ptr[1].item()
         logits = action_output.logits[start:end]
@@ -264,9 +273,9 @@ class PPOVariableActionGNN:
         if expl_noise is not None:
             deterministic = expl_noise == 0
         _, feasible_idx = self._prepare_feasible_actions(state, action_mask, device=self.device)
-        counts = [int(feasible_idx.numel())]
+        action_features, ptr = self._build_action_graph_inputs([state], [feasible_idx], device=self.device)
         data = state.to(self.device)
-        action_output, _ = self.policy(data, counts)
+        action_output, _ = self.policy(data, action_features, ptr)
         start, end = action_output.ptr[0].item(), action_output.ptr[1].item()
         logits = action_output.logits[start:end]
         if logits.numel() == 0:
@@ -329,7 +338,6 @@ class PPOVariableActionGNN:
                     self._mask_to_indices(self.buffer.action_masks[i].to(self.device))
                     for i in mb_idx
                 ]
-                feasible_counts = [info[0] for info in feasible_info]
                 feasible_indices = [info[1] for info in feasible_info]
                 action_positions = torch.tensor(
                     [self._locate_action_index(feasible_indices[i], mb_actions[i]) for i in range(len(mb_idx))],
@@ -337,7 +345,8 @@ class PPOVariableActionGNN:
                     device=self.device,
                 )
 
-                action_output, values = self.policy(state_batch, feasible_counts)
+                action_features, ptr = self._build_action_graph_inputs(subset_states, feasible_indices, device=self.device)
+                action_output, values = self.policy(state_batch, action_features, ptr)
                 new_logprobs, entropy = self._gather_logprobs(
                     action_output.logits, action_output.ptr, action_positions
                 )
@@ -380,6 +389,45 @@ class PPOVariableActionGNN:
 
     def load(self, path: str):
         self.policy.load_state_dict(torch.load(f"{path}_actor.pt", map_location=self.device))
+
+    def _build_action_graph_inputs(
+        self,
+        states: List[HeteroData],
+        feasible_indices: List[torch.Tensor],
+        device: torch.device,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        features = []
+        ptr = [0]
+        for state, indices in zip(states, feasible_indices):
+            cpu_indices = indices.to(torch.long).cpu()
+            node_features = self._action_node_features(state, cpu_indices)
+            features.append(node_features)
+            ptr.append(ptr[-1] + node_features.size(0))
+
+        if features:
+            action_features = torch.cat(features, dim=0)
+        else:
+            action_features = torch.zeros((0, self.action_feature_dim), dtype=torch.float32)
+
+        action_features = action_features.to(device)
+        ptr_tensor = torch.tensor(ptr, dtype=torch.long, device=device)
+        return action_features, ptr_tensor
+
+    def _action_node_features(self, state: HeteroData, indices: torch.Tensor) -> torch.Tensor:
+        """
+        Extract action graph features from state for the given action indices.
+        The state already contains precomputed action_graph_features.
+        """
+        if indices.numel() == 0:
+            return torch.zeros((0, self.action_feature_dim), dtype=torch.float32)
+        
+        # State contains precomputed action graph features
+        action_graph_features = state.action_graph_features
+        
+        # Extract features for the requested indices
+        selected_features = action_graph_features[indices.to(action_graph_features.device)]
+        
+        return selected_features.cpu()
 
     def _prepare_feasible_actions(
         self,

@@ -29,21 +29,28 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    'algorithm': ['ppo', 'ppo-variable'],
-    'steps_per_update': [128],
-    'epochs': [10],
-    'entropy_coef': [0.01, 0.1],
-    'seed': [0],
+    # 'algorithm': ['ppo', 'ppo-variable'],
+    "algorithm": ["ppo-variable"],
+    "steps_per_update": [128],
+    "epochs": [10],
+    "entropy_coef": [0.1],
+    "gnn_hidden_dim": [32, 64, 128],
+    "mlp_hidden_dim": [64, 256],
+    "seed": [0],
 }
 
 # Generate all combinations
-all_combinations = list(itertools.product(
-    hyperparam_grids['algorithm'],
-    hyperparam_grids['steps_per_update'],
-    hyperparam_grids['epochs'],
-    hyperparam_grids['entropy_coef'],
-    hyperparam_grids['seed']
-))
+all_combinations = list(
+    itertools.product(
+        hyperparam_grids["algorithm"],
+        hyperparam_grids["steps_per_update"],
+        hyperparam_grids["epochs"],
+        hyperparam_grids["entropy_coef"],
+        hyperparam_grids["gnn_hidden_dim"],
+        hyperparam_grids["mlp_hidden_dim"],
+        hyperparam_grids["seed"],
+    )
+)
 
 # Sweep name for grouping in wandb
 
@@ -51,47 +58,59 @@ all_combinations = list(itertools.product(
 print(f"Total configurations to run: {len(all_combinations)}")
 # print(f"Sweep name: {sweep_name}\n")
 
-for config_idx, (algorithm, steps_per_update, epochs, entropy_coef, seed) in enumerate(all_combinations, 1):
+for config_idx, (
+    algorithm,
+    steps_per_update,
+    epochs,
+    entropy_coef,
+    gnn_hidden_dim,
+    mlp_hidden_dim,
+    seed,
+) in enumerate(all_combinations, 1):
     # Print configuration being launched
-    print(f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm} | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}")
-    
+    print(
+        f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm} | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}"
+    )
+
     # Build experiment name
-    exp_name = f'{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}'
+    exp_name = f"{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
-        
+
     # Build command
     command = (
         f'tmux new-session -d \\; send-keys " {python_path} train.py'
-        f' --algo {algorithm}'
-        f' --config {config}'
-        f' --seed {seed}'
-        f' --lr {learning_rate}'
-        f' --gnn-hidden-dim {hidden_dim}'
-        f' --actor-gcn-layers {num_gcn_layers}'
-        f' --critic-gcn-layers {num_gcn_layers}'
-        f' --batch-size {batch_size}'
-        f' --max-episodes {max_episodes}'
-        f' --max-timesteps {max_timesteps}'
-        f' --eval-freq {eval_freq}'
-        f' --num-trucks {num_trucks}'
-        f' --num-stops {num_stops}'
-        f' --max-time {max_time}'
-        f' --wandb-project evpr-experiments'
-        f' --wandb-entity stavrosorf'
-        f' --group-name {sweep_name}'
-        f' --ppo-steps-per-update {steps_per_update}'
-        f' --ppo-epochs {epochs}'
-        f' --ppo-minibatch-size 256'
-        f' --ppo-clip 0.2'
-        f' --ppo-entropy-coef {entropy_coef}'
-        f' --exp-name {exp_name}'
+        f" --algo {algorithm}"
+        f" --config {config}"
+        f" --seed {seed}"
+        f" --lr {learning_rate}"
+        f" --gnn-hidden-dim {gnn_hidden_dim}"
+        f" --mlp-hidden-dim {mlp_hidden_dim}"
+        f" --actor-gcn-layers {num_gcn_layers}"
+        f" --critic-gcn-layers {num_gcn_layers}"
+        f" --batch-size {batch_size}"
+        f" --max-episodes {max_episodes}"
+        f" --max-timesteps {max_timesteps}"
+        f" --eval-freq {eval_freq}"
+        f" --num-trucks {num_trucks}"
+        f" --num-stops {num_stops}"
+        f" --max-time {max_time}"
+        f" --wandb-project evpr-experiments"
+        f" --wandb-entity stavrosorf"
+        f" --group-name {sweep_name}"
+        f" --ppo-steps-per-update {steps_per_update}"
+        f" --ppo-epochs {epochs}"
+        f" --ppo-minibatch-size 256"
+        f" --ppo-clip 0.2"
+        f" --ppo-entropy-coef {entropy_coef}"
+        f" --exp-name {exp_name}"
         f'" Enter'
     )
-    
+
     # Execute command
     os.system(command)
     counter += 1
-    
+
     # Wait before starting next experiment to avoid race conditions
     time.sleep(3)
 

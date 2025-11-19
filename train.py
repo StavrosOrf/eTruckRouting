@@ -4,6 +4,7 @@ Training loop for the TD3 Action-GNN agent using wandb to log results.
 
 import argparse
 import copy
+import json
 import os
 import sys
 import numpy as np
@@ -21,6 +22,32 @@ from algo.PPO_actionGNN import PPOActionGNN
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from algo.replay_buffer import ReplayBuffer
 from truck_env.utils.utils import load_config
+
+
+def save_network_config(save_dir, config_dict, algo_name):
+    """Save neural network configuration to JSON file in the save directory.
+    
+    Args:
+        save_dir: Directory where the config should be saved
+        config_dict: Dictionary containing the network configuration
+        algo_name: Name of the algorithm (td3, ppo, ppo-variable)
+    """
+    config_file = os.path.join(save_dir, f"{algo_name}_network_config.json")
+    
+    # Convert non-serializable types to serializable ones
+    serializable_config = {}
+    for key, value in config_dict.items():
+        if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+            serializable_config[key] = value
+        elif isinstance(value, np.ndarray):
+            serializable_config[key] = value.tolist()
+        else:
+            serializable_config[key] = str(value)
+    
+    with open(config_file, 'w') as f:
+        json.dump(serializable_config, f, indent=4)
+    
+    print(f"Network configuration saved to: {config_file}")
 
 
 def parse_args():
@@ -367,6 +394,31 @@ def train_td3(args):
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "model")
     
+    # Save network configuration once
+    td3_config = {
+        "algo": "td3",
+        "action_dim": action_dim,
+        "max_action": max_action,
+        "fx_node_sizes": fx_node_sizes,
+        "discount": args.discount,
+        "tau": args.tau,
+        "policy_noise": args.policy_noise,
+        "noise_clip": args.noise_clip,
+        "policy_freq": args.policy_freq,
+        "feature_dim": args.feature_dim,
+        "gnn_hidden_dim": args.gnn_hidden_dim,
+        "mlp_hidden_dim": args.mlp_hidden_dim,
+        "lr": args.lr,
+        "actor_gcn_layers": args.actor_gcn_layers,
+        "critic_gcn_layers": args.critic_gcn_layers,
+        "min_charging_duration": args.min_charging_duration,
+        "max_charging_duration": args.max_charging_duration,
+        "target_action_temp": args.target_action_temp,
+        "expl_noise": args.expl_noise,
+        "seed": args.seed
+    }
+    save_network_config(save_dir, td3_config, "td3")
+    
     # Track best model
     best_eval_reward = None
     best_model_path = None
@@ -663,6 +715,30 @@ def train_ppo(args):
         policy_kwargs["charge_durations"] = config["charging"].get("charge_durations", [])
 
     policy = PolicyCls(**policy_kwargs)
+
+    # Save network configuration once
+    ppo_config = {
+        "algo": args.algo,  # 'ppo' or 'ppo-variable'
+        "action_dim": action_dim,
+        "node_feature_dims": node_feature_dims,
+        "hidden_dim": args.gnn_hidden_dim,
+        "num_layers": args.actor_gcn_layers,
+        "mlp_dim": args.mlp_hidden_dim,
+        "lr": args.lr,
+        "gamma": args.discount,
+        "gae_lambda": args.gae_lambda,
+        "clip_coef": args.ppo_clip,
+        "value_coef": args.ppo_value_coef,
+        "entropy_coef": args.ppo_entropy_coef,
+        "max_grad_norm": args.ppo_max_grad_norm,
+        "ppo_epochs": args.ppo_epochs,
+        "minibatch_size": args.ppo_minibatch_size,
+        "seed": args.seed
+    }
+    if args.algo == 'ppo-variable':
+        ppo_config["charge_durations"] = config["charging"]["charge_durations"]
+    
+    save_network_config(save_dir, ppo_config, "ppo")
 
     print(f"\n{'='*80}")
     print(f"Starting PPO Training ({policy_variant}): {args.exp_name}")

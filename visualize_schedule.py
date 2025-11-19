@@ -20,13 +20,10 @@ from train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
-# POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256"
 POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/"
-POLICY_TYPE = "ppo-variable"  # or "heuristic" or "ppo"
-# POLICY_TYPE = "heuristic"  # or "heuristic" or "ppo"
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 10
-NUM_STOPS = 3
+NUM_TRUCKS = 2
+NUM_STOPS = 5
 SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
@@ -73,7 +70,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
                 "trucks": truck_details
             })
 
-def run_scenario():
+def run_scenario(policy_type):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     # Setup
@@ -92,8 +89,8 @@ def run_scenario():
     env_init.close()
 
     # Load Policy
-    print(f"Loading policy: {POLICY_PATH} (requested {POLICY_TYPE})...")
-    policy, active_policy_type = load_policy(POLICY_PATH, POLICY_TYPE, gnn_state_space, config)
+    print(f"Loading policy: {POLICY_PATH} (requested {policy_type})...")
+    policy, active_policy_type = load_policy(POLICY_PATH, policy_type, gnn_state_space, config, device="cpu")
 
     # Run Instrumented Environment
     env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False)
@@ -133,26 +130,9 @@ def run_scenario():
         active_policy_type,
     )
 
-def plot_gantt(history, max_time, charging_nodes, total_steps, policy_label):
-    """Generate Timeline chart from history."""
-    
-    # Define colors for states
-    colors = {
-        "routing": "#3498db",      # Blue
-        "charging": "#2ecc71",     # Green
-        "waiting_to_charge": "#e74c3c", # Red
-        "ready": "#95a5a6",        # Gray
-        "complete": "#f1c40f",     # Gold
-        "failed": "#34495e"        # Dark Blue/Black
-    }
-    
-    # Prepare plot
-    fig, ax = plt.subplots(figsize=(15, 10))
-    
-    # Get list of trucks
+def process_history(history):
+    """Process raw history into timeline segments per truck."""
     truck_ids = sorted(list(history[0]["trucks"].keys()))
-    
-    # Process history per truck to merge segments
     truck_timelines = {tid: [] for tid in truck_ids}
     
     for entry in history:
@@ -163,28 +143,20 @@ def plot_gantt(history, max_time, charging_nodes, total_steps, policy_label):
         for tid in truck_ids:
             details = trucks_info.get(tid, {})
             state = details.get("state", "unknown")
-            # relevant details for merging
             meta = {}
             if state == "routing":
                 meta["destination"] = details.get("destination")
             elif state in ["charging", "waiting_to_charge"]:
                 meta["current_node"] = details.get("current_node")
             
-            # Check if we can merge with last segment
+            # Merge segments
             if truck_timelines[tid]:
                 last = truck_timelines[tid][-1]
-                # Only merge if state and meta match. 
-                # Note: We might lose intermediate SoC points if we merge. 
-                # If we want SoC at every event finish, we should probably NOT merge if we want to show all points.
-                # However, the user said "after every truck event finish".
-                # If we merge, we only have the end of the merged segment.
-                # Let's keep merging for visual cleanliness, but update the end_soc of the merged segment.
                 if last["state"] == state and last["meta"] == meta and abs(last["end"] - start) < 1e-6:
-                    last["end"] = end # Extend
-                    last["end_soc"] = details.get("end_soc") # Update end SoC
+                    last["end"] = end
+                    last["end_soc"] = details.get("end_soc")
                     continue
             
-            # Add new segment
             truck_timelines[tid].append({
                 "start": start,
                 "end": end,
@@ -192,67 +164,57 @@ def plot_gantt(history, max_time, charging_nodes, total_steps, policy_label):
                 "meta": meta,
                 "end_soc": details.get("end_soc")
             })
+    return truck_timelines, truck_ids
 
-    # Plotting
+def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
+    """Generate Comparison Timeline chart."""
+    
+    colors = {
+        "routing": "#3498db",      # Blue
+        "charging": "#2ecc71",     # Green
+        "waiting_to_charge": "#e74c3c", # Red
+        "ready": "#95a5a6",        # Gray
+        "complete": "#f1c40f",     # Gold
+        "failed": "#34495e"        # Dark Blue/Black
+    }
+    
+    timelines_heuristic, truck_ids = process_history(history_heuristic)
+    timelines_ppo, _ = process_history(history_ppo)
+    
+    # Increase figure height to accommodate double lines
+    fig, ax = plt.subplots(figsize=(18, 12))
+    
+    # Y-axis positions: Truck ID i -> Heuristic at i-0.15, PPO at i+0.15
+    offset = 0.15
+    
     for tid in truck_ids:
-        timeline = truck_timelines[tid]
+        # Draw background track
+        ax.hlines(y=tid, xmin=0, xmax=max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=20)
         
-        # Draw the base line (track) for the truck
-        ax.hlines(y=tid, xmin=0, xmax=max_time, colors='gray', linestyles=':', alpha=0.2, linewidth=1)
-
-        for segment in timeline:
-            state = segment["state"]
-            start = segment["start"]
-            end = segment["end"]
-            meta = segment["meta"]
-            end_soc = segment.get("end_soc")
+        # Plot Heuristic (Top line)
+        y_pos_h = tid + offset
+        for segment in timelines_heuristic[tid]:
+            _plot_segment(ax, segment, y_pos_h, colors, charging_nodes, label_soc=True)
             
-            color = colors.get(state, "black")
-            # Thinner lines as requested
-            linewidth = 3 if state in ["charging", "routing", "waiting_to_charge"] else 1.5
+        # Plot PPO (Bottom line)
+        y_pos_p = tid - offset
+        for segment in timelines_ppo[tid]:
+            _plot_segment(ax, segment, y_pos_p, colors, charging_nodes, label_soc=True)
             
-            # Plot line segment
-            ax.hlines(y=tid, xmin=start, xmax=end, colors=color, linewidth=linewidth)
-            
-            # Plot SoC under the line at the end of the segment
-            if end_soc is not None:
-                ax.text(end, tid - 0.15, f"{end_soc:.0f}%", ha='center', va='top', fontsize=6, color='black', alpha=0.7)
-
-            # Add markers/labels for specific events
-            if state == "routing":
-                # End of routing is an arrival
-                dest = meta.get("destination")
-                if dest is not None:
-                    is_charger = dest in charging_nodes
-                    marker = 'o' if is_charger else 's' # Circle for charger, Square for delivery
-                    
-                    # Plot marker at the end
-                    ax.plot(end, tid, marker=marker, markersize=8, 
-                            markerfacecolor='white', markeredgecolor=color, markeredgewidth=2, zorder=10)
-                    
-                    # Label the node
-                    ax.text(end, tid + 0.2, str(dest), ha='center', va='bottom', fontsize=8, fontweight='bold', color=color)
-            
-            # Explicitly mark completion and failure
-            elif state == "complete":
-                # Mark the start of completion
-                ax.plot(start, tid, marker='*', markersize=12, 
-                        markerfacecolor='gold', markeredgecolor='black', markeredgewidth=1, zorder=15)
-            elif state == "failed":
-                # Mark the start of failure
-                ax.plot(start, tid, marker='X', markersize=10, 
-                        markerfacecolor='red', markeredgecolor='black', markeredgewidth=1, zorder=15)
+        # Add labels for policies
+        ax.text(-0.5, y_pos_h, "Heuristic", ha='right', va='center', fontsize=8, color='gray')
+        ax.text(-0.5, y_pos_p, "PPO", ha='right', va='center', fontsize=8, color='gray')
 
     # Formatting
     ax.set_xlabel("Simulation Time (hours)")
     ax.set_ylabel("Truck ID")
-    ax.set_title(f"Truck Schedule - {policy_label} (Seed {SEED}) - Total Steps: {total_steps}")
+    ax.set_title(f"Schedule Comparison: Heuristic (Top) vs PPO (Bottom) - Seed {SEED}")
     ax.set_xlim(0, max_time)
     ax.set_yticks(truck_ids)
     ax.set_yticklabels([f"Truck {tid}" for tid in truck_ids])
     ax.grid(True, axis='x', linestyle='--', alpha=0.7)
     
-    # Custom Legend
+    # Legend
     legend_elements = [
         mpatches.Patch(color=colors["routing"], label='Routing'),
         mpatches.Patch(color=colors["charging"], label='Charging'),
@@ -262,21 +224,60 @@ def plot_gantt(history, max_time, charging_nodes, total_steps, policy_label):
         plt.Line2D([0], [0], marker='*', color='gold', markerfacecolor='gold', markeredgecolor='black', markersize=12, label='Completed'),
         plt.Line2D([0], [0], marker='X', color='red', markerfacecolor='red', markeredgecolor='black', markersize=10, label='Failed'),
     ]
-    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))
+    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.12, 1))
 
     plt.tight_layout()
-    save_path = os.path.join(OUTPUT_DIR, "schedule_timeline.png")
+    save_path = os.path.join(OUTPUT_DIR, "schedule_comparison.png")
     plt.savefig(save_path, dpi=300)
-    print(f"Plot saved to {save_path}")
+    print(f"Comparison plot saved to {save_path}")
+
+def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
+    state = segment["state"]
+    start = segment["start"]
+    end = segment["end"]
+    meta = segment["meta"]
+    end_soc = segment.get("end_soc")
+    
+    color = colors.get(state, "black")
+    linewidth = 2.5 if state in ["charging", "routing", "waiting_to_charge"] else 1.0
+    
+    ax.hlines(y=y_pos, xmin=start, xmax=end, colors=color, linewidth=linewidth)
+    
+    if label_soc and end_soc is not None:
+        ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', fontsize=5, color='black', alpha=0.7)
+
+    if state == "routing":
+        dest = meta.get("destination")
+        if dest is not None:
+            is_charger = dest in charging_nodes
+            marker = 'o' if is_charger else 's'
+            ax.plot(end, y_pos, marker=marker, markersize=6, 
+                    markerfacecolor='white', markeredgecolor=color, markeredgewidth=1.5, zorder=10)
+            ax.text(end, y_pos + 0.1, str(dest), ha='center', va='bottom', fontsize=6, fontweight='bold', color=color)
+    
+    elif state == "complete":
+        ax.plot(start, y_pos, marker='*', markersize=10, 
+                markerfacecolor='gold', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
+    elif state == "failed":
+        ax.plot(start, y_pos, marker='X', markersize=8, 
+                markerfacecolor='red', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
 
 def main():
-    history, max_time, charging_nodes, total_steps, env, policy_label = run_scenario()
-    plot_gantt(history, max_time, charging_nodes, total_steps, policy_label)
+    # Run Heuristic
+    print("\n--- Running Heuristic Policy ---")
+    hist_h, max_time, charging_nodes, _, env_h, _ = run_scenario("heuristic")
     
-    # Plot queue dynamics
-    print("Plotting queue dynamics...")
+    # Run PPO
+    print("\n--- Running PPO Policy ---")
+    hist_p, _, _, _, env_p, _ = run_scenario("ppo-variable")
+    
+    # Plot Comparison
+    plot_comparison(hist_h, hist_p, max_time, charging_nodes)
+    
+    # Plot Queue Dynamics for PPO (most relevant)
+    print("Plotting queue dynamics for PPO...")
     plotter = EnvironmentPlotter(OUTPUT_DIR, verbose=False, use_osm=False)
-    plotter.plot_charger_queue_dynamics(env.charging_station, env.transport_graph, max_time)
+    plotter.plot_charger_queue_dynamics(env_p.charging_station, env_p.transport_graph, max_time)
 
 if __name__ == "__main__":
     main()

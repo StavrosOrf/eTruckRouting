@@ -62,6 +62,7 @@ def load_policy(
     requested_algo: Optional[str],
     gnn_state_space: "GNNStateSpace",
     config: dict,
+    device: str = "cpu",
 ) -> Tuple[object, str]:
     """
     Load a trained policy along with the resolved policy type.
@@ -114,6 +115,7 @@ def load_policy(
         "max_grad_norm": net_config["max_grad_norm"],
         "ppo_epochs": net_config["ppo_epochs"],
         "minibatch_size": net_config["minibatch_size"],
+        "device": device,
     }
 
     if resolved_algo == "ppo-variable" and "charge_durations" in net_config:

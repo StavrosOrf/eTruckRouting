@@ -210,7 +210,9 @@ class RolloutBuffer:
         self.rewards.append(reward)
         self.dones.append(done)
         self.values.append(value)
-        if isinstance(action_mask, torch.Tensor):
+        if action_mask is None:
+            self.action_masks.append(None)
+        elif isinstance(action_mask, torch.Tensor):
             self.action_masks.append(action_mask.to(torch.bool).cpu())
         else:
             self.action_masks.append(torch.tensor(action_mask, dtype=torch.bool))

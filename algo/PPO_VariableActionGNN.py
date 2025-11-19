@@ -19,6 +19,7 @@ VARIABLE_BATCH_EXCLUDE_KEYS = BATCH_EXCLUDE_KEYS + [
     "action_node_type",
     "action_local_index",
     "action_is_charging",
+    "action_charge_durations",
     "num_actions",
 ]
 
@@ -208,6 +209,7 @@ class PPOVariableActionGNN:
         hidden_dim: int = 64,
         num_layers: int = 3,
         mlp_dim: int = 128,
+        charge_durations: Optional[List[float]] = None,
         lr: float = 3e-4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
@@ -230,7 +232,9 @@ class PPOVariableActionGNN:
         self.minibatch_size = minibatch_size
         self.action_dim = action_dim
         self.node_feature_dims = node_feature_dims
-        self.action_feature_dim = 2  # [normalized_action_type, resulting_soc]
+        self.charge_durations = list(charge_durations) if charge_durations is not None else []
+        # [normalized_action_type, resulting_soc, charge_duration_norm]
+        self.action_feature_dim = 3
 
         self.policy = PPOVariableActorCritic(
             action_dim=action_dim,
@@ -261,6 +265,33 @@ class PPOVariableActionGNN:
         logprob = dist.log_prob(action_choice)
         global_action_idx = feasible_idx[action_choice]
         return int(global_action_idx.item()), float(logprob.item()), float(value.squeeze().item())
+
+    def to_env_action(self, state: HeteroData, action_idx: int) -> Tuple[int, float, bool]:
+        """Map a chosen action index to the environment tuple API."""
+        if not hasattr(state, "action_to_node_map"):
+            raise ValueError("State missing action_to_node_map needed for env action translation.")
+        actions = state.action_to_node_map
+        if action_idx < 0 or action_idx >= len(actions):
+            raise IndexError(f"action_idx {action_idx} out of bounds for action_to_node_map (size {len(actions)})")
+        node_id, is_charging = actions[action_idx]
+
+        # Pull matching charge duration if it exists
+        duration = 0.0
+        if is_charging:
+            if hasattr(state, "action_charge_durations") and len(state.action_charge_durations) > action_idx:
+                duration = float(state.action_charge_durations[action_idx])
+            elif self.charge_durations:
+                duration = float(self.charge_durations[0])
+            else:
+                duration = 1.0
+
+        # Convert possible tensors to python types
+        if hasattr(node_id, "item"):
+            node_id = int(node_id.item())
+        else:
+            node_id = int(node_id)
+
+        return node_id, float(duration), bool(is_charging)
 
     def select_action(
         self,
@@ -398,9 +429,26 @@ class PPOVariableActionGNN:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         features = []
         ptr = [0]
-        for state, indices in zip(states, feasible_indices):
-            cpu_indices = indices.to(torch.long).cpu()
-            node_features = self._action_node_features(state, cpu_indices)
+        for state, global_indices in zip(states, feasible_indices):
+            # action_graph_features contains features for feasible actions in state.feasible_action_mask
+            # global_indices are the indices we actually want to use (subset of feasible actions)
+            # We need to map global_indices to positions in action_graph_features
+            
+            # Get the indices of feasible actions from the state's mask
+            feasible_mask = state.feasible_action_mask
+            state_feasible_indices = torch.nonzero(feasible_mask, as_tuple=False).view(-1)
+            
+            # Create mapping from global action index to local index in action_graph_features
+            global_to_local = {int(g.item()): i for i, g in enumerate(state_feasible_indices)}
+            
+            # Map the requested global indices to local indices
+            # All global_indices must be in the state's feasible set
+            local_indices = torch.tensor(
+                [global_to_local[int(g.item())] for g in global_indices],
+                dtype=torch.long
+            )
+            
+            node_features = self._action_node_features(state, local_indices)
             features.append(node_features)
             ptr.append(ptr[-1] + node_features.size(0))
 
@@ -413,19 +461,20 @@ class PPOVariableActionGNN:
         ptr_tensor = torch.tensor(ptr, dtype=torch.long, device=device)
         return action_features, ptr_tensor
 
-    def _action_node_features(self, state: HeteroData, indices: torch.Tensor) -> torch.Tensor:
+    def _action_node_features(self, state: HeteroData, local_indices: torch.Tensor) -> torch.Tensor:
         """
-        Extract action graph features from state for the given action indices.
-        The state already contains precomputed action_graph_features.
+        Extract action graph features from state for the given local action indices.
+        The state contains precomputed action_graph_features for feasible actions only.
+        The local_indices are 0-based indices within the feasible action set.
         """
-        if indices.numel() == 0:
+        if local_indices.numel() == 0:
             return torch.zeros((0, self.action_feature_dim), dtype=torch.float32)
         
-        # State contains precomputed action graph features
+        # State contains precomputed action graph features for feasible actions only
         action_graph_features = state.action_graph_features
         
-        # Extract features for the requested indices
-        selected_features = action_graph_features[indices.to(action_graph_features.device)]
+        # Extract features for the requested local indices
+        selected_features = action_graph_features[local_indices.to(action_graph_features.device)]
         
         return selected_features.cpu()
 

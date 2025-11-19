@@ -12,13 +12,13 @@ python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 
 # Training parameters
 counter = 0
-max_episodes = 10_000_000
-max_timesteps = 1_000_000
+max_episodes = 100_000_000
+max_timesteps = 10_000_000
 eval_freq = 500
 batch_size = 64
 
 # Environment settings
-num_trucks = 2
+num_trucks = 10
 num_stops = 3
 max_time = 200.0
 
@@ -29,14 +29,16 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    'steps_per_update': [32, 64, 128],
-    'epochs': [10, 15],
-    'entropy_coef': [0.01, 0.05, 0.1],
-    'seed': [0, 42],
+    'algorithm': ['ppo', 'ppo-variable'],
+    'steps_per_update': [128],
+    'epochs': [10],
+    'entropy_coef': [0.01, 0.1],
+    'seed': [0],
 }
 
 # Generate all combinations
 all_combinations = list(itertools.product(
+    hyperparam_grids['algorithm'],
     hyperparam_grids['steps_per_update'],
     hyperparam_grids['epochs'],
     hyperparam_grids['entropy_coef'],
@@ -44,22 +46,23 @@ all_combinations = list(itertools.product(
 ))
 
 # Sweep name for grouping in wandb
-sweep_name = f"PPO_Hyperparameter_Sweep_trucks_{num_trucks}_stops_{num_stops}"
+
 
 print(f"Total configurations to run: {len(all_combinations)}")
-print(f"Sweep name: {sweep_name}\n")
+# print(f"Sweep name: {sweep_name}\n")
 
-for config_idx, (steps_per_update, epochs, entropy_coef, seed) in enumerate(all_combinations, 1):
+for config_idx, (algorithm, steps_per_update, epochs, entropy_coef, seed) in enumerate(all_combinations, 1):
     # Print configuration being launched
-    print(f"[{config_idx}/{len(all_combinations)}] Launching: PPO | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}")
+    print(f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm} | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}")
     
     # Build experiment name
-    exp_name = f'PPO_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}'
-    
+    exp_name = f'{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}'
+    sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
+        
     # Build command
     command = (
         f'tmux new-session -d \\; send-keys " {python_path} train.py'
-        f' --algo ppo'
+        f' --algo {algorithm}'
         f' --config {config}'
         f' --seed {seed}'
         f' --lr {learning_rate}'

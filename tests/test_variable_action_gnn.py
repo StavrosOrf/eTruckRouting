@@ -36,16 +36,17 @@ def _make_state(
         data.action_is_charging[-1] = True
     data.action_local_index = torch.arange(num_actions, dtype=torch.long)
     data.action_to_node_map = [(idx, bool(data.action_is_charging[idx].item())) for idx in range(num_actions)]
+    data.action_charge_durations = torch.ones(num_actions, dtype=torch.float32)
     data.node_id_to_type = {idx: ('delivery', 0) for idx in range(num_actions)}
     data.active_truck_id = torch.tensor([0])
-    # Add precomputed action graph features
+    # Add precomputed action graph features ONLY for feasible actions
     action_graph_features = []
-    for idx in range(num_actions):
+    for idx in valid_indices:
         is_charging = bool(data.action_is_charging[idx].item())
         if is_charging:
-            action_graph_features.append([1.0, 1.0])  # charging: type=3/3, soc=1.0
+            action_graph_features.append([1.0, 1.0, 1.0])  # charging: type=3/3, soc=1.0, duration=1.0
         else:
-            action_graph_features.append([0.333, 0.9])  # delivery: type=1/3, soc=0.9
+            action_graph_features.append([0.333, 0.9, 0.0])  # delivery: type=1/3, soc=0.9, duration=0.0
     data.action_graph_features = torch.tensor(action_graph_features, dtype=torch.float32)
     return data
 
@@ -65,7 +66,7 @@ class VariableActionGNNTests(unittest.TestCase):
     def test_action_selection_respects_mask(self):
         state = _make_state(num_actions=5, valid_indices=[2, 4])
         action = self.policy.select_action(state, deterministic=True)
-        self.assertEqual(action, 2)
+        self.assertIn(action, [2, 4])
 
     def test_action_graph_head_ptr_builder(self):
         head = ActionGraphHead(

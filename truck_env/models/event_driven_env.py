@@ -325,12 +325,11 @@ class EventDrivenTruckEnv(gym.Env):
 
                 # Safety check: skip if truck is already complete or failed
                 if truck.is_complete or truck.failed:
-                    # if self.verbose:
-                    raise ValueError("Truck is already complete or failed")
-                    status = "complete" if truck.is_complete else "failed"
-                    print(
-                        f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
-                    )
+                    if self.verbose:
+                        status = "complete" if truck.is_complete else "failed"
+                        print(
+                            f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
+                        )
                     continue
 
                 # Skip if this is a stale wake event and truck is no longer waiting
@@ -462,6 +461,14 @@ class EventDrivenTruckEnv(gym.Env):
             elif event.event_type == EventType.TRUCK_ROUTING:
                 # Handle truck arrival at destination
                 destination = event.data["destination"]
+                truck = self.trucks[event.truck_id]
+                
+                # Skip if truck is already complete or failed
+                if truck.is_complete or truck.failed:
+                    if self.verbose:
+                        status = "complete" if truck.is_complete else "failed"
+                        print(f"  Skipping TRUCK_ROUTING for truck {truck.truck_id} (status: {status})")
+                    continue
 
                 # First, update the truck's physical state (position, battery, etc.)
                 self.event_handler.handle_truck_routing(
@@ -474,9 +481,7 @@ class EventDrivenTruckEnv(gym.Env):
                     self.enable_plotting,
                 )
 
-                # Check the truck's state after arrival
-                truck = self.trucks[event.truck_id]
-
+                # Check the truck's state after arrival - it may have become complete or failed
                 # Only schedule TRUCK_READY if truck is not complete or failed
                 if not (truck.is_complete or truck.failed):
                     # If truck arrived at a charger, check if port is available

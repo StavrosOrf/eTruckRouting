@@ -84,7 +84,7 @@ def parse_args():
     ppo_group = parser.add_argument_group('PPO Algorithm')
     ppo_group.add_argument('--ppo-steps-per-update', type=int, default=128,
                            help='Number of timesteps collected before each PPO update')
-    ppo_group.add_argument('--ppo-epochs', type=int, default=5,
+    ppo_group.add_argument('--ppo-epochs', type=int, default=10,
                            help='Number of gradient epochs per PPO update')
     ppo_group.add_argument('--ppo-minibatch-size', type=int, default=256,
                            help='Minibatch size for PPO updates')
@@ -94,7 +94,7 @@ def parse_args():
                            help='Clipping coefficient for PPO')
     ppo_group.add_argument('--ppo-entropy-coef', type=float, default=0.01,
                            help='Entropy bonus coefficient')
-    ppo_group.add_argument('--ppo-value-coef', type=float, default=0.5,
+    ppo_group.add_argument('--ppo-value-coef', type=float, default=0.01,
                            help='Value loss coefficient')
     ppo_group.add_argument('--ppo-max-grad-norm', type=float, default=0.5,
                            help='Gradient clipping value for PPO')
@@ -203,16 +203,19 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         while not (done or truncated) and episode_steps < max_steps:
             # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
-            action_mask = compute_action_mask(env)
             
             # Select action without exploration noise (greedy)
-            raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
-            if isinstance(raw_action, tuple):
-                action = raw_action
+            # For PPO-variable, don't pass action_mask since GNN state has its own action space
+            if isinstance(policy, PPOVariableActionGNN):
+                raw_action = policy.select_action(gnn_state, expl_noise=0)
+                action = policy.to_env_action(gnn_state, int(raw_action))
             else:
-                action = int(raw_action)
-                if not isinstance(policy, PPOVariableActionGNN):
-                    action %= env.action_space.n
+                action_mask = compute_action_mask(env)
+                raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
+                if isinstance(raw_action, tuple):
+                    action = raw_action
+                else:
+                    action = int(raw_action) % env.action_space.n
             
             # Take action
             obs, reward, done, truncated, info = env.step(action)
@@ -640,7 +643,7 @@ def train_ppo(args):
     PolicyCls = PPOVariableActionGNN if args.algo == 'ppo-variable' else PPOActionGNN
     policy_variant = "Variable Action" if args.algo == 'ppo-variable' else "Standard"
 
-    policy = PolicyCls(
+    policy_kwargs = dict(
         action_dim=action_dim,
         node_feature_dims=node_feature_dims,
         hidden_dim=args.gnn_hidden_dim,
@@ -654,8 +657,12 @@ def train_ppo(args):
         entropy_coef=args.ppo_entropy_coef,
         max_grad_norm=args.ppo_max_grad_norm,
         ppo_epochs=args.ppo_epochs,
-        minibatch_size=args.ppo_minibatch_size
+        minibatch_size=args.ppo_minibatch_size,
     )
+    if args.algo == 'ppo-variable':
+        policy_kwargs["charge_durations"] = config["charging"].get("charge_durations", [])
+
+    policy = PolicyCls(**policy_kwargs)
 
     print(f"\n{'='*80}")
     print(f"Starting PPO Training ({policy_variant}): {args.exp_name}")
@@ -669,10 +676,21 @@ def train_ppo(args):
     for t in range(args.max_timesteps):
         episode_timesteps += 1
 
-        mask_np = compute_action_mask(env)
-        mask_tensor = torch.tensor(mask_np, dtype=torch.bool)
-        action, logprob, value = policy.act(gnn_state, action_mask=mask_tensor)
-        next_obs, reward, done, truncated, info = env.step(action)
+        # For PPO-variable, don't pass action_mask since GNN state has its own action space
+        # For standard PPO, compute and pass the action_mask to respect environment constraints
+        if args.algo == 'ppo-variable':
+            action, logprob, value = policy.act(gnn_state)
+            env_action = policy.to_env_action(gnn_state, action)
+            # PPO-variable doesn't need environment action mask, state has feasible_action_mask
+            action_mask_to_store = None
+        else:
+            mask_np = compute_action_mask(env)
+            mask_tensor = torch.tensor(mask_np, dtype=torch.bool)
+            action, logprob, value = policy.act(gnn_state, action_mask=mask_tensor)
+            env_action = action
+            action_mask_to_store = mask_tensor
+        
+        next_obs, reward, done, truncated, info = env.step(env_action)
         next_gnn_state = gnn_state_space.get_state_GNN(env)
 
         done_flag = done or truncated
@@ -680,7 +698,8 @@ def train_ppo(args):
             done_flag = True
             truncated = True
 
-        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value, mask_tensor)
+        # Store transition
+        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value, action_mask_to_store)
 
         gnn_state = next_gnn_state
         episode_reward += reward

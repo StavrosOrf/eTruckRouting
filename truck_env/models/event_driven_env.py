@@ -795,10 +795,10 @@ class EventDrivenTruckEnv(gym.Env):
             delivery_bonus = self.reward_config["delivery_bonus"]
             
             # Check if last delivery
-            if truck.get_next_delivery_target() == truck.delivery_sequence[-1]:                
-                energy = truck.current_battery - discharge
+            # if truck.get_next_delivery_target() == truck.delivery_sequence[-1]:                
+            #     energy = truck.current_battery - discharge
                                 
-                delivery_bonus +=  100 - energy * 100 / truck.battery_capacity                
+            #     delivery_bonus +=  100 - energy * 100 / truck.battery_capacity                
             
             return time_penalty + delivery_bonus
 

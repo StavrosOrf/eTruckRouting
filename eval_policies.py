@@ -22,7 +22,7 @@ from algo.policy_utils import load_policy
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/", "variable-ppo"),
-    ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/NewSoCReward_new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
@@ -35,10 +35,14 @@ if HAS_GUROBI:
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 2
+NUM_EVAL_SCENARIOS = 10
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
+
+
+def _truncate_name(name: str, width: int = 20) -> str:
+    return name if len(name) <= width else f"{name[: width - 3]}..."
 
 
 def evaluate_policy(
@@ -46,6 +50,9 @@ def evaluate_policy(
 ):
     """Evaluate a policy over multiple episodes."""
     rewards, successes, distances, charging_times = [], [], [], []
+    total_times, makespans, global_times = [], [], []
+    step_counts = []
+    optimal_charge_durations = []
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
         obs, info = env.reset(seed=seed + episode)
@@ -57,6 +64,13 @@ def evaluate_policy(
         while not (done or truncated) and episode_steps < max_steps:
             if policy_type in ("heuristic", "optimal"):
                 action = policy.get_action(env)
+                if (
+                    policy_type == "optimal"
+                    and isinstance(action, tuple)
+                    and len(action) == 3
+                    and action[2]
+                ):
+                    optimal_charge_durations.append(float(action[1]))
             elif policy_type == "ppo-variable":
                 gnn_state = gnn_state_space.get_state_GNN(env)
                 # Use deterministic evaluation (greedy) to match train.py
@@ -78,6 +92,7 @@ def evaluate_policy(
 
         rewards.append(episode_reward)
         successes.append(1.0 if info.get("all_complete", False) else 0.0)
+        step_counts.append(episode_steps)
 
         total_dist = sum(t.get("total_distance", 0.0) for t in info.get("trucks", []))
         total_charge = sum(
@@ -85,8 +100,12 @@ def evaluate_policy(
         )
         distances.append(total_dist)
         charging_times.append(total_charge)
+        truck_times = [t.get("total_time", 0.0) for t in info.get("trucks", [])]
+        total_times.append(sum(truck_times))
+        makespans.append(max(truck_times) if truck_times else 0.0)
+        global_times.append(info.get("global_clock", env.global_clock))
 
-    return {
+    metrics = {
         "mean_reward": np.mean(rewards),
         "std_reward": np.std(rewards),
         "success_rate": np.mean(successes),
@@ -94,7 +113,23 @@ def evaluate_policy(
         "std_total_distance": np.std(distances),
         "mean_charging_time": np.mean(charging_times),
         "std_charging_time": np.std(charging_times),
+        "mean_total_time": np.mean(total_times),
+        "std_total_time": np.std(total_times),
+        "mean_makespan": np.mean(makespans),
+        "std_makespan": np.std(makespans),
+        "mean_global_clock": np.mean(global_times),
+        "mean_steps": np.mean(step_counts),
     }
+    if policy_type == "optimal" and optimal_charge_durations:
+        sample = ", ".join(f"{d:.2f}" for d in optimal_charge_durations[:10])
+        more = len(optimal_charge_durations) - 10
+        if more > 0:
+            sample += f", ... (+{more} more)"
+        print(
+            f"[Optimal] Charge durations selected (hours): {sample}\n"
+            f"[Optimal] Total charging actions logged: {len(optimal_charge_durations)}"
+        )
+    return metrics
 
 
 def main():
@@ -158,15 +193,27 @@ def main():
     # Print results table
     print(f"\n{'='*90}\nRESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)\n")
     print(
-        f"{'Policy':<50} {'Reward':<20} {'Success %':<15} {'Distance (km)':<18} {'Charging (h)':<15}"
+        f"{'Policy':<20} {'Reward':<18} {'Success %':<10} {'Total Time (h)':<18} "
+        f"{'Makespan (h)':<18} {'Distance (km)':<18} {'Charging (h)':<15} "
+        f"{'GlobalClk (h)':<15} {'Steps':<7}"
     )
     print("-" * 90)
 
     for name in sorted(results.keys()):
         r = results[name]
+        display_name = _truncate_name(name, 20)
+        reward_str = f"{r['mean_reward']:8.0f} ±{r['std_reward']:6.0f}"
+        success_str = f"{r['success_rate']*100:6.1f}%"
+        total_time_str = f"{r['mean_total_time']:8.1f} ±{r['std_total_time']:<6.1f}"
+        makespan_str = f"{r['mean_makespan']:8.1f} ±{r['std_makespan']:<6.1f}"
+        distance_str = f"{r['mean_total_distance']:8.1f} ±{r['std_total_distance']:<6.1f}"
+        charging_str = f"{r['mean_charging_time']:6.1f} ±{r['std_charging_time']:<5.1f}"
+        global_clock_str = f"{r['mean_global_clock']:6.1f}"
+        steps_str = f"{r['mean_steps']:6.1f}"
         print(
-            f"{name:<50} {r['mean_reward']:8.0f} ±{r['std_reward']:6.0f} {r['success_rate']*100:>6.1f}%      "
-            f"{r['mean_total_distance']:>9.0f} ±{r['std_total_distance']:<6.0f} {r['mean_charging_time']:>7.1f} ±{r['std_charging_time']:<6.1f}"
+            f"{display_name:<20} {reward_str:<18} {success_str:<10} {total_time_str:<18} "
+            f"{makespan_str:<18} {distance_str:<18} {charging_str:<15} "
+            f"{global_clock_str:<15} {steps_str:<7}"
         )
 
     print(f"{'='*90}\n")

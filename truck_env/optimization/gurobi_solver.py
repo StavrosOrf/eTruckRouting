@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import networkx as nx
 
+from truck_env.utils.utils import check_navigation_feasibility
+
 if TYPE_CHECKING:  # pragma: no cover
     from truck_env.models.event_driven_env import EventDrivenTruckEnv
 
@@ -133,84 +135,46 @@ class GurobiTruckRoutingSolver:
         end_node = f"end_{truck_id}"
         arc_vars: Dict[Tuple[int, int], gp.Var] = {}
 
-        # Build route variables between real nodes
-        for src in real_nodes:
-            for dst in real_nodes:
-                if src == dst or dst == start_node:
-                    continue
+        # Force deliveries to follow the provided sequence order
+        if not deliveries:
+            # No deliveries, just connect start to end
+            arc_vars[(start_node, end_node)] = model.addVar(
+                vtype=GRB.BINARY, name=f"x_{truck_id}_{start_node}_{end_node}"
+            )
+            model.addConstr(
+                arc_vars[(start_node, end_node)] == 1.0, name=f"skip_{truck_id}"
+            )
+            self._arc_time[(truck_id, start_node, end_node)] = 0.0
+        else:
+            for idx in range(len(real_nodes) - 1):
+                src = real_nodes[idx]
+                dst = real_nodes[idx + 1]
                 travel_time = time_matrix.get(src, {}).get(dst, float("inf"))
                 if not float(travel_time) < float("inf"):
-                    continue
-                arc_vars[(src, dst)] = model.addVar(
+                    raise ValueError(
+                        f"No valid path between sequential deliveries {src}->{dst}"
+                    )
+                var = model.addVar(
                     vtype=GRB.BINARY,
                     name=f"x_{truck_id}_{src}_{dst}",
                 )
+                model.addConstr(var == 1.0, name=f"order_{truck_id}_{idx}")
+                arc_vars[(src, dst)] = var
                 self._arc_time[(truck_id, src, dst)] = float(travel_time)
 
-        # Arcs to terminal node (zero-time)
-        for src in real_nodes:
-            arc_vars[(src, end_node)] = model.addVar(
-                vtype=GRB.BINARY,
-                name=f"x_{truck_id}_{src}_{end_node}",
+            # Terminal arc to end node (zero-time)
+            last_node = real_nodes[-1]
+            arc_vars[(last_node, end_node)] = model.addVar(
+                vtype=GRB.BINARY, name=f"x_{truck_id}_{last_node}_{end_node}"
             )
-            self._arc_time[(truck_id, src, end_node)] = 0.0
-
-        # Allow skipping deliveries when none exist
-        if not deliveries:
-            start_to_end = arc_vars[(start_node, end_node)]
-            model.addConstr(start_to_end == 1.0, name=f"skip_{truck_id}")
-            self._route_vars[truck_id] = arc_vars
-            self._order_vars[truck_id] = {}
-            self._truck_info[truck_id] = {
-                "start": start_node,
-                "end": end_node,
-                "deliveries": deliveries,
-            }
-            return gp.LinExpr(0.0)
-
-        # Flow constraints
-        outgoing_start = gp.quicksum(
-            var for (src, dst), var in arc_vars.items() if src == start_node
-        )
-        model.addConstr(outgoing_start == 1.0, name=f"start_out_{truck_id}")
-
-        incoming_end = gp.quicksum(
-            var for (src, dst), var in arc_vars.items() if dst == end_node
-        )
-        model.addConstr(incoming_end == 1.0, name=f"end_in_{truck_id}")
-
-        for delivery in deliveries:
-            incoming = gp.quicksum(
-                var for (src, dst), var in arc_vars.items() if dst == delivery
+            model.addConstr(
+                arc_vars[(last_node, end_node)] == 1.0,
+                name=f"end_{truck_id}",
             )
-            outgoing = gp.quicksum(
-                var for (src, dst), var in arc_vars.items() if src == delivery
-            )
-            model.addConstr(incoming == 1.0, name=f"in_{truck_id}_{delivery}")
-            model.addConstr(outgoing == 1.0, name=f"out_{truck_id}_{delivery}")
-
-        # MTZ subtour elimination
-        order_vars: Dict[int, gp.Var] = {}
-        for idx, node in enumerate(deliveries, start=1):
-            order_vars[node] = model.addVar(
-                lb=1.0, ub=len(deliveries), vtype=GRB.CONTINUOUS, name=f"u_{truck_id}_{node}"
-            )
-
-        for i in deliveries:
-            for j in deliveries:
-                if i == j:
-                    continue
-                var = arc_vars.get((i, j))
-                if var is None:
-                    continue
-                model.addConstr(
-                    order_vars[i] - order_vars[j] + len(deliveries) * var
-                    <= len(deliveries) - 1,
-                    name=f"mtz_{truck_id}_{i}_{j}",
-                )
+            self._arc_time[(truck_id, last_node, end_node)] = 0.0
 
         self._route_vars[truck_id] = arc_vars
-        self._order_vars[truck_id] = order_vars
+        self._order_vars[truck_id] = {}
         self._truck_info[truck_id] = {
             "start": start_node,
             "end": end_node,
@@ -348,32 +312,6 @@ class GurobiTruckRoutingSolver:
             return False
         return energy_needed <= truck.current_battery + 1e-6
 
-    def _select_supporting_charger(
-        self, truck, target_node: int
-    ) -> Optional[int]:
-        current_node = int(truck.current_node)
-        best_node = None
-        best_cost = float("inf")
-        for charger in self.env.charging_nodes:
-            energy_to_charger = self.env.transport_graph.get_path_energy(
-                current_node, int(charger)
-            )
-            if (
-                energy_to_charger == float("inf")
-                or energy_to_charger > truck.current_battery + 1e-6
-            ):
-                continue
-            energy_from_charger = self.env.transport_graph.get_path_energy(
-                int(charger), int(target_node)
-            )
-            if energy_from_charger == float("inf"):
-                continue
-            score = energy_to_charger + energy_from_charger
-            if score < best_cost:
-                best_cost = score
-                best_node = int(charger)
-        return best_node
-
     def _charger_power(self, env: "EventDrivenTruckEnv", charger_node: int) -> Tuple[float, float]:
         charger_type = env.charging_station.charger_type.get(charger_node, "level2")
         if charger_type == "DCFast":
@@ -400,11 +338,19 @@ class GurobiTruckRoutingSolver:
 
         return (energy_to_target + post_delivery) * (1.0 + self._charge_buffer)
 
-    def _build_charge_action(self, env, truck, target_node: int) -> Optional[Tuple[int, float, bool]]:
+    def _build_charge_action(
+        self, env, truck, hop_target: int, ensure_delivery: bool
+    ) -> Optional[Tuple[int, float, bool]]:
         charger_node = int(truck.current_node)
-        required_energy = self._required_energy_from_charger(
-            env, charger_node, int(target_node)
-        )
+        hop_target = int(hop_target)
+        if hop_target in env.charging_nodes and not ensure_delivery:
+            required_energy = env.transport_graph.get_path_energy(
+                charger_node, hop_target
+            )
+        else:
+            required_energy = self._required_energy_from_charger(
+                env, charger_node, hop_target
+            )
         if required_energy == float("inf"):
             return None
         if truck.current_battery >= required_energy - 1e-6:
@@ -414,6 +360,72 @@ class GurobiTruckRoutingSolver:
         deficit = required_energy - truck.current_battery
         hours = deficit / effective_rate
         return (charger_node, hours, True)
+
+    def _delivery_feasible_after_arrival(self, env, truck, target_node: int, node_for_leg: Optional[int] = None, assume_full: bool = False) -> bool:
+        node = int(node_for_leg) if node_for_leg is not None else int(truck.current_node)
+        energy_needed = env.transport_graph.get_path_energy(node, int(target_node))
+        if energy_needed == float("inf"):
+            return False
+        nearest_after, energy_after = env.transport_graph.get_nearest_charging_node(
+            int(target_node)
+        )
+        post_delivery = 0.0
+        if nearest_after is not None and energy_after != float("inf"):
+            post_delivery = energy_after
+        available = (
+            truck.battery_capacity if assume_full or node in env.charging_nodes else truck.current_battery
+        )
+        required = (energy_needed + post_delivery) * (1.0 + self._charge_buffer)
+        return available >= required - 1e-6
+
+    def _plan_multi_charger_path(
+        self, env: "EventDrivenTruckEnv", truck, target_node: int
+    ) -> Optional[List[int]]:
+        start = int(truck.current_node)
+        target = int(target_node)
+        nodes = set(env.charging_nodes)
+        nodes.add(target)
+        nodes.add(start)
+        capacity = truck.battery_capacity + 1e-6
+        adjacency: Dict[int, List[Tuple[int, float]]] = {
+            node: [] for node in nodes
+        }
+        for i in nodes:
+            for j in nodes:
+                if i == j:
+                    continue
+                energy = env.transport_graph.get_path_energy(i, j)
+                if energy == float("inf"):
+                    continue
+                if i == start and i not in env.charging_nodes:
+                    available = truck.current_battery + 1e-6
+                else:
+                    available = capacity
+                if energy > available:
+                    continue
+                if j == target:
+                    assume_full = i in env.charging_nodes
+                    if not self._delivery_feasible_after_arrival(
+                        env, truck, target, node_for_leg=i, assume_full=assume_full
+                    ):
+                        continue
+                adjacency[i].append((j, energy))
+
+        import heapq
+
+        heap: List[Tuple[float, int, List[int]]] = [(0.0, start, [start])]
+        best_cost: Dict[int, float] = {start: 0.0}
+
+        while heap:
+            cost, node, path = heapq.heappop(heap)
+            if node == target:
+                return path
+            for nxt, e in adjacency.get(node, []):
+                new_cost = cost + e
+                if new_cost + 1e-6 < best_cost.get(nxt, float("inf")):
+                    best_cost[nxt] = new_cost
+                    heapq.heappush(heap, (new_cost, nxt, path + [nxt]))
+        return None
 
     def get_action(self, env: "EventDrivenTruckEnv"):
         """Return the next action tuple to follow the optimized schedule."""
@@ -438,26 +450,28 @@ class GurobiTruckRoutingSolver:
             return (int(truck.current_node), 0.0, False)
 
         current_node = int(truck.current_node)
-        # If we are at a charger and need energy, initiate charging
+        path = self._plan_multi_charger_path(env, truck, next_target)
+        if path is None or len(path) < 2:
+            return (int(next_target), 0.0, False)
+        next_hop = path[1]
+
+        # If we are at a charger, ensure enough energy for next hop
         if current_node in env.charging_nodes:
-            charge_action = self._build_charge_action(env, truck, next_target)
+            ensure_delivery = next_hop == next_target
+            charge_action = self._build_charge_action(
+                env, truck, next_hop if not ensure_delivery else next_target, ensure_delivery
+            )
             if charge_action is not None:
                 return charge_action
 
-        if self._can_reach_with_current_battery(truck, next_target):
+        energy_hop = env.transport_graph.get_path_energy(current_node, int(next_hop))
+        if energy_hop == float("inf"):
             return (int(next_target), 0.0, False)
+        if energy_hop > truck.current_battery + 1e-6:
+            # Should not happen if charging logic works, fallback to staying put
+            return (int(current_node), 0.0, False)
 
-        charger_node = self._select_supporting_charger(truck, next_target)
-        if charger_node is None:
-            # No reachable charger; fall back to attempting delivery
-            return (int(next_target), 0.0, False)
-
-        if charger_node == current_node:
-            charge_action = self._build_charge_action(env, truck, next_target)
-            if charge_action is not None:
-                return charge_action
-
-        return (int(charger_node), 0.0, False)
+        return (int(next_hop), 0.0, False)
 
 
 class GurobiOptimalPolicy:

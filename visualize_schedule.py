@@ -23,6 +23,7 @@ from algo.policy_utils import load_policy
 # Set POLICY_PATH/POLICY_TYPE to "optimal" to visualize the solver policy.
 POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
 POLICY_TYPE = "ppo-variable"
+POLICY_TYPE = "optimal"
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3

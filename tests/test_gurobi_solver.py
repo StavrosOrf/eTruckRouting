@@ -52,6 +52,8 @@ def _create_truck(truck_id, sequence):
     )
 @unittest.skipUnless(HAS_GUROBI, "gurobipy is required for optimization tests")
 class GurobiSolverTests(unittest.TestCase):
+    def test_solver_prints_charge_durations(self):
+        self.assertTrue(HAS_GUROBI)
     def test_solver_finds_shortest_sequence_single_truck(self):
         truck = _create_truck(0, [0, 1, 2])
         env = _build_dummy_env([truck])

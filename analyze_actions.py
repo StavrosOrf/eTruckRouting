@@ -19,6 +19,7 @@ from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
 from train import compute_action_mask
 from algo.policy_utils import load_policy
+from truck_env.optimization import HAS_GUROBI
 
 # ============ CONFIGURATION ============
 POLICIES = [
@@ -26,6 +27,8 @@ POLICIES = [
     ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]
+if HAS_GUROBI:
+    POLICIES.append(("optimal", "optimal"))
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
@@ -78,15 +81,15 @@ def collect_actions(env, policy, gnn_state_space, policy_type, num_episodes, see
         done = truncated = False
 
         while not (done or truncated) and episode_steps < max_steps:
-            gnn_state = gnn_state_space.get_state_GNN(env)
-
             # Select Action
-            if policy_type == "heuristic":
+            if policy_type in ("heuristic", "optimal"):
                 action = policy.get_action(env)
             elif policy_type == "ppo-variable":
+                gnn_state = gnn_state_space.get_state_GNN(env)
                 raw_action = policy.select_action(gnn_state, deterministic=True)
                 action = policy.to_env_action(gnn_state, int(raw_action))
             else:  # ppo standard
+                gnn_state = gnn_state_space.get_state_GNN(env)
                 mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
                 raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
                 if isinstance(raw_action, tuple):
@@ -167,7 +170,12 @@ def main():
     for policy_path, policy_type in POLICIES:
         print(f"Loading: {policy_path} ({policy_type})...")
         policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
-        name = os.path.basename(policy_path) if policy_path != "heuristic" else "Heuristic"
+        if policy_path == "heuristic":
+            name = "Heuristic"
+        elif policy_path == "optimal":
+            name = "Optimal"
+        else:
+            name = os.path.basename(policy_path.rstrip("/"))
         policies[name] = {"policy": policy, "type": resolved_type}
 
     # Collect Data

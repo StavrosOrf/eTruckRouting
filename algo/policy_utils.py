@@ -12,6 +12,7 @@ from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from algo.PPO_actionGNN import PPOActionGNN
 from truck_env.baselines.heuristic_policy import HeuristicPolicy
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
+from truck_env.optimization import HAS_GUROBI, GurobiOptimalPolicy
 
 # Importing only for type checking / documentation purposes.
 from truck_env.state.gnn_state_space import GNNStateSpace  # noqa: F401
@@ -39,6 +40,8 @@ def _normalize_policy_type(label: Optional[str]) -> Optional[str]:
         "heuristic": "heuristic",
         "rule-based": "heuristic",
         "rulebased": "heuristic",
+        "optimal": "optimal",
+        "gurobi": "optimal",
     }
     return mapping.get(cleaned, cleaned)
 
@@ -72,11 +75,23 @@ def load_policy(
     variable-action checkpoint) does not cause hard failures.
     """
     normalized_requested = _normalize_policy_type(requested_algo)
-    if isinstance(policy_path, str) and policy_path.lower() == "heuristic":
-        normalized_requested = "heuristic"
+    if isinstance(policy_path, str):
+        lowered_path = policy_path.lower()
+        if lowered_path == "heuristic":
+            normalized_requested = "heuristic"
+        elif lowered_path == "optimal":
+            normalized_requested = "optimal"
 
     if normalized_requested == "heuristic":
         return HeuristicPolicy(), "heuristic"
+
+    if normalized_requested == "optimal":
+        if not HAS_GUROBI:
+            raise RuntimeError(
+                "The optimal policy requires gurobipy, but it is not available."
+            )
+        policy = GurobiOptimalPolicy(config=config, seed=0)
+        return policy, "optimal"
 
     config_file = os.path.join(policy_path, "ppo_network_config.json")
     if not os.path.exists(config_file):

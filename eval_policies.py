@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
+from truck_env.optimization import HAS_GUROBI
 
 # Import compute_action_mask from train module
 from train import compute_action_mask
@@ -20,14 +21,21 @@ from algo.policy_utils import load_policy
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
-    ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/", "variable-ppo"),
+    # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/", "variable-ppo"),
+    ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewSoCReward_new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]
+
+if HAS_GUROBI:
+    POLICIES.append(("optimal", "optimal"))
+
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 20
+NUM_EVAL_SCENARIOS = 2
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
@@ -41,19 +49,21 @@ def evaluate_policy(
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
         obs, info = env.reset(seed=seed + episode)
+        if hasattr(policy, "start_episode"):
+            policy.start_episode(env)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
 
         while not (done or truncated) and episode_steps < max_steps:
-            gnn_state = gnn_state_space.get_state_GNN(env)
-
-            if policy_type == "heuristic":
+            if policy_type in ("heuristic", "optimal"):
                 action = policy.get_action(env)
             elif policy_type == "ppo-variable":
+                gnn_state = gnn_state_space.get_state_GNN(env)
                 # Use deterministic evaluation (greedy) to match train.py
                 raw_action = policy.select_action(gnn_state, deterministic=True)
                 action = policy.to_env_action(gnn_state, int(raw_action))
             else:  # ppo
+                gnn_state = gnn_state_space.get_state_GNN(env)
                 # Use deterministic evaluation (greedy) to match train.py
                 mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
                 raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
@@ -105,12 +115,21 @@ def main():
 
     # Load policies
     policies = {}
+    policy_name_counts = {}
     for policy_path, policy_type in POLICIES:
         print(f"Loading: {policy_path} ({policy_type})...")
-        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
-        name = (
-            os.path.basename(policy_path) if policy_path != "heuristic" else "Heuristic"
-        )
+        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config, device="cpu")
+        if policy_path == "heuristic":
+            name = "Heuristic"
+        else:
+            base_name = os.path.basename(policy_path.rstrip("/"))
+            # Track duplicate names and append counter if needed
+            if base_name in policy_name_counts:
+                policy_name_counts[base_name] += 1
+                name = f"{base_name} (#{policy_name_counts[base_name]})"
+            else:
+                policy_name_counts[base_name] = 1
+                name = base_name
         policies[name] = {"policy": policy, "type": resolved_type}
 
     # Evaluate all policies

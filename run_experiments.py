@@ -34,8 +34,8 @@ hyperparam_grids = {
     "steps_per_update": [128],
     "epochs": [10],
     "entropy_coef": [0.1],
-    "gnn_hidden_dim": [32, 64, 128],
-    "mlp_hidden_dim": [64, 256],
+    "gnn_hidden_dim": [32],
+    "mlp_hidden_dim": [256],
     "seed": [0],
 }
 
@@ -74,7 +74,8 @@ for config_idx, (
 
     # Build experiment name
     exp_name = f"{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
-    exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
+    exp_name += f"_gnn={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
+    exp_name = "NewSoCReward_new_action_step_" + exp_name  # Prefix for easy identification
     sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
 
     # Build command

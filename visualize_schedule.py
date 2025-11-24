@@ -20,11 +20,13 @@ from train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
-POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/"
+# Set POLICY_PATH/POLICY_TYPE to "optimal" to visualize the solver policy.
+POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
+POLICY_TYPE = "ppo-variable"
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 2
-NUM_STOPS = 5
-SEED = 1000
+NUM_TRUCKS = 10
+NUM_STOPS = 3
+SEED = 10001
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -70,7 +72,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
                 "trucks": truck_details
             })
 
-def run_scenario(policy_type):
+def run_scenario(policy_path, policy_type):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     # Setup
@@ -89,26 +91,28 @@ def run_scenario(policy_type):
     env_init.close()
 
     # Load Policy
-    print(f"Loading policy: {POLICY_PATH} (requested {policy_type})...")
-    policy, active_policy_type = load_policy(POLICY_PATH, policy_type, gnn_state_space, config, device="cpu")
+    print(f"Loading policy: {policy_path} (requested {policy_type})...")
+    policy, active_policy_type = load_policy(policy_path, policy_type, gnn_state_space, config, device="cpu")
 
     # Run Instrumented Environment
     env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False)
     
     print(f"Running scenario with seed {SEED}...")
     obs, info = env.reset(seed=SEED)
+    if hasattr(policy, "start_episode"):
+        policy.start_episode(env)
     done = truncated = False
     episode_steps = 0
     
     while not (done or truncated) and episode_steps < 200:
-        gnn_state = gnn_state_space.get_state_GNN(env)
-
-        if active_policy_type == "heuristic":
+        if active_policy_type in ("heuristic", "optimal"):
             action = policy.get_action(env)
         elif active_policy_type == "ppo-variable":
+            gnn_state = gnn_state_space.get_state_GNN(env)
             raw_action = policy.select_action(gnn_state, deterministic=True)
             action = policy.to_env_action(gnn_state, int(raw_action))
         else:
+            gnn_state = gnn_state_space.get_state_GNN(env)
             mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
             raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
             if isinstance(raw_action, tuple):
@@ -166,8 +170,12 @@ def process_history(history):
             })
     return truck_timelines, truck_ids
 
-def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
-    """Generate Comparison Timeline chart."""
+def _format_label(name: str) -> str:
+    return name.replace("-", " ").replace("_", " ").title()
+
+
+def plot_comparison(history_a, label_a, history_b, label_b, max_time, charging_nodes):
+    """Generate a comparison timeline chart between two policies."""
     
     colors = {
         "routing": "#3498db",      # Blue
@@ -178,8 +186,8 @@ def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
         "failed": "#34495e"        # Dark Blue/Black
     }
     
-    timelines_heuristic, truck_ids = process_history(history_heuristic)
-    timelines_ppo, _ = process_history(history_ppo)
+    timelines_a, truck_ids = process_history(history_a)
+    timelines_b, _ = process_history(history_b)
     
     # Increase figure height to accommodate double lines
     fig, ax = plt.subplots(figsize=(18, 12))
@@ -193,22 +201,22 @@ def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
         
         # Plot Heuristic (Top line)
         y_pos_h = tid + offset
-        for segment in timelines_heuristic[tid]:
+        for segment in timelines_a[tid]:
             _plot_segment(ax, segment, y_pos_h, colors, charging_nodes, label_soc=True)
             
-        # Plot PPO (Bottom line)
+        # Plot policy B (Bottom line)
         y_pos_p = tid - offset
-        for segment in timelines_ppo[tid]:
+        for segment in timelines_b[tid]:
             _plot_segment(ax, segment, y_pos_p, colors, charging_nodes, label_soc=True)
             
         # Add labels for policies
-        ax.text(-0.5, y_pos_h, "Heuristic", ha='right', va='center', fontsize=8, color='gray')
-        ax.text(-0.5, y_pos_p, "PPO", ha='right', va='center', fontsize=8, color='gray')
+        ax.text(-0.5, y_pos_h, label_a, ha='right', va='center', fontsize=8, color='gray')
+        ax.text(-0.5, y_pos_p, label_b, ha='right', va='center', fontsize=8, color='gray')
 
     # Formatting
     ax.set_xlabel("Simulation Time (hours)")
     ax.set_ylabel("Truck ID")
-    ax.set_title(f"Schedule Comparison: Heuristic (Top) vs PPO (Bottom) - Seed {SEED}")
+    ax.set_title(f"Schedule Comparison: {label_a} (Top) vs {label_b} (Bottom) - Seed {SEED}")
     ax.set_xlim(0, max_time)
     ax.set_yticks(truck_ids)
     ax.set_yticklabels([f"Truck {tid}" for tid in truck_ids])
@@ -265,17 +273,24 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
 def main():
     # Run Heuristic
     print("\n--- Running Heuristic Policy ---")
-    hist_h, max_time, charging_nodes, _, env_h, _ = run_scenario("heuristic")
+    hist_h, max_time, charging_nodes, _, env_h, _ = run_scenario("heuristic", "heuristic")
     
-    # Run PPO
-    print("\n--- Running PPO Policy ---")
-    hist_p, _, _, _, env_p, _ = run_scenario("ppo-variable")
+    # Run comparison policy
+    print(f"\n--- Running {POLICY_TYPE} Policy ---")
+    hist_p, _, _, _, env_p, active_type = run_scenario(POLICY_PATH, POLICY_TYPE)
     
     # Plot Comparison
-    plot_comparison(hist_h, hist_p, max_time, charging_nodes)
+    plot_comparison(
+        hist_h,
+        _format_label("heuristic"),
+        hist_p,
+        _format_label(active_type),
+        max_time,
+        charging_nodes,
+    )
     
     # Plot Queue Dynamics for PPO (most relevant)
-    print("Plotting queue dynamics for PPO...")
+    print(f"Plotting queue dynamics for {active_type}...")
     plotter = EnvironmentPlotter(OUTPUT_DIR, verbose=False, use_osm=False)
     plotter.plot_charger_queue_dynamics(env_p.charging_station, env_p.transport_graph, max_time)
 

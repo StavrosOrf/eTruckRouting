@@ -55,6 +55,9 @@ class Truck:
         # Route tracking (for GNN state representation)
         self.route_destination = None  # Next destination when on route
         self.route_arrival_time = None  # Event time when truck will arrive at destination
+        
+        # Charging policy: truck must leave after charging
+        self.must_leave_charger = False  # True if truck just finished charging and must leave
     
     def get_next_delivery_target(self) -> Optional[int]:
         """
@@ -95,6 +98,7 @@ class Truck:
         self.current_battery -= discharge
         self.total_distance_traveled += distance
         self.total_time_elapsed += travel_time
+        self.must_leave_charger = False  # Reset flag when moving away
         
         # Check if this was a delivery target
         if node == self.get_next_delivery_target():
@@ -124,6 +128,7 @@ class Truck:
         self.num_charging_sessions += 1
         self.is_charging = False
         self.charge_start_time = None
+        self.must_leave_charger = True  # Force truck to leave after charging
     
     def add_waiting_time(self, wait_duration: float):
         """Add waiting time at a charging station."""
@@ -154,6 +159,7 @@ class Truck:
             "battery_percentage": self.get_battery_percentage(),
             "base_speed": self.base_speed,
             "is_charging": self.is_charging,
+            "must_leave_charger": self.must_leave_charger,
             "is_complete": self.is_complete,
             "failed": self.failed,
             "deliveries_remaining": len(self.get_remaining_deliveries()),

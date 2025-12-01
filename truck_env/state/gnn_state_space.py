@@ -481,6 +481,8 @@ class GNNStateSpace:
                 action_local_indices.append(local_idx)
             action_is_charging.append(bool(is_charging_action))
 
+        print(f'\n\n env.active_truck_id: {env.active_truck_id}')
+        print(f'truck_id_to_idx: {truck_id_to_idx}')
         if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
             active_truck_idx = truck_id_to_idx[env.active_truck_id]
             if active_truck_idx is not None:
@@ -591,6 +593,8 @@ class GNNStateSpace:
                         _append_action_metadata(-1, True)
                         action_charge_durations.append(float(charge_hours))
             else:
+                # print seed env
+                print(f"Active truck ID: {env.active_truck_id}, Truck ID to Index Mapping: {truck_id_to_idx}")
                 raise ValueError("Active truck index not found in truck_id_to_idx mapping")
 
         # Convert to tensors
@@ -637,23 +641,19 @@ class GNNStateSpace:
             active_truck_idx if env.active_truck_id in truck_id_to_idx else None,
         )
         
-        print(f'action_local_index: {data.action_local_index}')
-        print(f'action_node_type: {data.action_node_type}')
-        print(f'action_is_charging: {data.action_is_charging}')
-        print(f'action_charge_durations: {data.action_charge_durations}')
-        print(f'can_charge_here: {data.can_charge_here}')
-        print(f'num_actions: {data.num_actions}')
+        # print(f'action_local_index: {data.action_local_index}')
+        # print(f'action_node_type: {data.action_node_type}')
+        # print(f'action_is_charging: {data.action_is_charging}')
+        # print(f'action_charge_durations: {data.action_charge_durations}')
+        # print(f'can_charge_here: {data.can_charge_here}')
+        # print(f'num_actions: {data.num_actions}')
         
-        print("Feasible action mask:", data.feasible_action_mask)
-        print("feasible_indices", feasible_indices)
-        print("feasible_action_to_node_map", feasible_action_to_node_map)
-        print("feasible_action_is_charging", feasible_action_is_charging)
-        print("feasible_action_durations", feasible_action_durations)
-            
-        
-        
-        
-        input("Press Enter to continue...")
+        # print("Feasible action mask:", data.feasible_action_mask)
+        # print("feasible_indices", feasible_indices)
+        # print("feasible_action_to_node_map", feasible_action_to_node_map)
+        # print("feasible_action_is_charging", feasible_action_is_charging)
+        # print("feasible_action_durations", feasible_action_durations)
+                    
         return data
 
     # ==================== Node Feature Functions ====================

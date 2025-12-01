@@ -32,9 +32,9 @@ hyperparam_grids = {
     # 'algorithm': ['ppo', 'ppo-variable'],
     "algorithm": ["ppo-variable"],
     "steps_per_update": [128],
-    "epochs": [5, 10],
+    "epochs": [10],
     "entropy_coef": [0.1],
-    "gnn_hidden_dim": [32, 128],
+    "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
     "seed": [0],
 }
@@ -73,7 +73,7 @@ for config_idx, (
     )
 
     # Build experiment name
-    exp_name = f"SanityCheck_{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"NewFeasibleSpace_FixedGraph_{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
 
@@ -109,6 +109,7 @@ for config_idx, (
 
     # Execute command
     os.system(command)
+    # print(command)
     counter += 1
 
     # Wait before starting next experiment to avoid race conditions

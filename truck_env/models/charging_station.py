@@ -554,3 +554,91 @@ class ChargingStation:
                 + dcfast_stats["total_charge_time"],
             },
         }
+
+    def print_queues(self):
+        """
+        Print current status of all charger queues showing which trucks are charging
+        and which are waiting.
+        """
+        print("\n" + "=" * 80)
+        print("CHARGER QUEUE STATUS")
+        print("=" * 80)
+        
+        has_activity = False
+        
+        for charger_node in sorted(self.charging_nodes):
+            charging = self.charger_occupancy.get(charger_node, [])
+            waiting = self.charger_waitlist.get(charger_node, [])
+            capacity = self.charger_capacity[charger_node]
+            charger_type = self.charger_type[charger_node]
+            
+            # Only print chargers with activity
+            if charging or waiting:
+                has_activity = True
+                print(f"\nCharger Node {charger_node} ({charger_type}, Capacity: {capacity})")
+                print("-" * 80)
+                
+                # Print charging trucks
+                if charging:
+                    print(f"  Charging ({len(charging)}/{capacity} ports occupied):")
+                    for truck_id in charging:
+                        end_time = self.truck_charge_end_time.get(truck_id, "unknown")
+                        if end_time != "unknown":
+                            print(f"    • Truck {truck_id} (finishes at t={end_time:.2f}h)")
+                        else:
+                            print(f"    • Truck {truck_id}")
+                else:
+                    print(f"  Charging: None (0/{capacity} ports occupied)")
+                
+                # Print waiting trucks
+                if waiting:
+                    print(f"  Waiting ({len(waiting)} trucks in queue):")
+                    for i, truck_id in enumerate(waiting, 1):
+                        print(f"    {i}. Truck {truck_id}")
+                else:
+                    print("  Waiting: None")
+        
+        if not has_activity:
+            print("  No trucks currently charging or waiting at any charger")
+        
+        print("=" * 80 + "\n")
+
+    def print_charger_queue(self, charger_node: int):
+        """
+        Print current status of a specific charger showing which trucks are charging
+        and which are waiting.
+        
+        Args:
+            charger_node: The charger node ID to print status for
+        """
+        if charger_node not in self.charging_nodes:
+            print(f"  Node {charger_node} is not a charger")
+            return
+        
+        charging = self.charger_occupancy[charger_node]
+        waiting = self.charger_waitlist[charger_node]
+        capacity = self.charger_capacity[charger_node]
+        charger_type = self.charger_type[charger_node]
+        
+        print(f"  Charger Node {charger_node} ({charger_type}, Capacity: {capacity})")
+        print(f"  " + "-" * 76)
+        
+        # Print charging trucks
+        if charging:
+            print(f"    Charging ({len(charging)}/{capacity} ports occupied):")
+            for truck_id in charging:
+                end_time = self.truck_charge_end_time.get(truck_id, "unknown")
+                if end_time != "unknown":
+                    print(f"      • Truck {truck_id} (finishes at t={end_time:.2f}h)")
+                else:
+                    print(f"      • Truck {truck_id}")
+        else:
+            print(f"    Charging: None (0/{capacity} ports occupied)")
+        
+        # Print waiting trucks
+        if waiting:
+            print(f"    Waiting ({len(waiting)} trucks in queue):")
+            for i, truck_id in enumerate(waiting, 1):
+                print(f"      {i}. Truck {truck_id}")
+        else:
+            print(f"    Waiting: None")

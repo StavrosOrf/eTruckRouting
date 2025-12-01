@@ -332,13 +332,13 @@ def train_td3(args):
     # Create training and evaluation environments (evaluation env stays isolated)
     env = EventDrivenTruckEnv(
         config=config,
-        verbose=False,
+        verbose=True, #False
         enable_plotting=False,
         run_id=args.exp_name
     )
     eval_env = EventDrivenTruckEnv(
         config=copy.deepcopy(config),
-        verbose=False,
+        verbose=True,
         enable_plotting=False,
         run_id=f"{args.exp_name}_eval"
     )
@@ -647,13 +647,13 @@ def train_ppo(args):
 
     env = EventDrivenTruckEnv(
         config=config,
-        verbose=False,
+        verbose=True,
         enable_plotting=False,
         run_id=args.exp_name
     )
     eval_env = EventDrivenTruckEnv(
         config=copy.deepcopy(config),
-        verbose=False,
+        verbose=True,
         enable_plotting=False,
         run_id=f"{args.exp_name}_eval"
     )

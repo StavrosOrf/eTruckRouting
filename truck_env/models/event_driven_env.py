@@ -429,9 +429,12 @@ class EventDrivenTruckEnv(gym.Env):
                         else:
                             if self.verbose:
                                 print(
-                                    f"  Truck {truck.truck_id} waiting for charge port at node {node}"
+                                    f"  Truck {truck.truck_id} waiting for charge port at node {node} at time {self.global_clock:.2f}h"
                                 )
                                 print(f"    Will be woken when port becomes available")
+                                # Print the charger queue status for this specific charger
+                                self.charging_station.print_charger_queue(node)
+                                
                         continue
 
                 # Not at a charger or gating passed - truck is ready for decision
@@ -1198,9 +1201,7 @@ class EventDrivenTruckEnv(gym.Env):
         return all_done
 
     def _check_truncated(self) -> bool:
-        """Check if episode is truncated (time limit exceeded)."""
-        if self.global_clock >= self.max_time and self.verbose:
-            input("Press Enter to continue...")
+        """Check if episode is truncated (time limit exceeded)."""        
 
         return self.global_clock >= self.max_time
 

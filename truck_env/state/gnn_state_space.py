@@ -298,7 +298,6 @@ class GNNStateSpace:
                 if truck.route_destination is not None:
                     destination = truck.route_destination
                     time_remaining = max(0.0, truck.route_arrival_time - env.global_clock)
-                    print(f"Truck {truck.truck_id} routing to {destination} with time remaining {time_remaining}"   )
                     time_remaining_norm = time_remaining / self.max_time
                     
                     # Check if destination is a delivery node
@@ -468,7 +467,7 @@ class GNNStateSpace:
         # Map charger IDs to their local indices in charger features
         for charger_id, local_idx in charger_node_to_idx.items():
             if local_idx is not None:
-                node_id_to_type[charger_id] = ('charger', local_idx)
+                node_id_to_type[charger_id] = ('charger', local_idx)                
         
         def _append_action_metadata(node_id: int, is_charging_action: bool):
             """Store metadata for action mapping to node embeddings."""
@@ -502,11 +501,8 @@ class GNNStateSpace:
                     _append_action_metadata(next_delivery, False)
                     action_charge_durations.append(0.0)
                 else:
-                    # No delivery left - add dummy action
-                    action_to_node_map.append((-1, False))
-                    feasible_action_mask.append(False)
-                    _append_action_metadata(-1, False)
-                    action_charge_durations.append(0.0)
+                    raise ValueError("No next delivery found for active truck")
+
 
                 # Actions 1 to N: Go to charger i
                 for charger_id in sorted(charger_node_to_idx.keys()):
@@ -537,6 +533,8 @@ class GNNStateSpace:
                         feasible_action_mask.append(False)
                         _append_action_metadata(-1, True)
                         action_charge_durations.append(float(charge_hours))
+            else:
+                raise ValueError("Active truck index not found in truck_id_to_idx mapping")
 
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
@@ -578,7 +576,24 @@ class GNNStateSpace:
             feasible_action_durations,
             active_truck_idx if env.active_truck_id in truck_id_to_idx else None,
         )
-
+        
+        print(f'action_local_index: {data.action_local_index}')
+        print(f'action_node_type: {data.action_node_type}')
+        print(f'action_is_charging: {data.action_is_charging}')
+        print(f'action_charge_durations: {data.action_charge_durations}')
+        print(f'can_charge_here: {data.can_charge_here}')
+        print(f'num_actions: {data.num_actions}')
+        
+        print("Feasible action mask:", data.feasible_action_mask)
+        print("feasible_indices", feasible_indices)
+        print("feasible_action_to_node_map", feasible_action_to_node_map)
+        print("feasible_action_is_charging", feasible_action_is_charging)
+        print("feasible_action_durations", feasible_action_durations)
+            
+        
+        
+        
+        input("Press Enter to continue...")
         return data
 
     # ==================== Node Feature Functions ====================

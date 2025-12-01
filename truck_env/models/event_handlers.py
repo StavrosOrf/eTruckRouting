@@ -104,7 +104,7 @@ class EventHandler:
                 )
 
         if self.verbose:
-            print(f"  Truck {truck.truck_id} arrived at node {data['destination']}")
+            print(f"  Truck {truck.truck_id} arrived at node {data['destination']} at time {global_clock:.2f}")
             print(
                 f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)"
             )

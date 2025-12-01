@@ -423,7 +423,7 @@ class EventDrivenTruckEnv(gym.Env):
                             )
                             if self.verbose:
                                 print(
-                                    f"  Truck {truck.truck_id} waiting for charge port at node {node}"
+                                    f"  Truck {truck.truck_id} waiting for charge port at node {node} at time {self.global_clock:.2f}h"
                                 )
                                 print(f"    Will recheck at t={next_check_time:.2f}h")
                         else:
@@ -447,7 +447,7 @@ class EventDrivenTruckEnv(gym.Env):
                         truck.add_waiting_time(waiting_duration)
                         
                         if self.verbose:
-                            print(f"  Truck {truck.truck_id} finished waiting")
+                            print(f"  Truck {truck.truck_id} finished waiting at {self.global_clock:.2f}h")
                             print(f"    Waited: {waiting_duration:.2f}h")
                             print(f"    Waiting penalty (to be applied on next action): {waiting_penalty:.2f}")
                     
@@ -870,39 +870,6 @@ class EventDrivenTruckEnv(gym.Env):
 
         if not can_proceed:
             raise ValueError("Truck cannot start charging due to gating failure")
-            # This should not happen because gating is checked before truck becomes ready
-            # Truck wants to charge but no port available - go to waiting_to_charge state
-            self.truck_states[truck.truck_id] = "waiting_to_charge"
-            
-            # Track when truck starts waiting (if not already tracked)
-            if truck.truck_id not in self.waiting_start_times:
-                self.waiting_start_times[truck.truck_id] = self.global_clock
-
-            # Only schedule recheck if we have a specific time
-            if next_check_time is not None:
-                heapq.heappush(
-                    self.event_queue,
-                    Event(
-                        time=next_check_time,
-                        event_type=EventType.TRUCK_READY,
-                        truck_id=truck.truck_id,
-                        data={"reason": "recheck_charge_attempt"},
-                    ),
-                )
-                if self.verbose:
-                    print(
-                        f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state."
-                    )
-                    print(f"    Will recheck at t={next_check_time:.2f}h")
-            else:
-                if self.verbose:
-                    print(
-                        f"  Truck {truck.truck_id} cannot start charging yet (no free port). Going to waiting state."
-                    )
-                    print(f"    Will be woken when port becomes available")
-
-            # Small time penalty for attempting to charge when no port available
-            return -0.01
 
         # Get charger type and determine charge rate
         charger_type = self.charging_station.charger_type[charger_node]
@@ -910,7 +877,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         if charger_type == "DCFast":
             # Temporary fallback: use Level2 parameters until DCFast is implemented
-            charger_config = charging_config["level2"]
+            charger_config = charging_config["dcfast"]
             charge_rate = charger_config["charge_rate"]  # kW
             efficiency = charger_config["efficiency"]
         else:  # Level2

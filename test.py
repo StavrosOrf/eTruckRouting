@@ -17,14 +17,14 @@ def evaluate_env(seed: int = 42):
     }
 
     config = load_config(config_file)
-    config.update(config_overwrite)
-
+    config['environment'].update(config_overwrite)
+    
     # create an instance of the environment
     env = EventDrivenTruckEnv(
         config=config,
         run_id="test_run",
         verbose=True,
-        enable_plotting=False,
+        enable_plotting=True,
     )
 
     obs, info = env.reset(seed=seed)
@@ -42,9 +42,9 @@ def evaluate_env(seed: int = 42):
 
     policy = HeuristicPolicy(verbose=False)
     gnn_state_space = GNNStateSpace(
-        num_trucks=config["num_trucks"],
-        num_stops=config["num_stops"],
-        max_time=config["max_time"],
+        num_trucks=config['environment']["num_trucks"],
+        num_stops=config['environment']["num_stops"],
+        max_time=config['environment']["max_time"],
         num_charging_nodes=len(env.charging_nodes),
         device="cpu",
     )
@@ -96,6 +96,6 @@ def evaluate_env(seed: int = 42):
 
 if __name__ == "__main__":
 
-    for i in range(100):
+    for i in range(100,101):
         print(f"\n\n===== EVALUATION RUN {i+1} =====")
         evaluate_env(seed=i)

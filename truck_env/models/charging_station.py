@@ -197,73 +197,63 @@ class ChargingStation:
         free_slots = max(0, capacity - occupancy)
         waitlist = self.charger_waitlist[charger_node]
 
-        def ensure_in_waitlist(tid: int, planned: Optional[float]):
-            """Add truck to waitlist if not already present."""
-            if not any(e["truck_id"] == tid for e in waitlist):
-                waitlist.append({"truck_id": tid, "planned_plug_time": planned})
-                # Record arrival event
-                self._record_queue_state(charger_node, global_clock, tid, 'arrive')
-            else:
-                if planned is not None:
-                    for e in waitlist:
-                        if e["truck_id"] == tid:
-                            e["planned_plug_time"] = planned
-                            break
-
+        # Check if truck is already in waitlist
         idx = next(
             (i for i, e in enumerate(waitlist) if e["truck_id"] == truck_id), None
         )
 
         if idx is None:
-            # New arrival at charger
+            # NEW ARRIVAL: Truck not in waitlist yet
+            
+            # Case 1: Free slots available AND no one waiting ahead
+            # Truck can charge immediately - don't add to waitlist
             if free_slots > 0 and len(waitlist) == 0:
-                # Scenario 1: No other truck is waiting at any port
-                # Use lookup table to predict wait time
-                util = occupancy / float(capacity) if capacity > 0 else 0.0
-                wait_h = self.get_waiting_time(charger_node, util)
-                if wait_h > 0:
-                    plug_time = global_clock + wait_h
-                    ensure_in_waitlist(truck_id, planned=plug_time)
-                    return False, plug_time  # Schedule event at predicted time
-                else:
-                    ensure_in_waitlist(truck_id, planned=global_clock)
-                    return True, None  # Can proceed immediately
-            elif capacity == 1 and occupancy > 0:
-                # Scenario 2: Single-port charger with truck already charging
-                # Truck will ONLY be woken when the charging truck finishes
-                ensure_in_waitlist(truck_id, planned=None)
-                return False, None  # No self-scheduled event - wait for wake
-            elif capacity > 1 and (occupancy > 0 or len(waitlist) > 0):
-                # Scenario 3: Multi-port charger with trucks already charging/waiting
-                # Sample wait time from lookup table
-                util = occupancy / float(capacity) if capacity > 0 else 0.0
-                wait_h = self.get_waiting_time(charger_node, util)
+                # Record arrival event (but not added to waitlist)
+                self._record_queue_state(charger_node, global_clock, truck_id, 'arrive')
+                return True, None  # Can proceed immediately
+            
+            # Case 2: All ports occupied OR someone is already waiting
+            # Add to waitlist and handle based on capacity
+            waitlist.append({"truck_id": truck_id, "planned_plug_time": None})
+            self._record_queue_state(charger_node, global_clock, truck_id, 'arrive')
+            
+            # For single-port charger, truck will be woken when current charger finishes
+            if capacity == 1:
+                return False, None  # Wait for wake event
+            
+            # For multi-port charger, estimate wait time from lookup table
+            util = occupancy / float(capacity) if capacity > 0 else 0.0
+            wait_h = self.get_waiting_time(charger_node, util)
+            
+            if wait_h > 0:
                 plug_time = global_clock + max(wait_h, 0.1)  # At least 6 minutes
-                ensure_in_waitlist(truck_id, planned=plug_time)
-                return False, plug_time  # Schedule event at predicted time
+                waitlist[-1]["planned_plug_time"] = plug_time
+                return False, plug_time  # Schedule recheck at predicted time
             else:
-                # Fallback: wait for wake
-                ensure_in_waitlist(truck_id, planned=None)
+                # No predicted wait - will be woken when port becomes available
                 return False, None
+        
         else:
-            # Already waiting in line
+            # ALREADY IN WAITLIST: Check if truck can proceed now
             planned = waitlist[idx]["planned_plug_time"]
-            if (
-                (free_slots > 0)
-                and (idx < free_slots)
-                and (planned is None or planned <= global_clock)
-            ):
-                # Eligible to act now - at front of queue with available slot
+            
+            # Can proceed if:
+            # 1. There's a free slot available
+            # 2. Truck is at the front of the queue (within first free_slots positions)
+            # 3. Any planned time has passed
+            if (free_slots > 0 
+                and idx < free_slots 
+                and (planned is None or planned <= global_clock)):
+                # Eligible to charge now
                 return True, None
+            
+            # Can't proceed yet
+            if planned is not None and planned > global_clock:
+                # Has a scheduled recheck time
+                return False, planned
             else:
-                # Can't proceed yet
-                # Only schedule recheck if this truck has a planned time (first in queue)
-                if planned is not None and planned > global_clock:
-                    # Use the planned plug time
-                    return False, planned
-                else:
-                    # No planned time - truck will be woken by wake_waiting_trucks
-                    return False, None
+                # Will be woken by wake_waiting_trucks
+                return False, None
 
     def start_charging(
         self, truck_id: int, charger_node: int, charge_hours: float, global_clock: float

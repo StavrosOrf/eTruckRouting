@@ -923,7 +923,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     if fig4 is not None:
         plt.close(fig4)
 
-    # input("Press Enter to continue...")
+    input("Press Enter to continue...")
     # Run steps and visualize
     for step in range(1, 10):
         action = policy.get_action(env)
@@ -956,7 +956,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         
         # Print some stats
         print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")
-        # input("Press Enter to continue...")
+        input("Press Enter to continue...")
 
         if done or truncated:
             print("Episode finished!")

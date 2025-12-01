@@ -481,8 +481,8 @@ class GNNStateSpace:
                 action_local_indices.append(local_idx)
             action_is_charging.append(bool(is_charging_action))
 
-        print(f'\n\n env.active_truck_id: {env.active_truck_id}')
-        print(f'truck_id_to_idx: {truck_id_to_idx}')
+        # print(f'\n\n env.active_truck_id: {env.active_truck_id}')
+        # print(f'truck_id_to_idx: {truck_id_to_idx}')
         if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
             active_truck_idx = truck_id_to_idx[env.active_truck_id]
             if active_truck_idx is not None:
@@ -607,6 +607,7 @@ class GNNStateSpace:
             data.action_is_charging = torch.tensor(action_is_charging, dtype=torch.bool, device=self.device)
             data.action_charge_durations = torch.tensor(action_charge_durations, dtype=torch.float32, device=self.device)
         else:
+            self.env.charging_station.print_queues()
             raise ValueError("No action metadata found for active truck")
             # data.action_node_type = torch.zeros((0,), dtype=torch.long, device=self.device)
             # data.action_local_index = torch.zeros((0,), dtype=torch.long, device=self.device)

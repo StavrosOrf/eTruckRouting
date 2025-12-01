@@ -274,6 +274,7 @@ source = { editable = "." }
 dependencies = [
     { name = "contextily" },
     { name = "dm-tree" },
+    { name = "gurobipy" },
     { name = "gymnasium" },
     { name = "matplotlib" },
     { name = "networkx" },
@@ -282,6 +283,7 @@ dependencies = [
     { name = "pillow" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "seaborn" },
     { name = "torch" },
     { name = "torch-geometric" },
     { name = "tqdm" },
@@ -292,6 +294,7 @@ dependencies = [
 requires-dist = [
     { name = "contextily", specifier = ">=1.2.1" },
     { name = "dm-tree", specifier = ">=0.1.8" },
+    { name = "gurobipy", specifier = "==13.0.0" },
     { name = "gymnasium", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "networkx", specifier = ">=3.5" },
@@ -300,6 +303,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "scikit-learn", specifier = ">=1.3.2" },
     { name = "scipy", specifier = ">=1.16.2" },
+    { name = "seaborn", specifier = ">=0.12.2" },
     { name = "torch", specifier = ">=2.9.0" },
     { name = "torch-geometric", specifier = ">=2.5.1" },
     { name = "tqdm", specifier = ">=4.67" },
@@ -434,6 +438,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9a/c8/dd58967d119baab745caec2f9d853297cec1989ec1d63f677d3880632b88/gitpython-3.1.45.tar.gz", hash = "sha256:85b0ee964ceddf211c41b9f27a49086010a190fd8132a24e21f362a4b36a791c", size = 215076, upload-time = "2025-07-24T03:45:54.871Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/61/d4b89fec821f72385526e1b9d9a3a0385dda4a72b206d28049e2c7cd39b8/gitpython-3.1.45-py3-none-any.whl", hash = "sha256:8908cb2e02fb3b93b7eb0f2827125cb699869470432cc885f019b8fd0fccff77", size = 208168, upload-time = "2025-07-24T03:45:52.517Z" },
+]
+
+[[package]]
+name = "gurobipy"
+version = "13.0.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/2c/2d05d2cb9c9de8a3bbb5da21dfbfa608c13e9cff683ffb32a7a04cf5ced4/gurobipy-13.0.0-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:f5a9d7b25aaff4a2317ff0edef1080a85ebfb50143956c0e324428a249970c11", size = 15943425, upload-time = "2025-11-11T00:30:20.922Z" },
+    { url = "https://files.pythonhosted.org/packages/63/db/0cb931ac18636ea48bd0bdae34168843b8739c4816ca3295713e0d2d802d/gurobipy-13.0.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ad200cc39680a7e126cf65e5a36197adb56cbca470fc2731705e38d4dfc8b13c", size = 14843598, upload-time = "2025-11-11T00:30:24.733Z" },
+    { url = "https://files.pythonhosted.org/packages/56/e0/e6416d22716a79e8c122a04884a7c7c15a6441bcd0171258d73211067f2c/gurobipy-13.0.0-cp313-cp313-manylinux_2_26_aarch64.whl", hash = "sha256:d31e6038afa6d0bca0545ba1ea119f3726965dc94d75fb81a69aaaecfbb71682", size = 87198134, upload-time = "2025-11-11T00:30:43.233Z" },
+    { url = "https://files.pythonhosted.org/packages/52/1b/93d44f5b8f9960cf74e312d905ed1cf02783466c222b542d78493285cd79/gurobipy-13.0.0-cp313-cp313-win_amd64.whl", hash = "sha256:8e36c58e2c1fa0c0d77d369cce2ad4d228caf863b15b151ef886aec1c5e8cd1b", size = 11211650, upload-time = "2025-11-11T00:30:49.264Z" },
 ]
 
 [[package]]
@@ -1151,6 +1166,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/f2/b31d75cb9b5fa4dd39a0a931ee9b33e7f6f36f23be5ef560bf72e0f92f32/scipy-1.16.3-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:e7efa2681ea410b10dde31a52b18b0154d66f2485328830e45fdf183af5aefc6", size = 38796678, upload-time = "2025-10-28T17:35:26.354Z" },
     { url = "https://files.pythonhosted.org/packages/b4/1e/b3723d8ff64ab548c38d87055483714fefe6ee20e0189b62352b5e015bb1/scipy-1.16.3-cp313-cp313t-win_amd64.whl", hash = "sha256:2d1ae2cf0c350e7705168ff2429962a89ad90c2d49d1dd300686d8b2a5af22fc", size = 38640178, upload-time = "2025-10-28T17:35:35.304Z" },
     { url = "https://files.pythonhosted.org/packages/8e/f3/d854ff38789aca9b0cc23008d607ced9de4f7ab14fa1ca4329f86b3758ca/scipy-1.16.3-cp313-cp313t-win_arm64.whl", hash = "sha256:0c623a54f7b79dd88ef56da19bc2873afec9673a48f3b85b18e4d402bdd29a5a", size = 25803246, upload-time = "2025-10-28T17:35:42.155Z" },
+]
+
+[[package]]
+name = "seaborn"
+version = "0.13.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/59/a451d7420a77ab0b98f7affa3a1d78a313d2f7281a57afb1a34bae8ab412/seaborn-0.13.2.tar.gz", hash = "sha256:93e60a40988f4d65e9f4885df477e2fdaff6b73a9ded434c1ab356dd57eefff7", size = 1457696, upload-time = "2024-01-25T13:21:52.551Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/11/00d3c3dfc25ad54e731d91449895a79e4bf2384dc3ac01809010ba88f6d5/seaborn-0.13.2-py3-none-any.whl", hash = "sha256:636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987", size = 294914, upload-time = "2024-01-25T13:21:49.598Z" },
 ]
 
 [[package]]

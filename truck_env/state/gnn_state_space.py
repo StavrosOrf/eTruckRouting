@@ -89,6 +89,8 @@ class GNNStateSpace:
         self._delivery_feature_dim = 3
         self._charger_feature_dim = 4
         self._edge_feature_dim = 2
+        
+        self.BIDIRECTIONAL_EDGES = True
 
     def get_state_GNN(self, env) -> HeteroData:
         """
@@ -143,6 +145,7 @@ class GNNStateSpace:
             data['truck'].x = torch.tensor(truck_features_array, dtype=torch.float32, device=self.device)
             self._truck_feature_dim = truck_features_array.shape[1]
         else:
+            raise ValueError("No active trucks found")
             data['truck'].x = torch.zeros((0, self._truck_feature_dim), dtype=torch.float32, device=self.device)
         
         # 2. Build delivery nodes (only undelivered)
@@ -170,6 +173,7 @@ class GNNStateSpace:
             data['delivery'].x = torch.tensor(delivery_features_array, dtype=torch.float32, device=self.device)
             self._delivery_feature_dim = delivery_features_array.shape[1]
         else:
+            raise ValueError("No delivery nodes found")
             data['delivery'].x = torch.zeros((0, self._delivery_feature_dim), dtype=torch.float32, device=self.device)
         
         # 3. Build charger nodes (all chargers)
@@ -188,22 +192,12 @@ class GNNStateSpace:
             data['charger'].x = torch.tensor(charger_features_array, dtype=torch.float32, device=self.device)
             self._charger_feature_dim = charger_features_array.shape[1]
         else:
-            data['charger'].x = torch.zeros((0, self._charger_feature_dim), dtype=torch.float32, device=self.device)
+            raise ValueError("No charger features found")
+            # data['charger'].x = torch.zeros((0, self._charger_feature_dim), dtype=torch.float32, device=self.device)
 
         # Get max truck battery capacity for feasibility checks
         max_battery_capacity = max(truck.battery_capacity for truck in env.trucks)
-
-        # Build edges by type
-        # Edge types we'll create:
-        # - ('truck', 'to', 'delivery')
-        # - ('delivery', 'to', 'truck')
-        # - ('truck', 'to', 'charger')
-        # - ('charger', 'to', 'truck')
-        # - ('truck', 'to', 'truck')
-        # - ('charger', 'to', 'charger')
-        # - ('charger', 'to', 'delivery')
-        # - ('delivery', 'to', 'delivery')
-        
+   
         edge_dict = {
             ('truck', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
             ('delivery', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
@@ -212,6 +206,7 @@ class GNNStateSpace:
             ('truck', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
             ('charger', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
             ('charger', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+            ('delivery', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
             ('delivery', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
         }
 
@@ -236,8 +231,10 @@ class GNNStateSpace:
                     # Bidirectional edge with 0 energy/time (at charger)
                     edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
                     edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, 0.0])
-                    edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
-                    edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
+                    
+                    if self.BIDIRECTIONAL_EDGES:                    
+                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
                     
             elif truck.route_destination is None:
                 # READY: connect to next delivery and all feasible chargers
@@ -252,17 +249,20 @@ class GNNStateSpace:
                         energy, time = 0.0, 0.0
                     else:
                         energy = env.transport_graph.get_path_energy(current_location, next_delivery)
+                        energy_inv = env.transport_graph.get_path_energy(next_delivery, current_location)             
+                        
                         time = env.transport_graph.get_time_distance(current_location, next_delivery)
-                    
+                        time_inv = env.transport_graph.get_time_distance(next_delivery, current_location)
+
                     # Only add edge if energy is feasible (< current battery)
                     if energy < current_battery and not np.isinf(energy):
-                        # Normalize edge features
-                        energy_norm = energy / 1000.0
-                        time_norm = time / self.max_time
+                        # Normalize edge features                        
                         edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, delivery_idx])
-                        edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy_norm, time_norm])
-                        edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
-                        edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_norm, time_norm])
+                        edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])                        
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
+                            edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
                 
                 # Connect to all chargers (if feasible with current battery)
                 for charger_id, charger_idx in charger_node_to_idx.items():
@@ -271,28 +271,34 @@ class GNNStateSpace:
                         # Add 0-weight edge to current location
                         edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
                         edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, 0.0])
-                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
-                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                            edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, 0.0])
+                            
                         continue
                     
                     energy = env.transport_graph.get_path_energy(current_location, charger_id)
+                    energy_inv = env.transport_graph.get_path_energy(charger_id, current_location)             
                     time = env.transport_graph.get_time_distance(current_location, charger_id)
+                    time_inv = env.transport_graph.get_time_distance(charger_id, current_location)
                     
                     # Only add edge if energy is feasible (< current battery)
                     if energy < current_battery and not np.isinf(energy):
                         # Normalize edge features
-                        energy_norm = energy / 1000.0
-                        time_norm = time / self.max_time
                         edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
-                        edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([energy_norm, time_norm])
-                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
-                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([energy_norm, time_norm])
+                        edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([energy/1000.0, time/self.max_time])
+                        
+                        if self.BIDIRECTIONAL_EDGES:                        
+                            edge_dict[('charger', 'to', 'truck')]['edge_index'].append([charger_idx, truck_idx])
+                            edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
             
             else:
                 # ROUTING: connect only to destination node
                 if truck.route_destination is not None:
                     destination = truck.route_destination
-                    time_remaining = max(0.0, truck.route_arrival_time - env.global_clock) if truck.route_arrival_time else 0.0
+                    time_remaining = max(0.0, truck.route_arrival_time - env.global_clock)
+                    print(f"Truck {truck.truck_id} routing to {destination} with time remaining {time_remaining}"   )
                     time_remaining_norm = time_remaining / self.max_time
                     
                     # Check if destination is a delivery node
@@ -300,16 +306,20 @@ class GNNStateSpace:
                         dest_idx = delivery_node_to_idx[destination]
                         edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, dest_idx])
                         edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([0.0, time_remaining_norm])
-                        edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
-                        edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
+                            edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
                     
                     # Check if destination is a charger node
                     elif destination in charger_node_to_idx:
                         dest_idx = charger_node_to_idx[destination]
                         edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, dest_idx])
                         edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([0.0, time_remaining_norm])
-                        edge_dict[('charger', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
-                        edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            edge_dict[('charger', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
+                            edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
 
         # 5. Add edges between chargers (always bidirectional if feasible)
         for i, charger1_id in enumerate(env.charging_nodes):
@@ -322,18 +332,20 @@ class GNNStateSpace:
                     continue
                 charger2_idx = charger_node_to_idx[charger2_id]
                 
-                energy_dist = env.transport_graph.get_path_energy(charger1_id, charger2_id)
+                energy_dist = env.transport_graph.get_path_energy(charger1_id, charger2_id)    
+                energy_dist_back = env.transport_graph.get_path_energy(charger2_id, charger1_id)            
+                
                 time_to_traverse = env.transport_graph.get_time_distance(charger1_id, charger2_id)
+                time_to_traverse_back = env.transport_graph.get_time_distance(charger2_id, charger1_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
-                    # Normalize edge features
-                    energy_norm = energy_dist / 1000.0
-                    time_norm = time_to_traverse / self.max_time
+                    # Normalize edge features                    
                     edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger1_idx, charger2_idx])
-                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_norm, time_norm])
-                    
+                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist/1000.0, time_to_traverse/self.max_time])
+                
+                if energy_dist_back <= max_battery_capacity and not np.isinf(energy_dist_back):
                     edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger2_idx, charger1_idx])
-                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_norm, time_norm])
+                    edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist_back/1000.0, time_to_traverse_back/self.max_time])
 
         # 6. Add edges between chargers and deliveries (bidirectional if feasible)
         for charger_id in env.charging_nodes:
@@ -345,7 +357,7 @@ class GNNStateSpace:
                 delivery_idx = delivery_node_to_idx[delivery_id]
                 
                 # Charger → Delivery
-                energy_dist = env.transport_graph.get_path_energy(charger_id, delivery_id)
+                energy_dist = env.transport_graph.get_path_energy(charger_id, delivery_id)                
                 time_to_traverse = env.transport_graph.get_time_distance(charger_id, delivery_id)
                 
                 if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
@@ -355,17 +367,6 @@ class GNNStateSpace:
                     edge_dict[('charger', 'to', 'delivery')]['edge_index'].append([charger_idx, delivery_idx])
                     edge_dict[('charger', 'to', 'delivery')]['edge_attr'].append([energy_norm, time_norm])
                 
-                # Delivery → Charger (reverse direction)
-                # Note: This is delivery->charger but we don't have that edge type defined
-                # We'll add it to charger->delivery with reversed indices
-                # Actually, we should add ('delivery', 'to', 'charger') edge type
-                # But to keep it simple, let's add the reverse edge to the existing type
-                # NO - we need proper bidirectionality, so let's add the reverse edge properly
-
-        # Add missing edge type for delivery->charger
-        if ('delivery', 'to', 'charger') not in edge_dict:
-            edge_dict[('delivery', 'to', 'charger')] = {'edge_index': [], 'edge_attr': []}
-        
         for delivery_id in delivery_node_to_idx.keys():
             delivery_idx = delivery_node_to_idx[delivery_id]
             
@@ -403,8 +404,9 @@ class GNNStateSpace:
                     edge_dict[('delivery', 'to', 'delivery')]['edge_index'].append([delivery1_idx, delivery2_idx])
                     edge_dict[('delivery', 'to', 'delivery')]['edge_attr'].append([energy_norm, time_norm])
                     
-                    energy_dist_back = env.transport_graph.get_path_energy(delivery2_id, delivery1_id)
-                    time_to_traverse_back = env.transport_graph.get_time_distance(delivery2_id, delivery1_id)
+                energy_dist_back = env.transport_graph.get_path_energy(delivery2_id, delivery1_id)
+                time_to_traverse_back = env.transport_graph.get_time_distance(delivery2_id, delivery1_id)
+                if energy_dist_back <= max_battery_capacity and not np.isinf(energy_dist_back):                    
                     # Normalize edge features
                     energy_norm_back = energy_dist_back / 1000.0
                     time_norm_back = time_to_traverse_back / self.max_time
@@ -435,7 +437,8 @@ class GNNStateSpace:
         data.global_clock = torch.tensor([env.global_clock], device=self.device)
         data.num_trucks = torch.tensor([env.num_trucks], device=self.device)
         
-        # Build discrete action space for active truck
+        
+        # ============ BUILD DISCRETE ACTION SPACE METADATA ============
         # Actions: [next_delivery, charger_0, charger_1, ..., charger_N, charge_here]
         # feasible_action_mask marks which actions are valid
         # action_to_node_map maps action_idx -> (node_id, is_charging_action)

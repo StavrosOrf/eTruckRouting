@@ -19,6 +19,8 @@ dependencies = [
     "networkx>=3.5",
     "dm-tree>=0.1.8",
     "contextily>=1.2.1",
+    "gurobipy==13.0.0",
+    "seaborn>=0.12.2",
 ]
 
 [build-system]

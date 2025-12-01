@@ -20,14 +20,14 @@ from algo.policy_utils import load_policy
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
-    ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/", "variable-ppo"),
+    ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 20
+NUM_EVAL_SCENARIOS = 1
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================

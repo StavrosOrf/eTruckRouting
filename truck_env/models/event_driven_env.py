@@ -352,6 +352,7 @@ class EventDrivenTruckEnv(gym.Env):
 
                 # Check if this is a charge completion event
                 reason = event.data.get("reason", "")
+                skip_charger_gating = False
                 if reason == "charge_complete":
 
                     charger_node = event.data["charger_node"]
@@ -379,6 +380,9 @@ class EventDrivenTruckEnv(gym.Env):
                             f"    Charged: {charge_amount:.1f} kWh in {charge_duration:.2f}h"
                         )
 
+                    # After a charge completes the truck must depart; skip gating at this stop
+                    skip_charger_gating = True
+
                     # Wake trucks waiting at this charger
                     self.charging_station.wake_waiting_trucks(
                         charger_node=charger_node,
@@ -390,7 +394,7 @@ class EventDrivenTruckEnv(gym.Env):
 
                 # Charger gating: enforce FCFS waitlist with capacity ports
                 node = int(truck.current_node)
-                if node in self.charging_nodes:
+                if (not skip_charger_gating) and node in self.charging_nodes:
                     can_proceed, next_check_time = (
                         self.charging_station.check_charger_gating(
                             truck_id=truck.truck_id,
@@ -484,6 +488,9 @@ class EventDrivenTruckEnv(gym.Env):
                 # Check the truck's state after arrival - it may have become complete or failed
                 # Only schedule TRUCK_READY if truck is not complete or failed
                 if not (truck.is_complete or truck.failed):
+                    # If truck arrived at a charger, reset per-stop charge flag
+                    if destination in self.charging_nodes:
+                        truck.has_charged_this_stop = False
                     # If truck arrived at a charger, check if port is available
                     if destination in self.charging_nodes:
                         can_proceed, next_check_time = (
@@ -857,6 +864,15 @@ class EventDrivenTruckEnv(gym.Env):
 
         charger_node = truck.current_node
 
+        # Enforce: only one charge per arrival at charger
+        if getattr(truck, "has_charged_this_stop", False):
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} already charged at this stop; skipping additional charge")
+            next_delivery = truck.get_next_delivery_target()
+            if next_delivery is not None:
+                return self._execute_navigation_action(truck, action=self.num_charging_nodes)
+            return 0.0
+
         # If battery already essentially full, redirect to next delivery
         battery_deficit = truck.battery_capacity - truck.current_battery
         if battery_deficit <= 1e-3:
@@ -916,8 +932,7 @@ class EventDrivenTruckEnv(gym.Env):
         charging_config = self.config["charging"]
 
         if charger_type == "DCFast":
-            # Temporary fallback: use Level2 parameters until DCFast is implemented
-            charger_config = charging_config["level2"]
+            charger_config = charging_config["dcfast"]
             charge_rate = charger_config["charge_rate"]  # kW
             efficiency = charger_config["efficiency"]
         else:  # Level2
@@ -940,6 +955,9 @@ class EventDrivenTruckEnv(gym.Env):
             charge_hours=charge_hours,
             global_clock=self.global_clock,
         )
+
+        # Mark that this stop has consumed its single charge opportunity
+        truck.has_charged_this_stop = True
 
         # Schedule TRUCK_READY event when charging completes
         completion_time = self.global_clock + charge_hours
@@ -1135,6 +1153,15 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  Using current location {truck.current_node}")
             charger_node = truck.current_node
         
+        # Enforce: only one charge per arrival at charger
+        if getattr(truck, "has_charged_this_stop", False):
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} already charged at this stop; skipping additional charge (GNN)")
+            next_delivery = truck.get_next_delivery_target()
+            if next_delivery is not None:
+                return self._execute_navigation_action_gnn(truck, next_delivery)
+            return 0.0
+
         # If battery full, go to next delivery instead
         battery_deficit = truck.battery_capacity - truck.current_battery
         if battery_deficit <= 1e-3:
@@ -1196,6 +1223,9 @@ class EventDrivenTruckEnv(gym.Env):
             charge_hours=actual_charge_hours,
             global_clock=self.global_clock,
         )
+
+        # Mark that this stop has consumed its single charge opportunity
+        truck.has_charged_this_stop = True
         
         # Schedule charge completion
         completion_time = self.global_clock + actual_charge_hours
@@ -1299,6 +1329,7 @@ class EventDrivenTruckEnv(gym.Env):
             num_charging_nodes=self.num_charging_nodes,
             num_navigation_actions=self.num_navigation_actions,
             charging_nodes=self.charging_nodes,
+            charge_durations=self.charging_config.get("charge_durations", []),
         )
 
     def get_delivery_sequence_index(self, node_id: int) -> int:

@@ -434,9 +434,12 @@ class PPOVariableActionGNN:
             # global_indices are the indices we actually want to use (subset of feasible actions)
             # We need to map global_indices to positions in action_graph_features
             
-            # Get the indices of feasible actions from the state's mask
-            feasible_mask = state.feasible_action_mask
-            state_feasible_indices = torch.nonzero(feasible_mask, as_tuple=False).view(-1)
+            # Get the indices of feasible actions from the state's stored mapping if present
+            if hasattr(state, "feasible_action_indices"):
+                state_feasible_indices = state.feasible_action_indices
+            else:
+                feasible_mask = state.feasible_action_mask
+                state_feasible_indices = torch.nonzero(feasible_mask, as_tuple=False).view(-1)
             
             # Create mapping from global action index to local index in action_graph_features
             global_to_local = {int(g.item()): i for i, g in enumerate(state_feasible_indices)}
@@ -491,10 +494,8 @@ class PPOVariableActionGNN:
             env_mask = torch.as_tensor(action_mask, dtype=torch.bool)
             mask = self._align_and_combine_masks(mask, env_mask)
         if not mask.any():
-            mask = torch.ones_like(mask, dtype=torch.bool)
+            raise RuntimeError("No feasible actions available after masking.")
         indices = torch.nonzero(mask, as_tuple=False).view(-1)
-        if indices.numel() == 0:
-            indices = torch.arange(mask.numel(), dtype=torch.long)
         if device is not None:
             mask = mask.to(device)
             indices = indices.to(device)

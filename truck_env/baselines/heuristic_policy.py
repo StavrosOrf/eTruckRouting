@@ -187,7 +187,12 @@ class HeuristicPolicy:
                 # Battery upon arrival at charger:
                 battery_on_arrival = max(0.0, current_battery - energy_to_charger)
                 # Charging rate at this charger
-                ctype = env.charger_type.get(node, "level2") if hasattr(env, 'charger_type') else "level2"
+                charger_types = getattr(env, "charging_station", None)
+                ctype = (
+                    charger_types.charger_type.get(node, "Level2")
+                    if charger_types
+                    else "Level2"
+                )
                 cfg = env.charging_config["dcfast"] if ctype == "DCFast" else env.charging_config["level2"]
                 rate = cfg["charge_rate"] * cfg["efficiency"]
                 deficit = max(0.0, min(required_from_charger, battery_capacity) - battery_on_arrival)
@@ -208,7 +213,12 @@ class HeuristicPolicy:
         """Compute minimal charge duration index to satisfy required_energy from current node."""
         durations = env.charging_config["charge_durations"]
         node = int(truck.current_node)
-        charger_type = env.charger_type.get(node, "level2") if hasattr(env, 'charger_type') else "level2"
+        charger_types = getattr(env, "charging_station", None)
+        charger_type = (
+            charger_types.charger_type.get(node, "Level2")
+            if charger_types
+            else "Level2"
+        )
         if charger_type == "DCFast":
             cfg = env.charging_config["dcfast"]
         else:

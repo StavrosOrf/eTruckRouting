@@ -55,6 +55,9 @@ class Truck:
         # Route tracking (for GNN state representation)
         self.route_destination = None  # Next destination when on route
         self.route_arrival_time = None  # Event time when truck will arrive at destination
+        
+        # Charging control: allow only one charge per stop/arrival at a charger
+        self.has_charged_this_stop = False
     
     def get_next_delivery_target(self) -> Optional[int]:
         """

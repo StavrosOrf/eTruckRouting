@@ -176,6 +176,7 @@ def action_to_string(
     num_charging_nodes: int,
     num_navigation_actions: int,
     charging_nodes: list,
+    charge_durations: list = None,
 ) -> str:
     """
     Convert action integer to human-readable string.
@@ -196,5 +197,9 @@ def action_to_string(
         return "Go to next delivery"
     else:
         charge_idx = action - num_navigation_actions
-        hours = charge_idx + 1
+        hours = (
+            charge_durations[charge_idx]
+            if charge_durations and charge_idx < len(charge_durations)
+            else charge_idx + 1
+        )
         return f"Charge for {hours}h"

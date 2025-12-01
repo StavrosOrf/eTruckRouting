@@ -411,6 +411,197 @@ class GNNVisualizer:
         
         plt.tight_layout()
         return fig
+
+    def plot_active_action_graph(self, data, env, title: str = "Active Truck Action Graph"):
+        """
+        Plot the action graph for the active truck only.
+        """
+        if env.active_truck_id is None:
+            print("No active truck to visualize")
+            return None
+
+        truck = env.trucks[env.active_truck_id]
+        if truck.failed or truck.is_complete:
+            print("Active truck is not available for action visualization")
+            return None
+
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        fig.suptitle(title, fontsize=16, fontweight="bold")
+        self._plot_single_truck_action_graph(truck, env, data, ax)
+        plt.tight_layout()
+        return fig
+
+    def plot_state_and_active_action_pair(self, data, env, title: str = "State + Active Action"):
+        """
+        Side-by-side figure: left = state graph layout, right = active truck action graph.
+        """
+        fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        fig.suptitle(title, fontsize=16, fontweight="bold")
+
+        # Left: state network layout
+        try:
+            self._plot_networkx_layout(data, env, axes[0])
+        except Exception as e:
+            axes[0].axis('off')
+            axes[0].text(0.5, 0.5, f"State plot error: {e}", ha='center', va='center')
+
+        # Right: active truck action graph
+        if env.active_truck_id is not None and 0 <= env.active_truck_id < len(env.trucks):
+            truck = env.trucks[env.active_truck_id]
+            if not truck.failed and not truck.is_complete:
+                try:
+                    self._plot_single_truck_action_graph(truck, env, data, axes[1])
+                except Exception as e:
+                    axes[1].axis('off')
+                    axes[1].text(0.5, 0.5, f"Action plot error: {e}", ha='center', va='center')
+            else:
+                axes[1].axis('off')
+                axes[1].text(0.5, 0.5, "Active truck done/failed", ha='center', va='center')
+        else:
+            axes[1].axis('off')
+            axes[1].text(0.5, 0.5, "No active truck", ha='center', va='center')
+
+        plt.tight_layout()
+        return fig
+
+    def plot_feasible_action_graph_from_data(self, data, env, title: str = "Feasible Action Graph (GNN)"):
+        """
+        Visualize the action graph built from GNN state's action tensors, showing only feasible actions.
+
+        Uses:
+        - data.action_to_node_map (list of (node_id, is_charging))
+        - data.feasible_action_mask (bool tensor)
+        - data.action_is_charging (bool tensor)
+        - data.action_charge_durations (float tensor)
+        - data.action_graph_features (tensor for feasible actions only: [type_norm, resulting_soc, dur_norm])
+        - data.node_id_to_type (mapping) for labelling nodes
+        """
+        required = [
+            hasattr(data, 'action_to_node_map'),
+            hasattr(data, 'feasible_action_mask'),
+            hasattr(data, 'action_is_charging'),
+            hasattr(data, 'action_charge_durations'),
+            hasattr(data, 'action_graph_features'),
+            hasattr(data, 'node_id_to_type'),
+        ]
+        if not all(required):
+            print("[ActionGraph] Missing action tensors; cannot plot.")
+            return None
+
+        amap = list(getattr(data, 'action_to_node_map'))
+        fmap = getattr(data, 'feasible_action_mask')
+        acharge = getattr(data, 'action_is_charging')
+        adur = getattr(data, 'action_charge_durations')
+        afeats = getattr(data, 'action_graph_features')  # feasible-only rows
+        node_id_to_type = getattr(data, 'node_id_to_type', {})
+
+        fmap_np = fmap.detach().cpu().numpy() if hasattr(fmap, 'detach') else np.array(fmap, dtype=bool)
+        acharge_np = acharge.detach().cpu().numpy() if hasattr(acharge, 'detach') else np.array(acharge, dtype=bool)
+        adur_np = adur.detach().cpu().numpy() if hasattr(adur, 'detach') else np.array(adur, dtype=float)
+        afeats_np = afeats.detach().cpu().numpy() if hasattr(afeats, 'detach') else np.array(afeats, dtype=float)
+
+        # Gather feasible actions and align features
+        feasible_indices = [i for i, v in enumerate(fmap_np) if bool(v)]
+        if len(feasible_indices) == 0:
+            print("[ActionGraph] No feasible actions.")
+            return None
+        if afeats_np.shape[0] != len(feasible_indices):
+            # Safety: realign to min length
+            k = min(afeats_np.shape[0], len(feasible_indices))
+            feasible_indices = feasible_indices[:k]
+            afeats_np = afeats_np[:k]
+
+        # Build graph
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+        fig.suptitle(title, fontsize=16, fontweight="bold")
+        G = nx.Graph()
+
+        # Central node: active truck
+        active_tid = env.active_truck_id if hasattr(env, 'active_truck_id') else None
+        center_label = f"T{active_tid}" if active_tid is not None and active_tid >= 0 else "Truck"
+        G.add_node(center_label)
+
+        # Prepare nodes for each feasible action
+        action_nodes = []
+        colors = []
+        sizes = []
+        labels = {}
+
+        # Color scheme
+        col_route_deliv = "#4ECDC4"  # teal
+        col_route_ch = "#45B7D1"     # blue
+        col_charge = "#FFA726"       # orange
+
+        # Compose nodes
+        for row_idx, act_idx in enumerate(feasible_indices):
+            node_id, is_ch = amap[act_idx]
+            dur_h = float(adur_np[act_idx]) if act_idx < len(adur_np) else 0.0
+            feat = afeats_np[row_idx] if row_idx < len(afeats_np) else [0, 0, 0]
+            # feat = [type_norm, resulting_soc, dur_norm]
+            resulting_soc = float(feat[1])
+
+            # Determine label prefix by node type
+            if is_ch:
+                # Charging at current location
+                label = f"Charge {dur_h:.1f}h\nSoC→{resulting_soc*100:.0f}%"
+                color = col_charge
+            else:
+                # Navigation
+                t = node_id_to_type.get(node_id, (None, None))[0]
+                if t == 'delivery':
+                    label = f"Go D{node_id}\nSoC→{resulting_soc*100:.0f}%"
+                    color = col_route_deliv
+                else:
+                    label = f"Go C{node_id}\nSoC→{resulting_soc*100:.0f}%"
+                    color = col_route_ch
+
+            node_name = f"A{act_idx}"
+            action_nodes.append(node_name)
+            G.add_node(node_name)
+            labels[node_name] = label
+            colors.append(color)
+            sizes.append(900 if is_ch else 800)
+
+            # Edge from truck center to action
+            G.add_edge(center_label, node_name)
+
+        # Fully connect action nodes among themselves
+        for i in range(len(action_nodes)):
+            for j in range(i + 1, len(action_nodes)):
+                G.add_edge(action_nodes[i], action_nodes[j])
+
+        # Layout: place truck at center, actions on a circle
+        # Compute positions
+        pos = {}
+        pos[center_label] = (0.0, 0.0)
+        n = len(action_nodes)
+        radius = 3.0
+        for k, node in enumerate(action_nodes):
+            ang = 2 * np.pi * k / max(1, n)
+            pos[node] = (radius * np.cos(ang), radius * np.sin(ang))
+
+        # Draw
+        # Draw edges lightly
+        nx.draw_networkx_edges(G, pos, ax=ax, edge_color='gray', alpha=0.25)
+        # Draw center
+        nx.draw_networkx_nodes(G, pos, nodelist=[center_label], node_color="#FF6B6B", node_size=1200, ax=ax)
+        nx.draw_networkx_labels(G, pos, labels={center_label: center_label}, font_size=10, font_weight='bold', ax=ax)
+        # Draw actions
+        nx.draw_networkx_nodes(G, pos, nodelist=action_nodes, node_color=colors, node_size=sizes, ax=ax)
+        nx.draw_networkx_labels(G, pos, labels=labels, font_size=8, font_weight='bold', ax=ax)
+
+        # Legend
+        legend_elems = [
+            mpatches.Patch(color="#FF6B6B", label='Truck (center)'),
+            mpatches.Patch(color=col_route_deliv, label='Route to Delivery'),
+            mpatches.Patch(color=col_route_ch, label='Route to Charger'),
+            mpatches.Patch(color=col_charge, label='Charge Action'),
+        ]
+        ax.legend(handles=legend_elems, loc='upper right', fontsize=8)
+        ax.set_title("Feasible Actions (Fully Connected)", fontweight='bold')
+        ax.axis('off')
+        plt.tight_layout()
+        return fig
     
     def _plot_single_truck_action_graph(self, truck, env, data, ax):
         """Plot action graph for a single truck."""
@@ -605,8 +796,13 @@ class GNNVisualizer:
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, ax=ax, font_size=7)
         
         # Set title with truck info
+        # Compose title; if this is the active truck and at charger, indicate charge allowance
+        title_extra = ""
+        if env.active_truck_id == truck.truck_id and current_location in env.charging_nodes:
+            can_charge_here = bool(getattr(data, 'can_charge_here', False))
+            title_extra = f" | ChargeAllowed: {'YES' if can_charge_here else 'NO'}"
         ax.set_title(
-            f"Truck {truck.truck_id} - {state_str}\n"
+            f"Truck {truck.truck_id} - {state_str}{title_extra}\n"
             f"Location: {current_location} | Battery: {current_battery:.0f}/{truck.battery_capacity:.0f} kWh | "
             f"Deliveries: {truck.current_sequence_index}/{len(truck.delivery_sequence)-1}",
             fontweight="bold",
@@ -621,6 +817,27 @@ class GNNVisualizer:
             mpatches.Patch(color=self.node_colors[2], label='Charger'),
         ]
         ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+
+        # If active truck, show feasible charge durations summary below plot
+        if env.active_truck_id == truck.truck_id:
+            try:
+                fmap = getattr(data, 'feasible_action_mask', None)
+                ain_charge = getattr(data, 'action_is_charging', None)
+                dur = getattr(data, 'action_charge_durations', None)
+                amap = getattr(data, 'action_to_node_map', None)
+                if fmap is not None and ain_charge is not None and dur is not None and amap is not None:
+                    fmap_np = fmap.detach().cpu().numpy() if hasattr(fmap, 'detach') else np.array(fmap, dtype=bool)
+                    ain_np = ain_charge.detach().cpu().numpy() if hasattr(ain_charge, 'detach') else np.array(ain_charge, dtype=bool)
+                    dur_np = dur.detach().cpu().numpy() if hasattr(dur, 'detach') else np.array(dur, dtype=float)
+                    # Filter charge actions for current location
+                    charge_durs = [float(dur_np[i]) for i,(nid,is_c) in enumerate(amap) if is_c and fmap_np[i] and nid == current_location]
+                    if charge_durs:
+                        txt = f"Feasible charge durations here: {', '.join(f'{d:.1f}h' for d in charge_durs)}"
+                    else:
+                        txt = "No feasible charge durations here"
+                    ax.text(0.02, -0.08, txt, transform=ax.transAxes, fontsize=8)
+            except Exception:
+                pass
 
     def plot_graph_info_text(self, data, env, title: str = "Graph Information"):
         """
@@ -904,8 +1121,9 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     )
     figs.append(fig3)
     
-    fig4 = visualizer.plot_action_graph(
-        data_initial, env, title="Initial Action Graph - Feasible Actions"
+    # Active truck's action graph (initial)
+    fig4 = visualizer.plot_active_action_graph(
+        data_initial, env, title="Initial Action Graph - Active Truck"
     )
     if fig4 is not None:
         figs.append(fig4)
@@ -916,12 +1134,22 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     if fig4 is not None:
         output_dir = visualizer.save_figure(fig4, index=-3)
     
+    # Also plot fully connected feasible action graph (initial)
+    fig5 = visualizer.plot_feasible_action_graph_from_data(
+        data_initial, env, title="Initial Feasible Action Graph (GNN)"
+    )
+    if fig5 is not None:
+        figs.append(fig5)
+        output_dir = visualizer.save_figure(fig5, index=-4)
+
     # Close figures to free memory
     plt.close(fig1)
     plt.close(fig2)
     plt.close(fig3)
     if fig4 is not None:
         plt.close(fig4)
+    if fig5 is not None:
+        plt.close(fig5)
 
     # input("Press Enter to continue...")
     # Run steps and visualize
@@ -936,23 +1164,42 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
         print(f"\nGenerating visualization for step {step}...")
         data = gnn_state.get_state_GNN(env)
 
-        fig = visualizer.plot_graph_structure(
+        # State graph figure
+        fig_state = visualizer.plot_graph_structure(
             data, env, title=f"GNN Graph State - Step {step}"
         )
-        figs.append(fig)
-        output_dir = visualizer.save_figure(fig, index=step)
+        figs.append(fig_state)
+        output_dir = visualizer.save_figure(fig_state, index=step)
         
-        # Also generate action graph
-        fig_action = visualizer.plot_action_graph(
-            data, env, title=f"Action Graph - Step {step}"
+        # Active-only action graph
+        fig_action_active = visualizer.plot_active_action_graph(
+            data, env, title=f"Active Truck Action - Step {step}"
         )
-        if fig_action is not None:
-            figs.append(fig_action)
-            output_dir = visualizer.save_figure(fig_action, index=5 + step + 100)
-            plt.close(fig_action)
+        if fig_action_active is not None:
+            figs.append(fig_action_active)
+            output_dir = visualizer.save_figure(fig_action_active, index=500 + step)
+            plt.close(fig_action_active)
+
+        # Side-by-side pair (state + active action)
+        fig_pair = visualizer.plot_state_and_active_action_pair(
+            data, env, title=f"State + Active Action - Step {step}"
+        )
+        if fig_pair is not None:
+            figs.append(fig_pair)
+            output_dir = visualizer.save_figure(fig_pair, index=900 + step)
+            plt.close(fig_pair)
+
+        # Fully connected feasible action graph from GNN data
+        fig_fc = visualizer.plot_feasible_action_graph_from_data(
+            data, env, title=f"Feasible Action Graph (GNN) - Step {step}"
+        )
+        if fig_fc is not None:
+            figs.append(fig_fc)
+            output_dir = visualizer.save_figure(fig_fc, index=1200 + step)
+            plt.close(fig_fc)
         
         # Close main figure to free memory
-        plt.close(fig)
+        plt.close(fig_state)
         
         # Print some stats
         print(f"  Step {step}: Nodes={data.num_nodes}, Edges={data.num_edges}, Reward={reward:.2f}")

@@ -73,6 +73,9 @@ class GNNStateSpace:
         self.num_charging_nodes = num_charging_nodes
         self.max_nodes_in_graph = max_nodes_in_graph
         self.device = device
+        # Charger pruning for action space
+        self.max_charger_actions = 3  # keep top-K charger routes by detour cost
+        self.detour_relaxation = 0.25  # allow chargers within (1+relaxation)*best detour
 
         # Node type constants (no depot)
         self.NODE_TYPE_TRUCK = 0
@@ -486,6 +489,23 @@ class GNNStateSpace:
                 current_battery = active_truck.current_battery
                 current_location = active_truck.current_node
                 battery_pct = active_truck.get_battery_percentage()
+                at_charger = current_location in charger_node_to_idx
+                has_charged_this_stop = bool(getattr(active_truck, 'has_charged_this_stop', False))
+                truck_state = env.truck_states.get(active_truck.truck_id, "")
+                is_waiting_to_charge = truck_state == "waiting_to_charge"
+                can_charge_here_flag = (
+                    (battery_pct < 95.0)
+                    and (not active_truck.is_charging)
+                    and (not is_waiting_to_charge)
+                    and (not has_charged_this_stop)
+                )
+                must_charge_now = (
+                    at_charger
+                    and (not has_charged_this_stop)
+                    and (not active_truck.is_charging)
+                    and truck_state == "ready"
+                    and can_charge_here_flag  # only force charge if charging is actually allowed
+                )
                 
                 charge_durations = env.charging_config.get("charge_durations", [])
 
@@ -493,7 +513,11 @@ class GNNStateSpace:
                 next_delivery = active_truck.get_next_delivery_target()
                 if next_delivery is not None:
                     energy = env.transport_graph.get_path_energy(current_location, next_delivery)
-                    is_feasible = energy < current_battery and not np.isinf(energy)
+                    is_feasible = (
+                        (not must_charge_now)
+                        and energy < current_battery
+                        and not np.isinf(energy)
+                    )
                     action_to_node_map.append((next_delivery, False))
                     feasible_action_mask.append(is_feasible)
                     _append_action_metadata(next_delivery, False)
@@ -505,22 +529,54 @@ class GNNStateSpace:
                     _append_action_metadata(-1, False)
                     action_charge_durations.append(0.0)
 
+                # Pre-compute detour-aware charger shortlist (optional)
+                detour_keep: Optional[Set[int]] = None
+                if next_delivery is not None:
+                    detours = []
+                    for charger_id in sorted(charger_node_to_idx.keys()):
+                        if charger_id == current_location:
+                            continue
+                        energy_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
+                        if np.isinf(energy_to_charger):
+                            continue
+                        energy_charger_to_delivery = env.transport_graph.get_path_energy(charger_id, next_delivery)
+                        if np.isinf(energy_charger_to_delivery):
+                            continue
+                        detour_cost = energy_to_charger + energy_charger_to_delivery
+                        detours.append((charger_id, detour_cost))
+                    if detours:
+                        detours.sort(key=lambda t: t[1])
+                        best = detours[0][1]
+                        threshold = best * (1.0 + self.detour_relaxation)
+                        keep_ids = [cid for cid, cost in detours if cost <= threshold]
+                        if self.max_charger_actions > 0:
+                            keep_ids = keep_ids[: self.max_charger_actions]
+                        detour_keep = set(keep_ids)
+
                 # Actions 1 to N: Go to charger i
                 for charger_id in sorted(charger_node_to_idx.keys()):
                     if charger_id == current_location:
                         # Skip current location in routing actions
                         continue
+                    allowed_by_detour = True
+                    if detour_keep is not None and charger_id not in detour_keep:
+                        allowed_by_detour = False
                     energy = env.transport_graph.get_path_energy(current_location, charger_id)
-                    is_feasible = energy < current_battery and not np.isinf(energy)
+                    is_feasible = (
+                        allowed_by_detour
+                        and (not must_charge_now)
+                        and energy < current_battery
+                        and not np.isinf(energy)
+                    )
                     action_to_node_map.append((charger_id, False))
                     feasible_action_mask.append(is_feasible)
                     _append_action_metadata(charger_id, False)
                     action_charge_durations.append(0.0)
 
-                # Last action: Charge at current location (if at charger and battery not full)
-                if current_location in charger_node_to_idx:
-                    # Check if battery is not full (allow charging if < 95% to avoid precision issues)
-                    can_charge = battery_pct < 95.0
+                # Last actions: Charge at current location (one of durations) if allowed
+                if at_charger:
+                    # Additional gating: only one charge per stop, not already charging or queued
+                    can_charge = can_charge_here_flag
                     can_charge_here = can_charge
                     for charge_hours in charge_durations:
                         action_to_node_map.append((current_location, True))
@@ -534,6 +590,10 @@ class GNNStateSpace:
                         feasible_action_mask.append(False)
                         _append_action_metadata(-1, True)
                         action_charge_durations.append(float(charge_hours))
+
+        # Safety fallback: ensure at least one feasible action for the active truck
+        if action_to_node_map and (not any(feasible_action_mask)):
+            feasible_action_mask[0] = True  # default to next-delivery placeholder
 
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
@@ -567,6 +627,9 @@ class GNNStateSpace:
         feasible_action_to_node_map = [action_to_node_map[i] for i in feasible_indices]
         feasible_action_is_charging = [action_is_charging[i] for i in feasible_indices]
         feasible_action_durations = [action_charge_durations[i] for i in feasible_indices]
+        data.feasible_action_indices = torch.tensor(
+            feasible_indices, dtype=torch.long, device=self.device
+        ) if feasible_indices else torch.zeros((0,), dtype=torch.long, device=self.device)
         
         data.action_graph_features = self._build_action_graph_features(
             env,
@@ -793,15 +856,31 @@ class GNNStateSpace:
         max_charge_duration = max(env.charging_config.get("charge_durations", [1.0])) if env else 1.0
         features = []
         for action_idx, (node_id, is_charging) in enumerate(action_to_node_map):
-            charge_duration = action_charge_durations[action_idx]
+            charge_duration = float(action_charge_durations[action_idx])
             charge_duration_norm = (
                 float(charge_duration) / float(max_charge_duration) if max_charge_duration > 0 else 0.0
             )
             # Determine action type
             if action_is_charging[action_idx]:
                 action_type_norm = 3.0 / 3.0  # Charging action
-                # After charging, battery will be at 100%
-                resulting_soc = 1.0
+                # Estimate SoC after charging by applying duration, rate, efficiency and capacity cap
+                resulting_soc = current_battery / battery_capacity if battery_capacity > 0 else 0.0
+                if battery_capacity > 0 and charge_duration > 0:
+                    charger_type = env.charging_station.charger_type.get(
+                        current_location, "Level2"
+                    )
+                    charging_config = env.config.get("charging", {})
+                    if charger_type == "DCFast":
+                        cfg = charging_config.get("dcfast", charging_config.get("level2", {}))
+                    else:
+                        cfg = charging_config.get("level2", {})
+                    charge_rate = float(cfg.get("charge_rate", 0.0))
+                    efficiency = float(cfg.get("efficiency", 1.0))
+                    charge_amount = charge_duration * charge_rate * efficiency
+                    charge_amount = min(charge_amount, battery_capacity - current_battery)
+                    resulting_soc = max(
+                        0.0, min(1.0, (current_battery + charge_amount) / battery_capacity)
+                    )
             else:
                 # Check if node is a delivery or charger
                 is_delivery_node = node_id not in env.charging_nodes if node_id >= 0 else False

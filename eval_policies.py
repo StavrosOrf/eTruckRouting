@@ -23,8 +23,8 @@ POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/", "variable-ppo"),
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/NewSoCReward_new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/NewSoCReward_new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/new_action_step_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnn=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]

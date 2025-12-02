@@ -20,6 +20,7 @@ from algo.policy_utils import load_policy
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
+    ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
@@ -37,7 +38,7 @@ def evaluate_policy(
     env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps
 ):
     """Evaluate a policy over multiple episodes."""
-    rewards, successes, distances, charging_times = [], [], [], []
+    rewards, successes, distances, charging_times, steps, completion_times = [], [], [], [], [], []
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
         obs, info = env.reset(seed=seed + episode)
@@ -68,6 +69,8 @@ def evaluate_policy(
 
         rewards.append(episode_reward)
         successes.append(1.0 if info.get("all_complete", False) else 0.0)
+        steps.append(episode_steps)
+        completion_times.append(env.global_clock)
 
         total_dist = sum(t.get("total_distance", 0.0) for t in info.get("trucks", []))
         total_charge = sum(
@@ -84,6 +87,10 @@ def evaluate_policy(
         "std_total_distance": np.std(distances),
         "mean_charging_time": np.mean(charging_times),
         "std_charging_time": np.std(charging_times),
+        "mean_steps": np.mean(steps),
+        "std_steps": np.std(steps),
+        "mean_completion_time": np.mean(completion_times),
+        "std_completion_time": np.std(completion_times),
     }
 
 
@@ -105,12 +112,26 @@ def main():
 
     # Load policies
     policies = {}
+    policy_counter = {}  # Track duplicate names
     for policy_path, policy_type in POLICIES:
         print(f"Loading: {policy_path} ({policy_type})...")
         policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
-        name = (
-            os.path.basename(policy_path) if policy_path != "heuristic" else "Heuristic"
-        )
+        
+        # Generate unique name for each policy
+        if policy_path == "heuristic":
+            name = "Heuristic"
+        else:
+            base_name = os.path.basename(policy_path.rstrip('/'))
+            # Truncate name to first 30 characters
+            base_name = base_name[:30]
+            # Handle duplicate names by appending counter
+            if base_name in policy_counter:
+                policy_counter[base_name] += 1
+                name = f"{base_name}_v{policy_counter[base_name]}"
+            else:
+                policy_counter[base_name] = 1
+                name = base_name
+        
         policies[name] = {"policy": policy, "type": resolved_type}
 
     # Evaluate all policies
@@ -137,20 +158,27 @@ def main():
     eval_env.close()
 
     # Print results table
-    print(f"\n{'='*90}\nRESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)\n")
+    print(f"\n{'='*140}")
+    print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)\n")
     print(
-        f"{'Policy':<50} {'Reward':<20} {'Success %':<15} {'Distance (km)':<18} {'Charging (h)':<15}"
+        f"{'Policy':<50} {'Reward':<18} {'Success':<12} {'Steps':<15} "
+        f"{'Time (h)':<18} {'Distance (km)':<18} {'Charging (h)':<18}"
     )
-    print("-" * 90)
+    print("-" * 140)
 
     for name in sorted(results.keys()):
         r = results[name]
         print(
-            f"{name:<50} {r['mean_reward']:8.0f} ±{r['std_reward']:6.0f} {r['success_rate']*100:>6.1f}%      "
-            f"{r['mean_total_distance']:>9.0f} ±{r['std_total_distance']:<6.0f} {r['mean_charging_time']:>7.1f} ±{r['std_charging_time']:<6.1f}"
+            f"{name:<50} "
+            f"{r['mean_reward']:>7.0f}±{r['std_reward']:<7.0f}  "
+            f"{r['success_rate']*100:>5.1f}%      "
+            f"{r['mean_steps']:>6.1f}±{r['std_steps']:<5.1f}  "
+            f"{r['mean_completion_time']:>7.1f}±{r['std_completion_time']:<7.1f}  "
+            f"{r['mean_total_distance']:>7.0f}±{r['std_total_distance']:<7.0f}  "
+            f"{r['mean_charging_time']:>7.1f}±{r['std_charging_time']:<7.1f}"
         )
 
-    print(f"{'='*90}\n")
+    print(f"{'='*140}\n")
 
 
 if __name__ == "__main__":

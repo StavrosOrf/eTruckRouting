@@ -11,7 +11,7 @@ def evaluate_env(seed: int = 42):
     config_file = "truck_env/config_files/config.yaml"
     # overweiten config for testing
     config_overwrite = {
-        "num_trucks": 10,
+        "num_trucks": 100,
         "num_stops": 3,
         "max_time": 200.0,
     }

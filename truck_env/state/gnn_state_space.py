@@ -721,7 +721,7 @@ class GNNStateSpace:
             is_routing,  # State: routing (one-hot)
             is_waiting_to_charge,  # State: waiting_to_charge (one-hot)
             is_charging,  # State: charging (one-hot)
-            float(truck.must_leave_charger),  # Must leave charger flag (binary)
+            # float(truck.must_leave_charger),  # Must leave charger flag (binary)
             deliveries_done_norm,  # Deliveries completed (normalized)
             deliveries_remaining_norm,  # Deliveries remaining (normalized)
             truck.total_time_elapsed / self.max_time,  # Time elapsed (normalized)
@@ -893,7 +893,7 @@ class GNNStateSpace:
                 charge_rate = charger_config["charge_rate"]  # kW
                 efficiency = charger_config["efficiency"]
                 resulting_soc = min(1.0, (current_battery + charge_duration * charge_rate * efficiency) / battery_capacity)
-                print(f'Action {action_idx}: Charging for {charge_duration} hours at node {node_id}, resulting_soc: {resulting_soc:.2f}')
+                # print(f'Action {action_idx}: Charging for {charge_duration} hours at node {node_id}, resulting_soc: {resulting_soc:.2f}')
             else:
                 # Check if node is a delivery or charger
                 is_delivery_node = node_id not in env.charging_nodes if node_id >= 0 else False
@@ -910,7 +910,7 @@ class GNNStateSpace:
                         resulting_soc = max(0.0, (current_battery - energy_consumed) / battery_capacity)
                     else:
                         resulting_soc = 0.0
-                    print(f'Action {action_idx}: Routing to node {node_id} from {current_location}, energy_consumed: {energy_consumed:.2f}, resulting_soc: {resulting_soc:.2f}')
+                    # print(f'Action {action_idx}: Routing to node {node_id} from {current_location}, energy_consumed: {energy_consumed:.2f}, resulting_soc: {resulting_soc:.2f}')
                     
                 else:
                     raise ValueError("Invalid node_id or current_location for routing action")

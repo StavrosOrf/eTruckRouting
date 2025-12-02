@@ -61,8 +61,11 @@ class ChargingStation:
         self.truck_charge_end_time = {}  # truck_id -> expected charge completion time
 
         # Simplified FCFS waitlist per charging station (feeds all ports)
-        # Each entry: {"truck_id": int, "planned_plug_time": Optional[float]}
+        # Each entry: {"truck_id": int, "sequence": int}
         self.charger_waitlist = {node: [] for node in charging_nodes}
+        
+        # Global sequence counter for strict FCFS ordering
+        self.waitlist_sequence_counter = 0
 
         # Charging station utilization tracking
         self.charger_stats = {
@@ -94,6 +97,7 @@ class ChargingStation:
         self.charger_queue = {node: [] for node in self.charging_nodes}
         self.truck_charge_end_time = {}
         self.charger_waitlist = {node: [] for node in self.charging_nodes}
+        self.waitlist_sequence_counter = 0
         self.charger_stats = {
             node: {
                 "total_charge_sessions": 0,
@@ -180,7 +184,7 @@ class ChargingStation:
     ) -> Tuple[bool, Optional[float]]:
         """
         Check if a truck can proceed with an action at a charging station.
-        Enforces FCFS waitlist with capacity ports.
+        Pure event-driven FCFS with strict ordering via sequence numbers.
 
         Args:
             truck_id: ID of the truck
@@ -190,7 +194,7 @@ class ChargingStation:
         Returns:
             Tuple of (can_proceed, next_check_time)
             - can_proceed: True if truck can act now, False otherwise
-            - next_check_time: When to check again (None if can proceed)
+            - next_check_time: Always None (no time-based predictions)
         """
         capacity = int(self.charger_capacity[charger_node])
         occupancy = len(self.charger_occupancy[charger_node])
@@ -213,47 +217,31 @@ class ChargingStation:
                 return True, None  # Can proceed immediately
             
             # Case 2: All ports occupied OR someone is already waiting
-            # Add to waitlist and handle based on capacity
-            waitlist.append({"truck_id": truck_id, "planned_plug_time": None})
+            # Add to waitlist with sequence number for strict FCFS ordering
+            self.waitlist_sequence_counter += 1
+            waitlist.append({
+                "truck_id": truck_id, 
+                "sequence": self.waitlist_sequence_counter
+            })
             self._record_queue_state(charger_node, global_clock, truck_id, 'arrive')
             
-            # For single-port charger, truck will be woken when current charger finishes
-            if capacity == 1:
-                return False, None  # Wait for wake event
-            
-            # For multi-port charger, estimate wait time from lookup table
-            util = occupancy / float(capacity) if capacity > 0 else 0.0
-            wait_h = self.get_waiting_time(charger_node, util)
-            
-            if wait_h > 0:
-                plug_time = global_clock + max(wait_h, 0.1)  # At least 6 minutes
-                waitlist[-1]["planned_plug_time"] = plug_time
-                return False, plug_time  # Schedule recheck at predicted time
-            else:
-                # No predicted wait - will be woken when port becomes available
-                return False, None
+            # Truck will be woken by wake_waiting_trucks when port becomes available
+            return False, None  # Always return None - no time predictions
         
         else:
-            # ALREADY IN WAITLIST: Check if truck can proceed now
-            planned = waitlist[idx]["planned_plug_time"]
+            # ALREADY IN WAITLIST: Check if truck is eligible based on strict FCFS
             
-            # Can proceed if:
+            # Truck can proceed if:
             # 1. There's a free slot available
-            # 2. Truck is at the front of the queue (within first free_slots positions)
-            # 3. Any planned time has passed
-            if (free_slots > 0 
-                and idx < free_slots 
-                and (planned is None or planned <= global_clock)):
-                # Eligible to charge now
+            # 2. Truck is within the first free_slots positions in the waitlist
+            # 3. All trucks ahead in sequence order have been processed
+            
+            if free_slots > 0 and idx < free_slots:
+                # Eligible based on position
                 return True, None
             
-            # Can't proceed yet
-            if planned is not None and planned > global_clock:
-                # Has a scheduled recheck time
-                return False, planned
-            else:
-                # Will be woken by wake_waiting_trucks
-                return False, None
+            # Can't proceed yet - will be woken by wake_waiting_trucks
+            return False, None
 
     def start_charging(
         self, truck_id: int, charger_node: int, charge_hours: float, global_clock: float
@@ -359,6 +347,7 @@ class ChargingStation:
     ):
         """
         Wake trucks waiting at a charging station when a port becomes available.
+        Uses strict FCFS ordering based on sequence numbers.
 
         Args:
             charger_node: Charging station node
@@ -373,21 +362,32 @@ class ChargingStation:
         waitlist = self.charger_waitlist[charger_node]
 
         if free_slots > 0 and waitlist:
-            # Wake up to free_slots number of trucks immediately
-            k = min(free_slots, len(waitlist))
-            for i in range(k):
+            # Sort waitlist by sequence number to ensure strict FCFS
+            # (should already be sorted, but this guarantees it)
+            waitlist.sort(key=lambda x: x["sequence"])
+            
+            # Wake up to free_slots number of trucks in strict FCFS order
+            num_to_wake = min(free_slots, len(waitlist))
+            
+            for i in range(num_to_wake):
                 tid = waitlist[i]["truck_id"]
-                # Wake truck immediately, regardless of planned time
-                # This handles scenario 3: truck finishes earlier than predicted
-                # Note: If truck already has a scheduled event, it will be processed but ignored
-                # if the truck is no longer in waiting_to_charge state
+                sequence = waitlist[i]["sequence"]
+                
+                if self.verbose:
+                    print(f"    Waking truck {tid} (sequence {sequence}) at charger {charger_node}")
+                
+                # Schedule immediate wake event
                 heapq.heappush(
                     event_queue,
                     Event(
                         time=global_clock,
                         event_type=EventType.TRUCK_READY,
                         truck_id=tid,
-                        data={"reason": "port_freed_early"},
+                        data={
+                            "reason": "charger_port_available",
+                            "charger_node": charger_node,
+                            "sequence": sequence
+                        },
                     ),
                 )
 
@@ -628,7 +628,9 @@ class ChargingStation:
         # Print waiting trucks
         if waiting:
             print(f"    Waiting ({len(waiting)} trucks in queue):")
-            for i, truck_id in enumerate(waiting, 1):
-                print(f"      {i}. Truck {truck_id}")
+            for i, entry in enumerate(waiting, 1):
+                truck_id = entry["truck_id"]
+                sequence = entry["sequence"]
+                print(f"      {i}. Truck {truck_id} (seq #{sequence})")
         else:
             print(f"    Waiting: None")

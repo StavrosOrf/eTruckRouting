@@ -400,7 +400,6 @@ class EventDrivenTruckEnv(gym.Env):
                     )
 
                     if not can_proceed:
-                        # raise ValueError("Truck cannot proceed to charge due to gating failure")
                         # Update state to waiting_to_charge
                         self.truck_states[truck.truck_id] = "waiting_to_charge"
                         
@@ -408,32 +407,15 @@ class EventDrivenTruckEnv(gym.Env):
                         if truck.truck_id not in self.waiting_start_times:
                             self.waiting_start_times[truck.truck_id] = self.global_clock
 
-                        # Only schedule recheck if we have a specific time
-                        # (first truck in waitlist with predicted wait time)
-                        # Otherwise, truck will be woken by wake_waiting_trucks
-                        if next_check_time is not None:
-                            heapq.heappush(
-                                self.event_queue,
-                                Event(
-                                    time=next_check_time,
-                                    event_type=EventType.TRUCK_READY,
-                                    truck_id=event.truck_id,
-                                    data={"reason": "recheck_gating"},
-                                ),
+                        # Pure event-driven: truck will be woken by wake_waiting_trucks
+                        # No time-based predictions or scheduled rechecks
+                        if self.verbose:
+                            print(
+                                f"  Truck {truck.truck_id} waiting for charge port at node {node} at time {self.global_clock:.2f}h"
                             )
-                            if self.verbose:
-                                print(
-                                    f"  Truck {truck.truck_id} waiting for charge port at node {node} at time {self.global_clock:.2f}h"
-                                )
-                                print(f"    Will recheck at t={next_check_time:.2f}h")
-                        else:
-                            if self.verbose:
-                                print(
-                                    f"  Truck {truck.truck_id} waiting for charge port at node {node} at time {self.global_clock:.2f}h"
-                                )
-                                print(f"    Will be woken when port becomes available")
-                                # Print the charger queue status for this specific charger
-                                self.charging_station.print_charger_queue(node)
+                            print(f"    Will be woken when port becomes available")
+                            # Print the charger queue status for this specific charger
+                            self.charging_station.print_charger_queue(node)
                                 
                         continue
 

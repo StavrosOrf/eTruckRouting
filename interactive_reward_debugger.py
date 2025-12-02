@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
+from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
 
 
@@ -28,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="truck_env/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
-    parser.add_argument("--num-trucks", type=int, default=10,
+    parser.add_argument("--num-trucks", type=int, default=2,
                         help="Override number of trucks from the config.")
     parser.add_argument("--num-stops", type=int, default=3,
                         help="Override number of delivery stops from the config.")
@@ -66,7 +67,7 @@ def compute_navigation_stats(env: EventDrivenTruckEnv, src: int, dst: Optional[i
     return {"energy": energy, "time": travel_time}
 
 
-def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
+def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStateSpace] = None) -> List[Dict]:
     """Build metadata for every discrete action."""
     if env.active_truck_id is None:
         return []
@@ -76,6 +77,16 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
     charge_durations = env.charging_config["charge_durations"]
     current_time = env.global_clock
     actions = []
+    
+    # Get GNN feasibility if available
+    gnn_feasible_mask = None
+    if gnn_state_space is not None:
+        try:
+            gnn_state = gnn_state_space.get_state_GNN(env)
+            gnn_feasible_mask = gnn_state.feasible_action_mask.cpu().numpy()
+        except Exception as e:
+            print(f"Warning: Could not compute GNN feasibility: {e}")
+            gnn_feasible_mask = None
 
     for action_idx in range(env.action_space.n):
         if action_idx < env.num_charging_nodes:
@@ -138,6 +149,11 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
         if charge_hours is not None:
             label = f"Charge for {charge_hours}h"
 
+        # Get GNN feasibility for this action
+        gnn_feasible = None
+        if gnn_feasible_mask is not None and action_idx < len(gnn_feasible_mask):
+            gnn_feasible = bool(gnn_feasible_mask[action_idx])
+        
         actions.append({
             "index": action_idx,
             "label": label,
@@ -146,6 +162,7 @@ def describe_actions(env: EventDrivenTruckEnv) -> List[Dict]:
             "charge_hours": charge_hours,
             "navigation": nav_stats,
             "feasible": feasible,
+            "gnn_feasible": gnn_feasible,
             "infeasible_reason": reason,
             "arrival_time": arrival_time,
             "queue_length": queue_length,
@@ -306,7 +323,7 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
         print("No actions available.")
         return
 
-    header = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'Type':<16} {'Description':<28} {'Target':<8} {'ΔEnergy':<9} {'TravelTime':<11} {'ArrivalAt':<11} {'EstWait':<9} {'Sim reward/status'}"
+    header = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'GNN':<4} {'Type':<16} {'Description':<28} {'Target':<8} {'ΔEnergy':<9} {'TravelTime':<11} {'ArrivalAt':<11} {'EstWait':<9} {'Sim reward/status'}"
     print(header)
     print("-" * len(header))
 
@@ -320,12 +337,13 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
         
         target = action["target"] if action["target"] is not None else "-"
         feasible = "yes" if action["feasible"] else "no"
+        gnn_feas = "yes" if action.get("gnn_feasible") else ("no" if action.get("gnn_feasible") is not None else "-")
         heur_mark = "*" if heuristic_idx is not None and action["index"] == heuristic_idx else ""
         desc = action["label"]
         sim_summary = format_sim_result(action)
         
         print(
-            f"{action['index']:<4} {heur_mark:<2} {feasible:<5} {action['type']:<16} "
+            f"{action['index']:<4} {heur_mark:<2} {feasible:<5} {gnn_feas:<4} {action['type']:<16} "
             f"{desc:<28} {str(target):<8} {energy_str:<9} {time_str:<11} {arrival_str:<11} {wait_str:<9} {sim_summary}"
         )
         
@@ -367,6 +385,14 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
     step = 0
     done = False
     truncated = False
+    
+    # Initialize GNN state space
+    gnn_state_space = GNNStateSpace(
+        num_trucks=env.num_trucks,
+        num_stops=env.num_stops,
+        max_time=env.max_time,
+        num_charging_nodes=env.num_charging_nodes,
+    )
 
     while not (done or truncated):
         step += 1
@@ -378,7 +404,7 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
         if env.active_truck_id is None:
             break
 
-        actions = describe_actions(env)
+        actions = describe_actions(env, gnn_state_space)
         heuristic_idx = heuristic_action(env, actions)
         evaluate_actions(env, actions)
         print_actions_table(actions, heuristic_idx)

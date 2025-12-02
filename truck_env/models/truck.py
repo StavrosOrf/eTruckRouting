@@ -113,6 +113,7 @@ class Truck:
         """Mark truck as starting to charge."""
         self.is_charging = True
         self.charge_start_time = current_time
+        self.must_leave_charger = False  # Reset flag when starting new charge session
     
     def finish_charging(self, charge_amount: float, charge_duration: float):
         """

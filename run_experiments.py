@@ -109,7 +109,7 @@ for config_idx, (
 
     # Execute command
     os.system(command)
-    # print(command)
+    print(command)
     counter += 1
 
     # Wait before starting next experiment to avoid race conditions
@@ -124,3 +124,4 @@ print("\nUseful commands:")
 print("  tmux ls                        - List all sessions")
 print("  tmux attach -t <session-id>    - Attach to a session")
 print("  pkill -f train.py              - Kill all training sessions")
+

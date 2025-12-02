@@ -50,7 +50,7 @@ charging:
     efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
 
   # Available charging durations (hours)
-  charge_durations: [1, 2, 5, 10]
+  charge_durations: [1, 2, 5, 10, 20]
 
 # Reward Function
 # ---------------

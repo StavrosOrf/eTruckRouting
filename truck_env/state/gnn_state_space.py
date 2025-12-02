@@ -485,12 +485,20 @@ class GNNStateSpace:
         # print(f'truck_id_to_idx: {truck_id_to_idx}')
         if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
             active_truck_idx = truck_id_to_idx[env.active_truck_id]
-            if active_truck_idx is not None:
+            if active_truck_idx is None:
+                # Active truck is completed or failed - should not be requesting actions
+                active_truck = env.trucks[env.active_truck_id]
+                if active_truck.is_complete:
+                    raise ValueError(f"Active truck {env.active_truck_id} has completed all deliveries and should not be active")
+                elif active_truck.failed:
+                    raise ValueError(f"Active truck {env.active_truck_id} has failed and should not be active")
+                else:
+                    raise ValueError(f"Active truck {env.active_truck_id} is not in the truck index mapping")
+            else:
                 active_truck = env.trucks[env.active_truck_id]
                 current_battery = active_truck.current_battery
                 current_location = active_truck.current_node
-                battery_pct = active_truck.get_battery_percentage()
-                
+
                 charge_durations = env.charging_config['charge_durations']  # in hours
                 
                 # Check if truck must leave charger (after charging)
@@ -499,9 +507,28 @@ class GNNStateSpace:
                 # Check if truck is at charger - if so, must charge (unless must_leave is True)
                 at_charger = current_location in charger_node_to_idx
                 must_charge_now = at_charger and not must_leave
-
-                # Action 0: Go to next delivery (if exists and feasible)
                 next_delivery = active_truck.get_next_delivery_target()
+
+                # Actions 0 to N-1: Go to charger i (must match environment action order)
+                # Note: Include current location to match environment's action indexing
+                for charger_id in sorted(charger_node_to_idx.keys()):
+                    if charger_id == current_location:
+                        # Current location - routing here is always infeasible
+                        action_to_node_map.append((charger_id, False))
+                        feasible_action_mask.append(False)
+                        _append_action_metadata(charger_id, False)
+                        action_charge_durations.append(0.0)
+                    else:
+                        energy = env.transport_graph.get_path_energy(current_location, charger_id)
+                        is_energy_feasible = energy < current_battery and not np.isinf(energy)
+                        # Disable routing if truck must charge now
+                        is_feasible = is_energy_feasible and not must_charge_now
+                        action_to_node_map.append((charger_id, False))
+                        feasible_action_mask.append(is_feasible)
+                        _append_action_metadata(charger_id, False)
+                        action_charge_durations.append(0.0)
+
+                # Action N: Go to next delivery (must come after all chargers)
                 if next_delivery is not None:
                     energy = env.transport_graph.get_path_energy(current_location, next_delivery)
                     is_energy_feasible = energy < current_battery and not np.isinf(energy)
@@ -514,22 +541,7 @@ class GNNStateSpace:
                 else:
                     raise ValueError("No next delivery found for active truck")
 
-
-                # Actions 1 to N: Go to charger i
-                for charger_id in sorted(charger_node_to_idx.keys()):
-                    if charger_id == current_location:
-                        # Skip current location in routing actions
-                        continue
-                    energy = env.transport_graph.get_path_energy(current_location, charger_id)
-                    is_energy_feasible = energy < current_battery and not np.isinf(energy)
-                    # Disable routing if truck must charge now
-                    is_feasible = is_energy_feasible and not must_charge_now
-                    action_to_node_map.append((charger_id, False))
-                    feasible_action_mask.append(is_feasible)
-                    _append_action_metadata(charger_id, False)
-                    action_charge_durations.append(0.0)
-
-                # Last action: Charge at current location (if at charger)
+                # Last actions: Charge at current location (if at charger)
                 if current_location in charger_node_to_idx:
                     # If truck must leave charger, disable all charging actions
                     if must_leave:
@@ -592,10 +604,6 @@ class GNNStateSpace:
                         feasible_action_mask.append(False)
                         _append_action_metadata(-1, True)
                         action_charge_durations.append(float(charge_hours))
-            else:
-                # print seed env
-                print(f"Active truck ID: {env.active_truck_id}, Truck ID to Index Mapping: {truck_id_to_idx}")
-                raise ValueError("Active truck index not found in truck_id_to_idx mapping")
 
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup

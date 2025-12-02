@@ -11,7 +11,7 @@ def evaluate_env(seed: int = 42):
     config_file = "truck_env/config_files/config.yaml"
     # overweiten config for testing
     config_overwrite = {
-        "num_trucks": 100,
+        "num_trucks": 10,
         "num_stops": 3,
         "max_time": 200.0,
     }
@@ -24,7 +24,7 @@ def evaluate_env(seed: int = 42):
         config=config,
         run_id="test_run",
         verbose=True,
-        enable_plotting=True,
+        enable_plotting=False,
     )
 
     obs, info = env.reset(seed=seed)
@@ -58,21 +58,24 @@ def evaluate_env(seed: int = 42):
         
         # Find indices of feasible actions
         feasible_indices = [i for i, is_feasible in enumerate(feasible_mask) if is_feasible]
-        
+        print(f"\nFeasible action indices: {feasible_indices} {seed}")
         if not feasible_indices:
             print("ERROR: No feasible actions available!")
             break
         
-        # Select a random feasible action
-        selected_idx = random.choice(feasible_indices)
-        node_id, is_charging = action_to_node_map[selected_idx]
-        charge_duration = gnn_graph.action_charge_durations[selected_idx].item()
+        if random.random() < 0:            
+            action = policy.get_action(env)
+        else:
+            # Select a random feasible action
+            selected_idx = random.choice(feasible_indices)
+            node_id, is_charging = action_to_node_map[selected_idx]
+            charge_duration = gnn_graph.action_charge_durations[selected_idx].item()
+            
+            # Create action tuple in GNN format: (node_id, charging_duration, is_charging)
+            action = (node_id, charge_duration, is_charging)
         
-        # Create action tuple in GNN format: (node_id, charging_duration, is_charging)
-        action = (node_id, charge_duration, is_charging)
-        
-        print(f"\nSelected action {selected_idx}: node={node_id}, charging={is_charging}, duration={charge_duration:.1f}h")
-        print(f"Feasible actions: {len(feasible_indices)}/{len(feasible_mask)}")
+            print(f"\nSelected action {selected_idx}: node={node_id}, charging={is_charging}, duration={charge_duration:.1f}h")
+            print(f"Feasible actions: {len(feasible_indices)}/{len(feasible_mask)}")
         
         obs, reward, done, truncated, info = env.step(action)
         total_reward += reward
@@ -83,6 +86,7 @@ def evaluate_env(seed: int = 42):
         # print("Observation:", obs)
         print("Reward:", reward)
         print("Done:", done, " | Truncated:", truncated)
+        print("-+- "*10) 
 
         if done or truncated:
             break
@@ -96,6 +100,6 @@ def evaluate_env(seed: int = 42):
 
 if __name__ == "__main__":
 
-    for i in range(100,101):
+    for i in range(100,1000):
         print(f"\n\n===== EVALUATION RUN {i+1} =====")
         evaluate_env(seed=i)

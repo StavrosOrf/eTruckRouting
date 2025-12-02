@@ -55,6 +55,7 @@ class GNNStateSpace:
         num_charging_nodes: int,
         max_nodes_in_graph: int = 500,
         device: str = "cpu",
+        verbose: bool = True,
     ):
         """
         Initialize GNN state space.
@@ -73,6 +74,7 @@ class GNNStateSpace:
         self.num_charging_nodes = num_charging_nodes
         self.max_nodes_in_graph = max_nodes_in_graph
         self.device = device
+        self.verbose = verbose
 
         # Node type constants (no depot)
         self.NODE_TYPE_TRUCK = 0
@@ -116,13 +118,31 @@ class GNNStateSpace:
         delivery_node_to_idx = {}  # delivery_node_id -> index in delivery node list
         charger_node_to_idx = {}  # charger_node_id -> index in charger node list
         
-        # Track which delivery nodes have been delivered
+        # Track which delivery nodes have been delivered (per-truck tracking)
+        # A node is only "delivered" if ALL trucks that need to visit it have completed that visit
         delivered_nodes: Set[int] = set()
+        
+        # Build a mapping of node_id -> set of trucks that still need to deliver there
+        node_pending_trucks = {}
         for truck in env.trucks:
-            all_deliveries = set(truck.delivery_sequence[1:])  # Skip depot at index 0
-            remaining_deliveries = set(truck.get_remaining_deliveries())
-            delivered = all_deliveries - remaining_deliveries
-            delivered_nodes.update(delivered)
+            if truck.failed or truck.is_complete:
+                continue
+            for delivery_node in truck.get_remaining_deliveries():
+                if delivery_node not in node_pending_trucks:
+                    node_pending_trucks[delivery_node] = set()
+                node_pending_trucks[delivery_node].add(truck.truck_id)
+        
+        # A node is "delivered" if no active trucks have it in remaining deliveries
+        # (We don't add it to delivered_nodes if any truck still needs it)
+        # For nodes not in node_pending_trucks, check if any truck ever had it
+        all_delivery_nodes_ever = set()
+        for truck in env.trucks:
+            all_delivery_nodes_ever.update(truck.delivery_sequence[1:])
+        
+        for node_id in all_delivery_nodes_ever:
+            if node_id not in node_pending_trucks:
+                # No active truck needs this node anymore - it's fully delivered
+                delivered_nodes.add(node_id)
 
         # 1. Build truck nodes (excluding failed and completed trucks)
         truck_features_list = []
@@ -156,8 +176,10 @@ class GNNStateSpace:
         for truck in env.trucks:
             if truck.failed or truck.is_complete:
                 continue
+            remaining = truck.get_remaining_deliveries()
             all_delivery_nodes.update(truck.delivery_sequence[1:])  # Skip depot
         
+
         # Add only undelivered nodes
         for delivery_node_id in sorted(all_delivery_nodes):
             if delivery_node_id not in delivered_nodes:
@@ -173,7 +195,42 @@ class GNNStateSpace:
             data['delivery'].x = torch.tensor(delivery_features_array, dtype=torch.float32, device=self.device)
             self._delivery_feature_dim = delivery_features_array.shape[1]
         else:
-            raise ValueError("No delivery nodes found")
+            # No delivery nodes - this should only happen if episode should have terminated
+            # Check if all trucks are complete or failed
+            all_terminal = all(truck.failed or truck.is_complete for truck in env.trucks)
+            
+            # Detailed debugging for each truck
+            truck_debug_info = []
+            for truck in env.trucks:
+                remaining = truck.get_remaining_deliveries()
+                next_del = truck.get_next_delivery_target()
+                truck_debug_info.append(
+                    f"Truck {truck.truck_id}: "
+                    f"seq_idx={truck.current_sequence_index}/{len(truck.delivery_sequence)-1}, "
+                    f"is_complete={truck.is_complete}, "
+                    f"failed={truck.failed}, "
+                    f"state={env.truck_states.get(truck.truck_id)}, "
+                    f"next_target={next_del}, "
+                    f"remaining={len(remaining)}"
+                )
+            
+            debug_details = "\n    ".join(truck_debug_info)
+            
+            if all_terminal:
+                raise ValueError(
+                    f"No delivery nodes found and all trucks are in terminal state. "
+                    f"Episode should have terminated but didn't.\n"
+                    f"  Active truck: {env.active_truck_id}\n"
+                    f"  Truck states: {env.truck_states}\n"
+                    f"  Truck details:\n    {debug_details}"
+                )
+            else:
+                raise ValueError(
+                    f"No delivery nodes found but not all trucks are terminal.\n"
+                    f"  Active truck: {env.active_truck_id}\n"
+                    f"  Truck states: {env.truck_states}\n"
+                    f"  Truck details:\n    {debug_details}"
+                )
             data['delivery'].x = torch.zeros((0, self._delivery_feature_dim), dtype=torch.float32, device=self.device)
         
         # 3. Build charger nodes (all chargers)
@@ -543,6 +600,9 @@ class GNNStateSpace:
 
                 # Last actions: Charge at current location (if at charger)
                 if current_location in charger_node_to_idx:
+                    if self.verbose:
+                        print(f"[DEBUG] Truck {active_truck.truck_id} at charger {current_location}, must_leave={must_leave}")
+                    
                     # If truck must leave charger, disable all charging actions
                     if must_leave:
                         can_charge_here = False
@@ -551,6 +611,8 @@ class GNNStateSpace:
                             feasible_action_mask.append(False)  # Force leaving, no charging allowed
                             _append_action_metadata(current_location, True)
                             action_charge_durations.append(float(charge_hours))
+                        if self.verbose:
+                            print(f"  Forcing truck to leave")
                     else:
                         # Calculate minimum energy needed to reach ANY other location
                         min_energy_to_leave = float('inf')
@@ -578,6 +640,19 @@ class GNNStateSpace:
                         charge_rate = charger_config["charge_rate"]  # kW
                         efficiency = charger_config["efficiency"]
                         
+                        # Debug: Print charging feasibility information
+                        if self.verbose:
+                            print(f"\n[CHARGING FEASIBILITY DEBUG] Truck {active_truck.truck_id}")
+                            print(f"  Location: charger_{current_location} (type: {charger_type})")
+                            print(f"  Current battery: {current_battery:.2f} / {active_truck.battery_capacity:.2f} kWh")
+                            print(f"  Charge rate: {charge_rate:.2f} kW, Efficiency: {efficiency:.2f}")
+                            print(f"  Next delivery target: {next_delivery}")
+                            if next_delivery is not None:
+                                energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
+                                print(f"  Energy to delivery: {energy_to_delivery:.2f} kWh")
+                            print(f"  Min energy to leave (any destination): {min_energy_to_leave:.2f} kWh")
+                            print(f"  Evaluating charge durations: {charge_durations}")
+                        
                         can_charge_here = False
                         for charge_hours in charge_durations:
                             # Calculate resulting battery after this charge duration
@@ -586,8 +661,12 @@ class GNNStateSpace:
                             
                             # Check if resulting battery is enough to leave
                             # Allow charging only if it provides enough energy to reach another location
-                            can_charge_enough = resulting_battery >= min_energy_to_leave
-                            is_feasible = can_charge_enough
+                            is_feasible = resulting_battery >= min_energy_to_leave
+                            
+                            # Debug: Print each charge duration evaluation
+                            if self.verbose:
+                                print(f"    Charge {charge_hours}h: +{charge_amount:.2f} kWh → {resulting_battery:.2f} kWh total | "
+                                      f"Need {min_energy_to_leave:.2f} kWh | Feasible: {is_feasible}")
                             
                             action_to_node_map.append((current_location, True))
                             feasible_action_mask.append(is_feasible)
@@ -596,6 +675,12 @@ class GNNStateSpace:
                             
                             if is_feasible:
                                 can_charge_here = True
+                        
+                        # Debug: Print summary
+                        if self.verbose:
+                            print(f"  Result: can_charge_here = {can_charge_here}")
+                            if not can_charge_here:
+                                print(f"  WARNING: NO FEASIBLE CHARGING ACTIONS! All durations insufficient.")
                 else:
                     # Not at charger - can't charge
                     can_charge_here = False
@@ -615,6 +700,13 @@ class GNNStateSpace:
             data.action_is_charging = torch.tensor(action_is_charging, dtype=torch.bool, device=self.device)
             data.action_charge_durations = torch.tensor(action_charge_durations, dtype=torch.float32, device=self.device)
         else:
+            # Debug: Print action generation summary
+            print(f"\n[ACTION GENERATION ERROR]")
+            print(f"  Total actions generated: {len(action_to_node_map)}")
+            print(f"  Feasible actions: {sum(feasible_action_mask)}")
+            print(f"  action_node_types length: {len(action_node_types)}")
+            print(f"  action_to_node_map: {action_to_node_map}")
+            print(f"  feasible_action_mask: {feasible_action_mask}")
             self.env.charging_station.print_queues()
             raise ValueError("No action metadata found for active truck")
             # data.action_node_type = torch.zeros((0,), dtype=torch.long, device=self.device)
@@ -641,6 +733,18 @@ class GNNStateSpace:
         feasible_action_to_node_map = [action_to_node_map[i] for i in feasible_indices]
         feasible_action_is_charging = [action_is_charging[i] for i in feasible_indices]
         feasible_action_durations = [action_charge_durations[i] for i in feasible_indices]
+        
+        # Debug: Check if all actions are infeasible
+        if not feasible_action_to_node_map:
+            if self.verbose:
+                print(f"\n[CRITICAL] ALL ACTIONS INFEASIBLE!")
+                print(f"  Active truck: {env.active_truck_id}")
+                print(f"  Total actions: {len(action_to_node_map)}")
+                print(f"  Feasible count: {sum(feasible_action_mask)}")
+                print(f"  action_to_node_map: {action_to_node_map}")
+                print(f"  feasible_action_mask: {feasible_action_mask}")
+                print(f"  action_is_charging: {action_is_charging}")
+                print(f"  action_charge_durations: {action_charge_durations}")
         
         data.action_graph_features = self._build_action_graph_features(
             env,

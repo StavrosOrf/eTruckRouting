@@ -270,9 +270,10 @@ def print_state_statistics(env: EventDrivenTruckEnv) -> None:
             flag = "COMPLETE"
         elif truck_state["is_charging"]:
             flag = "CHARGING"
-            if truck.charge_end_time is not None:
-                time_remaining = truck.charge_end_time - env.global_clock
-                time_info = f"(finishes in {time_remaining:.2f}h at {truck.charge_end_time:.2f}h)"
+            charge_end_time = env.charging_station.truck_charge_end_time.get(truck_id)
+            if charge_end_time is not None:
+                time_remaining = charge_end_time - env.global_clock
+                time_info = f"(finishes in {time_remaining:.2f}h at {charge_end_time:.2f}h)"
         elif truck.route_destination is not None and truck.route_arrival_time is not None:
             flag = "ROUTING"
             time_to_arrival = truck.route_arrival_time - env.global_clock

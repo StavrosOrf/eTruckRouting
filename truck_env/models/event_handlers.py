@@ -108,6 +108,19 @@ class EventHandler:
             print(
                 f"    Battery: {truck.current_battery:.1f} kWh ({truck.get_battery_percentage():.1f}%)"
             )
+            # Debug: Show delivery progress
+            remaining_deliveries = truck.get_remaining_deliveries()
+            next_delivery = truck.get_next_delivery_target()
+            total_deliveries = len(truck.delivery_sequence) - 1  # Exclude depot
+            completed_deliveries = truck.current_sequence_index
+            print(
+                f"    Delivery progress: {completed_deliveries}/{total_deliveries} complete, "
+                f"{len(remaining_deliveries)} remaining"
+            )
+            print(f"    Current sequence index: {truck.current_sequence_index}/{len(truck.delivery_sequence)-1}")
+            print(f"    Next delivery target: {next_delivery}")
+            print(f"    Remaining deliveries: {remaining_deliveries}")
+            print(f"    is_complete flag: {truck.is_complete}")
 
         # Check if truck failed
         if truck.failed:

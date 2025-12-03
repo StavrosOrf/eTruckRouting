@@ -386,6 +386,7 @@ class EventDrivenTruckEnv(gym.Env):
                         event_queue=self.event_queue,
                         EventType=EventType,
                         Event=Event,
+                        truck_states=self.truck_states,
                     )
 
                 # Charger gating: enforce FCFS waitlist with capacity ports
@@ -438,6 +439,14 @@ class EventDrivenTruckEnv(gym.Env):
                     
                     # Clear waiting start time
                     del self.waiting_start_times[truck.truck_id]
+                
+                # Final check: ensure truck is not complete or failed before setting as active
+                # This can happen if a TRUCK_READY event was scheduled before truck completed
+                if truck.is_complete or truck.failed:
+                    if self.verbose:
+                        status = "complete" if truck.is_complete else "failed"
+                        print(f"  Skipping TRUCK_READY for truck {truck.truck_id} - just became {status}")
+                    continue
                 
                 self.active_truck_id = event.truck_id
                 self.truck_states[truck.truck_id] = "ready"
@@ -617,6 +626,13 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Advance to next decision point
         self._advance_to_next_decision()
+        
+        if self.verbose:
+            # print status of all trucks
+            print(f"\nTruck statuses after step:")
+            for t in self.trucks:
+                state = self.truck_states[t.truck_id]
+                print(f"  Truck {t.truck_id}: State={state}, Battery={t.current_battery:.1f} kWh, Completed={t.is_complete}, Failed={t.failed}")
 
         # Check termination conditions
         terminated = self._check_terminated()
@@ -735,8 +751,12 @@ class EventDrivenTruckEnv(gym.Env):
                 event_queue=self.event_queue,
                 EventType=EventType,
                 Event=Event,
+                truck_states=self.truck_states,
             )
 
+        # Remove any existing routing events for this truck before scheduling new one
+        self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
+        
         # Schedule truck routing (arrival) event
         completion_time = self.global_clock + actual_travel_time
         heapq.heappush(
@@ -886,6 +906,9 @@ class EventDrivenTruckEnv(gym.Env):
             global_clock=self.global_clock,
         )
 
+        # Remove any pending TRUCK_READY events for this truck (e.g., from previous charge/wait)
+        self._remove_pending_events(truck.truck_id, EventType.TRUCK_READY)
+        
         # Schedule TRUCK_READY event when charging completes
         completion_time = self.global_clock + charge_hours
         heapq.heappush(
@@ -1005,7 +1028,11 @@ class EventDrivenTruckEnv(gym.Env):
                 event_queue=self.event_queue,
                 EventType=EventType,
                 Event=Event,
+                truck_states=self.truck_states,
             )
+        
+        # Remove any existing routing events for this truck before scheduling new one
+        self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
         
         # Schedule truck routing event
         completion_time = self.global_clock + actual_travel_time
@@ -1142,6 +1169,9 @@ class EventDrivenTruckEnv(gym.Env):
             global_clock=self.global_clock,
         )
         
+        # Remove any pending TRUCK_READY events for this truck (e.g., from previous charge/wait)
+        self._remove_pending_events(truck.truck_id, EventType.TRUCK_READY)
+        
         # Schedule charge completion
         completion_time = self.global_clock + actual_charge_hours
         heapq.heappush(
@@ -1171,6 +1201,29 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Return time penalty
         return -actual_charge_hours
+
+    def _remove_pending_events(self, truck_id: int, event_type: EventType = None):
+        """
+        Remove pending events for a specific truck.
+        
+        Args:
+            truck_id: The truck ID
+            event_type: If specified, only remove events of this type. 
+                       If None, remove all events for the truck.
+        """
+        if event_type is None:
+            # Remove all events for this truck
+            self.event_queue = [
+                event for event in self.event_queue 
+                if event.truck_id != truck_id
+            ]
+        else:
+            # Remove only events of specific type for this truck
+            self.event_queue = [
+                event for event in self.event_queue 
+                if not (event.truck_id == truck_id and event.event_type == event_type)
+            ]
+        heapq.heapify(self.event_queue)
 
     def _check_terminated(self) -> bool:
         """Check if episode is terminated (all trucks done)."""

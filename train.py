@@ -286,329 +286,6 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0
     }
 
-
-def train_td3(args):
-    """Main training loop."""
-    
-    # Set seeds for reproducibility
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    
-    # Load config and override with command line args
-    config = load_config(args.config)
-    if args.num_trucks is not None:
-        config['environment']['num_trucks'] = args.num_trucks
-    if args.num_stops is not None:
-        config['environment']['num_stops'] = args.num_stops
-    if args.max_time is not None:
-        config['environment']['max_time'] = args.max_time
-    if args.enable_traffic:
-        config['traffic']['enable_traffic'] = True
-    
-    # Generate experiment name if not provided
-    if args.exp_name is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.exp_name = f"TD3_GNN_{timestamp}"
-        
-    # Use user-provided group name or default to environment configuration
-    if args.group_name is not None:
-        group_name = args.group_name
-    else:
-        group_name = f"{config['environment']['num_trucks']}trucks_{config['environment']['num_stops']}stops"
-    
-    # Initialize wandb
-    if not args.no_wandb:
-        _run = wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            name=args.exp_name,
-            group=group_name,
-            config=vars(args),
-            save_code=True
-        )
-        #log code files
-        _run.log_code(".")
-    
-    # Create training and evaluation environments (evaluation env stays isolated)
-    env = EventDrivenTruckEnv(
-        config=config,
-        verbose=True, #False
-        enable_plotting=False,
-        run_id=args.exp_name
-    )
-    eval_env = EventDrivenTruckEnv(
-        config=copy.deepcopy(config),
-        verbose=True,
-        enable_plotting=False,
-        run_id=f"{args.exp_name}_eval"
-    )
-    
-    # Initialize GNN state space
-    gnn_state_space = GNNStateSpace(
-        num_trucks=config['environment']['num_trucks'],
-        num_stops=config['environment']['num_stops'],
-        max_time=config['environment']['max_time'],
-        num_charging_nodes=env.num_charging_nodes
-    )
-    
-    # Get action dimension and max action
-    action_dim = env.action_space.n
-    max_action = 1.0  # For discrete actions with softmax
-    
-    # Define feature sizes for different node types
-    # Adjust based on your actual GNN state implementation
-    fx_node_sizes = {
-        'ev': 10,  # Truck features (reduced from 13)
-        'cs': 5,   # Charger features (increased from 4, now includes time_for_queue_to_empty)
-        'tr': 3,   # Delivery features (node_type, node_id, delivery_sequence_index)
-        'env': 1   # Environment features (if any)
-    }
-    
-    # Initialize TD3 agent
-    policy = TD3_ActionGNN(
-        action_dim=action_dim,
-        max_action=max_action,
-        fx_node_sizes=fx_node_sizes,
-        discount=args.discount,
-        tau=args.tau,
-        policy_noise=args.policy_noise,
-        noise_clip=args.noise_clip,
-        policy_freq=args.policy_freq,
-        fx_dim=args.feature_dim,
-        fx_GNN_hidden_dim=args.gnn_hidden_dim,
-        mlp_hidden_dim=args.mlp_hidden_dim,
-        lr=args.lr,
-        discrete_actions=action_dim,
-        actor_num_gcn_layers=args.actor_gcn_layers,
-        critic_num_gcn_layers=args.critic_gcn_layers,
-        min_charging_duration=args.min_charging_duration,
-        max_charging_duration=args.max_charging_duration,
-        target_action_temperature=args.target_action_temp
-    )
-    
-    # Initialize replay buffer
-    replay_buffer = ReplayBuffer(max_size=args.buffer_size)
-    
-    # Create save directory with proper structure: {project}/saved_models/{run_id}/
-    save_dir = os.path.join("saved_models", args.exp_name)
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "model")
-    
-    # Save network configuration once
-    td3_config = {
-        "algo": "td3",
-        "action_dim": action_dim,
-        "max_action": max_action,
-        "fx_node_sizes": fx_node_sizes,
-        "discount": args.discount,
-        "tau": args.tau,
-        "policy_noise": args.policy_noise,
-        "noise_clip": args.noise_clip,
-        "policy_freq": args.policy_freq,
-        "feature_dim": args.feature_dim,
-        "gnn_hidden_dim": args.gnn_hidden_dim,
-        "mlp_hidden_dim": args.mlp_hidden_dim,
-        "lr": args.lr,
-        "actor_gcn_layers": args.actor_gcn_layers,
-        "critic_gcn_layers": args.critic_gcn_layers,
-        "min_charging_duration": args.min_charging_duration,
-        "max_charging_duration": args.max_charging_duration,
-        "target_action_temp": args.target_action_temp,
-        "expl_noise": args.expl_noise,
-        "seed": args.seed
-    }
-    save_network_config(save_dir, td3_config, "td3")
-    
-    # Track best model
-    best_eval_reward = None
-    best_model_path = None
-    
-    # Training loop
-    total_timesteps = 0
-    episode_num = 0
-    episode_reward = 0
-    episode_timesteps = 0
-    
-    obs, info = env.reset(seed=args.seed)
-    gnn_state = gnn_state_space.get_state_GNN(env)
-    
-    print(f"\n{'='*80}")
-    print(f"Starting Training: {args.exp_name}")
-    print(f"{'='*80}")
-    print(f"Environment: {config['environment']['num_trucks']} trucks, {config['environment']['num_stops']} stops")
-    print(f"Max timesteps: {args.max_timesteps}")
-    print(f"Max steps per episode: {args.max_episode_steps}")
-    print(f"Replay buffer size: {args.buffer_size}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"{'='*80}\n")
-    
-    for t in range(args.max_timesteps):
-        episode_timesteps += 1
-        
-                
-        action = policy.select_action(gnn_state, expl_noise=args.expl_noise)
-        # action is now a tuple: (node_id, charging_duration, is_charging)
-        
-        # Perform action (env.step handles both integer and tuple formats)
-        # print(f"Taking action: {action}, step: {t}")
-        next_obs, reward, done, truncated, info = env.step(action)
-        next_gnn_state = gnn_state_space.get_state_GNN(env)
-        
-        # Store transition in replay buffer
-        # For tuple actions, replay buffer expects (action_idx, charging_duration)
-        if isinstance(action, tuple):
-            node_id, charging_duration, is_charging = action
-            # We need to convert back to action_idx for storage
-            # The replay buffer and training use action indices internally
-            # Get action_idx from the state's action_to_node_map
-            if hasattr(gnn_state, 'action_to_node_map'):
-                # Find which action index corresponds to this (node_id, is_charging) pair
-                action_idx = None
-                for idx, (mapped_node, mapped_is_charging) in enumerate(gnn_state.action_to_node_map):
-                    if mapped_node == node_id and mapped_is_charging == is_charging:
-                        action_idx = idx
-                        break
-                
-                if action_idx is None:
-                    # Fallback: shouldn't happen but handle gracefully
-                    action_idx = 0
-                    if args.verbose:
-                        print(f"Warning: Could not find action_idx for (node={node_id}, is_charging={is_charging})")
-                
-                replay_buffer.add(gnn_state, (action_idx, charging_duration), next_gnn_state, reward, float(done))
-            else:
-                # Fallback for states without action_to_node_map
-                replay_buffer.add(gnn_state, (0, charging_duration), next_gnn_state, reward, float(done))
-        else:
-            # Legacy integer action
-            replay_buffer.add(gnn_state, action, next_gnn_state, reward, float(done))
-        
-        gnn_state = next_gnn_state
-        episode_reward += reward
-        total_timesteps += 1
-        
-        # Check if episode reached maximum steps
-        if episode_timesteps >= args.max_episode_steps:
-            truncated = True
-            if args.verbose:
-                print(f"Episode {episode_num} truncated at {episode_timesteps} steps (max={args.max_episode_steps})")
-        
-        # Train agent after collecting sufficient data
-        if t >= args.start_timesteps:
-            critic_loss, actor_loss = policy.train(replay_buffer, args.batch_size)
-            
-            # Log training metrics
-            if not args.no_wandb:  # Log every 100 steps
-                log_dict = {
-                    'train/critic_loss': critic_loss,
-                    'train/timestep': total_timesteps
-                }
-                if actor_loss is not None:
-                    log_dict['train/actor_loss'] = actor_loss
-                    
-                wandb.log(log_dict)
-
-            if ((not args.no_wandb) or args.verbose) and (total_timesteps % args.diag_log_freq == 0):
-                diag_metrics = policy.get_action_diagnostics(gnn_state)
-                diag_metrics['train/timestep'] = total_timesteps
-                if not args.no_wandb:
-                    wandb.log(diag_metrics)
-                if args.verbose:
-                    print(f"Diag@{total_timesteps}: top1={diag_metrics['diag/top1_logit']:.3f}, "
-                          f"gap={diag_metrics['diag/top_gap']:.3f}, entropy={diag_metrics['diag/action_entropy']:.3f}, "
-                          f"Qbest={diag_metrics['diag/q_best']:.3f}")
-        
-        # Episode ended
-        if done or truncated:
-            # Log episode statistics
-            if not args.no_wandb:
-                wandb.log({
-                    'train/episode_reward': episode_reward,
-                    'train/episode_length': episode_timesteps,
-                    'train/episode': episode_num,
-                    'train/success': 1.0 if info.get('all_complete', False) else 0.0,
-                    'train/timestep': total_timesteps
-                })
-            
-            # if args.verbose or episode_num % 10 == 0:
-                
-            if t >= args.start_timesteps:
-                print(f"Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
-                    f"Success={info.get('all_complete', False)}, Timestep={total_timesteps}")
-            else:
-                print(f"[Collecting] Episode {episode_num}: Reward={episode_reward:.2f}, Steps={episode_timesteps}, "
-                    f"Success={info.get('all_complete', False)}")
-            
-            # Reset environment
-            obs, info = env.reset(seed=args.seed + episode_num + 1)
-            gnn_state = gnn_state_space.get_state_GNN(env)
-            episode_reward = 0
-            episode_timesteps = 0
-            episode_num += 1
-        
-        # Evaluate policy
-        if (t + 1) % args.eval_freq == 0 and t >= args.start_timesteps:
-            eval_results = evaluate_policy(eval_env, policy, gnn_state_space, 
-                                         args.eval_episodes, args.seed + 1000, args.max_episode_steps)
-            
-            print(f"\n{'='*80}")
-            print(f"Evaluation at timestep {total_timesteps}")
-            print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")
-            print(f"Success Rate: {eval_results['success_rate']*100:.1f}%")
-            print(f"Episode Length: {eval_results['mean_episode_length']:.1f} steps")
-            print(f"Charging Time: {eval_results['mean_charging_time']:.2f} hours")
-            print(f"Charging Sessions: {eval_results['mean_num_charging_sessions']:.1f}")
-            print(f"Waiting Time: {eval_results['mean_waiting_time']:.2f} hours")
-            print(f"Distance Traveled: {eval_results['mean_total_distance']:.1f} km")
-            if eval_results['mean_episode_time'] > 0:
-                print(f"Episode Time: {eval_results['mean_episode_time']:.2f} hours")
-            
-            # Save best model
-            if best_eval_reward is None or eval_results['mean_reward'] > best_eval_reward:
-                best_eval_reward = eval_results['mean_reward']
-                best_model_path = f"{save_path}_best"
-                policy.save(best_model_path)
-                print(f"🌟 New best model saved! Reward: {best_eval_reward:.2f}")
-            
-            print(f"{'='*80}\n")
-            
-            if not args.no_wandb:
-                wandb.log({
-                    'eval/mean_reward': eval_results['mean_reward'],
-                    'eval/std_reward': eval_results['std_reward'],
-                    'eval/success_rate': eval_results['success_rate'],
-                    'eval/best_reward': best_eval_reward,
-                    'eval/episode_length': eval_results['mean_episode_length'],
-                    'eval/charging_time': eval_results['mean_charging_time'],
-                    'eval/num_charging_sessions': eval_results['mean_num_charging_sessions'],
-                    'eval/waiting_time': eval_results['mean_waiting_time'],
-                    'eval/total_distance': eval_results['mean_total_distance'],
-                    'eval/episode_time': eval_results['mean_episode_time'],
-                    'eval/timestep': total_timesteps
-                })
-        if episode_num >= args.max_episodes:
-            if args.verbose:
-                print(f"Reached max episodes ({args.max_episodes}). Ending training loop.")
-            break
-    
-    # Final save of the last model
-    final_model_path = f"{save_path}_final"
-    policy.save(final_model_path)
-    print(f"\nTraining completed.")
-    print(f"Final model saved to: {final_model_path}")
-    if best_model_path is not None and best_eval_reward is not None:
-        print(f"Best model saved to: {best_model_path} (Reward: {best_eval_reward:.2f})")
-    else:
-        print("Best model not saved (evaluation not run or no improvement).")
-    print(f"Save directory: {save_dir}")
-    
-    # Close environment and wandb
-    env.close()
-    eval_env.close()
-    if not args.no_wandb:
-        wandb.finish()
-
-
 def train_ppo(args):
     """PPO training loop using the GNN state representation."""
     torch.manual_seed(args.seed)
@@ -662,7 +339,9 @@ def train_ppo(args):
         num_trucks=config['environment']['num_trucks'],
         num_stops=config['environment']['num_stops'],
         max_time=config['environment']['max_time'],
-        num_charging_nodes=env.num_charging_nodes
+        num_charging_nodes=env.num_charging_nodes,
+        device="cpu",  # Always create states on CPU for buffer storage
+        verbose=False  # Disable verbose output during training
     )
 
     action_dim = env.action_space.n
@@ -767,17 +446,24 @@ def train_ppo(args):
             action_mask_to_store = mask_tensor
         
         next_obs, reward, done, truncated, info = env.step(env_action)
-        next_gnn_state = gnn_state_space.get_state_GNN(env)
-
+        
         done_flag = done or truncated
         if episode_timesteps >= args.max_episode_steps:
             done_flag = True
             truncated = True
 
+        # Only get next state if episode is not done
+        if done_flag:
+            next_gnn_state = None  # Episode is over, no next state
+        else:
+            next_gnn_state = gnn_state_space.get_state_GNN(env)
+
         # Store transition
         policy.store_transition(gnn_state, action, logprob, reward, done_flag, value, action_mask_to_store)
 
-        gnn_state = next_gnn_state
+        # Only update current state if episode continues
+        if not done_flag:
+            gnn_state = next_gnn_state
         episode_reward += reward
         total_timesteps += 1
 
@@ -876,10 +562,7 @@ def train_ppo(args):
 
 
 def train(args):
-    if args.algo == 'td3':
-        train_td3(args)
-    else:
-        train_ppo(args)
+    train_ppo(args)
 
 
 if __name__ == "__main__":

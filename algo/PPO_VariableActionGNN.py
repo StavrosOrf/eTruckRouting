@@ -329,8 +329,15 @@ class PPOVariableActionGNN:
         value: float,
         action_mask: Optional[torch.Tensor] = None,
     ):
-        combined_mask, _ = self._prepare_feasible_actions(state, action_mask, device="cpu")
-        self.buffer.add(state, action, logprob, reward, done, value, combined_mask)
+        # Ensure state is on CPU for storage (act() may have moved it to GPU)
+        # For HeteroData, check if any node type's features are on CUDA
+        is_on_cuda = any(
+            hasattr(state[node_type], 'x') and state[node_type].x.is_cuda 
+            for node_type in state.node_types
+        )
+        state_cpu = state.to('cpu') if is_on_cuda else state
+        combined_mask, _ = self._prepare_feasible_actions(state_cpu, action_mask, device="cpu")
+        self.buffer.add(state_cpu, action, logprob, reward, done, value, combined_mask)
 
     def update(self, last_value: float):
         if len(self.buffer.rewards) == 0:

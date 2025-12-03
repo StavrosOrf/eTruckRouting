@@ -565,7 +565,7 @@ class GNNStateSpace:
                 at_charger = current_location in charger_node_to_idx
                 must_charge_now = at_charger and not must_leave
                 next_delivery = active_truck.get_next_delivery_target()
-                print(f'-- at_charger: {at_charger}, must_leave: {must_leave}, must_charge_now: {must_charge_now}, next_delivery: {next_delivery}')
+                print(f'\n-- at_charger: {at_charger}, must_leave: {must_leave}, must_charge_now: {must_charge_now}, next_delivery: {next_delivery}')
 
                 # Actions 0 to N-1: Go to charger i (must match environment action order)
                 # Note: Include current location to match environment's action indexing
@@ -592,6 +592,8 @@ class GNNStateSpace:
                     energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
                     is_energy_feasible = energy_to_delivery < current_battery
                     
+                    print(f'[RoutingToDel] Energy to next delivery {next_delivery}: {energy_to_delivery:.2f} kWh, current battery: {current_battery:.2f} kWh, is_energy_feasible: {is_energy_feasible}')
+                    
                     # Additional check: After reaching the delivery, can the truck reach ANY charger or next delivery?
                     # This prevents the truck from getting stranded after completing this delivery
                     can_continue_after_delivery = False
@@ -601,23 +603,23 @@ class GNNStateSpace:
                         # Check if there are more deliveries after this one
                         remaining_after_this = active_truck.get_remaining_deliveries()
                         has_more_deliveries = len(remaining_after_this) > 1  # More than just this delivery
+                        print(f'  remaining_after_this: {remaining_after_this}, has_more_deliveries: {has_more_deliveries}')
                         
-                        if has_more_deliveries:
-                            # Check if can reach next delivery after this one
-                            next_next_delivery = remaining_after_this[1] if len(remaining_after_this) > 1 else None
-                            if next_next_delivery is not None:
-                                energy_to_next_next = env.transport_graph.get_path_energy(next_delivery, next_next_delivery)
-                                if battery_after_delivery > energy_to_next_next and not np.isinf(energy_to_next_next):
-                                    can_continue_after_delivery = True
                         
-                        # If no more deliveries OR can't reach next delivery, check if can reach ANY charger
-                        if not can_continue_after_delivery:
+                        #check if it can reach any charger after delivery
+                        print(f'  Checking if can reach any charger after delivery from node {next_delivery}')
+                        
+                        if not has_more_deliveries:
+                            can_continue_after_delivery = True
+                        else:
                             for charger_id in charger_node_to_idx.keys():
                                 energy_to_charger = env.transport_graph.get_path_energy(next_delivery, charger_id)
-                                if battery_after_delivery > energy_to_charger and not np.isinf(energy_to_charger):
+                                if battery_after_delivery > energy_to_charger:
                                     can_continue_after_delivery = True
                                     break
-                    
+                        
+                        print(f'  can_continue_after_delivery: {can_continue_after_delivery} (battery after delivery: {battery_after_delivery:.2f} kWh)')
+                        
                     # Disable routing if truck must charge now OR if truck would be stranded after delivery
                     is_feasible = is_energy_feasible and not must_charge_now and can_continue_after_delivery
                     action_to_node_map.append((next_delivery, False))
@@ -630,7 +632,7 @@ class GNNStateSpace:
                 # Last actions: Charge at current location (if at charger)
                 if current_location in charger_node_to_idx:
                     if self.verbose:
-                        print(f"[DEBUG] Truck {active_truck.truck_id} at charger {current_location}, must_leave={must_leave}")
+                        print(f"\n[DEBUG] Truck {active_truck.truck_id} at charger {current_location}, must_leave={must_leave}")
                     
                     # If truck must leave charger, disable all charging actions
                     if must_leave:

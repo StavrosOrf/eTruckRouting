@@ -343,11 +343,12 @@ class ChargingStation:
         self._record_queue_state(charger_node, global_clock, truck_id, 'finish')
 
     def wake_waiting_trucks(
-        self, charger_node: int, global_clock: float, event_queue: List, EventType, Event
+        self, charger_node: int, global_clock: float, event_queue: List, EventType, Event, truck_states: Dict = None
     ):
         """
         Wake trucks waiting at a charging station when a port becomes available.
         Uses strict FCFS ordering based on sequence numbers.
+        Skips trucks that are currently routing.
 
         Args:
             charger_node: Charging station node
@@ -355,6 +356,7 @@ class ChargingStation:
             event_queue: Event queue for scheduling wake events
             EventType: EventType enum
             Event: Event class
+            truck_states: Optional dict mapping truck_id to state (to skip routing trucks)
         """
         capacity = int(self.charger_capacity[charger_node])
         occupancy = len(self.charger_occupancy[charger_node])
@@ -372,6 +374,12 @@ class ChargingStation:
             for i in range(num_to_wake):
                 tid = waitlist[i]["truck_id"]
                 sequence = waitlist[i]["sequence"]
+                
+                # Skip trucks that are currently routing (to any destination)
+                if truck_states is not None and truck_states.get(tid) == "routing":
+                    if self.verbose:
+                        print(f"    Skipping truck {tid} (sequence {sequence}) - currently routing")
+                    continue
                 
                 if self.verbose:
                     print(f"    Waking truck {tid} (sequence {sequence}) at charger {charger_node}")

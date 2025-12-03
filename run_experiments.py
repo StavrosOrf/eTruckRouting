@@ -31,8 +31,8 @@ num_gcn_layers = 3
 hyperparam_grids = {
     # 'algorithm': ['ppo', 'ppo-variable'],
     "algorithm": ["ppo-variable"],
-    "steps_per_update": [64, 512],
-    "epochs": [5],
+    "steps_per_update": [128, 512, 1024],
+    "epochs": [1, 5, 10],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],

@@ -22,8 +22,10 @@ from algo.policy_utils import load_policy
 # ============ CONFIGURATION ============
 POLICY_PATH = "saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 20
-NUM_STOPS = 4
+NUM_TRUCKS = 10
+NUM_STOPS = 6
+MAX_TIME = 200.0
+MAX_EPISODE_STEPS = 500
 SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
@@ -77,6 +79,7 @@ def run_scenario(policy_type):
     config = load_config(CONFIG_FILE)
     config["environment"]["num_trucks"] = NUM_TRUCKS
     config["environment"]["num_stops"] = NUM_STOPS
+    config["environment"]["max_time"] = MAX_TIME
     
     # Initialize State Space
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
@@ -90,7 +93,7 @@ def run_scenario(policy_type):
 
     # Load Policy
     print(f"Loading policy: {POLICY_PATH} (requested {policy_type})...")
-    policy, active_policy_type = load_policy(POLICY_PATH, policy_type, gnn_state_space, config, device="cpu")
+    policy, active_policy_type = load_policy(POLICY_PATH, policy_type, gnn_state_space, config, device="cuda")
 
     # Run Instrumented Environment
     env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False)
@@ -100,7 +103,7 @@ def run_scenario(policy_type):
     done = truncated = False
     episode_steps = 0
     
-    while not (done or truncated) and episode_steps < 200:
+    while not (done or truncated) and episode_steps < MAX_EPISODE_STEPS:
         gnn_state = gnn_state_space.get_state_GNN(env)
 
         if active_policy_type == "heuristic":

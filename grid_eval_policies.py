@@ -21,20 +21,19 @@ from train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ HARDCODED PARAMETERS ============
-POLICIES = [
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+POLICIES = [    
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("heuristic", "heuristic"),
+    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=64_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [2, 10, 20]
-NUM_STOPS_GRID = [1, 3, 6]
+NUM_TRUCKS_GRID = [2, 10, 40]
+NUM_STOPS_GRID = [2, 3, 12]
 
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 2
-MAX_EPISODE_STEPS = 200
+MAX_EPISODE_STEPS = 1000
 SEED = 1000
 
 # Parallel processing
@@ -192,7 +191,7 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
     # Header
     header = f"{'Policy':<30} |"
     for num_trucks, num_stops in configs:
-        header += f" T={num_trucks:3d},S={num_stops:3d}| " #order it left to right        
+        header += f" T={num_trucks:3d}, S={num_stops:3d} |" #order it left to right        
     print(header)
     print("-" * len(header))
     

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
+from truck_env.optimization.gurobi_solver import GurobiOptimalPlanner
 
 # Import compute_action_mask from train module
 from train import compute_action_mask
@@ -21,22 +22,23 @@ from algo.policy_utils import load_policy
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
     # ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 10
+NUM_TRUCKS = 2
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 2
+NUM_EVAL_SCENARIOS = 10
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
 
 
 def evaluate_policy(
-    env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps
+    env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps, config
 ):
     """Evaluate a policy over multiple episodes."""
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
@@ -45,6 +47,58 @@ def evaluate_policy(
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
+
+        # For optimal policy, solve once and execute the solution
+        if policy_type == "optimal":
+            # Solve optimal plan for this scenario
+            solver = GurobiOptimalPlanner(env,
+                                          config,
+                                          time_limit=180,
+                                          verbose=False)
+            solver.build_model()
+            success = solver.solve()
+            
+            if not success:
+                # Optimal solver failure indicates a problem with the model
+                raise RuntimeError(
+                    f"Optimal solver failed for episode {episode} (seed={seed + episode}). "
+                    "This indicates an issue with the problem formulation or scenario feasibility. "
+                    "Check the Gurobi logs for details."
+                )
+            
+            # Execute the optimal solution (step through environment)
+            # For now, just extract final metrics from the solution
+            episode_reward = solver.solution['objective']  # Use negative for reward
+            episode_steps = sum(len(solver.solution['routes'][k]) - 1 for k in solver.solution['routes'])
+            
+            # Mark episode as complete
+            done = True
+            
+            # Get final info (need to step through or use solution metrics)
+            # For simplicity, extract from solution
+            completion_time = solver.solution['makespan']
+            total_dist = sum(
+                sum(
+                    env.transport_graph.get_path_energy(solver.solution['routes'][k][i], 
+                                                        solver.solution['routes'][k][i+1])
+                    for i in range(len(solver.solution['routes'][k]) - 1)
+                )
+                for k in solver.solution['routes']
+            )
+            total_charge = sum(
+                sum(info['duration'] for info in solver.solution['charging'][k].values())
+                for k in solver.solution['charging']
+            )
+            num_deliveries = sum(len(env.trucks[k].delivery_sequence) - 1 for k in range(len(env.trucks)))
+            
+            rewards.append(-completion_time)  # Negative time as reward
+            successes.append(1.0)
+            steps.append(episode_steps)
+            completion_times.append(completion_time)
+            distances.append(total_dist)
+            charging_times.append(total_charge)
+            total_deliveries.append(num_deliveries)
+            continue
 
         while not (done or truncated) and episode_steps < max_steps:
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -134,6 +188,8 @@ def main():
         # Generate unique name for each policy
         if policy_path == "heuristic":
             name = "Heuristic"
+        elif policy_path == "optimal":
+            name = "Optimal (Gurobi)"
         else:
             base_name = os.path.basename(policy_path.rstrip('/'))
             # Truncate name to first 30 characters
@@ -167,6 +223,7 @@ def main():
             NUM_EVAL_SCENARIOS,
             SEED,
             MAX_EPISODE_STEPS,
+            config,
         )
 
     eval_env.close()

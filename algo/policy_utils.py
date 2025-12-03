@@ -39,6 +39,10 @@ def _normalize_policy_type(label: Optional[str]) -> Optional[str]:
         "heuristic": "heuristic",
         "rule-based": "heuristic",
         "rulebased": "heuristic",
+        "optimal": "optimal",
+        "gurobi": "optimal",
+        "milp": "optimal",
+        "deterministic": "optimal",
     }
     return mapping.get(cleaned, cleaned)
 
@@ -72,11 +76,19 @@ def load_policy(
     variable-action checkpoint) does not cause hard failures.
     """
     normalized_requested = _normalize_policy_type(requested_algo)
-    if isinstance(policy_path, str) and policy_path.lower() == "heuristic":
-        normalized_requested = "heuristic"
+    if isinstance(policy_path, str):
+        if policy_path.lower() == "heuristic":
+            normalized_requested = "heuristic"
+        elif policy_path.lower() == "optimal":
+            normalized_requested = "optimal"
 
     if normalized_requested == "heuristic":
         return HeuristicPolicy(), "heuristic"
+    
+    if normalized_requested == "optimal":
+        # Return a placeholder object for optimal policy
+        # Actual solving happens in evaluate_policy
+        return None, "optimal"
 
     config_file = os.path.join(policy_path, "ppo_network_config.json")
     if not os.path.exists(config_file):

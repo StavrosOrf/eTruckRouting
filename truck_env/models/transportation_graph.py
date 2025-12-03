@@ -64,10 +64,10 @@ class TransportationGraph:
                     self._distance_cache = pickle.load(f)
                 cache_entries = len(self._distance_cache)
                 cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
-                print(f"[TransportationGraph] ✓ Loaded distance cache from disk")
-                print(
-                    f"  - Cache contains {cache_entries} distance entries ({cache_size_mb:.2f} MB)"
-                )
+                # print(f"[TransportationGraph] ✓ Loaded distance cache from disk")
+                # print(
+                #     f"  - Cache contains {cache_entries} distance entries ({cache_size_mb:.2f} MB)"
+                # )
                 return
             except Exception as e:
                 print(

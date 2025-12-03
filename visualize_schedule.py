@@ -20,10 +20,10 @@ from train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
-POLICY_PATH = "saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=64/"
+POLICY_PATH = "saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 2
-NUM_STOPS = 5
+NUM_TRUCKS = 20
+NUM_STOPS = 4
 SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================

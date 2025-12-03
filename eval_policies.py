@@ -20,15 +20,16 @@ from algo.policy_utils import load_policy
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
-    ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 1
+NUM_EVAL_SCENARIOS = 2
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
@@ -38,7 +39,7 @@ def evaluate_policy(
     env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps
 ):
     """Evaluate a policy over multiple episodes."""
-    rewards, successes, distances, charging_times, steps, completion_times = [], [], [], [], [], []
+    rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
         obs, info = env.reset(seed=seed + episode)
@@ -68,16 +69,27 @@ def evaluate_policy(
             episode_steps += 1
 
         rewards.append(episode_reward)
-        successes.append(1.0 if info.get("all_complete", False) else 0.0)
+        successes.append(1.0 if info["all_complete"] else 0.0)
         steps.append(episode_steps)
         completion_times.append(env.global_clock)
 
-        total_dist = sum(t.get("total_distance", 0.0) for t in info.get("trucks", []))
-        total_charge = sum(
-            t.get("total_charging_time", 0.0) for t in info.get("trucks", [])
-        )
+        # Extract metrics from truck info
+        trucks_info = info["trucks"]
+        total_dist = sum(t["total_distance"] for t in trucks_info)
+        total_charge = sum(t["total_charging_time"] for t in trucks_info)
+        
+        # Count deliveries completed: total sequence length - remaining deliveries - 1 (for start)
+        num_deliveries = 0
+        for t in trucks_info:
+            total_stops = len(t["delivery_sequence"])
+            remaining = t["deliveries_remaining"]
+            # Deliveries made = total stops - start node - remaining deliveries
+            if total_stops > 0:
+                num_deliveries += max(0, total_stops - 1 - remaining)
+        
         distances.append(total_dist)
         charging_times.append(total_charge)
+        total_deliveries.append(num_deliveries)
 
     return {
         "mean_reward": np.mean(rewards),
@@ -91,6 +103,8 @@ def evaluate_policy(
         "std_steps": np.std(steps),
         "mean_completion_time": np.mean(completion_times),
         "std_completion_time": np.std(completion_times),
+        "mean_deliveries": np.mean(total_deliveries),
+        "std_deliveries": np.std(total_deliveries),
     }
 
 
@@ -158,13 +172,13 @@ def main():
     eval_env.close()
 
     # Print results table
-    print(f"\n{'='*140}")
+    print(f"\n{'='*160}")
     print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)\n")
     print(
-        f"{'Policy':<50} {'Reward':<18} {'Success':<12} {'Steps':<15} "
+        f"{'Policy':<50} {'Reward':<18} {'Success':<12} {'Deliveries':<15} {'Steps':<15} "
         f"{'Time (h)':<18} {'Distance (km)':<18} {'Charging (h)':<18}"
     )
-    print("-" * 140)
+    print("-" * 160)
 
     for name in sorted(results.keys()):
         r = results[name]
@@ -172,13 +186,14 @@ def main():
             f"{name:<50} "
             f"{r['mean_reward']:>7.0f}±{r['std_reward']:<7.0f}  "
             f"{r['success_rate']*100:>5.1f}%      "
+            f"{r['mean_deliveries']:>6.1f}±{r['std_deliveries']:<5.1f}  "
             f"{r['mean_steps']:>6.1f}±{r['std_steps']:<5.1f}  "
             f"{r['mean_completion_time']:>7.1f}±{r['std_completion_time']:<7.1f}  "
             f"{r['mean_total_distance']:>7.0f}±{r['std_total_distance']:<7.0f}  "
             f"{r['mean_charging_time']:>7.1f}±{r['std_charging_time']:<7.1f}"
         )
 
-    print(f"{'='*140}\n")
+    print(f"{'='*160}\n")
 
 
 if __name__ == "__main__":

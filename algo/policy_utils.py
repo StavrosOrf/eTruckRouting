@@ -62,7 +62,7 @@ def load_policy(
     requested_algo: Optional[str],
     gnn_state_space: "GNNStateSpace",
     config: dict,
-    device: str = "cpu",
+    device: str = "cuda",
 ) -> Tuple[object, str]:
     """
     Load a trained policy along with the resolved policy type.

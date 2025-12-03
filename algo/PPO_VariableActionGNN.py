@@ -329,13 +329,47 @@ class PPOVariableActionGNN:
         value: float,
         action_mask: Optional[torch.Tensor] = None,
     ):
-        # Ensure state is on CPU for storage (act() may have moved it to GPU)
-        # For HeteroData, check if any node type's features are on CUDA
-        is_on_cuda = any(
-            hasattr(state[node_type], 'x') and state[node_type].x.is_cuda 
-            for node_type in state.node_types
-        )
-        state_cpu = state.to('cpu') if is_on_cuda else state
+        # Always ensure state is on CPU for storage (act() moves it to GPU)
+        # Use detach().clone() to create a separate copy on CPU to avoid any reference issues
+        state_cpu = HeteroData()
+        
+        # Copy node features
+        for node_type in state.node_types:
+            if hasattr(state[node_type], 'x'):
+                state_cpu[node_type].x = state[node_type].x.detach().cpu()
+            # Copy any other node-level attributes
+            for key in state[node_type].keys():
+                if key != 'x':
+                    attr = state[node_type][key]
+                    if isinstance(attr, torch.Tensor):
+                        state_cpu[node_type][key] = attr.detach().cpu()
+                    else:
+                        state_cpu[node_type][key] = attr
+        
+        # Copy edge features
+        for edge_type in state.edge_types:
+            if hasattr(state[edge_type], 'edge_index'):
+                state_cpu[edge_type].edge_index = state[edge_type].edge_index.detach().cpu()
+            if hasattr(state[edge_type], 'edge_attr'):
+                state_cpu[edge_type].edge_attr = state[edge_type].edge_attr.detach().cpu()
+            # Copy any other edge-level attributes
+            for key in state[edge_type].keys():
+                if key not in ['edge_index', 'edge_attr']:
+                    attr = state[edge_type][key]
+                    if isinstance(attr, torch.Tensor):
+                        state_cpu[edge_type][key] = attr.detach().cpu()
+                    else:
+                        state_cpu[edge_type][key] = attr
+        
+        # Copy global attributes
+        for key in state.keys():
+            if key not in ['_node_store_dict', '_edge_store_dict']:
+                attr = state[key]
+                if isinstance(attr, torch.Tensor):
+                    state_cpu[key] = attr.detach().cpu()
+                else:
+                    state_cpu[key] = attr
+        
         combined_mask, _ = self._prepare_feasible_actions(state_cpu, action_mask, device="cpu")
         self.buffer.add(state_cpu, action, logprob, reward, done, value, combined_mask)
 

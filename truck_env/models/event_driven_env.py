@@ -84,6 +84,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.min_hop_distance = env_config["min_hop_distance"]
         self.max_hop_distance = env_config["max_hop_distance"]
         self.max_time = env_config["max_time"]
+        self.max_episode_steps = env_config['max_episode_steps']
         self.verbose = verbose if verbose is not None else env_config["verbose"]
 
         # Visualization and output settings
@@ -211,6 +212,7 @@ class EventDrivenTruckEnv(gym.Env):
             {}
         )  # truck_id -> "active", "routing", "charging", "complete", "failed"
         self.episode_reward = 0.0
+        self.episode_steps = 0  # Track number of steps in current episode
         self.waiting_start_times = {}  # Track when trucks enter waiting_to_charge state
         self.waiting_penalty_buffer = 0.0  # Buffer for waiting penalty to apply on next step
 
@@ -227,6 +229,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.global_clock = 0.0
         self.event_queue = []
         self.episode_reward = 0.0
+        self.episode_steps = 0  # Reset step counter
         self.waiting_start_times = {}  # Reset waiting time tracking
         self.waiting_penalty_buffer = 0.0  # Reset waiting penalty buffer
 
@@ -624,6 +627,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Accumulate reward
         self.episode_reward += reward
+        self.episode_steps += 1  # Increment step counter
 
         # Advance to next decision point
         self._advance_to_next_decision()
@@ -1237,9 +1241,9 @@ class EventDrivenTruckEnv(gym.Env):
         return all_done
 
     def _check_truncated(self) -> bool:
-        """Check if episode is truncated (time limit exceeded)."""        
+        """Check if episode is truncated (time limit or step limit exceeded)."""        
 
-        return self.global_clock >= self.max_time
+        return self.global_clock >= self.max_time or self.episode_steps >= self.max_episode_steps
 
     def _get_observation(self) -> np.ndarray:
         """Get observation/state for the active truck."""

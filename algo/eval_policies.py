@@ -27,13 +27,12 @@ CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
 NUM_EVAL_SCENARIOS = 20
-MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
 
 
 def evaluate_policy(
-    env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps
+    env, policy, gnn_state_space, policy_type, num_episodes, seed
 ):
     """Evaluate a policy over multiple episodes."""
     rewards, successes, distances, charging_times = [], [], [], []
@@ -43,7 +42,7 @@ def evaluate_policy(
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
 
-        while not (done or truncated) and episode_steps < max_steps:
+        while not (done or truncated):
             gnn_state = gnn_state_space.get_state_GNN(env)
 
             if policy_type == "heuristic":
@@ -130,7 +129,6 @@ def main():
             policy_info["type"],
             NUM_EVAL_SCENARIOS,
             SEED,
-            MAX_EPISODE_STEPS,
         )
 
     eval_env.close()

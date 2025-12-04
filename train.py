@@ -71,8 +71,6 @@ def parse_args():
                             help='Maximum number of training episodes')
     train_group.add_argument('--max-timesteps', type=int, default=1000000,
                             help='Maximum number of timesteps')
-    train_group.add_argument('--max-episode-steps', type=int, default=200,
-                            help='Maximum steps per episode (prevents infinite episodes)')
     train_group.add_argument('--eval-freq', type=int, default=500,
                             help='Evaluation frequency (in timesteps)')
     train_group.add_argument('--eval-episodes', type=int, default=10,
@@ -182,7 +180,7 @@ def compute_action_mask(env):
     return mask
 
 
-def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_steps=200):
+def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
     """Evaluate the current policy and collect detailed metrics."""
     eval_rewards = []
     eval_success_rate = []
@@ -200,7 +198,7 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         done = False
         truncated = False
         
-        while not (done or truncated) and episode_steps < max_steps:
+        while not (done or truncated):
             # Get GNN state from the CORRECT environment (eval_env, not train env)
             gnn_state = gnn_state_space.get_state_GNN(env)
             
@@ -406,9 +404,6 @@ def train(args):
         next_obs, reward, done, truncated, info = env.step(env_action)
         
         done_flag = done or truncated
-        if episode_timesteps >= args.max_episode_steps:
-            done_flag = True
-            truncated = True
 
         # Only get next state if episode is not done
         if done_flag:
@@ -462,7 +457,7 @@ def train(args):
 
         if (t + 1) % args.eval_freq == 0:
             eval_results = evaluate_policy(eval_env, policy, gnn_state_space,
-                                           args.eval_episodes, args.seed + 1000, args.max_episode_steps)
+                                           args.eval_episodes, args.seed + 1000)
 
             print(f"\n{'='*80}")
             print(f"PPO Evaluation at timestep {total_timesteps}")

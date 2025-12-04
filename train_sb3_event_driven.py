@@ -16,10 +16,125 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import MaskablePPO, QRDQN
 from sb3_contrib.common.wrappers import ActionMasker
+from sb3_contrib.common.maskable.evaluation import evaluate_policy as evaluate_maskable_policy
 from wandb.integration.sb3 import WandbCallback
 
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.action_mask import get_action_mask
+
+
+class MaskableEvalCallback(EvalCallback):
+    """Custom EvalCallback that properly handles MaskablePPO with action masks.
+    
+    Note: Even though the eval_env is wrapped with ActionMasker, the standard
+    evaluate_policy function doesn't automatically pass action masks to 
+    MaskablePPO.predict(). This callback explicitly retrieves masks from the
+    ActionMasker wrapper and passes them to ensure only valid actions are selected.
+    """
+    
+    def _evaluate_maskable_policy(self):
+        """Evaluate MaskablePPO with explicit action mask passing."""
+        episode_rewards = []
+        episode_lengths = []
+        
+        for _ in range(self.n_eval_episodes):
+            obs = self.eval_env.reset()
+            done = False
+            episode_reward = 0.0
+            episode_length = 0
+            
+            while not done:
+                # Get action masks from the environment
+                # The eval_env is a VecEnv, so we need to get the first (and only) env
+                env = self.eval_env.envs[0]
+                
+                # Get action masks from ActionMasker wrapper
+                action_masks = env.action_masks()
+                
+                # Predict with action masks
+                action, _ = self.model.predict(
+                    obs, 
+                    action_masks=action_masks,
+                    deterministic=self.deterministic
+                )
+                
+                obs, reward, done, info = self.eval_env.step(action)
+                episode_reward += reward[0]
+                episode_length += 1
+                
+                if self.render:
+                    self.eval_env.render()
+            
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(episode_length)
+        
+        return episode_rewards, episode_lengths
+    
+    def _on_step(self) -> bool:
+        """Override to use maskable evaluation for MaskablePPO."""
+        continue_training = True
+
+        if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            # Use custom maskable evaluation if the model is MaskablePPO
+            if isinstance(self.model, MaskablePPO):
+                episode_rewards, episode_lengths = self._evaluate_maskable_policy()
+            else:
+                # Standard evaluation for other algorithms
+                from stable_baselines3.common.evaluation import evaluate_policy as sb3_evaluate_policy
+                episode_rewards, episode_lengths = sb3_evaluate_policy(
+                    self.model,
+                    self.eval_env,
+                    n_eval_episodes=self.n_eval_episodes,
+                    render=self.render,
+                    deterministic=self.deterministic,
+                    return_episode_rewards=True,
+                    warn=self.warn,
+                    callback=self._log_success_callback,
+                )
+
+            if self.log_path is not None:
+                self.evaluations_timesteps.append(self.num_timesteps)
+                self.evaluations_results.append(episode_rewards)
+                self.evaluations_length.append(episode_lengths)
+
+            mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
+            mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
+            self.last_mean_reward = mean_reward
+
+            if self.verbose >= 1:
+                print(f"Eval num_timesteps={self.num_timesteps}, "
+                      f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+                print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+
+            # Add to current Logger
+            self.logger.record("eval/mean_reward", float(mean_reward))
+            self.logger.record("eval/mean_ep_length", mean_ep_length)
+
+            if len(self._is_success_buffer) > 0:
+                success_rate = np.mean(self._is_success_buffer)
+                if self.verbose >= 1:
+                    print(f"Success rate: {100 * success_rate:.2f}%")
+                self.logger.record("eval/success_rate", success_rate)
+
+            # Dump log so the evaluation results are printed with the correct timestep
+            self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
+            self.logger.dump(self.num_timesteps)
+
+            if mean_reward > self.best_mean_reward:
+                if self.verbose >= 1:
+                    print("New best mean reward!")
+                if self.best_model_save_path is not None:
+                    self.model.save(os.path.join(self.best_model_save_path, "best_model"))
+                self.best_mean_reward = mean_reward
+                # Trigger callback on new best model, if needed
+                if self.callback_on_new_best is not None:
+                    continue_training = self.callback_on_new_best.on_step()
+
+            # Trigger callback after every evaluation, if needed
+            if self.callback is not None:
+                continue_training = continue_training and self._on_event()
+
+        return continue_training
 
 
 def mask_fn(env) -> np.ndarray:
@@ -144,15 +259,25 @@ def train_sb3_agent(
     train_env = DummyVecEnv([env_fn(config_path, seed)])
     eval_env = DummyVecEnv([env_fn(config_path, seed + 100)])
     
-    # Setup evaluation callback
-    eval_callback = EvalCallback(
-        eval_env,
-        eval_freq=eval_freq,
-        n_eval_episodes=n_eval_episodes,
-        deterministic=True,
-        render=False,
-        verbose=1,
-    )
+    # Setup evaluation callback - use custom callback for MaskablePPO
+    if use_masked:
+        eval_callback = MaskableEvalCallback(
+            eval_env,
+            eval_freq=eval_freq,
+            n_eval_episodes=n_eval_episodes,
+            deterministic=True,
+            render=False,
+            verbose=1,
+        )
+    else:
+        eval_callback = EvalCallback(
+            eval_env,
+            eval_freq=eval_freq,
+            n_eval_episodes=n_eval_episodes,
+            deterministic=True,
+            render=False,
+            verbose=1,
+        )
     
     # Setup callbacks
     callbacks = [eval_callback]
@@ -166,13 +291,9 @@ def train_sb3_agent(
     # Create model based on algorithm
     model = None
     
-    # Try to use tensorboard if available
-    try:
-        import tensorboard
-        tb_log = f"./logs/{run_name}"
-    except ImportError:
-        print("Warning: tensorboard not installed, logging disabled")
-        tb_log = None
+
+    import tensorboard
+    tb_log = f"./logs/{run_name}"
     
     if algo == "ppo":
         print("Initializing PPO with default parameters...")

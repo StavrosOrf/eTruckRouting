@@ -26,27 +26,26 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
-    # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
-    # ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # GNN-based policies
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
+    # SB3 policies
     ("saved_models/maskppo_seed0_20251204_040513/model.zip", "sb3-maskppo"),
     ("saved_models/ppo_seed0_20251204_034420/model.zip", "sb3-ppo"),
     ("saved_models/dqn_seed0_20251204_041900/model.zip", "sb3-dqn"),
+    # Baselines
     # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "truck_env/config_files/config.yaml"
-NUM_TRUCKS = 2
+NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 1
-MAX_EPISODE_STEPS = 200
+NUM_EVAL_SCENARIOS = 2
 SEED = 1000
 # =============================================
 
 
 def evaluate_policy(
-    env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps, config
+    env, policy, gnn_state_space, policy_type, num_episodes, seed, config
 ):
     """Evaluate a policy over multiple episodes."""
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
@@ -111,7 +110,7 @@ def evaluate_policy(
             total_deliveries.append(num_deliveries)
             continue
 
-        while not (done or truncated) and episode_steps < max_steps:
+        while not (done or truncated):
             if is_sb3_policy:
                 # SB3 policies use observation directly
                 if policy_type == "sb3-maskppo":
@@ -269,7 +268,6 @@ def main():
             policy_info["type"],
             NUM_EVAL_SCENARIOS,
             SEED,
-            MAX_EPISODE_STEPS,
             config,
         )
 

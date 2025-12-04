@@ -30,7 +30,6 @@ CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
 NUM_EVAL_SCENARIOS = 10
-MAX_EPISODE_STEPS = 200
 SEED = 1000
 OUTPUT_DIR = "results/analysis"
 # =======================================
@@ -68,7 +67,7 @@ def categorize_action(action, env):
             else:
                 return "Charge (Unknown)", 0.0
 
-def collect_actions(env, policy, gnn_state_space, policy_type, num_episodes, seed, max_steps, policy_name):
+def collect_actions(env, policy, gnn_state_space, policy_type, num_episodes, seed, policy_name):
     """Run episodes and collect all actions."""
     data = []
     
@@ -77,7 +76,7 @@ def collect_actions(env, policy, gnn_state_space, policy_type, num_episodes, see
         episode_steps = 0
         done = truncated = False
 
-        while not (done or truncated) and episode_steps < max_steps:
+        while not (done or truncated):
             gnn_state = gnn_state_space.get_state_GNN(env)
 
             # Select Action
@@ -185,8 +184,7 @@ def main():
             gnn_state_space, 
             info["type"], 
             NUM_EVAL_SCENARIOS, 
-            SEED, 
-            MAX_EPISODE_STEPS,
+            SEED,
             name
         )
         all_data.extend(policy_data)

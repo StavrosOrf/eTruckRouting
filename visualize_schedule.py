@@ -25,7 +25,6 @@ CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 6
 MAX_TIME = 200.0
-MAX_EPISODE_STEPS = 500
 SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
@@ -103,7 +102,7 @@ def run_scenario(policy_type):
     done = truncated = False
     episode_steps = 0
     
-    while not (done or truncated) and episode_steps < MAX_EPISODE_STEPS:
+    while not (done or truncated):
         gnn_state = gnn_state_space.get_state_GNN(env)
 
         if active_policy_type == "heuristic":

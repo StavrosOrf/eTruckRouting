@@ -22,6 +22,9 @@ environment:
   # Maximum simulation time in hours (for event-driven environments)
   max_time: 200
 
+  # Maximum number of steps per episode (prevents infinite episodes)
+  max_episode_steps: 200
+
 # Truck Configuration
 # -------------------
 truck:

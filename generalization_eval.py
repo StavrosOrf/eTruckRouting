@@ -33,7 +33,6 @@ NUM_STOPS_GRID = [2, 3, 12]
 
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 2
-MAX_EPISODE_STEPS = 1000
 SEED = 1000
 
 # Parallel processing
@@ -44,7 +43,7 @@ NUM_PARALLEL_POLICIES = 4  # Number of policies to evaluate in parallel (adjust 
 
 def evaluate_policy_single_config(
     env, gnn_state_space, policy, resolved_type,
-    num_episodes, seed, max_steps
+    num_episodes, seed
 ):
     """
     Evaluate a single policy on a single configuration.
@@ -59,7 +58,7 @@ def evaluate_policy_single_config(
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
 
-        while not (done or truncated) and episode_steps < max_steps:
+        while not (done or truncated):
             gnn_state = gnn_state_space.get_state_GNN(env)
 
             if resolved_type == "heuristic":
@@ -280,7 +279,6 @@ def evaluate_single_policy_all_configs(policy_spec):
                 resolved_type=resolved_type,
                 num_episodes=NUM_EVAL_SCENARIOS,
                 seed=SEED,
-                max_steps=MAX_EPISODE_STEPS,
             )
             
             result["num_trucks"] = num_trucks
@@ -311,7 +309,6 @@ def main():
     print(f"  - Trucks: {NUM_TRUCKS_GRID}")
     print(f"  - Stops: {NUM_STOPS_GRID}")
     print(f"\nTotal evaluations: {len(POLICIES) * len(NUM_TRUCKS_GRID) * len(NUM_STOPS_GRID)} (each with {NUM_EVAL_SCENARIOS} episodes)")
-    print(f"Max steps per episode: {MAX_EPISODE_STEPS}")
     
     if USE_PARALLEL:
         print(f"Parallel mode: {NUM_PARALLEL_POLICIES} policies in parallel (each on GPU)")

@@ -215,3 +215,4 @@ gnn_plots/
 wandb/
 saved_models/
 .vscode/
+logs/

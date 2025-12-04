@@ -8,7 +8,7 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 2
+  num_trucks: 10
 
   # Number of delivery stops per truck episode
   num_stops: 3
@@ -20,7 +20,7 @@ environment:
   max_hop_distance: 250.0
 
   # Maximum simulation time in hours (for event-driven environments)
-  max_time: 100
+  max_time: 200
 
 # Truck Configuration
 # -------------------

@@ -18,6 +18,7 @@ Simplified GNN Design:
 """
 
 import sys
+import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
@@ -26,7 +27,9 @@ import networkx as nx
 from typing import Dict, List, Tuple
 import torch
 
-sys.path.insert(0, "/home/sorfanouda/EVPR")
+# Add project root to path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, project_root)
 
 from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.models.event_driven_env import EventDrivenTruckEnv

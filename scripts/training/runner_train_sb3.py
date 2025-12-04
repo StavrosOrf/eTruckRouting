@@ -12,13 +12,13 @@ python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 
 # Training parameters
 counter = 0
-total_steps = 1_000_000
+total_steps = 10_000_000
 eval_freq = 1_000
 n_eval_episodes = 30
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "algorithm": ["ppo", "maskppo", "dqn", "qrdqn"],
+    "algorithm": ["maskppo", "qrdqn"],
     "seed": [0],
 }
 

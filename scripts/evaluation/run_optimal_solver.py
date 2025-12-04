@@ -17,14 +17,16 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, project_root)
 
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.optimization.gurobi_solver import GurobiOptimalPlanner
-from train import compute_action_mask
+from scripts.training.train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============

@@ -4,11 +4,16 @@ Supports: PPO, MaskablePPO, DQN, and QR-DQN.
 """
 
 import os
+import sys
 import argparse
 import torch
 import wandb
 import numpy as np
 from datetime import datetime
+
+# Add project root to path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+sys.path.insert(0, project_root)
 
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.callbacks import EvalCallback

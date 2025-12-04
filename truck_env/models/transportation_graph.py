@@ -209,6 +209,10 @@ class TransportationGraph:
         Returns:
             Travel time in hours, or float('inf') if no path exists
         """
+        # If same node, time distance is 0
+        if from_node == to_node:
+            return 0.0
+        
         if self.graph.has_edge(from_node, to_node):
             return self.graph[from_node][to_node]["time"]
         

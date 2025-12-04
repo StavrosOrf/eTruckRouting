@@ -29,6 +29,7 @@ from truck_env.models.event_handlers import EventType, Event, EventHandler
 from truck_env.models.loaders import create_truck
 from truck_env.models.charging_station import ChargingStation
 from truck_env.state.state_space import StateSpace, action_to_string
+from truck_env.state.action_mask import get_action_mask
 from truck_env.utils.plotter import EnvironmentPlotter
 from truck_env.utils.statistics import EnvironmentStatistics
 
@@ -1250,6 +1251,7 @@ class EventDrivenTruckEnv(gym.Env):
             truck_states=self.truck_states,
             event_queue=self.event_queue,
             global_clock=self.global_clock,
+            charging_station=self.charging_station,
         )
 
     def _get_info(self) -> Dict:
@@ -1287,6 +1289,17 @@ class EventDrivenTruckEnv(gym.Env):
                 for node in self.charging_nodes
             },
         }
+
+    def mask_fn(self) -> np.ndarray:
+        """
+        Generate feasibility mask for actions using GNN state space logic.
+        
+        Returns:
+            np.ndarray: Boolean array where True indicates feasible actions.
+                       Shape: (action_space.n,)
+                       Order: [charger_0, ..., charger_N-1, next_delivery, charge_1h, ..., charge_4h]
+        """
+        return get_action_mask(self)
 
     def _action_to_string(self, action: int) -> str:
         """Convert action to human-readable string."""

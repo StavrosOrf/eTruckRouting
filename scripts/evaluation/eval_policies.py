@@ -11,10 +11,10 @@ from tqdm import tqdm
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
+from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
-# from EVRoutingEnv.optimization.gurobi_solver import GurobiOptimalPlanner
 from EVRoutingEnv.state.action_mask import get_action_mask
 
 # Import compute_action_mask from train module
@@ -24,25 +24,24 @@ from algo.policy_utils import load_policy
 # Import SB3 algorithms
 from stable_baselines3 import PPO, DQN
 from sb3_contrib import MaskablePPO, QRDQN
-from sb3_contrib.common.maskable.utils import get_action_masks
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # GNN-based policies
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # SB3 policies
     ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 2
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================
 
@@ -60,58 +59,8 @@ def evaluate_policy(
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
-
-        # For optimal policy, solve once and execute the solution
-        if policy_type == "optimal":
-            # Solve optimal plan for this scenario
-            solver = GurobiOptimalPlanner(env,
-                                          config,
-                                          time_limit=180,
-                                          verbose=False)
-            solver.build_model()
-            success = solver.solve()
-            
-            if not success:
-                # Optimal solver failure indicates a problem with the model
-                raise RuntimeError(
-                    f"Optimal solver failed for episode {episode} (seed={seed + episode}). "
-                    "This indicates an issue with the problem formulation or scenario feasibility. "
-                    "Check the Gurobi logs for details."
-                )
-            
-            # Execute the optimal solution (step through environment)
-            # For now, just extract final metrics from the solution
-            episode_reward = solver.solution['objective']  # Use negative for reward
-            episode_steps = sum(len(solver.solution['routes'][k]) - 1 for k in solver.solution['routes'])
-            
-            # Mark episode as complete
-            done = True
-            
-            # Get final info (need to step through or use solution metrics)
-            # For simplicity, extract from solution
-            completion_time = solver.solution['makespan']
-            total_dist = sum(
-                sum(
-                    env.transport_graph.get_path_energy(solver.solution['routes'][k][i], 
-                                                        solver.solution['routes'][k][i+1])
-                    for i in range(len(solver.solution['routes'][k]) - 1)
-                )
-                for k in solver.solution['routes']
-            )
-            total_charge = sum(
-                sum(info['duration'] for info in solver.solution['charging'][k].values())
-                for k in solver.solution['charging']
-            )
-            num_deliveries = sum(len(env.trucks[k].delivery_sequence) - 1 for k in range(len(env.trucks)))
-            
-            rewards.append(-completion_time)  # Negative time as reward
-            successes.append(1.0)
-            steps.append(episode_steps)
-            completion_times.append(completion_time)
-            distances.append(total_dist)
-            charging_times.append(total_charge)
-            total_deliveries.append(num_deliveries)
-            continue
+        # Recreate optimal planner per episode to avoid stale plans across seeds
+        episode_policy = OptimalGurobiPolicy(verbose=False) if policy_type == "optimal" else policy
 
         while not (done or truncated):
             if is_sb3_policy:
@@ -124,17 +73,17 @@ def evaluate_policy(
                     # Standard SB3 policies (PPO, DQN, QRDQN)
                     action, _states = policy.predict(obs, deterministic=True)
             else:
-                # GNN-based policies
-                gnn_state = gnn_state_space.get_state_GNN(env)
-
-                if policy_type == "heuristic":
+                # Custom policies
+                if policy_type == "optimal":
+                    action = episode_policy.get_action(env)
+                elif policy_type == "heuristic":
                     action = policy.get_action(env)
                 elif policy_type == "ppo-variable":
-                    # Use deterministic evaluation (greedy) to match train.py
+                    gnn_state = gnn_state_space.get_state_GNN(env)
                     raw_action = policy.select_action(gnn_state, deterministic=True)
                     action = policy.to_env_action(gnn_state, int(raw_action))
                 else:  # ppo
-                    # Use deterministic evaluation (greedy) to match train.py
+                    gnn_state = gnn_state_space.get_state_GNN(env)
                     mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
                     raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
                     if isinstance(raw_action, tuple):
@@ -224,6 +173,14 @@ def main():
                 raise ValueError(f"Unknown SB3 algorithm: {algo_name}")
             resolved_type = policy_type
             print(f"  Loaded SB3 {algo_name.upper()} model")
+        elif policy_type == "optimal":
+            try:
+                policy = OptimalGurobiPolicy(verbose=False)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Optimal (Gurobi) policy requires gurobipy to be installed."
+                ) from exc
+            resolved_type = "optimal"
         else:
             # Load GNN-based policies using existing function
             policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)

@@ -165,7 +165,7 @@ The flattened state space includes the **exact same information** as the GNN sta
 ## Usage Example
 
 ```python
-from truck_env.state.state_space import FlattenedStateSpace
+from EVRoutingEnv.state.state_space import FlattenedStateSpace
 
 # Initialize
 state_space = FlattenedStateSpace(

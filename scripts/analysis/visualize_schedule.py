@@ -14,16 +14,16 @@ import torch
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.utils.utils import load_config
-from truck_env.utils.plotter import EnvironmentPlotter
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.utils.utils import load_config
+from EVRoutingEnv.utils.plotter import EnvironmentPlotter
 from scripts.training.train import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
 POLICY_PATH = "saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
-CONFIG_FILE = "truck_env/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 6
 MAX_TIME = 200.0

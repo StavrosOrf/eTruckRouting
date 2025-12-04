@@ -11,11 +11,11 @@ from tqdm import tqdm
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.utils.utils import load_config
-from truck_env.optimization.gurobi_solver import GurobiOptimalPlanner
-from truck_env.state.action_mask import get_action_mask
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.utils.utils import load_config
+# from EVRoutingEnv.optimization.gurobi_solver import GurobiOptimalPlanner
+from EVRoutingEnv.state.action_mask import get_action_mask
 
 # Import compute_action_mask from train module
 from scripts.training.train import compute_action_mask
@@ -31,14 +31,15 @@ POLICIES = [
     # GNN-based policies
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
     # SB3 policies
-    ("saved_models/maskppo_seed0_20251204_040513/model.zip", "sb3-maskppo"),
-    ("saved_models/ppo_seed0_20251204_034420/model.zip", "sb3-ppo"),
-    ("saved_models/dqn_seed0_20251204_041900/model.zip", "sb3-dqn"),
+    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
+    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
     # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
-CONFIG_FILE = "truck_env/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 3
 NUM_EVAL_SCENARIOS = 2

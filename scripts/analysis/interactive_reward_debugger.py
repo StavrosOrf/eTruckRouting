@@ -19,14 +19,14 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.utils.utils import load_config
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
-    parser.add_argument("--config", type=str, default="truck_env/config_files/config.yaml",
+    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
     parser.add_argument("--num-trucks", type=int, default=2,

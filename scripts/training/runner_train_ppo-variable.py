@@ -7,7 +7,7 @@ import time
 import itertools
 
 # Configuration
-config = "truck_env/config_files/config.yaml"
+config = "EVRoutingEnv/config_files/config.yaml"
 python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 
 # Training parameters
@@ -79,7 +79,7 @@ for config_idx, (
 
     # Build command
     command = (
-        f'tmux new-session -d \\; send-keys " {python_path} train.py'
+        f'tmux new-session -d \\; send-keys " {python_path} scripts/training/train.py'
         f" --algo {algorithm}"
         f" --config {config}"
         f" --seed {seed}"

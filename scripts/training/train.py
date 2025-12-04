@@ -16,10 +16,10 @@ from datetime import datetime
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.utils.utils import load_config
 
 
 def save_network_config(save_dir, config_dict):
@@ -53,7 +53,7 @@ def parse_args():
     
     # Environment parameters
     env_group = parser.add_argument_group('Environment')
-    env_group.add_argument('--config', type=str, default='truck_env/config_files/config.yaml',
+    env_group.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config.yaml',
                           help='Path to environment config file')
     env_group.add_argument('--num-trucks', type=int, default=1,
                           help='Number of trucks (overrides config)')

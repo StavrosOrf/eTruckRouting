@@ -1,7 +1,7 @@
 """Loaders for trucks and other entities in the environment."""
 
 import numpy as np
-from truck_env.models.truck import Truck
+from EVRoutingEnv.models.truck import Truck
 
 
 def create_truck(

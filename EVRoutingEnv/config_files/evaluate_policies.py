@@ -24,10 +24,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from algo.PPO_actionGNN import PPOActionGNN
-from truck_env.baselines.heuristic_policy import HeuristicPolicy
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.utils.utils import load_config
 
 
 NODE_FEATURE_DIMS = {"truck": 13, "delivery": 3, "charger": 4}
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="truck_env/config_files/config.yaml",
+        default="EVRoutingEnv/config_files/config.yaml",
         help="Environment config file.",
     )
     parser.add_argument(

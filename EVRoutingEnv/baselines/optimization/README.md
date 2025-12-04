@@ -51,12 +51,12 @@ The small makespan term provides a secondary objective to balance completion tim
 ### Basic Example
 
 ```python
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.optimization.gurobi_solver import GurobiOptimalPlanner
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.optimization.gurobi_solver import GurobiOptimalPlanner
+from EVRoutingEnv.utils.utils import load_config
 
 # Load configuration
-config = load_config("truck_env/config_files/config.yaml")
+config = load_config("EVRoutingEnv/config_files/config.yaml")
 config["environment"]["num_trucks"] = 2
 config["environment"]["num_stops"] = 3
 
@@ -127,7 +127,7 @@ Typical problem (10 trucks, 12 stops each):
 
 ## Files
 
-- `truck_env/optimization/gurobi_solver.py`: Main solver implementation
+- `EVRoutingEnv/optimization/gurobi_solver.py`: Main solver implementation
 - `test_optimal_solver.py`: Test script for small scenarios
 - `run_optimal_solver.py`: Comparison script (optimal vs heuristic vs PPO)
 

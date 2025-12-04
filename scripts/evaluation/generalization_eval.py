@@ -14,9 +14,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.utils.utils import load_config
 
 # Import compute_action_mask from train module
 from scripts.training.train import compute_action_mask
@@ -33,7 +33,7 @@ POLICIES = [
 NUM_TRUCKS_GRID = [2, 10, 40]
 NUM_STOPS_GRID = [2, 3, 12]
 
-CONFIG_FILE = "truck_env/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 2
 SEED = 1000
 

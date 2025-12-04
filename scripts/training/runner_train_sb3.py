@@ -6,8 +6,8 @@ import os
 import time
 import itertools
 
-# Configuration
-config = "truck_env/config_files/config.yaml"
+ # Configuration
+config = "EVRoutingEnv/config_files/config.yaml"
 python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 
 # Training parameters
@@ -17,8 +17,8 @@ eval_freq = 1_000
 n_eval_episodes = 30
 
 # Define hyperparameter grids
-hyperparam_grids = {
-    "algorithm": ["maskppo", "qrdqn"],
+hyperparam_grids = {    
+    "algorithm": ["dqn", "ppo", "maskppo", "qrdqn"],
     "seed": [0],
 }
 
@@ -34,7 +34,7 @@ all_combinations = list(
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.utils.utils import load_config
 
 env_config = load_config(config)
 num_trucks = env_config["environment"]["num_trucks"]
@@ -52,13 +52,17 @@ for config_idx, (algorithm, seed) in enumerate(all_combinations, 1):
         f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm.upper()} | seed={seed}"
     )
 
+    #add random suffix to experiment name to avoid tmux session name conflicts
+    import random
+    import string
+    random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
     # Build experiment name
-    exp_name = f"sb3_{algorithm}_seed{seed}_trucks{num_trucks}_stops{num_stops}"
+    exp_name = f"sb3_{algorithm}_seed{seed}_trucks{num_trucks}_stops{num_stops}_{random_suffix}"
 
     # Build command
     command = (
         f'tmux new-session -d -s "{exp_name}" \\; send-keys "'
-        f"{python_path} train_sb3_event_driven.py"
+        f"{python_path} scripts/training/train_sb3_event_driven.py"
         f" --algo {algorithm}"
         f" --seed {seed}"
         f" --config {config}"

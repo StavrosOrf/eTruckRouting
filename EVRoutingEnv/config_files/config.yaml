@@ -72,7 +72,7 @@ rewards:
 # Graph/Network Settings
 # -----------------------
 network:
-  data_path: "truck_env/data/"
+  data_path: "EVRoutingEnv/data/"
   # Graph file names
   shortest_path_energy_file: "shortest_path_energy_dict.json"
   shortest_path_time_file: "shortest_path_time_dict.json"

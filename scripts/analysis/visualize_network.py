@@ -15,8 +15,8 @@ import numpy as np
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.utils.utils import load_config
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.utils.utils import load_config
 
 
 def create_network_visualization(env, output_path=None, show_plot=True):
@@ -340,7 +340,7 @@ def print_network_summary(env):
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize transportation network')
-    parser.add_argument('--config', type=str, default='truck_env/config_files/config.yaml',
+    parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config.yaml',
                         help='Path to config file')
     parser.add_argument('--output', type=str, default='results/network_visualization.png',
                         help='Output path for visualization')

@@ -9,7 +9,7 @@ import numpy as np
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from truck_env.models.event_driven_env import EventDrivenTruckEnv
+    from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 
 
 def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:

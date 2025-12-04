@@ -9,11 +9,11 @@ import os
 from typing import Dict, Optional, Tuple
 
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
-from truck_env.baselines.heuristic_policy import HeuristicPolicy
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 
 # Importing only for type checking / documentation purposes.
-from truck_env.state.gnn_state_space import GNNStateSpace  # noqa: F401
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace  # noqa: F401
 
 
 def _normalize_policy_type(label: Optional[str]) -> Optional[str]:

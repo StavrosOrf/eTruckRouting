@@ -26,12 +26,12 @@ class TransportationGraph:
 
         # Distance cache
         self._distance_cache = {}  # Dict[Tuple[int, int], float]
-        # Cache file path: truck_env/data/distance_matrix_cache.pkl
-        # __file__ is at truck_env/models/transportation_graph.py
-        # So we go up to truck_env, then into data
+        # Cache file path: EVRoutingEnv/data/distance_matrix_cache.pkl
+        # __file__ is at EVRoutingEnv/models/transportation_graph.py
+        # So we go up to EVRoutingEnv, then into data
         self._cache_file = os.path.join(
-            os.path.dirname(__file__),  # truck_env/models
-            "..",  # truck_env
+            os.path.dirname(__file__),  # EVRoutingEnv/models
+            "..",  # EVRoutingEnv
             "data",
             "distance_matrix_cache.pkl",
         )

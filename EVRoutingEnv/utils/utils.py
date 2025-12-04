@@ -161,20 +161,20 @@ def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     time_file = network_config.get("shortest_path_time_file", "shortest_path_time_dict.json")
     station_file = network_config.get("station_info_file", "station_info_dict.json")
 
-    # Get the directory where this file is located (truck_env/utils)
+    # Get the directory where this file is located (EVRoutingEnv/utils)
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Navigate up from utils to truck_env
-    truck_env_dir = os.path.dirname(current_dir)
+    # Navigate up from utils to EVRoutingEnv
+    EVRoutingEnv_dir = os.path.dirname(current_dir)
     
     # Construct data directory path
-    # If data_path starts with "truck_env/", use it as-is relative to project root
-    if data_path.startswith("truck_env/"):
+    # If data_path starts with "EVRoutingEnv/", use it as-is relative to project root
+    if data_path.startswith("EVRoutingEnv/"):
         # Relative to project root
-        project_root = os.path.dirname(truck_env_dir)
+        project_root = os.path.dirname(EVRoutingEnv_dir)
         data_dir = os.path.join(project_root, data_path.rstrip('/'))
     else:
-        # Relative to truck_env directory
-        data_dir = os.path.join(truck_env_dir, data_path.rstrip('/'))
+        # Relative to EVRoutingEnv directory
+        data_dir = os.path.join(EVRoutingEnv_dir, data_path.rstrip('/'))
 
     edge_distance_file = os.path.join(data_dir, energy_file)
     edge_time_file = os.path.join(data_dir, time_file)

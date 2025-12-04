@@ -12,7 +12,7 @@ import numpy as np
 from datetime import datetime
 
 # Add project root to path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, project_root)
 
 from stable_baselines3 import PPO, DQN
@@ -21,60 +21,60 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import MaskablePPO, QRDQN
 from sb3_contrib.common.wrappers import ActionMasker
-from sb3_contrib.common.maskable.evaluation import evaluate_policy as evaluate_maskable_policy
+from sb3_contrib.common.maskable.evaluation import (
+    evaluate_policy as evaluate_maskable_policy,
+)
 from wandb.integration.sb3 import WandbCallback
 
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
-from truck_env.state.action_mask import get_action_mask
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.action_mask import get_action_mask
 
 
 class MaskableEvalCallback(EvalCallback):
     """Custom EvalCallback that properly handles MaskablePPO with action masks.
-    
+
     Note: Even though the eval_env is wrapped with ActionMasker, the standard
-    evaluate_policy function doesn't automatically pass action masks to 
+    evaluate_policy function doesn't automatically pass action masks to
     MaskablePPO.predict(). This callback explicitly retrieves masks from the
     ActionMasker wrapper and passes them to ensure only valid actions are selected.
     """
-    
+
     def _evaluate_maskable_policy(self):
         """Evaluate MaskablePPO with explicit action mask passing."""
         episode_rewards = []
         episode_lengths = []
-        
+
         for _ in range(self.n_eval_episodes):
             obs = self.eval_env.reset()
             done = False
             episode_reward = 0.0
             episode_length = 0
-            
+
             while not done:
                 # Get action masks from the environment
                 # The eval_env is a VecEnv, so we need to get the first (and only) env
                 env = self.eval_env.envs[0]
-                
+
                 # Get action masks from ActionMasker wrapper
                 action_masks = env.action_masks()
-                
+
                 # Predict with action masks
                 action, _ = self.model.predict(
-                    obs, 
-                    action_masks=action_masks,
-                    deterministic=self.deterministic
+                    obs, action_masks=action_masks, deterministic=self.deterministic
                 )
-                
+
                 obs, reward, done, info = self.eval_env.step(action)
                 episode_reward += reward[0]
                 episode_length += 1
-                
+
                 if self.render:
                     self.eval_env.render()
-            
+
             episode_rewards.append(episode_reward)
             episode_lengths.append(episode_length)
-        
+
         return episode_rewards, episode_lengths
-    
+
     def _on_step(self) -> bool:
         """Override to use maskable evaluation for MaskablePPO."""
         continue_training = True
@@ -85,7 +85,10 @@ class MaskableEvalCallback(EvalCallback):
                 episode_rewards, episode_lengths = self._evaluate_maskable_policy()
             else:
                 # Standard evaluation for other algorithms
-                from stable_baselines3.common.evaluation import evaluate_policy as sb3_evaluate_policy
+                from stable_baselines3.common.evaluation import (
+                    evaluate_policy as sb3_evaluate_policy,
+                )
+
                 episode_rewards, episode_lengths = sb3_evaluate_policy(
                     self.model,
                     self.eval_env,
@@ -103,12 +106,16 @@ class MaskableEvalCallback(EvalCallback):
                 self.evaluations_length.append(episode_lengths)
 
             mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
-            mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(episode_lengths)
+            mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(
+                episode_lengths
+            )
             self.last_mean_reward = mean_reward
 
             if self.verbose >= 1:
-                print(f"Eval num_timesteps={self.num_timesteps}, "
-                      f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}")
+                print(
+                    f"Eval num_timesteps={self.num_timesteps}, "
+                    f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}"
+                )
                 print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
 
             # Add to current Logger
@@ -122,14 +129,18 @@ class MaskableEvalCallback(EvalCallback):
                 self.logger.record("eval/success_rate", success_rate)
 
             # Dump log so the evaluation results are printed with the correct timestep
-            self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")
+            self.logger.record(
+                "time/total_timesteps", self.num_timesteps, exclude="tensorboard"
+            )
             self.logger.dump(self.num_timesteps)
 
             if mean_reward > self.best_mean_reward:
                 if self.verbose >= 1:
                     print("New best mean reward!")
                 if self.best_model_save_path is not None:
-                    self.model.save(os.path.join(self.best_model_save_path, "best_model"))
+                    self.model.save(
+                        os.path.join(self.best_model_save_path, "best_model")
+                    )
                 self.best_mean_reward = mean_reward
                 # Trigger callback on new best model, if needed
                 if self.callback_on_new_best is not None:
@@ -144,41 +155,41 @@ class MaskableEvalCallback(EvalCallback):
 
 def mask_fn(env) -> np.ndarray:
     """Return action mask for the current environment state.
-    
+
     The env passed here may be wrapped (e.g., Monitor), so we need to
     unwrap it to get the base EventDrivenTruckEnv.
     """
     # Unwrap to get the base environment
     base_env = env
-    while hasattr(base_env, 'env'):
+    while hasattr(base_env, "env"):
         base_env = base_env.env
     return get_action_mask(base_env)
 
 
 def make_env(config_path: str, seed: int, enable_plotting: bool = False):
     """Create and return environment wrapped with Monitor."""
+
     def _init():
         env = EventDrivenTruckEnv(
-            config=config_path,
-            verbose=False,
-            enable_plotting=enable_plotting
+            config=config_path, verbose=False, enable_plotting=enable_plotting
         )
         env = Monitor(env)
         return env
+
     return _init
 
 
 def make_masked_env(config_path: str, seed: int, enable_plotting: bool = False):
     """Create and return environment wrapped for MaskablePPO with Monitor and ActionMasker."""
+
     def _init():
         env = EventDrivenTruckEnv(
-            config=config_path,
-            verbose=False,
-            enable_plotting=enable_plotting
+            config=config_path, verbose=False, enable_plotting=enable_plotting
         )
         env = Monitor(env)
         env = ActionMasker(env, mask_fn)
         return env
+
     return _init
 
 
@@ -193,11 +204,11 @@ def train_sb3_agent(
     save_dir: str = "./saved_models",
     use_wandb: bool = True,
     project_name: str = "evrp-sb3",
-    **kwargs
+    **kwargs,
 ):
     """
     Train an SB3 agent on EventDrivenTruckEnv.
-    
+
     Args:
         algo: Algorithm name ('ppo', 'maskppo', 'dqn', 'qrdqn')
         seed: Random seed
@@ -215,13 +226,14 @@ def train_sb3_agent(
     torch.manual_seed(seed)
     if device == "cuda":
         torch.cuda.manual_seed_all(seed)
-    
+
     algo = algo.lower()
-    
+
     # Load config to extract environment parameters for group naming
-    from truck_env.utils.utils import load_config
+    from EVRoutingEnv.utils.utils import load_config
+
     config = load_config(config_path)
-    
+
     print(f"\n{'='*60}")
     print(f"Training Configuration")
     print(f"{'='*60}")
@@ -231,13 +243,13 @@ def train_sb3_agent(
     print(f"Total steps: {total_steps:,}")
     print(f"Config: {config_path}")
     print(f"{'='*60}\n")
-    
+
     # Initialize wandb with group name based on environment config
     run_name = f"{algo}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    num_trucks = config['environment']['num_trucks']
-    num_stops = config['environment']['num_stops']
+    num_trucks = config["environment"]["num_trucks"]
+    num_stops = config["environment"]["num_stops"]
     group_name = f"{num_trucks}trucks_{num_stops}stops"
-    
+
     if use_wandb:
         wandb.init(
             project=project_name,
@@ -256,18 +268,23 @@ def train_sb3_agent(
             sync_tensorboard=True,
             save_code=True,
         )
-    
+
     # Create environments
-    use_masked = (algo == "maskppo")
+    use_masked = algo == "maskppo"
     env_fn = make_masked_env if use_masked else make_env
-    
+
     train_env = DummyVecEnv([env_fn(config_path, seed)])
     eval_env = DummyVecEnv([env_fn(config_path, seed + 100)])
-    
+
+    save_path = f"./saved_models/{group_name}/{run_name}/"
+    os.makedirs(f"./saved_models/{group_name}", exist_ok=True)
+    os.makedirs(save_path, exist_ok=True)
+
     # Setup evaluation callback - use custom callback for MaskablePPO
     if use_masked:
         eval_callback = MaskableEvalCallback(
             eval_env,
+            best_model_save_path=save_path,
             eval_freq=eval_freq,
             n_eval_episodes=n_eval_episodes,
             deterministic=True,
@@ -277,29 +294,30 @@ def train_sb3_agent(
     else:
         eval_callback = EvalCallback(
             eval_env,
+            best_model_save_path=save_path,
             eval_freq=eval_freq,
             n_eval_episodes=n_eval_episodes,
             deterministic=True,
             render=False,
             verbose=1,
         )
-    
+
     # Setup callbacks
     callbacks = [eval_callback]
     if use_wandb:
-        callbacks.append(WandbCallback(
-            gradient_save_freq=1000,
-            model_save_path=f"{save_dir}/{run_name}",
-            verbose=2,
-        ))
-    
+        callbacks.append(
+            WandbCallback(
+                verbose=2,
+            )
+        )
+
     # Create model based on algorithm
     model = None
-    
 
     import tensorboard
+
     tb_log = f"./logs/{run_name}"
-    
+
     if algo == "ppo":
         print("Initializing PPO with default parameters...")
         model = PPO(
@@ -310,7 +328,7 @@ def train_sb3_agent(
             tensorboard_log=tb_log,
             seed=seed,
         )
-    
+
     elif algo == "maskppo":
         print("Initializing MaskablePPO with default parameters...")
         model = MaskablePPO(
@@ -321,7 +339,7 @@ def train_sb3_agent(
             tensorboard_log=tb_log,
             seed=seed,
         )
-    
+
     elif algo == "dqn":
         print("Initializing DQN with default parameters...")
         model = DQN(
@@ -332,7 +350,7 @@ def train_sb3_agent(
             tensorboard_log=tb_log,
             seed=seed,
         )
-    
+
     elif algo == "qrdqn":
         print("Initializing QR-DQN with default parameters...")
         model = QRDQN(
@@ -343,30 +361,29 @@ def train_sb3_agent(
             tensorboard_log=tb_log,
             seed=seed,
         )
-    
+
     else:
-        raise ValueError(f"Unknown algorithm: {algo}. Supported: ppo, maskppo, dqn, qrdqn")
-    
+        raise ValueError(
+            f"Unknown algorithm: {algo}. Supported: ppo, maskppo, dqn, qrdqn"
+        )
+
     # Train the model
     print(f"\nStarting training for {total_steps:,} steps...")
     print(f"{'='*60}\n")
-    
+
     model.learn(
         total_timesteps=total_steps,
         progress_bar=True,
         callback=callbacks,
     )
     
-    # Save the final model
-    os.makedirs(save_dir, exist_ok=True)
-    model_path = os.path.join(save_dir, f"{run_name}_final")
-    model.save(model_path)
-    print(f"\nModel saved to: {model_path}")
-    
+    model.save(f"{save_path}/last_model.zip")    
+    model_path = f"{save_path}/last_model.zip"
+
     # Close wandb
     if use_wandb:
         wandb.finish()
-    
+
     return model, model_path
 
 
@@ -390,7 +407,7 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="truck_env/config_files/config.yaml",
+        default="EVRoutingEnv/config_files/config.yaml",
         help="Path to environment config file",
     )
     parser.add_argument(
@@ -434,9 +451,9 @@ def main():
         default="evpr-sb3",
         help="Wandb project name",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Train the agent
     model, model_path = train_sb3_agent(
         algo=args.algo,
@@ -450,7 +467,7 @@ def main():
         use_wandb=not args.no_wandb,
         project_name=args.project,
     )
-    
+
     print(f"\n{'='*60}")
     print("Training completed!")
     print(f"Final model saved to: {model_path}")

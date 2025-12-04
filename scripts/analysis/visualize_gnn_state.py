@@ -31,8 +31,8 @@ import torch
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from truck_env.state.gnn_state_space import GNNStateSpace
-from truck_env.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 
 
 class GNNVisualizer:
@@ -866,7 +866,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     print("GNN State Visualization")
     print("=" * 80)
 
-    from truck_env.baselines.heuristic_policy import HeuristicPolicy
+    from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
 
     # Initialize
     env = EventDrivenTruckEnv(config_path, verbose=True, enable_plotting=True)
@@ -979,5 +979,5 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
 
 
 if __name__ == "__main__":
-    config_path = "/home/sorfanouda/EVPR/truck_env/config_files/config.yaml"
+    config_path = "/home/sorfanouda/EVPR/EVRoutingEnv/config_files/config.yaml"
     visualize_gnn_state(config_path, num_steps=3)

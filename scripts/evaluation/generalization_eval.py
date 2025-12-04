@@ -9,6 +9,7 @@ from tqdm import tqdm
 import pandas as pd
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -20,18 +21,31 @@ from EVRoutingEnv.utils.utils import load_config
 
 # Import compute_action_mask from train module
 from scripts.training.train import compute_action_mask
+from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
+# SB3 imports
+from stable_baselines3 import PPO, DQN
+from sb3_contrib import MaskablePPO, QRDQN
+from sb3_contrib.common.maskable.utils import get_action_masks
+
 # ============ HARDCODED PARAMETERS ============
-POLICIES = [    
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=64_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("heuristic", "heuristic"),
+POLICIES = [
+    # GNN-based policies
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
+    # SB3 policies
+    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
+    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    # Baselines
+    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [2, 10, 40]
-NUM_STOPS_GRID = [2, 3, 12]
+NUM_TRUCKS_GRID = [2, 10]
+NUM_STOPS_GRID = [2, 3]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 2
@@ -45,7 +59,9 @@ NUM_PARALLEL_POLICIES = 4  # Number of policies to evaluate in parallel (adjust 
 
 def evaluate_policy_single_config(
     env, gnn_state_space, policy, resolved_type,
-    num_episodes, seed
+    num_episodes, seed,
+    sb3_model=None,
+    sb3_type=None
 ):
     """
     Evaluate a single policy on a single configuration.
@@ -61,20 +77,37 @@ def evaluate_policy_single_config(
         done = truncated = False
 
         while not (done or truncated):
-            gnn_state = gnn_state_space.get_state_GNN(env)
+            if sb3_model is not None:
+                # SB3 policy: use raw observation
+                # (don't compute GNN state for SB3 models)
+                pass
+            else:
+                # Custom policies: compute GNN state
+                gnn_state = gnn_state_space.get_state_GNN(env)
 
-            if resolved_type == "heuristic":
-                action = policy.get_action(env)
-            elif resolved_type == "ppo-variable" or resolved_type == "variable-ppo":
-                raw_action = policy.select_action(gnn_state, deterministic=True)
-                action = policy.to_env_action(gnn_state, int(raw_action))
-            else:  # ppo
-                mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
-                raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
-                if isinstance(raw_action, tuple):
-                    action = raw_action
+            if sb3_model is not None:
+                # SB3 policy
+                if sb3_type == "maskppo":
+                    # MaskablePPO: use action masks from environment
+                    action_masks = get_action_mask(env)
+                    action, _ = sb3_model.predict(obs, action_masks=action_masks, deterministic=True)
                 else:
-                    action = int(raw_action) % env.action_space.n
+                    # PPO, DQN, QRDQN
+                    action, _ = sb3_model.predict(obs, deterministic=True)
+            else:
+                # Custom policies
+                if resolved_type == "heuristic":
+                    action = policy.get_action(env)
+                elif resolved_type == "ppo-variable" or resolved_type == "variable-ppo":
+                    raw_action = policy.select_action(gnn_state, deterministic=True)
+                    action = policy.to_env_action(gnn_state, int(raw_action))
+                else:  # ppo
+                    mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
+                    raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
+                    if isinstance(raw_action, tuple):
+                        action = raw_action
+                    else:
+                        action = int(raw_action) % env.action_space.n
 
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
@@ -163,7 +196,7 @@ def print_policy_legend(policy_mapping):
         print()
 
 
-def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=format_cell, policy_mapping=None):
+def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=format_cell, policy_mapping=None, sb3_config_lookup=None):
     """
     Print a table for a single metric across all policies and configurations.
     
@@ -174,6 +207,7 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
         title: Title of the table
         formatter: Function to format the cell value
         policy_mapping: Optional pre-computed mapping of short -> full names
+        sb3_config_lookup: Optional dict mapping policy_name to (num_trucks, num_stops)
     """
     print(f"\n{'='*120}")
     print(f"{title}")
@@ -200,7 +234,14 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
     for short_name, full_name in sorted(policy_mapping.items()):
         row = f"{short_name:<30} |"
         for config in configs:
-            if config in results_dict[full_name]:
+            dash = False
+            if sb3_config_lookup and full_name in sb3_config_lookup:
+                allowed_config = sb3_config_lookup[full_name]
+                if config != allowed_config:
+                    dash = True
+            if dash:
+                row += f" {'-':^12} |"
+            elif config in results_dict[full_name]:
                 r = results_dict[full_name][config]
                 if metric_std and metric_std in r:
                     cell = formatter(r[metric_mean], r[metric_std])
@@ -217,34 +258,69 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
 def evaluate_single_policy_all_configs(policy_spec):
     """Evaluate a single policy across all configurations (runs in separate process with GPU)."""
     policy_path, policy_type = policy_spec
-    
+
     # Generate policy name (keep full name)
     if policy_path == "heuristic":
         policy_name = "Heuristic"
     else:
         base_name = os.path.basename(policy_path.rstrip('/'))
-        policy_name = base_name
-    
+        # For SB3 policies, extract algorithm name from folder (e.g., "ppo_seed0_20251204_202437" -> "PPO")
+        if policy_type.startswith("sb3-"):
+            # Get the algorithm folder name
+            algo_folder = os.path.basename(os.path.dirname(policy_path.rstrip('/')))
+            algo_name = algo_folder.split('_')[0].upper()  # Extract "ppo", "dqn", etc. and uppercase
+            policy_name = algo_name
+        else:
+            policy_name = base_name
+
     # Load config
     config = load_config(CONFIG_FILE)
-    
-    # Load policy once
-    config_temp = copy.deepcopy(config)
-    config_temp["environment"]["num_trucks"] = NUM_TRUCKS_GRID[0]
-    config_temp["environment"]["num_stops"] = NUM_STOPS_GRID[0]
-    
-    env_temp = EventDrivenTruckEnv(config=config_temp, verbose=False, enable_plotting=False)
-    gnn_state_space_temp = GNNStateSpace(
-        num_trucks=NUM_TRUCKS_GRID[0],
-        num_stops=NUM_STOPS_GRID[0],
-        max_time=config_temp["environment"]["max_time"],
-        num_charging_nodes=env_temp.num_charging_nodes,
-        verbose=False,
-    )
-    
-    policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space_temp, config_temp, device="cuda")
-    env_temp.close()
-    
+
+    # Detect SB3 policy type and trained config
+    sb3_model = None
+    sb3_type = None
+    sb3_trained_config = None
+    if policy_type.startswith("sb3-"):
+        # Extract config from path (e.g. .../10trucks_3stops/algorithm_name/...)
+        path_parts = policy_path.rstrip('/').split('/')
+        import re
+        for part in path_parts:
+            m = re.search(r"(\d+)trucks_(\d+)stops", part)
+            if m:
+                sb3_trained_config = (int(m.group(1)), int(m.group(2)))
+                break
+        
+        # Map type to SB3 class
+        sb3_type = policy_type.replace("sb3-", "")
+        if sb3_type == "ppo":
+            sb3_model = PPO.load(policy_path, device="cpu")
+        elif sb3_type == "maskppo":
+            sb3_model = MaskablePPO.load(policy_path, device="cpu")
+        elif sb3_type == "dqn":
+            sb3_model = DQN.load(policy_path, device="cpu")
+        elif sb3_type == "qrdqn":
+            sb3_model = QRDQN.load(policy_path, device="cpu")
+        else:
+            raise ValueError(f"Unknown SB3 type: {sb3_type}")
+        resolved_type = None
+        policy = None
+    else:
+        # Custom policies
+        config_temp = copy.deepcopy(config)
+        config_temp["environment"]["num_trucks"] = NUM_TRUCKS_GRID[0]
+        config_temp["environment"]["num_stops"] = NUM_STOPS_GRID[0]
+
+        env_temp = EventDrivenTruckEnv(config=config_temp, verbose=False, enable_plotting=False)
+        gnn_state_space_temp = GNNStateSpace(
+            num_trucks=NUM_TRUCKS_GRID[0],
+            num_stops=NUM_STOPS_GRID[0],
+            max_time=config_temp["environment"]["max_time"],
+            num_charging_nodes=env_temp.num_charging_nodes,
+            verbose=False,
+        )
+        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space_temp, config_temp, device="cuda")
+        env_temp.close()
+
     # Create environments for each configuration
     environments = {}
     for num_trucks in NUM_TRUCKS_GRID:
@@ -252,7 +328,7 @@ def evaluate_single_policy_all_configs(policy_spec):
             config_copy = copy.deepcopy(config)
             config_copy["environment"]["num_trucks"] = num_trucks
             config_copy["environment"]["num_stops"] = num_stops
-            
+
             env = EventDrivenTruckEnv(config=config_copy, verbose=False, enable_plotting=False)
             gnn_state_space = GNNStateSpace(
                 num_trucks=num_trucks,
@@ -261,19 +337,25 @@ def evaluate_single_policy_all_configs(policy_spec):
                 num_charging_nodes=env.num_charging_nodes,
                 verbose=False,
             )
-            
+
             environments[(num_trucks, num_stops)] = {
                 "env": env,
                 "gnn_state_space": gnn_state_space
             }
-    
+
     # Evaluate across all configurations
     policy_results = {}
     for num_trucks in NUM_TRUCKS_GRID:
         for num_stops in NUM_STOPS_GRID:
             config_key = (num_trucks, num_stops)
-            env_info = environments[config_key]
             
+            # Skip SB3 policies if not their trained config
+            if sb3_model is not None and sb3_trained_config is not None:
+                if config_key != sb3_trained_config:
+                    continue
+            
+            env_info = environments[config_key]
+
             result = evaluate_policy_single_config(
                 env=env_info["env"],
                 gnn_state_space=env_info["gnn_state_space"],
@@ -281,16 +363,18 @@ def evaluate_single_policy_all_configs(policy_spec):
                 resolved_type=resolved_type,
                 num_episodes=NUM_EVAL_SCENARIOS,
                 seed=SEED,
+                sb3_model=sb3_model,
+                sb3_type=sb3_type
             )
-            
+
             result["num_trucks"] = num_trucks
             result["num_stops"] = num_stops
             policy_results[config_key] = result
-    
+
     # Cleanup
     for env_info in environments.values():
         env_info["env"].close()
-    
+
     return policy_name, policy_results
 
 
@@ -356,46 +440,60 @@ def main():
     print("RESULTS")
     print("="*120)
     
+    # Create output directory with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join("results", "grid_eval", f"grid_eval_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"\nSaving results to: {output_dir}\n")
+    
     # Create policy name mapping once
     policy_mapping = create_policy_mapping(results)
     
     # Print legend once at the top
     print_policy_legend(policy_mapping)
     
+    # Build SB3 config lookup: {policy_name: (num_trucks, num_stops)}
+    sb3_config_lookup = {}
+    for policy_path, policy_type in POLICIES:
+        if policy_type.startswith("sb3-"):
+            # Try to extract config from path (e.g. .../10trucks_3stops/...)
+            base = os.path.basename(os.path.dirname(policy_path.rstrip('/')))
+            import re
+            m = re.search(r"(\d+)trucks_(\d+)stops", base)
+            if m:
+                num_trucks = int(m.group(1))
+                num_stops = int(m.group(2))
+                policy_name = os.path.basename(policy_path.rstrip('/'))
+                sb3_config_lookup[policy_name] = (num_trucks, num_stops)
+
     # Print tables for each metric (passing the same mapping)
     print_metric_table(
         results, "mean_reward", "std_reward", 
-        "REWARD", format_cell_int, policy_mapping
+        "REWARD", format_cell_int, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "success_rate", None,
-        "SUCCESS RATE", format_cell_percent, policy_mapping
+        "SUCCESS RATE", format_cell_percent, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "mean_deliveries", "std_deliveries",
-        "TOTAL DELIVERIES", format_cell, policy_mapping
+        "TOTAL DELIVERIES", format_cell, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "mean_steps", "std_steps",
-        "STEPS", format_cell, policy_mapping
+        "STEPS", format_cell, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "mean_completion_time", "std_completion_time",
-        "COMPLETION TIME (hours)", format_cell, policy_mapping
+        "COMPLETION TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "mean_total_distance", "std_total_distance",
-        "TOTAL DISTANCE (km)", format_cell_int, policy_mapping
+        "TOTAL DISTANCE (km)", format_cell_int, policy_mapping, sb3_config_lookup
     )
-    
     print_metric_table(
         results, "mean_charging_time", "std_charging_time",
-        "CHARGING TIME (hours)", format_cell, policy_mapping
+        "CHARGING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
     )
     
     # Save results to CSV
@@ -421,7 +519,7 @@ def main():
     df = df.sort_values(["policy", "num_trucks", "num_stops"])
     
     # Save to CSV
-    output_file = "grid_evaluation_results.csv"
+    output_file = os.path.join(output_dir, "grid_evaluation_results.csv")
     df.to_csv(output_file, index=False)
     print(f"\n✓ Results saved to: {output_file}")
     
@@ -429,7 +527,7 @@ def main():
     import sys
     from io import StringIO
     
-    output_txt = "grid_evaluation_results.txt"
+    output_txt = os.path.join(output_dir, "grid_evaluation_results.txt")
     with open(output_txt, "w") as f:
         # Redirect stdout to file
         old_stdout = sys.stdout

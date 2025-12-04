@@ -13,25 +13,33 @@ from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
 from truck_env.utils.utils import load_config
 from truck_env.optimization.gurobi_solver import GurobiOptimalPlanner
+from truck_env.state.action_mask import get_action_mask
 
 # Import compute_action_mask from train module
 from train import compute_action_mask
 from algo.policy_utils import load_policy
+
+# Import SB3 algorithms
+from stable_baselines3 import PPO, DQN
+from sb3_contrib import MaskablePPO, QRDQN
+from sb3_contrib.common.maskable.utils import get_action_masks
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # ("saved_models/ppo-variable_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=64_mlphd=256/", "variable-ppo"),
     # ("saved_models/SanityCheck_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=128_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
-    # ("saved_models/debug_ppo_var_eval", "ppo-variable"),
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/maskppo_seed0_20251204_040513/model.zip", "sb3-maskppo"),
+    ("saved_models/ppo_seed0_20251204_034420/model.zip", "sb3-ppo"),
+    ("saved_models/dqn_seed0_20251204_041900/model.zip", "sb3-dqn"),
+    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "truck_env/config_files/config.yaml"
 NUM_TRUCKS = 2
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 10
+NUM_EVAL_SCENARIOS = 1
 MAX_EPISODE_STEPS = 200
 SEED = 1000
 # =============================================
@@ -42,6 +50,9 @@ def evaluate_policy(
 ):
     """Evaluate a policy over multiple episodes."""
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
+    
+    # Check if this is an SB3 policy
+    is_sb3_policy = policy_type.startswith("sb3-")
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
         obs, info = env.reset(seed=seed + episode)
@@ -101,22 +112,33 @@ def evaluate_policy(
             continue
 
         while not (done or truncated) and episode_steps < max_steps:
-            gnn_state = gnn_state_space.get_state_GNN(env)
-
-            if policy_type == "heuristic":
-                action = policy.get_action(env)
-            elif policy_type == "ppo-variable":
-                # Use deterministic evaluation (greedy) to match train.py
-                raw_action = policy.select_action(gnn_state, deterministic=True)
-                action = policy.to_env_action(gnn_state, int(raw_action))
-            else:  # ppo
-                # Use deterministic evaluation (greedy) to match train.py
-                mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
-                raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
-                if isinstance(raw_action, tuple):
-                    action = raw_action
+            if is_sb3_policy:
+                # SB3 policies use observation directly
+                if policy_type == "sb3-maskppo":
+                    # MaskablePPO requires action masks
+                    action_masks = get_action_mask(env)
+                    action, _states = policy.predict(obs, action_masks=action_masks, deterministic=True)
                 else:
-                    action = int(raw_action) % env.action_space.n
+                    # Standard SB3 policies (PPO, DQN, QRDQN)
+                    action, _states = policy.predict(obs, deterministic=True)
+            else:
+                # GNN-based policies
+                gnn_state = gnn_state_space.get_state_GNN(env)
+
+                if policy_type == "heuristic":
+                    action = policy.get_action(env)
+                elif policy_type == "ppo-variable":
+                    # Use deterministic evaluation (greedy) to match train.py
+                    raw_action = policy.select_action(gnn_state, deterministic=True)
+                    action = policy.to_env_action(gnn_state, int(raw_action))
+                else:  # ppo
+                    # Use deterministic evaluation (greedy) to match train.py
+                    mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
+                    raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
+                    if isinstance(raw_action, tuple):
+                        action = raw_action
+                    else:
+                        action = int(raw_action) % env.action_space.n
 
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
@@ -183,13 +205,38 @@ def main():
     policy_counter = {}  # Track duplicate names
     for policy_path, policy_type in POLICIES:
         print(f"Loading: {policy_path} ({policy_type})...")
-        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
+        
+        # Handle SB3 policies differently
+        if policy_type.startswith("sb3-"):
+            # Load SB3 model
+            algo_name = policy_type.replace("sb3-", "")
+            if algo_name == "ppo":
+                policy = PPO.load(policy_path)
+            elif algo_name == "maskppo":
+                policy = MaskablePPO.load(policy_path)
+            elif algo_name == "dqn":
+                policy = DQN.load(policy_path)
+            elif algo_name == "qrdqn":
+                policy = QRDQN.load(policy_path)
+            else:
+                raise ValueError(f"Unknown SB3 algorithm: {algo_name}")
+            resolved_type = policy_type
+            print(f"  Loaded SB3 {algo_name.upper()} model")
+        else:
+            # Load GNN-based policies using existing function
+            policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
         
         # Generate unique name for each policy
         if policy_path == "heuristic":
             name = "Heuristic"
         elif policy_path == "optimal":
             name = "Optimal (Gurobi)"
+        elif policy_type.startswith("sb3-"):
+            # For SB3 models, create readable name from directory path
+            dir_path = os.path.dirname(policy_path) if policy_path.endswith('.zip') else policy_path
+            base_name = os.path.basename(dir_path.rstrip('/'))
+            base_name = base_name[:40]  # Truncate
+            name = f"SB3-{base_name}"
         else:
             base_name = os.path.basename(policy_path.rstrip('/'))
             # Truncate name to first 30 characters

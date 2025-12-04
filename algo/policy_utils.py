@@ -9,7 +9,6 @@ import os
 from typing import Dict, Optional, Tuple
 
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
-from algo.PPO_actionGNN import PPOActionGNN
 from truck_env.baselines.heuristic_policy import HeuristicPolicy
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 

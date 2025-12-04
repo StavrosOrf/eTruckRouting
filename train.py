@@ -1,5 +1,5 @@
 """
-Training loop for the TD3 Action-GNN agent using wandb to log results.
+Training loop for PPO-Variable Action-GNN agent using wandb to log results.
 """
 
 import argparse
@@ -17,22 +17,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from truck_env.models.event_driven_env import EventDrivenTruckEnv
 from truck_env.state.gnn_state_space import GNNStateSpace
-from algo.TD3_actionGNN import TD3_ActionGNN
-from algo.PPO_actionGNN import PPOActionGNN
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
-from algo.replay_buffer import ReplayBuffer
 from truck_env.utils.utils import load_config
 
 
-def save_network_config(save_dir, config_dict, algo_name):
+def save_network_config(save_dir, config_dict):
     """Save neural network configuration to JSON file in the save directory.
     
     Args:
         save_dir: Directory where the config should be saved
         config_dict: Dictionary containing the network configuration
-        algo_name: Name of the algorithm (td3, ppo, ppo-variable)
     """
-    config_file = os.path.join(save_dir, f"{algo_name}_network_config.json")
+    config_file = os.path.join(save_dir, "ppo_network_config.json")
     
     # Convert non-serializable types to serializable ones
     serializable_config = {}
@@ -52,9 +48,7 @@ def save_network_config(save_dir, config_dict, algo_name):
 
 def parse_args():
     """Parse command line arguments for training hyperparameters."""
-    parser = argparse.ArgumentParser(description='Train TD3 Action-GNN agent for Electric Truck Routing')
-    parser.add_argument('--algo', type=str, choices=['td3', 'ppo', 'ppo-variable'], default='ppo',
-                        help='Choose which RL algorithm to run (ppo-variable enables the action-graph variant)')
+    parser = argparse.ArgumentParser(description='Train PPO-Variable Action-GNN agent for Electric Truck Routing')
     
     # Environment parameters
     env_group = parser.add_argument_group('Environment')
@@ -85,28 +79,7 @@ def parse_args():
                             help='Number of episodes for evaluation')
     train_group.add_argument('--batch-size', type=int, default=256,
                             help='Batch size for training')
-    train_group.add_argument('--start-timesteps', type=int, default=5000,
-                            help='Timesteps before training starts (random policy)')
-    train_group.add_argument('--buffer-size', type=int, default=500000,
-                            help='Replay buffer size')
     
-    # TD3 hyperparameters
-    td3_group = parser.add_argument_group('TD3 Algorithm')
-    td3_group.add_argument('--discount', type=float, default=0.99,
-                          help='Discount factor (gamma)')
-    td3_group.add_argument('--tau', type=float, default=0.005,
-                          help='Target network update rate')
-    td3_group.add_argument('--policy-noise', type=float, default=0.2,
-                          help='Policy noise for target smoothing')
-    td3_group.add_argument('--noise-clip', type=float, default=0.5,
-                          help='Range to clip target policy noise')
-    td3_group.add_argument('--policy-freq', type=int, default=2,
-                          help='Frequency of delayed policy updates')
-    td3_group.add_argument('--expl-noise', type=float, default=0.1,
-                          help='Exploration noise (std of Gaussian)')
-    td3_group.add_argument('--target-action-temp', type=float, default=1.5,
-                          help='Temperature for sampling target actions (>0)')
-
     # PPO hyperparameters
     ppo_group = parser.add_argument_group('PPO Algorithm')
     ppo_group.add_argument('--ppo-steps-per-update', type=int, default=128,
@@ -147,7 +120,7 @@ def parse_args():
     
     # Logging and output
     log_group = parser.add_argument_group('Logging')
-    log_group.add_argument('--wandb-project', type=str, default='evpr-td3-gnn',
+    log_group.add_argument('--wandb-project', type=str, default='evpr-ppo-variable',
                           help='Wandb project name')
     log_group.add_argument('--wandb-entity', type=str, default= 'stavrosorf',
                           help='Wandb entity (username or team)')
@@ -286,8 +259,8 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, max_
         'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0
     }
 
-def train_ppo(args):
-    """PPO training loop using the GNN state representation."""
+def train(args):
+    """PPO-Variable training loop using the GNN state representation."""
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -371,9 +344,6 @@ def train_ppo(args):
             feature_dim = int(features.shape[-1])
         node_feature_dims[node_type] = feature_dim
 
-    PolicyCls = PPOVariableActionGNN if args.algo == 'ppo-variable' else PPOActionGNN
-    policy_variant = "Variable Action" if args.algo == 'ppo-variable' else "Standard"
-
     policy_kwargs = dict(
         action_dim=action_dim,
         node_feature_dims=node_feature_dims,
@@ -389,11 +359,10 @@ def train_ppo(args):
         max_grad_norm=args.ppo_max_grad_norm,
         ppo_epochs=args.ppo_epochs,
         minibatch_size=args.ppo_minibatch_size,
+        charge_durations=config["charging"]["charge_durations"],
     )
-    if args.algo == 'ppo-variable':
-        policy_kwargs["charge_durations"] = config["charging"].get("charge_durations", [])
 
-    policy = PolicyCls(**policy_kwargs)
+    policy = PPOVariableActionGNN(**policy_kwargs)
 
     # Save network configuration once
     ppo_config = {
@@ -412,15 +381,14 @@ def train_ppo(args):
         "max_grad_norm": args.ppo_max_grad_norm,
         "ppo_epochs": args.ppo_epochs,
         "minibatch_size": args.ppo_minibatch_size,
+        "charge_durations": config["charging"]["charge_durations"],
         "seed": args.seed
     }
-    if args.algo == 'ppo-variable':
-        ppo_config["charge_durations"] = config["charging"]["charge_durations"]
     
-    save_network_config(save_dir, ppo_config, "ppo")
+    save_network_config(save_dir, ppo_config)
 
     print(f"\n{'='*80}")
-    print(f"Starting PPO Training ({policy_variant}): {args.exp_name}")
+    print(f"Starting PPO-Variable Training: {args.exp_name}")
     print(f"{'='*80}")
     print(f"Environment: {config['environment']['num_trucks']} trucks, {config['environment']['num_stops']} stops")
     print(f"Max timesteps: {args.max_timesteps}")
@@ -431,19 +399,9 @@ def train_ppo(args):
     for t in range(args.max_timesteps):
         episode_timesteps += 1
 
-        # For PPO-variable, don't pass action_mask since GNN state has its own action space
-        # For standard PPO, compute and pass the action_mask to respect environment constraints
-        if args.algo == 'ppo-variable':
-            action, logprob, value = policy.act(gnn_state)
-            env_action = policy.to_env_action(gnn_state, action)
-            # PPO-variable doesn't need environment action mask, state has feasible_action_mask
-            action_mask_to_store = None
-        else:
-            mask_np = compute_action_mask(env)
-            mask_tensor = torch.tensor(mask_np, dtype=torch.bool)
-            action, logprob, value = policy.act(gnn_state, action_mask=mask_tensor)
-            env_action = action
-            action_mask_to_store = mask_tensor
+        # PPO-variable has its own action space with feasible_action_mask in GNN state
+        action, logprob, value = policy.act(gnn_state)
+        env_action = policy.to_env_action(gnn_state, action)
         
         next_obs, reward, done, truncated, info = env.step(env_action)
         
@@ -459,7 +417,7 @@ def train_ppo(args):
             next_gnn_state = gnn_state_space.get_state_GNN(env)
 
         # Store transition
-        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value, action_mask_to_store)
+        policy.store_transition(gnn_state, action, logprob, reward, done_flag, value)
 
         # Only update current state if episode continues
         if not done_flag:
@@ -559,10 +517,6 @@ def train_ppo(args):
     eval_env.close()
     if not args.no_wandb:
         wandb.finish()
-
-
-def train(args):
-    train_ppo(args)
 
 
 if __name__ == "__main__":

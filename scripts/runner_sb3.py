@@ -32,11 +32,13 @@ all_combinations = list(
 
 # Get environment info from config for group naming
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from truck_env.utils.utils import load_config
+
 env_config = load_config(config)
-num_trucks = env_config['environment']['num_trucks']
-num_stops = env_config['environment']['num_stops']
+num_trucks = env_config["environment"]["num_trucks"]
+num_stops = env_config["environment"]["num_stops"]
 
 # Sweep name for grouping in wandb
 sweep_name = f"SB3_Sweep_{num_trucks}trucks_{num_stops}stops"
@@ -46,7 +48,9 @@ print(f"Sweep name: {sweep_name}\n")
 
 for config_idx, (algorithm, seed) in enumerate(all_combinations, 1):
     # Print configuration being launched
-    print(f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm.upper()} | seed={seed}")
+    print(
+        f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm.upper()} | seed={seed}"
+    )
 
     # Build experiment name
     exp_name = f"sb3_{algorithm}_seed{seed}_trucks{num_trucks}_stops{num_stops}"

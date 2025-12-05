@@ -1,0 +1,24 @@
+{
+  "strategy": "mixed",
+  "description": "Sample from multiple difficulty levels with specified weights",
+  "difficulty_levels": [
+    {
+      "truck_range": [1, 3],
+      "stop_range": [3, 5],
+      "weight": 0.3,
+      "description": "Easy: Small problems for stable gradients"
+    },
+    {
+      "truck_range": [4, 7],
+      "stop_range": [5, 8],
+      "weight": 0.5,
+      "description": "Medium: Balanced difficulty"
+    },
+    {
+      "truck_range": [8, 10],
+      "stop_range": [8, 10],
+      "weight": 0.2,
+      "description": "Hard: Challenging problems for generalization"
+    }
+  ]
+}

@@ -30,7 +30,7 @@ POLICIES = [
     # GNN-based policies
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # SB3 policies
-    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
+    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
@@ -39,9 +39,9 @@ POLICIES = [
     ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 10  # Must match the configuration used during training
+NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 50
+NUM_EVAL_SCENARIOS = 100
 SEED = 1000
 # =============================================
 

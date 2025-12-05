@@ -40,7 +40,7 @@ POLICIES = [
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 

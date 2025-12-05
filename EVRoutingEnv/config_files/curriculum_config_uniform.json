@@ -1,0 +1,6 @@
+{
+  "strategy": "uniform",
+  "description": "Uniformly sample from specified ranges every episode",
+  "truck_range": [3, 8],
+  "stop_range": [3, 8]
+}

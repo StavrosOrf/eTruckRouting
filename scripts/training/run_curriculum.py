@@ -3,6 +3,7 @@
 
 import os
 import subprocess
+import random
 from pathlib import Path
 
 # ============================================================================
@@ -21,7 +22,9 @@ def get_project_root():
     return str(Path(__file__).parent.parent.parent)
 
 def create_command(seed, curriculum, gpu_id, project_root):
-    exp_name = f"curriculum_{curriculum}_seed{seed}"
+    # Add random suffix to allow multiple runs with same config
+    random_suffix = random.randint(10000, 99999)
+    exp_name = f"curriculum_{curriculum}_seed{seed}_{random_suffix}"
     config_path = f"EVRoutingEnv/config_files/curriculum_config_{curriculum}.json"
     
     cmd = (f"CUDA_VISIBLE_DEVICES={gpu_id} python scripts/training/train_curriculum.py "

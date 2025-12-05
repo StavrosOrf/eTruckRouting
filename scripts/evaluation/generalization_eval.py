@@ -21,7 +21,7 @@ from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 
 # Import compute_action_mask from train module
-from scripts.training.train import compute_action_mask
+from scripts.training.train_PPO_Variable import compute_action_mask
 from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
@@ -38,18 +38,18 @@ POLICIES = [
     ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
     ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
     # SB3 policies
-    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
+    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [5, 10, 20]
-NUM_STOPS_GRID = [2, 3, 10]
+NUM_TRUCKS_GRID = [50]
+NUM_STOPS_GRID = [2, 3, 5]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 5
@@ -57,7 +57,7 @@ SEED = 1000
 
 # Parallel processing
 USE_PARALLEL = True  # Run policies in parallel (each on GPU), configs sequential
-NUM_PARALLEL_POLICIES = 4  # Number of policies to evaluate in parallel (adjust based on GPU memory)
+NUM_PARALLEL_POLICIES = 2  # Number of policies to evaluate in parallel (adjust based on GPU memory)
 # =============================================
 
 

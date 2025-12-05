@@ -18,7 +18,7 @@ from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
-from scripts.training.train import compute_action_mask
+from scripts.training.train_PPO_Variable import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============

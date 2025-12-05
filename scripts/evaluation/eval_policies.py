@@ -18,7 +18,7 @@ from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.state.action_mask import get_action_mask
 
 # Import compute_action_mask from train module
-from scripts.training.train import compute_action_mask
+from scripts.training.train_PPO_Variable import compute_action_mask
 from algo.policy_utils import load_policy
 
 # Import SB3 algorithms

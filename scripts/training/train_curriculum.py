@@ -44,11 +44,11 @@ def parse_args():
     # Training
     parser.add_argument('--seed', type=int, default=0,
                        help='Random seed')
-    parser.add_argument('--max-timesteps', type=int, default=2_000_000,
+    parser.add_argument('--max-timesteps', type=int, default=20_000_000,
                        help='Maximum training timesteps')
     parser.add_argument('--eval-freq', type=int, default=10_000,
                        help='Evaluation frequency (timesteps)')
-    parser.add_argument('--eval-episodes', type=int, default=50,
+    parser.add_argument('--eval-episodes', type=int, default=20,
                        help='Episodes per evaluation config')
     
     # PPO

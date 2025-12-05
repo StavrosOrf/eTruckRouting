@@ -87,6 +87,8 @@ def parse_args():
                            help='Number of gradient epochs per PPO update')
     ppo_group.add_argument('--ppo-minibatch-size', type=int, default=256,
                            help='Minibatch size for PPO updates')
+    ppo_group.add_argument('--gamma', type=float, default=0.99,
+                           help='Discount factor for rewards')
     ppo_group.add_argument('--gae-lambda', type=float, default=0.95,
                            help='GAE lambda parameter')
     ppo_group.add_argument('--ppo-clip', type=float, default=0.2,
@@ -296,13 +298,13 @@ def train(args):
 
     env = EventDrivenTruckEnv(
         config=config,
-        verbose=True,
+        verbose=False,
         enable_plotting=False,
         run_id=args.exp_name
     )
     eval_env = EventDrivenTruckEnv(
         config=copy.deepcopy(config),
-        verbose=True,
+        verbose=False,
         enable_plotting=False,
         run_id=f"{args.exp_name}_eval"
     )
@@ -350,7 +352,7 @@ def train(args):
         num_layers=args.actor_gcn_layers,
         mlp_dim=args.mlp_hidden_dim,
         lr=args.lr,
-        gamma=args.discount,
+        gamma=args.gamma,
         gae_lambda=args.gae_lambda,
         clip_coef=args.ppo_clip,
         value_coef=args.ppo_value_coef,
@@ -365,14 +367,14 @@ def train(args):
 
     # Save network configuration once
     ppo_config = {
-        "algo": args.algo,  # 'ppo' or 'ppo-variable'
+        "algo": "ppo-variable",  # Always use ppo-variable
         "action_dim": action_dim,
         "node_feature_dims": node_feature_dims,
         "hidden_dim": args.gnn_hidden_dim,
         "num_layers": args.actor_gcn_layers,
         "mlp_dim": args.mlp_hidden_dim,
         "lr": args.lr,
-        "gamma": args.discount,
+        "gamma": args.gamma,
         "gae_lambda": args.gae_lambda,
         "clip_coef": args.ppo_clip,
         "value_coef": args.ppo_value_coef,

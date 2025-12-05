@@ -29,10 +29,8 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    # 'algorithm': ['ppo', 'ppo-variable'],
-    "algorithm": ["ppo-variable"],
-    "steps_per_update": [128, 512, 1024],
-    "epochs": [1, 5, 10],
+    "steps_per_update": [512],
+    "epochs": [10],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
@@ -42,7 +40,6 @@ hyperparam_grids = {
 # Generate all combinations
 all_combinations = list(
     itertools.product(
-        hyperparam_grids["algorithm"],
         hyperparam_grids["steps_per_update"],
         hyperparam_grids["epochs"],
         hyperparam_grids["entropy_coef"],
@@ -59,7 +56,6 @@ print(f"Total configurations to run: {len(all_combinations)}")
 # print(f"Sweep name: {sweep_name}\n")
 
 for config_idx, (
-    algorithm,
     steps_per_update,
     epochs,
     entropy_coef,
@@ -69,18 +65,17 @@ for config_idx, (
 ) in enumerate(all_combinations, 1):
     # Print configuration being launched
     print(
-        f"[{config_idx}/{len(all_combinations)}] Launching: {algorithm} | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}"
+        f"[{config_idx}/{len(all_combinations)}] Launching: ppo-variable | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}"
     )
 
     # Build experiment name
-    exp_name = f"NewFeasibleSpace_FixedGraph_{algorithm}_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"BothChargers_MoreActions_ppo-variable_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
 
     # Build command
     command = (
-        f'tmux new-session -d \\; send-keys " {python_path} scripts/training/train.py'
-        f" --algo {algorithm}"
+        f'tmux new-session -d \\; send-keys " {python_path} scripts/training/train_PPO_Variable.py'
         f" --config {config}"
         f" --seed {seed}"
         f" --lr {learning_rate}"

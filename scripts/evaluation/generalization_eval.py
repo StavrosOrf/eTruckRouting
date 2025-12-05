@@ -18,6 +18,7 @@ sys.path.insert(0, project_root)
 from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
+from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 
 # Import compute_action_mask from train module
 from scripts.training.train import compute_action_mask
@@ -35,17 +36,17 @@ POLICIES = [
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
     # SB3 policies
     ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [2, 10]
-NUM_STOPS_GRID = [2, 3]
+NUM_TRUCKS_GRID = [20, 100]
+NUM_STOPS_GRID = [3, 10]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 2
@@ -75,11 +76,17 @@ def evaluate_policy_single_config(
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
+        
+        # Recreate optimal planner per episode to avoid stale plans across seeds
+        episode_policy = OptimalGurobiPolicy(verbose=False) if resolved_type == "optimal" else policy
 
         while not (done or truncated):
             if sb3_model is not None:
                 # SB3 policy: use raw observation
                 # (don't compute GNN state for SB3 models)
+                pass
+            elif resolved_type == "optimal" or resolved_type == "heuristic":
+                # Optimal and heuristic policies don't need GNN state
                 pass
             else:
                 # Custom policies: compute GNN state
@@ -96,8 +103,10 @@ def evaluate_policy_single_config(
                     action, _ = sb3_model.predict(obs, deterministic=True)
             else:
                 # Custom policies
-                if resolved_type == "heuristic":
-                    action = policy.get_action(env)
+                if resolved_type == "optimal":
+                    action = episode_policy.get_action(env)
+                elif resolved_type == "heuristic":
+                    action = episode_policy.get_action(env)
                 elif resolved_type == "ppo-variable" or resolved_type == "variable-ppo":
                     raw_action = policy.select_action(gnn_state, deterministic=True)
                     action = policy.to_env_action(gnn_state, int(raw_action))
@@ -262,6 +271,8 @@ def evaluate_single_policy_all_configs(policy_spec):
     # Generate policy name (keep full name)
     if policy_path == "heuristic":
         policy_name = "Heuristic"
+    elif policy_path == "optimal":
+        policy_name = "Optimal (Gurobi)"
     else:
         base_name = os.path.basename(policy_path.rstrip('/'))
         # For SB3 policies, extract algorithm name from folder (e.g., "ppo_seed0_20251204_202437" -> "PPO")
@@ -304,6 +315,15 @@ def evaluate_single_policy_all_configs(policy_spec):
             raise ValueError(f"Unknown SB3 type: {sb3_type}")
         resolved_type = None
         policy = None
+    elif policy_type == "optimal":
+        # Optimal (Gurobi) policy
+        try:
+            policy = OptimalGurobiPolicy(verbose=False)
+        except ImportError as exc:
+            raise RuntimeError(
+                "Optimal (Gurobi) policy requires gurobipy to be installed."
+            ) from exc
+        resolved_type = "optimal"
     else:
         # Custom policies
         config_temp = copy.deepcopy(config)

@@ -132,15 +132,26 @@ def load_policy(
     if resolved_algo == "ppo-variable" and "charge_durations" in net_config:
         policy_kwargs["charge_durations"] = net_config["charge_durations"]
 
-    PolicyCls = PPOVariableActionGNN if resolved_algo == "ppo-variable" else PPOActionGNN
+    PolicyCls = PPOVariableActionGNN 
     policy = PolicyCls(**policy_kwargs)
 
-    model_path = os.path.join(policy_path, "ppo_model_best")
-    actor_path = f"{model_path}_actor.pt"
-    if os.path.exists(actor_path):
-        policy.load(model_path)
-        print(f"Loaded model from {actor_path}")
-    else:
-        print(f"Warning: Model file {actor_path} not found. Using random policy.")
+    # Try different naming conventions
+    model_candidates = [
+        os.path.join(policy_path, "ppo_model_best"),  # Standard naming
+        os.path.join(policy_path, "ppo_curriculum_best"),  # Curriculum naming
+        os.path.join(policy_path, "ppo_best"),  # Alternative naming
+    ]
+    
+    model_path = None
+    for candidate in model_candidates:
+        actor_path = f"{candidate}_actor.pt"
+        if os.path.exists(actor_path):
+            model_path = candidate
+            policy.load(model_path)
+            print(f"Loaded model from {actor_path}")
+            break
+    
+    if model_path is None:
+        print(f"Warning: Model file not found. Tried: {model_candidates}. Using random policy.")
 
     return policy, resolved_algo

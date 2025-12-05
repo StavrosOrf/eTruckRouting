@@ -11,7 +11,7 @@ from pathlib import Path
 SEED_GRID = [0]
 CURRICULUM_GRID = ['uniform', 'staged', 'mixed']
 NUM_GPUS = 1
-SESSION_NAME = "curriculum"
+SESSION_PREFIX = "curr"
 
 # ============================================================================
 # Script logic
@@ -22,16 +22,13 @@ def get_project_root():
 
 def create_command(seed, curriculum, gpu_id, project_root):
     exp_name = f"curriculum_{curriculum}_seed{seed}"
+    config_path = f"EVRoutingEnv/config_files/curriculum_config_{curriculum}.json"
     
-    cmd = f"CUDA_VISIBLE_DEVICES={gpu_id} python scripts/training/train_curriculum.py"
+    cmd = (f"CUDA_VISIBLE_DEVICES={gpu_id} python scripts/training/train_curriculum.py "
+           f"--curriculum-config {config_path} "
+           f"--exp-name {exp_name} "
+           f"--seed {seed}")
     
-    if curriculum in ['staged', 'mixed']:
-        config_path = f"EVRoutingEnv/config_files/curriculum_config_{curriculum}.json"
-        cmd += f" --curriculum-config {config_path}"
-    else:
-        cmd += f" --curriculum-strategy {curriculum} --truck-range 3 8 --stop-range 3 8"
-    
-    cmd += f" --exp-name {exp_name} --seed {seed}"
     return exp_name, cmd
 
 def main():
@@ -55,44 +52,39 @@ def main():
         print(f"[{exp_id}] GPU{gpu_id}: {curriculum:8s} seed={seed}")
     print(f"{'='*70}\n")
     
-    # Kill existing session if exists
-    subprocess.run(["tmux", "kill-session", "-t", SESSION_NAME], 
-                   capture_output=True)
-    
-    # Create session with first window
-    subprocess.run(["tmux", "new-session", "-s", SESSION_NAME, 
-                   "-n", "exp0", "-d"], check=True)
-    
     venv = f"{project_root}/.venv"
     activate = f"source {venv}/bin/activate" if os.path.exists(venv) else ""
     
-    # Setup windows - each experiment in its own window
-    for i, (exp_id, gpu_id, seed, curriculum, exp_name, cmd) in enumerate(experiments):
-        if i > 0:
-            # Create new window for each experiment after the first
-            subprocess.run(["tmux", "new-window", "-t", SESSION_NAME, 
-                          "-n", f"exp{i}"], check=True)
+    # Create a separate session for each experiment
+    session_names = []
+    for exp_id, gpu_id, seed, curriculum, exp_name, cmd in experiments:
+        session_name = f"{SESSION_PREFIX}_{curriculum}_s{seed}"
+        session_names.append(session_name)
         
-        subprocess.run(["tmux", "send-keys", "-t", f"{SESSION_NAME}:exp{i}",
+        # Kill existing session if exists
+        subprocess.run(["tmux", "kill-session", "-t", session_name], 
+                       capture_output=True)
+        
+        # Create new session
+        subprocess.run(["tmux", "new-session", "-s", session_name, "-d"])
+        
+        # Setup environment
+        subprocess.run(["tmux", "send-keys", "-t", session_name,
                        f"cd {project_root}", "C-m"])
         if activate:
-            subprocess.run(["tmux", "send-keys", "-t", f"{SESSION_NAME}:exp{i}",
+            subprocess.run(["tmux", "send-keys", "-t", session_name,
                            activate, "C-m"])
-        subprocess.run(["tmux", "send-keys", "-t", f"{SESSION_NAME}:exp{i}",
+        
+        # Run training command
+        subprocess.run(["tmux", "send-keys", "-t", session_name,
                        cmd, "C-m"])
     
-    # Monitor window
-    subprocess.run(["tmux", "new-window", "-t", SESSION_NAME, "-n", "gpu"])
-    subprocess.run(["tmux", "send-keys", "-t", f"{SESSION_NAME}:gpu",
-                   "watch -n 3 nvidia-smi", "C-m"])
-    
-    subprocess.run(["tmux", "select-window", "-t", f"{SESSION_NAME}:exp0"])
-    
-    print(f"Session '{SESSION_NAME}' created!")
-    print(f"Attach: tmux attach -t {SESSION_NAME}")
-    print(f"Switch windows: Ctrl-b [0-{len(experiments)}]")
-    print(f"Detach: Ctrl-b d")
-    print(f"Kill: tmux kill-session -t {SESSION_NAME}\n")
+    print(f"Created {len(experiments)} tmux sessions:")
+    for session_name in session_names:
+        print(f"  - {session_name}")
+    print(f"\nAttach to any session: tmux attach -t <session_name>")
+    print(f"List sessions: tmux ls")
+    print(f"Kill all: tmux kill-server\n")
 
 if __name__ == '__main__':
     main()

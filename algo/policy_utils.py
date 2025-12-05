@@ -26,6 +26,7 @@ def _normalize_policy_type(label: Optional[str]) -> Optional[str]:
         "variable_ppo": "ppo-variable",
         "ppo-variable": "ppo-variable",
         "ppo_variable": "ppo-variable",
+        "ppo-variable-curriculum": "ppo-variable",
         "variable": "ppo-variable",
         "var-ppo": "ppo-variable",
         "varppo": "ppo-variable",

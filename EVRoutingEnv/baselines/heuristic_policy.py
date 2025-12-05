@@ -111,9 +111,9 @@ class HeuristicPolicy:
             return action
         except ValueError as e:
             # Infeasible routing detected - fall back to random action
-            print(f"\n⚠️  ALERT: Heuristic policy encountered infeasible routing!")
-            print(f"    Error: {e}")
-            print(f"    Falling back to RANDOM action selection\n")
+            # print(f"\n⚠️  ALERT: Heuristic policy encountered infeasible routing!")
+            # print(f"    Error: {e}")
+            # print(f"    Falling back to RANDOM action selection\n")
             action = env.action_space.sample()
             truck_id = env.active_truck_id
             if truck_id is not None:

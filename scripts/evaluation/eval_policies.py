@@ -44,7 +44,7 @@ POLICIES = [
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 5
+NUM_EVAL_SCENARIOS = 2
 SEED = 1000
 # =============================================
 
@@ -81,7 +81,7 @@ def evaluate_policy(
                     action = episode_policy.get_action(env)
                 elif policy_type == "heuristic":
                     action = policy.get_action(env)
-                elif policy_type == "ppo-variable":
+                elif policy_type == "ppo-variable" or policy_type == "variable-ppo":
                     gnn_state = gnn_state_space.get_state_GNN(env)
                     raw_action = policy.select_action(gnn_state, deterministic=True)
                     action = policy.to_env_action(gnn_state, int(raw_action))

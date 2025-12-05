@@ -34,22 +34,25 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 POLICIES = [
     # GNN-based policies
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
+    ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
+    ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
+    ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
     # SB3 policies
     ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
+    ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
     # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
     ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [20, 100]
-NUM_STOPS_GRID = [3, 10]
+NUM_TRUCKS_GRID = [5, 10, 20]
+NUM_STOPS_GRID = [2, 3, 10]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_EVAL_SCENARIOS = 2
+NUM_EVAL_SCENARIOS = 5
 SEED = 1000
 
 # Parallel processing
@@ -62,7 +65,10 @@ def evaluate_policy_single_config(
     env, gnn_state_space, policy, resolved_type,
     num_episodes, seed,
     sb3_model=None,
-    sb3_type=None
+    sb3_type=None,
+    show_progress=False,
+    desc="Eval",
+    position=None
 ):
     """
     Evaluate a single policy on a single configuration.
@@ -72,7 +78,12 @@ def evaluate_policy_single_config(
     # Evaluate
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
 
-    for episode in range(num_episodes):
+    episode_iter = range(num_episodes)
+    if show_progress and position is not None:
+        # Position the episode progress bar right below the config progress bar
+        episode_iter = tqdm(episode_iter, desc=desc, leave=False, position=position + len(POLICIES))
+    
+    for episode in episode_iter:
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
@@ -264,7 +275,7 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
     print()
 
 
-def evaluate_single_policy_all_configs(policy_spec):
+def evaluate_single_policy_all_configs(policy_spec, position=None):
     """Evaluate a single policy across all configurations (runs in separate process with GPU)."""
     policy_path, policy_type = policy_spec
 
@@ -365,31 +376,56 @@ def evaluate_single_policy_all_configs(policy_spec):
 
     # Evaluate across all configurations
     policy_results = {}
-    for num_trucks in NUM_TRUCKS_GRID:
-        for num_stops in NUM_STOPS_GRID:
-            config_key = (num_trucks, num_stops)
-            
-            # Skip SB3 policies if not their trained config
-            if sb3_model is not None and sb3_trained_config is not None:
-                if config_key != sb3_trained_config:
-                    continue
-            
-            env_info = environments[config_key]
+    
+    # Count total configs for this policy
+    total_configs = len(NUM_TRUCKS_GRID) * len(NUM_STOPS_GRID)
+    if sb3_model is not None and sb3_trained_config is not None:
+        total_configs = 1  # SB3 only evaluates on trained config
+    
+    # Create progress bar for this policy
+    pbar_desc = f"{policy_name[:20]:<20}"
+    with tqdm(total=total_configs, desc=pbar_desc, position=position, leave=True, 
+              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as pbar:
+        config_idx = 0
+        for num_trucks in NUM_TRUCKS_GRID:
+            for num_stops in NUM_STOPS_GRID:
+                config_key = (num_trucks, num_stops)
+                
+                # Skip SB3 policies if not their trained config
+                if sb3_model is not None and sb3_trained_config is not None:
+                    if config_key != sb3_trained_config:
+                        continue
+                
+                # Update progress bar with current configuration
+                config_idx += 1
+                pbar.set_description(f"{policy_name[:15]:<15} T={num_trucks:2d},S={num_stops:2d}")
+                
+                env_info = environments[config_key]
 
-            result = evaluate_policy_single_config(
-                env=env_info["env"],
-                gnn_state_space=env_info["gnn_state_space"],
-                policy=policy,
-                resolved_type=resolved_type,
-                num_episodes=NUM_EVAL_SCENARIOS,
-                seed=SEED,
-                sb3_model=sb3_model,
-                sb3_type=sb3_type
-            )
+                result = evaluate_policy_single_config(
+                    env=env_info["env"],
+                    gnn_state_space=env_info["gnn_state_space"],
+                    policy=policy,
+                    resolved_type=resolved_type,
+                    num_episodes=NUM_EVAL_SCENARIOS,
+                    seed=SEED,
+                    sb3_model=sb3_model,
+                    sb3_type=sb3_type,
+                    show_progress=True,  # Enable nested progress bar
+                    desc=f"  └─ Episodes T={num_trucks:2d},S={num_stops:2d}",
+                    position=position
+                )
 
-            result["num_trucks"] = num_trucks
-            result["num_stops"] = num_stops
-            policy_results[config_key] = result
+                result["num_trucks"] = num_trucks
+                result["num_stops"] = num_stops
+                policy_results[config_key] = result
+                
+                # Update with completion info
+                pbar.set_postfix(ordered_dict={
+                    'success': f"{result['success_rate']*100:.0f}%",
+                    'reward': f"{result['mean_reward']:.0f}"
+                })
+                pbar.update(1)
 
     # Cleanup
     for env_info in environments.values():
@@ -424,37 +460,58 @@ def main():
     
     # Run evaluations
     results = {}
+    completed_policies = 0
+    
+    print(f"\n{'='*120}")
+    print("STARTING EVALUATIONS")
+    print(f"{'='*120}\n")
     
     if USE_PARALLEL:
         # Parallel execution: each policy runs in its own process with GPU
         mp.set_start_method('spawn', force=True)
+        
+        # Submit all jobs with position parameter
         with ProcessPoolExecutor(max_workers=NUM_PARALLEL_POLICIES) as executor:
-            futures = {executor.submit(evaluate_single_policy_all_configs, policy_spec): policy_spec 
-                      for policy_spec in POLICIES}
+            futures = {}
+            for idx, policy_spec in enumerate(POLICIES):
+                future = executor.submit(evaluate_single_policy_all_configs, policy_spec, idx)
+                futures[future] = policy_spec
             
-            with tqdm(total=len(POLICIES), desc="Policies") as pbar:
-                for future in as_completed(futures):
-                    try:
-                        policy_name, policy_results = future.result()
-                        results[policy_name] = policy_results
-                        pbar.set_description(f"Completed {policy_name[:20]}")
-                        pbar.update(1)
-                    except Exception as e:
-                        policy_spec = futures[future]
-                        print(f"\nError evaluating {policy_spec[0]}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        pbar.update(1)
+            # Wait for completion
+            for future in as_completed(futures):
+                try:
+                    policy_name, policy_results = future.result()
+                    results[policy_name] = policy_results
+                    completed_policies += 1
+                    
+                    # Calculate aggregate success rate for this policy
+                    success_rates = [r['success_rate'] for r in policy_results.values()]
+                    avg_success = np.mean(success_rates) * 100 if success_rates else 0
+                    
+                    print(f"\n✓ [{completed_policies}/{len(POLICIES)}] {policy_name} completed | "
+                          f"Avg success: {avg_success:.1f}% across {len(policy_results)} configs")
+                except Exception as e:
+                    policy_spec = futures[future]
+                    print(f"\n✗ Error evaluating {policy_spec[0]}: {e}")
+                    import traceback
+                    traceback.print_exc()
     else:
         # Sequential execution
-        with tqdm(total=len(POLICIES), desc="Policies") as pbar:
-            for policy_spec in POLICIES:
-                pbar.set_description(f"Evaluating {policy_spec[0][:20]}")
-                policy_name, policy_results = evaluate_single_policy_all_configs(policy_spec)
-                results[policy_name] = policy_results
-                pbar.update(1)
+        for idx, policy_spec in enumerate(POLICIES):
+            policy_name, policy_results = evaluate_single_policy_all_configs(policy_spec, position=idx)
+            results[policy_name] = policy_results
+            completed_policies += 1
+            
+            # Calculate aggregate success rate for this policy
+            success_rates = [r['success_rate'] for r in policy_results.values()]
+            avg_success = np.mean(success_rates) * 100 if success_rates else 0
+            
+            print(f"\n✓ [{completed_policies}/{len(POLICIES)}] {policy_name} completed | "
+                  f"Avg success: {avg_success:.1f}% across {len(policy_results)} configs")
     
-    print("\nDone!")
+    print(f"\n{'='*120}")
+    print(f"ALL EVALUATIONS COMPLETED! ({completed_policies}/{len(POLICIES)} policies)")
+    print(f"{'='*120}")
     
     print("\n" + "="*120)
     print("RESULTS")

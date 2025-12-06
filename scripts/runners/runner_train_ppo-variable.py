@@ -8,7 +8,7 @@ import itertools
 
 # Configuration
 config = "EVRoutingEnv/config_files/config.yaml"
-python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+python_path = "/home/sorfanoudakis/EVRP/.venv/bin/python"
 
 # Training parameters
 counter = 0
@@ -18,7 +18,7 @@ eval_freq = 500
 batch_size = 64
 
 # Environment settings
-num_trucks = 10
+num_trucks = 50
 num_stops = 3
 max_time = 200.0
 
@@ -69,7 +69,7 @@ for config_idx, (
     )
 
     # Build experiment name
-    exp_name = f"BothChargers_MoreActions_ppo-variable_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"MoreActions_ppo-variable_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
 

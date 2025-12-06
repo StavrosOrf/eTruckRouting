@@ -42,10 +42,10 @@ charging:
 
   # Level 2 chargers (slower, more common)
   level2:
-    charge_rate: 7.2 # kW (typical Level 2 charging power)
-    efficiency: 0.90 # 90% charging efficiency
-    # charge_rate: 50.0 # kW (typical DC Fast charging power)
-    # efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
+    # charge_rate: 7.2 # kW (typical Level 2 charging power)
+    # efficiency: 0.90 # 90% charging efficiency
+    charge_rate: 50.0 # kW (typical DC Fast charging power)
+    efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
 
   # DC Fast chargers (faster, less common)
   dcfast:

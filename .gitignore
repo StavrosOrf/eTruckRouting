@@ -210,7 +210,6 @@ visualizations/
 results/
 uv.lock
 /EVRoutingEnv/data/vis_data/
-EVRoutingEnv/models/event_driven_env.py
 gnn_plots/
 wandb/
 saved_models/

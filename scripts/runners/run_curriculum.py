@@ -10,7 +10,8 @@ from pathlib import Path
 # CONFIGURATION - Edit these grids
 # ============================================================================
 SEED_GRID = [0]
-CURRICULUM_GRID = ['uniform', 'staged', 'mixed']
+CURRICULUM_GRID = ['staged']
+# CURRICULUM_GRID = ['uniform', 'staged', 'mixed']
 NUM_GPUS = 1
 SESSION_PREFIX = "curr"
 

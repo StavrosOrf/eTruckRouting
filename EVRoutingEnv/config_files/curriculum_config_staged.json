@@ -26,9 +26,15 @@
       "stop_range": [2,5],
       "description": "Stage 3: Hard - Many trucks and stops"
     },
+        {
+      "episodes": 3000,
+      "truck_range": [5, 50],
+      "stop_range": [2,5],
+      "description": "Stage 3: Hard - Many trucks and stops"
+    },
     {
       "episodes": -1,
-      "truck_range": [3, 30],
+      "truck_range": [3, 50],
       "stop_range": [2, 5],
       "description": "Stage 4: Full range - Continue forever"
     }

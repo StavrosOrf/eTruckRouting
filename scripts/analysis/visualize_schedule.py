@@ -525,12 +525,12 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
     # Increase figure height to accommodate triple lines
     fig, ax = plt.subplots(figsize=(20, 14))
     
-    # Y-axis positions: Truck ID i -> Policy 1 at i+0.2, Policy 2 at i, Policy 3 at i-0.2
-    offsets = [0.2, 0, -0.2]
+    # Y-axis positions: Truck ID i -> Policy 1 at i+0.3, Policy 2 at i, Policy 3 at i-0.3
+    offsets = [0.3, 0, -0.3]
     
     for tid in truck_ids:
         # Draw background track
-        ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=25)
+        ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=35)
         
         # Plot each policy in two passes: routing first, then charging/waiting on top
         for idx, (timelines, policy_name, offset) in enumerate(zip(timelines_list, policy_names, offsets)):
@@ -601,9 +601,11 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
     
     ax.hlines(y=y_pos, xmin=start, xmax=end, colors=color, linewidth=linewidth, zorder=zorder)
     
+    # Calculate duration for all states
+    duration = end - start
+    
     # For charging: show duration above the bar and SoC at start and end
     if state == "charging":
-        duration = end - start
         if duration > 0:
             # Show duration above the charging bar
             mid_point = (start + end) / 2
@@ -620,8 +622,24 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
                     ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
                             fontsize=6, color='green', alpha=0.9, weight='bold')
     
+    # For routing: show duration above the bar
+    elif state == "routing":
+        if duration > 0.1:  # Only show if duration is significant
+            mid_point = (start + end) / 2
+            ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
+                    fontsize=6, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
+                    facecolor='white', edgecolor='#3498db', alpha=0.7, linewidth=0.8))
+    
+    # For waiting_to_charge: show duration above the bar
+    elif state == "waiting_to_charge":
+        if duration > 0.05:  # Only show if duration is significant
+            mid_point = (start + end) / 2
+            ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
+                    fontsize=6, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
+                    facecolor='white', edgecolor='#e74c3c', alpha=0.7, linewidth=0.8))
+    
     # For other states: show SoC only at the end (arrival points)
-    elif label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed"]:
+    if label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed", "charging"]:
         ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', fontsize=5, color='black', alpha=0.7)
 
     if state == "routing":

@@ -18,14 +18,21 @@ from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
+from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from scripts.training.train_PPO_Variable import compute_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
-POLICY_PATH = "saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/"
+# Three policies to compare
+POLICIES = [
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("optimal", "optimal"),
+    ("heuristic", "heuristic"),
+]
+
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10
-NUM_STOPS = 6
+NUM_STOPS = 3
 MAX_TIME = 200.0
 SEED = 1000
 OUTPUT_DIR = "results/visualization"
@@ -73,7 +80,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
                 "trucks": truck_details
             })
 
-def run_scenario(policy_type):
+def run_scenario(policy_path, policy_type):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
     # Setup
@@ -93,8 +100,22 @@ def run_scenario(policy_type):
     env_init.close()
 
     # Load Policy
-    print(f"Loading policy: {POLICY_PATH} (requested {policy_type})...")
-    policy, active_policy_type = load_policy(POLICY_PATH, policy_type, gnn_state_space, config, device="cuda")
+    print(f"Loading policy: {policy_path} (type: {policy_type})...")
+    
+    if policy_type == "optimal":
+        try:
+            policy = OptimalGurobiPolicy(verbose=False)
+            active_policy_type = "optimal"
+        except ImportError as exc:
+            raise RuntimeError(
+                "Optimal (Gurobi) policy requires gurobipy to be installed."
+            ) from exc
+    elif policy_type == "heuristic":
+        from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+        policy = HeuristicPolicy()
+        active_policy_type = "heuristic"
+    else:
+        policy, active_policy_type = load_policy(policy_path, policy_type, gnn_state_space, config, device="cuda")
 
     # Run Instrumented Environment
     env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False)
@@ -104,27 +125,33 @@ def run_scenario(policy_type):
     done = truncated = False
     episode_steps = 0
     
+    # Recreate optimal planner per episode to avoid stale plans
+    episode_policy = OptimalGurobiPolicy(verbose=False) if active_policy_type == "optimal" else policy
+    
     while not (done or truncated):
-        gnn_state = gnn_state_space.get_state_GNN(env)
-
-        if active_policy_type == "heuristic":
-            action = policy.get_action(env)
-        elif active_policy_type == "ppo-variable":
-            raw_action = policy.select_action(gnn_state, deterministic=True)
-            action = policy.to_env_action(gnn_state, int(raw_action))
+        if active_policy_type == "optimal" or active_policy_type == "heuristic":
+            # Baseline policies don't need GNN state
+            action = episode_policy.get_action(env)
         else:
-            mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
-            raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
-            if isinstance(raw_action, tuple):
-                action = raw_action
+            gnn_state = gnn_state_space.get_state_GNN(env)
+            
+            if active_policy_type == "ppo-variable" or active_policy_type == "variable-ppo":
+                raw_action = policy.select_action(gnn_state, deterministic=True)
+                action = policy.to_env_action(gnn_state, int(raw_action))
             else:
-                action = int(raw_action) % env.action_space.n
+                mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
+                raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
+                if isinstance(raw_action, tuple):
+                    action = raw_action
+                else:
+                    action = int(raw_action) % env.action_space.n
 
         obs, reward, done, truncated, info = env.step(action)
         episode_steps += 1
 
     print(f"Scenario finished. Reward: {env.episode_reward:.2f}")
     print(f"Total Steps: {episode_steps}")
+    print(f"Success: {'Yes' if info['all_complete'] else 'No'}")
     return (
         env.history,
         config["environment"]["max_time"],
@@ -170,8 +197,149 @@ def process_history(history):
             })
     return truck_timelines, truck_ids
 
-def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
-    """Generate Comparison Timeline chart."""
+
+def generate_schedule_log(histories, envs, policy_names, output_dir):
+    """Generate detailed schedule log file comparing all policies."""
+    
+    log_path = os.path.join(output_dir, "schedule_comparison_log.txt")
+    
+    with open(log_path, 'w') as f:
+        f.write("="*120 + "\n")
+        f.write("TRUCK SCHEDULE COMPARISON LOG\n")
+        f.write("="*120 + "\n")
+        f.write(f"Configuration: {NUM_TRUCKS} trucks, {NUM_STOPS} stops, Seed: {SEED}\n")
+        f.write(f"Policies: {', '.join(policy_names)}\n")
+        f.write("="*120 + "\n\n")
+        
+        # Process histories to extract truck schedules
+        all_schedules = {}
+        for history, policy_name in zip(histories, policy_names):
+            timelines, truck_ids = process_history(history)
+            
+            schedules = {}
+            for tid in truck_ids:
+                schedule = []
+                for segment in timelines[tid]:
+                    state = segment["state"]
+                    start_time = segment["start"]
+                    end_time = segment["end"]
+                    end_soc = segment.get("end_soc")
+                    
+                    # Record arrival at nodes
+                    if state == "routing":
+                        destination = segment["meta"].get("destination")
+                        if destination is not None:
+                            schedule.append({
+                                "time": end_time,
+                                "node": destination,
+                                "soc": end_soc,
+                                "event": "arrive"
+                            })
+                    elif state == "charging":
+                        node = segment["meta"].get("current_node")
+                        # Record start of charging
+                        schedule.append({
+                            "time": start_time,
+                            "node": node,
+                            "soc": segment.get("start_soc"),  # May not have this
+                            "event": "start_charging"
+                        })
+                        # Record end of charging
+                        schedule.append({
+                            "time": end_time,
+                            "node": node,
+                            "soc": end_soc,
+                            "event": "finish_charging"
+                        })
+                    elif state == "waiting_to_charge":
+                        node = segment["meta"].get("current_node")
+                        schedule.append({
+                            "time": start_time,
+                            "node": node,
+                            "soc": end_soc,
+                            "event": "waiting"
+                        })
+                
+                schedules[tid] = schedule
+            all_schedules[policy_name] = schedules
+        
+        # Get all truck IDs
+        truck_ids = sorted(list(all_schedules[policy_names[0]].keys()))
+        
+        # Write detailed comparison for each truck
+        for truck_id in truck_ids:
+            f.write("\n" + "="*120 + "\n")
+            f.write(f"TRUCK {truck_id}\n")
+            f.write("="*120 + "\n\n")
+            
+            for policy_name in policy_names:
+                f.write(f"\n--- {policy_name} ---\n")
+                f.write(f"{'Time (h)':<12} {'Event':<25} {'Node':<10} {'SoC (%)':<10}\n")
+                f.write("-"*60 + "\n")
+                
+                schedule = all_schedules[policy_name].get(truck_id, [])
+                
+                if not schedule:
+                    f.write("  No events recorded\n")
+                else:
+                    for event in schedule:
+                        time_str = f"{event['time']:.2f}"
+                        event_str = event['event'].replace('_', ' ').title()
+                        node_str = str(event['node']) if event['node'] is not None else "N/A"
+                        soc_str = f"{event['soc']:.1f}" if event['soc'] is not None else "N/A"
+                        
+                        f.write(f"{time_str:<12} {event_str:<25} {node_str:<10} {soc_str:<10}\n")
+                
+                # Summary statistics from environment
+                env = envs[policy_names.index(policy_name)]
+                truck = next((t for t in env.trucks if t.truck_id == truck_id), None)
+                
+                if truck and schedule:
+                    total_time = schedule[-1]['time'] if schedule else 0
+                    final_soc = schedule[-1]['soc'] if schedule and schedule[-1]['soc'] is not None else 0
+                    num_arrivals = len([e for e in schedule if e['event'] == 'arrive'])
+                    num_charges = len([e for e in schedule if e['event'] == 'start_charging'])
+                    
+                    f.write(f"\nSummary:\n")
+                    f.write(f"  Total Time: {total_time:.2f} hours\n")
+                    f.write(f"  Final SoC: {final_soc:.1f}%\n")
+                    f.write(f"  Total Distance: {truck.total_distance_traveled:.2f} km\n")
+                    f.write(f"  Total Charging Time: {truck.total_charging_time:.2f} hours\n")
+                    f.write(f"  Node Arrivals: {num_arrivals}\n")
+                    f.write(f"  Charging Sessions: {num_charges}\n")
+                    f.write(f"  Deliveries Remaining: {len(truck.get_remaining_deliveries())}\n")
+                    f.write(f"  Status: {'Complete' if truck.is_complete else 'Failed' if truck.failed else 'Incomplete'}\n")
+        
+        # Overall comparison summary
+        f.write("\n\n" + "="*120 + "\n")
+        f.write("OVERALL COMPARISON SUMMARY\n")
+        f.write("="*120 + "\n\n")
+        
+        for env, policy_name in zip(envs, policy_names):
+            f.write(f"\n{policy_name}:\n")
+            f.write(f"  Episode Reward: {env.episode_reward:.2f}\n")
+            f.write(f"  Completion Time: {env.global_clock:.2f} hours\n")
+            
+            # Calculate aggregate statistics
+            all_complete = all(len(t.get_remaining_deliveries()) == 0 for t in env.trucks)
+            total_distance = sum(truck.total_distance_traveled for truck in env.trucks)
+            total_charging_time = sum(truck.total_charging_time for truck in env.trucks)
+            total_deliveries = sum(len(t.delivery_sequence) - 1 - len(t.get_remaining_deliveries()) for t in env.trucks)
+            num_failed = sum(1 for t in env.trucks if t.failed)
+            
+            f.write(f"  All Deliveries Complete: {'Yes' if all_complete else 'No'}\n")
+            f.write(f"  Failed Trucks: {num_failed}/{len(env.trucks)}\n")
+            f.write(f"  Total Distance: {total_distance:.2f} km\n")
+            f.write(f"  Total Charging Time: {total_charging_time:.2f} hours\n")
+            f.write(f"  Total Deliveries Completed: {total_deliveries}\n")
+            f.write(f"  Avg Distance per Truck: {total_distance/len(env.trucks):.2f} km\n")
+            f.write(f"  Avg Charging Time per Truck: {total_charging_time/len(env.trucks):.2f} hours\n")
+    
+    print(f"  ✓ Schedule comparison log saved to: {log_path}")
+    return log_path
+
+def plot_comparison(histories, policy_names, max_time, charging_nodes):
+    """Generate Comparison Timeline chart for three policies."""
     
     colors = {
         "routing": "#3498db",      # Blue
@@ -182,38 +350,49 @@ def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
         "failed": "#34495e"        # Dark Blue/Black
     }
     
-    timelines_heuristic, truck_ids = process_history(history_heuristic)
-    timelines_ppo, _ = process_history(history_ppo)
+    # Process all histories
+    timelines_list = []
+    truck_ids = None
+    for history in histories:
+        timeline, tids = process_history(history)
+        timelines_list.append(timeline)
+        if truck_ids is None:
+            truck_ids = tids
     
-    # Increase figure height to accommodate double lines
-    fig, ax = plt.subplots(figsize=(18, 12))
+    # Calculate actual maximum time needed across all policies
+    actual_max_time = 0
+    for timelines in timelines_list:
+        for tid in truck_ids:
+            for segment in timelines[tid]:
+                actual_max_time = max(actual_max_time, segment["end"])
     
-    # Y-axis positions: Truck ID i -> Heuristic at i-0.15, PPO at i+0.15
-    offset = 0.15
+    # Add small padding (5%) for better visualization
+    actual_max_time = actual_max_time * 1.05
+    
+    # Increase figure height to accommodate triple lines
+    fig, ax = plt.subplots(figsize=(20, 14))
+    
+    # Y-axis positions: Truck ID i -> Policy 1 at i+0.2, Policy 2 at i, Policy 3 at i-0.2
+    offsets = [0.2, 0, -0.2]
     
     for tid in truck_ids:
         # Draw background track
-        ax.hlines(y=tid, xmin=0, xmax=max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=20)
+        ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=25)
         
-        # Plot Heuristic (Top line)
-        y_pos_h = tid + offset
-        for segment in timelines_heuristic[tid]:
-            _plot_segment(ax, segment, y_pos_h, colors, charging_nodes, label_soc=True)
+        # Plot each policy
+        for idx, (timelines, policy_name, offset) in enumerate(zip(timelines_list, policy_names, offsets)):
+            y_pos = tid + offset
+            for segment in timelines[tid]:
+                _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
             
-        # Plot PPO (Bottom line)
-        y_pos_p = tid - offset
-        for segment in timelines_ppo[tid]:
-            _plot_segment(ax, segment, y_pos_p, colors, charging_nodes, label_soc=True)
-            
-        # Add labels for policies
-        ax.text(-0.5, y_pos_h, "Heuristic", ha='right', va='center', fontsize=8, color='gray')
-        ax.text(-0.5, y_pos_p, "PPO", ha='right', va='center', fontsize=8, color='gray')
+            # Add label for policy
+            ax.text(-1.0, y_pos, policy_name, ha='right', va='center', fontsize=8, color='gray', weight='bold')
 
     # Formatting
-    ax.set_xlabel("Simulation Time (hours)")
-    ax.set_ylabel("Truck ID")
-    ax.set_title(f"Schedule Comparison: Heuristic (Top) vs PPO (Bottom) - Seed {SEED}")
-    ax.set_xlim(0, max_time)
+    ax.set_xlabel("Simulation Time (hours)", fontsize=12)
+    ax.set_ylabel("Truck ID", fontsize=12)
+    ax.set_title(f"Schedule Comparison: {', '.join(policy_names)} - Seed {SEED}", fontsize=14)
+    ax.set_xlim(0, actual_max_time)
     ax.set_yticks(truck_ids)
     ax.set_yticklabels([f"Truck {tid}" for tid in truck_ids])
     ax.grid(True, axis='x', linestyle='--', alpha=0.7)
@@ -228,12 +407,12 @@ def plot_comparison(history_heuristic, history_ppo, max_time, charging_nodes):
         plt.Line2D([0], [0], marker='*', color='gold', markerfacecolor='gold', markeredgecolor='black', markersize=12, label='Completed'),
         plt.Line2D([0], [0], marker='X', color='red', markerfacecolor='red', markeredgecolor='black', markersize=10, label='Failed'),
     ]
-    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.12, 1))
+    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 1), fontsize=10)
 
     plt.tight_layout()
-    save_path = os.path.join(OUTPUT_DIR, "schedule_comparison.png")
-    plt.savefig(save_path, dpi=300)
-    print(f"Comparison plot saved to {save_path}")
+    save_path = os.path.join(OUTPUT_DIR, "schedule_comparison_3policies.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\nComparison plot saved to {save_path}")
 
 def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
     state = segment["state"]
@@ -266,22 +445,213 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
         ax.plot(start, y_pos, marker='X', markersize=8, 
                 markerfacecolor='red', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
 
-def main():
-    # Run Heuristic
-    print("\n--- Running Heuristic Policy ---")
-    hist_h, max_time, charging_nodes, _, env_h, _ = run_scenario("heuristic")
+def plot_charger_queue_comparison(envs, policy_names, max_time, output_dir):
+    """Generate comparison of charger queue dynamics across multiple policies."""
     
-    # Run PPO
-    print("\n--- Running PPO Policy ---")
-    hist_p, _, _, _, env_p, _ = run_scenario("ppo-variable")
+    # Find all chargers that were visited by any policy
+    all_visited_chargers = set()
+    for env in envs:
+        for node in env.charging_station.charging_nodes:
+            history = env.charging_station.queue_history[node]
+            if len(history["truck_events"]) > 0:
+                all_visited_chargers.add(node)
+    
+    if not all_visited_chargers:
+        print("  ⚠ No charging stations were visited during any simulation")
+        return
+    
+    # Sort chargers by total activity across all policies
+    charger_activity = {}
+    for node in all_visited_chargers:
+        total_activity = 0
+        for env in envs:
+            history = env.charging_station.queue_history[node]
+            total_activity += len(history["truck_events"])
+        charger_activity[node] = total_activity
+    
+    visited_chargers = sorted(charger_activity.keys(), key=lambda x: charger_activity[x], reverse=True)
+    
+    # Limit to top 6 most active chargers
+    max_chargers_to_plot = 6
+    if len(visited_chargers) > max_chargers_to_plot:
+        print(f"  📊 Plotting top {max_chargers_to_plot} most active chargers (out of {len(visited_chargers)})")
+        visited_chargers = visited_chargers[:max_chargers_to_plot]
+    
+    n_chargers = len(visited_chargers)
+    n_policies = len(policy_names)
+    
+    # Create subplots: rows = chargers, columns = policies
+    fig, axes = plt.subplots(n_chargers, n_policies, 
+                            figsize=(7 * n_policies, 3.5 * n_chargers), 
+                            dpi=150, squeeze=False)
+    
+    # Overall title
+    fig.suptitle('Charging Station Queue Dynamics Comparison', 
+                fontsize=18, fontweight='bold', y=0.998)
+    
+    # Colors for consistency
+    colors = {
+        'occupancy': '#2E86AB',
+        'waitlist': '#F24236',
+        'capacity': '#27AE60',
+        'events': {'arrive': '#FF6B35', 'start': '#004E89', 'finish': '#9B59B6'}
+    }
+    
+    for row_idx, charger_node in enumerate(visited_chargers):
+        for col_idx, (env, policy_name) in enumerate(zip(envs, policy_names)):
+            ax = axes[row_idx, col_idx]
+            
+            charging_station = env.charging_station
+            history = charging_station.queue_history[charger_node]
+            
+            # Get charger info
+            charger_type = charging_station.charger_type[charger_node]
+            capacity = int(charging_station.charger_capacity[charger_node])
+            stats = charging_station.charger_stats[charger_node]
+            
+            # Extract time series data
+            times = np.array(history["times"])
+            occupancy = np.array(history["occupancy"])
+            waitlist = np.array(history["waitlist"])
+            truck_events = history["truck_events"]
+            
+            if len(times) == 0:
+                # No activity for this charger in this policy
+                ax.text(0.5, 0.5, 'No Activity', transform=ax.transAxes,
+                       ha='center', va='center', fontsize=14, color='gray')
+                ax.set_xlim(0, max_time)
+                ax.set_ylim(0, capacity + 1)
+            else:
+                # Calculate statistics
+                max_occupancy = occupancy.max()
+                max_waitlist = waitlist.max()
+                avg_occupancy = occupancy.mean()
+                utilization = stats["occupancy_time"] / max_time if max_time > 0 else 0
+                
+                # Plot stacked area
+                ax.fill_between(times, 0, occupancy, alpha=0.4, 
+                               color=colors['occupancy'], step='post', linewidth=0)
+                ax.fill_between(times, occupancy, occupancy + waitlist, alpha=0.4, 
+                               color=colors['waitlist'], step='post', linewidth=0)
+                
+                # Plot step lines
+                ax.step(times, occupancy, where='post', color='#1A5276', linewidth=2)
+                ax.step(times, occupancy + waitlist, where='post', 
+                       color='#A93226', linewidth=2, linestyle='--')
+                
+                # Capacity line
+                ax.axhline(y=capacity, color=colors['capacity'], 
+                          linestyle=':', linewidth=2.5, alpha=0.8)
+                
+                # Set limits
+                y_max = max(capacity + 1, max_occupancy + max_waitlist + 1)
+                ax.set_xlim(-1, max_time + 1)
+                ax.set_ylim(0, y_max * 1.1)
+            
+            # Titles and labels
+            if row_idx == 0:
+                ax.set_title(f'{policy_name}', fontsize=12, fontweight='bold', pad=8)
+            
+            if col_idx == 0:
+                ax.set_ylabel(f'Charger {charger_node}\n({charger_type})\nTrucks', 
+                             fontsize=10, fontweight='bold')
+            
+            if row_idx == n_chargers - 1:
+                ax.set_xlabel('Time (hours)', fontsize=10)
+            
+            # Grid
+            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+            ax.set_axisbelow(True)
+            
+            # Add statistics text
+            if len(times) > 0:
+                stats_text = (f'Util: {utilization*100:.0f}% | '
+                             f'Peak Queue: {int(max_waitlist)} | '
+                             f'Sessions: {stats["total_charge_sessions"]}')
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                       fontsize=8, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+    
+    # Add a common legend at the bottom
+    legend_elements = [
+        mpatches.Patch(color=colors['occupancy'], alpha=0.4, label='Actively Charging'),
+        mpatches.Patch(color=colors['waitlist'], alpha=0.4, label='Waiting in Queue'),
+        plt.Line2D([0], [0], color=colors['capacity'], linestyle=':', linewidth=2.5, label='Capacity Limit')
+    ]
+    fig.legend(handles=legend_elements, loc='lower center', 
+              bbox_to_anchor=(0.5, -0.01), ncol=3, fontsize=11, framealpha=0.95)
+    
+    plt.tight_layout(rect=[0, 0.02, 1, 0.995])
+    filepath = os.path.join(output_dir, "charger_queue_comparison.png")
+    plt.savefig(filepath, dpi=150, bbox_inches="tight")
+    plt.close()
+    
+    print(f"  ✓ Charger queue comparison plot saved to: {filepath}")
+
+
+def main():
+    print("="*80)
+    print(f"VISUALIZING TRUCK SCHEDULES - Comparing {len(POLICIES)} Policies")
+    print("="*80)
+    print(f"Configuration: {NUM_TRUCKS} trucks, {NUM_STOPS} stops, {MAX_TIME}h max time")
+    print(f"Seed: {SEED}")
+    print()
+    
+    histories = []
+    policy_names = []
+    envs = []
+    max_time = None
+    charging_nodes = None
+    
+    # Run each policy
+    for idx, (policy_path, policy_type) in enumerate(POLICIES, 1):
+        print(f"\n{'='*80}")
+        print(f"[{idx}/{len(POLICIES)}] Running Policy: {policy_path if policy_path not in ['optimal', 'heuristic'] else policy_path.upper()}")
+        print(f"{'='*80}")
+        
+        hist, mt, cn, steps, env, active_type = run_scenario(policy_path, policy_type)
+        
+        histories.append(hist)
+        envs.append(env)
+        
+        # Generate readable policy name
+        if policy_path == "heuristic":
+            name = "Heuristic"
+        elif policy_path == "optimal":
+            name = "Optimal"
+        else:
+            # Extract short name from path
+            base = os.path.basename(policy_path.rstrip('/'))
+            if len(base) > 20:
+                name = base[:20]
+            else:
+                name = base
+        policy_names.append(name)
+        
+        if max_time is None:
+            max_time = mt
+            charging_nodes = cn
+    
+    print(f"\n{'='*80}")
+    print("GENERATING COMPARISON PLOT")
+    print(f"{'='*80}")
     
     # Plot Comparison
-    plot_comparison(hist_h, hist_p, max_time, charging_nodes)
+    plot_comparison(histories, policy_names, max_time, charging_nodes)
     
-    # Plot Queue Dynamics for PPO (most relevant)
-    print("Plotting queue dynamics for PPO...")
-    plotter = EnvironmentPlotter(OUTPUT_DIR, verbose=False, use_osm=False)
-    plotter.plot_charger_queue_dynamics(env_p.charging_station, env_p.transport_graph, max_time)
+    # Plot Queue Dynamics Comparison
+    print(f"\nGenerating charger queue dynamics comparison...")
+    plot_charger_queue_comparison(envs, policy_names, max_time, OUTPUT_DIR)
+    
+    # Generate Schedule Log
+    print(f"\nGenerating detailed schedule comparison log...")
+    generate_schedule_log(histories, envs, policy_names, OUTPUT_DIR)
+    
+    print(f"\n{'='*80}")
+    print("VISUALIZATION COMPLETE")
+    print(f"{'='*80}")
+    print(f"Results saved to: {OUTPUT_DIR}/")
+    print()
 
 if __name__ == "__main__":
     main()

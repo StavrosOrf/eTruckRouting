@@ -708,7 +708,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Apply traffic simulation if enabled
         actual_travel_time = self._apply_traffic_simulation(travel_time)
-
+        
         # Check if truck can make it
         if discharge > truck.current_battery:
             if self.verbose:
@@ -820,7 +820,8 @@ class EventDrivenTruckEnv(gym.Env):
         """
         if not self.enable_traffic or travel_time <= 0:
             return travel_time
-
+        raise RuntimeError("Traffic simulation is disabled or travel time is non-positive.")
+    
         # Calculate standard deviation
         std_dev = travel_time * self.traffic_std_factor
 

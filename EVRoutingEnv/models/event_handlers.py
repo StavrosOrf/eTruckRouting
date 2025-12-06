@@ -20,8 +20,8 @@ class Event:
     """Represents a simulation event."""
 
     time: float  # When the event occurs
+    truck_id: int  # Tie-breaker: lower truck_id gets priority when times are equal
     event_type: EventType = field(compare=False)
-    truck_id: int = field(compare=False)
     data: Dict = field(default_factory=dict, compare=False)
 
     def __repr__(self):
@@ -87,6 +87,9 @@ class EventHandler:
         # Track route for visualization
         if enable_plotting:
             event_label = "delivery" if is_delivery else "charger"
+            # Get SoC at arrival (after battery discharge from travel)
+            soc_at_arrival = truck.get_battery_percentage()
+            
             # Store the full path if available, otherwise just the destination
             path = data.get("path", [destination])
             # Add all intermediate nodes from the path (excluding start which is already in route)
@@ -95,12 +98,12 @@ class EventHandler:
                     # Only label the final destination
                     node_label = event_label if node == destination else "travel"
                     truck_routes[truck.truck_id].append(
-                        (node, global_clock, node_label)
+                        (node, global_clock, node_label, soc_at_arrival)
                     )
             else:
                 # No path available, just add destination
                 truck_routes[truck.truck_id].append(
-                    (destination, global_clock, event_label)
+                    (destination, global_clock, event_label, soc_at_arrival)
                 )
 
         if self.verbose:

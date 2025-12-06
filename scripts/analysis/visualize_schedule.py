@@ -118,7 +118,8 @@ def run_scenario(policy_path, policy_type):
         policy, active_policy_type = load_policy(policy_path, policy_type, gnn_state_space, config, device="cuda")
 
     # Run Instrumented Environment
-    env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False)
+    # Enable plotting to populate truck_routes for accurate event timing
+    env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True)
     
     print(f"Running scenario with seed {SEED}...")
     obs, info = env.reset(seed=SEED)
@@ -161,8 +162,80 @@ def run_scenario(policy_path, policy_type):
         active_policy_type,
     )
 
+def process_truck_routes(env):
+    """
+    Process truck_routes from environment into timeline segments per truck.
+    
+    Uses truck_routes which has accurate event.time values (not affected by
+    the history interval issue where global_clock advances during event processing).
+    
+    truck_routes format: (node, time, event_type, soc_at_arrival)
+    
+    Args:
+        env: EventDrivenTruckEnv with truck_routes populated
+        
+    Returns:
+        dict: truck_id -> list of timeline segments
+    """
+    truck_timelines = {}
+    
+    for truck_id, route_events in env.truck_routes.items():
+        timeline = []
+        prev_time = 0.0
+        
+        for i, event in enumerate(route_events):
+            # Handle both old 3-tuple and new 4-tuple formats
+            if len(event) == 4:
+                node, time, event_type, soc = event
+            else:
+                node, time, event_type = event
+                soc = None
+            
+            if event_type == "start":
+                prev_time = time
+                continue
+            
+            # Create routing segment from previous time to this arrival
+            if i > 0 and time > prev_time:
+                timeline.append({
+                    "start": prev_time,
+                    "end": time,
+                    "state": "routing",
+                    "meta": {"destination": node},
+                    "end_soc": soc
+                })
+            
+            prev_time = time
+        
+        # Add final state if truck is complete or failed
+        truck = env.trucks[truck_id]
+        if truck.is_complete:
+            timeline.append({
+                "start": prev_time,
+                "end": prev_time,
+                "state": "complete",
+                "meta": {},
+                "end_soc": truck.get_battery_percentage()
+            })
+        elif truck.failed:
+            timeline.append({
+                "start": prev_time,
+                "end": prev_time,
+                "state": "failed",
+                "meta": {},
+                "end_soc": truck.get_battery_percentage()
+            })
+        
+        truck_timelines[truck_id] = timeline
+    
+    return truck_timelines
+
 def process_history(history):
-    """Process raw history into timeline segments per truck."""
+    """Process raw history into timeline segments per truck.
+    
+    DEPRECATED: This has timing issues due to global_clock advancing during
+    event processing. Use process_truck_routes() instead for accurate timing.
+    """
     truck_ids = sorted(list(history[0]["trucks"].keys()))
     truck_timelines = {tid: [] for tid in truck_ids}
     
@@ -211,56 +284,43 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
         f.write(f"Policies: {', '.join(policy_names)}\n")
         f.write("="*120 + "\n\n")
         
-        # Process histories to extract truck schedules
+        # Use truck_routes instead of history for accurate event times
+        # truck_routes is populated directly by event handler with correct event.time
         all_schedules = {}
-        for history, policy_name in zip(histories, policy_names):
-            timelines, truck_ids = process_history(history)
-            
+        for env, policy_name in zip(envs, policy_names):
             schedules = {}
-            for tid in truck_ids:
+            
+            # Get truck_routes from environment
+            truck_routes = env.truck_routes  # truck_id -> list of (node, time, event_type)
+            
+            for truck_id, route in truck_routes.items():
                 schedule = []
-                for segment in timelines[tid]:
-                    state = segment["state"]
-                    start_time = segment["start"]
-                    end_time = segment["end"]
-                    end_soc = segment.get("end_soc")
+                truck = env.trucks[truck_id]
+                
+                # Process route events (handle both 3-tuple and 4-tuple formats)
+                for event in route:
+                    if len(event) == 4:
+                        node, time, event_type, soc = event
+                    else:
+                        node, time, event_type = event
+                        # Fallback: get SoC from current state if this is the current node
+                        soc = truck.get_battery_percentage() if truck.current_node == node else None
                     
-                    # Record arrival at nodes
-                    if state == "routing":
-                        destination = segment["meta"].get("destination")
-                        if destination is not None:
-                            schedule.append({
-                                "time": end_time,
-                                "node": destination,
-                                "soc": end_soc,
-                                "event": "arrive"
-                            })
-                    elif state == "charging":
-                        node = segment["meta"].get("current_node")
-                        # Record start of charging
+                    if event_type == "start":
+                        continue  # Skip start event
+                    
+                    if event_type in ["delivery", "charger", "travel"]:
                         schedule.append({
-                            "time": start_time,
+                            "time": time,
                             "node": node,
-                            "soc": segment.get("start_soc"),  # May not have this
-                            "event": "start_charging"
-                        })
-                        # Record end of charging
-                        schedule.append({
-                            "time": end_time,
-                            "node": node,
-                            "soc": end_soc,
-                            "event": "finish_charging"
-                        })
-                    elif state == "waiting_to_charge":
-                        node = segment["meta"].get("current_node")
-                        schedule.append({
-                            "time": start_time,
-                            "node": node,
-                            "soc": end_soc,
-                            "event": "waiting"
+                            "soc": soc,
+                            "event": "arrive"
                         })
                 
-                schedules[tid] = schedule
+                # TODO: Add charging events from history if needed
+                # For now, just show arrivals which are the most important
+                
+                schedules[truck_id] = schedule
             all_schedules[policy_name] = schedules
         
         # Get all truck IDs
@@ -338,8 +398,11 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
     print(f"  ✓ Schedule comparison log saved to: {log_path}")
     return log_path
 
-def plot_comparison(histories, policy_names, max_time, charging_nodes):
-    """Generate Comparison Timeline chart for three policies."""
+def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
+    """Generate Gantt chart comparing multiple policies (3 policies as stacked lines per truck).
+    
+    Uses truck_routes from envs for accurate event timing instead of history which has interval issues.
+    """
     
     colors = {
         "routing": "#3498db",      # Blue
@@ -350,14 +413,14 @@ def plot_comparison(histories, policy_names, max_time, charging_nodes):
         "failed": "#34495e"        # Dark Blue/Black
     }
     
-    # Process all histories
+    # Process truck_routes from envs for accurate timing
     timelines_list = []
     truck_ids = None
-    for history in histories:
-        timeline, tids = process_history(history)
+    for env in envs:
+        timeline = process_truck_routes(env)
         timelines_list.append(timeline)
         if truck_ids is None:
-            truck_ids = tids
+            truck_ids = sorted(timeline.keys())
     
     # Calculate actual maximum time needed across all policies
     actual_max_time = 0
@@ -636,8 +699,8 @@ def main():
     print("GENERATING COMPARISON PLOT")
     print(f"{'='*80}")
     
-    # Plot Comparison
-    plot_comparison(histories, policy_names, max_time, charging_nodes)
+    # Plot Comparison (pass envs for accurate truck_routes data)
+    plot_comparison(histories, envs, policy_names, max_time, charging_nodes)
     
     # Plot Queue Dynamics Comparison
     print(f"\nGenerating charger queue dynamics comparison...")

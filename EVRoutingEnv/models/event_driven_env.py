@@ -206,6 +206,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.global_clock = 0.0  # Current simulation time
         self.event_queue = []  # Priority queue of events (min-heap)
         self.active_truck_id = None  # ID of truck that needs to make a decision
+        self.truck_ready_times = {}  # truck_id -> time when TRUCK_READY event fired (actual ready time)
 
         # Current episode state
         self.trucks = []
@@ -233,6 +234,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.episode_steps = 0  # Reset step counter
         self.waiting_start_times = {}  # Reset waiting time tracking
         self.waiting_penalty_buffer = 0.0  # Reset waiting penalty buffer
+        self.truck_ready_times = {}  # Reset truck ready time tracking
 
         # Reset charging station state
         self.charging_station.reset()
@@ -306,7 +308,9 @@ class EventDrivenTruckEnv(gym.Env):
         self.trucks.append(truck)
 
         # Store initial plan for visualization
-        self.truck_routes[truck_id] = [(start_node, 0.0, "start")]
+        # Include initial SoC (should be 100% at start)
+        initial_soc = truck.get_battery_percentage()
+        self.truck_routes[truck_id] = [(start_node, 0.0, "start", initial_soc)]
         self.truck_initial_plans[truck_id] = {
             "start": start_node,
             "deliveries": delivery_sequence.copy(),
@@ -453,6 +457,9 @@ class EventDrivenTruckEnv(gym.Env):
                         print(f"  Skipping TRUCK_READY for truck {truck.truck_id} - just became {status}")
                     continue
                 
+                # Store the actual time when this truck became ready (event.time, not global_clock)
+                # This fixes the bug where global_clock advances during event processing
+                self.truck_ready_times[event.truck_id] = event.time
                 self.active_truck_id = event.truck_id
                 self.truck_states[truck.truck_id] = "ready"
                 return
@@ -764,7 +771,14 @@ class EventDrivenTruckEnv(gym.Env):
         self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
         
         # Schedule truck routing (arrival) event
-        completion_time = self.global_clock + actual_travel_time
+        # BUG FIX: Use the actual time when truck became ready (event.time from TRUCK_READY event)
+        # not the current global_clock which may have advanced during event processing
+        departure_time = self.truck_ready_times.get(truck.truck_id, self.global_clock)
+        completion_time = departure_time + actual_travel_time
+        
+        if self.verbose:
+            print(f"  DEBUG: Scheduling arrival - Departure: {departure_time:.4f}h, Travel: {actual_travel_time:.4f}h, Arrival: {completion_time:.4f}h")
+        
         heapq.heappush(
             self.event_queue,
             Event(
@@ -776,6 +790,7 @@ class EventDrivenTruckEnv(gym.Env):
                     "distance": distance,
                     "travel_time": actual_travel_time,
                     "discharge": discharge,
+                    "departure_time": departure_time,  # Track when truck actually departed
                 },
             ),
         )
@@ -1042,7 +1057,9 @@ class EventDrivenTruckEnv(gym.Env):
         self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
         
         # Schedule truck routing event
-        completion_time = self.global_clock + actual_travel_time
+        # BUG FIX: Use the actual time when truck became ready, not global_clock
+        departure_time = self.truck_ready_times.get(truck.truck_id, self.global_clock)
+        completion_time = departure_time + actual_travel_time
         heapq.heappush(
             self.event_queue,
             Event(

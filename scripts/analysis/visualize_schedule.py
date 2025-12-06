@@ -52,7 +52,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
         """
         t_start = self.global_clock
         
-        # Capture detailed state for each truck
+        # Capture detailed state for each truck (including start SoC)
         truck_details = {}
         for truck in self.trucks:
             state = self.truck_states.get(truck.truck_id, "unknown")
@@ -60,6 +60,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
                 "state": state,
                 "current_node": int(truck.current_node),
                 "destination": int(truck.route_destination) if truck.route_destination is not None else None,
+                "start_soc": truck.get_battery_percentage()  # Capture SoC at start of interval
             }
             truck_details[truck.truck_id] = details
             
@@ -166,19 +167,20 @@ def process_truck_routes(env):
     """
     Process truck_routes from environment into timeline segments per truck.
     
-    Uses truck_routes which has accurate event.time values (not affected by
-    the history interval issue where global_clock advances during event processing).
+    Combines truck_routes (for accurate routing timing) with history 
+    (for charging and waiting states).
     
     truck_routes format: (node, time, event_type, soc_at_arrival)
     
     Args:
-        env: EventDrivenTruckEnv with truck_routes populated
+        env: EventDrivenTruckEnv with truck_routes and history populated
         
     Returns:
         dict: truck_id -> list of timeline segments
     """
     truck_timelines = {}
     
+    # First, build routing segments from truck_routes (accurate timing)
     for truck_id, route_events in env.truck_routes.items():
         timeline = []
         prev_time = 0.0
@@ -207,8 +209,98 @@ def process_truck_routes(env):
             
             prev_time = time
         
-        # Add final state if truck is complete or failed
+        truck_timelines[truck_id] = timeline
+    
+    # Now merge in charging and waiting segments from history
+    # History has these states but with timing issues for routing
+    # We only extract charging/waiting states
+    if hasattr(env, 'history') and env.history:
+        # First collect all charging/waiting segments per truck
+        temp_segments = {}  # truck_id -> list of segments
+        
+        for entry in env.history:
+            start = entry["start"]
+            end = entry["end"]
+            trucks_info = entry["trucks"]
+            
+            for truck_id, details in trucks_info.items():
+                state = details.get("state", "unknown")
+                
+                # Only add charging and waiting states from history
+                if state in ["charging", "waiting_to_charge"]:
+                    meta = {}
+                    if state in ["charging", "waiting_to_charge"]:
+                        meta["current_node"] = details.get("current_node")
+                    
+                    start_soc = details.get("start_soc")
+                    end_soc = details.get("end_soc")
+                    
+                    if truck_id not in temp_segments:
+                        temp_segments[truck_id] = []
+                    
+                    temp_segments[truck_id].append({
+                        "start": start,
+                        "end": end,
+                        "state": state,
+                        "meta": meta,
+                        "start_soc": start_soc,
+                        "end_soc": end_soc
+                    })
+        
+        # Now merge consecutive segments with same state and node
+        for truck_id, segments in temp_segments.items():
+            if not segments:
+                continue
+            
+            # Sort by start time
+            segments.sort(key=lambda x: x["start"])
+            
+            # Merge consecutive segments
+            merged = []
+            current = segments[0]
+            
+            for i in range(1, len(segments)):
+                next_seg = segments[i]
+                
+                # Check if we should merge: same state, same node, consecutive time
+                if (current["state"] == next_seg["state"] and 
+                    current["meta"].get("current_node") == next_seg["meta"].get("current_node") and
+                    abs(current["end"] - next_seg["start"]) < 0.01):
+                    # Merge: extend end time and update end_soc
+                    current["end"] = next_seg["end"]
+                    current["end_soc"] = next_seg["end_soc"]
+                else:
+                    # Not mergeable, save current and move to next
+                    merged.append(current)
+                    current = next_seg
+            
+            # Don't forget the last segment
+            merged.append(current)
+            
+            # Now insert merged segments into timeline
+            timeline = truck_timelines.get(truck_id, [])
+            for seg in merged:
+                # Find where to insert (maintain chronological order)
+                insert_idx = len(timeline)
+                for idx, existing_seg in enumerate(timeline):
+                    if existing_seg["start"] >= seg["start"]:
+                        insert_idx = idx
+                        break
+                
+                timeline.insert(insert_idx, seg)
+            
+            truck_timelines[truck_id] = timeline
+    
+    # Add final state if truck is complete or failed
+    for truck_id in truck_timelines:
         truck = env.trucks[truck_id]
+        timeline = truck_timelines[truck_id]
+        
+        if timeline:
+            prev_time = timeline[-1]["end"]
+        else:
+            prev_time = 0.0
+        
         if truck.is_complete:
             timeline.append({
                 "start": prev_time,
@@ -225,8 +317,6 @@ def process_truck_routes(env):
                 "meta": {},
                 "end_soc": truck.get_battery_percentage()
             })
-        
-        truck_timelines[truck_id] = timeline
     
     return truck_timelines
 
@@ -442,11 +532,19 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
         # Draw background track
         ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', linestyles=':', alpha=0.1, linewidth=25)
         
-        # Plot each policy
+        # Plot each policy in two passes: routing first, then charging/waiting on top
         for idx, (timelines, policy_name, offset) in enumerate(zip(timelines_list, policy_names, offsets)):
             y_pos = tid + offset
+            
+            # First pass: draw routing segments
             for segment in timelines[tid]:
-                _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
+                if segment["state"] == "routing":
+                    _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
+            
+            # Second pass: draw charging and waiting on top
+            for segment in timelines[tid]:
+                if segment["state"] in ["charging", "waiting_to_charge", "complete", "failed"]:
+                    _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
             
             # Add label for policy
             ax.text(-1.0, y_pos, policy_name, ha='right', va='center', fontsize=8, color='gray', weight='bold')
@@ -483,13 +581,47 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
     end = segment["end"]
     meta = segment["meta"]
     end_soc = segment.get("end_soc")
+    start_soc = segment.get("start_soc")
     
     color = colors.get(state, "black")
-    linewidth = 2.5 if state in ["charging", "routing", "waiting_to_charge"] else 1.0
     
-    ax.hlines(y=y_pos, xmin=start, xmax=end, colors=color, linewidth=linewidth)
+    # Use different linewidths and z-orders for better visibility
+    if state == "charging":
+        linewidth = 6  # Thicker for charging
+        zorder = 20  # Draw on top
+    elif state == "waiting_to_charge":
+        linewidth = 5  # Thick for waiting
+        zorder = 19
+    elif state == "routing":
+        linewidth = 2.5
+        zorder = 10
+    else:
+        linewidth = 1.0
+        zorder = 5
     
-    if label_soc and end_soc is not None:
+    ax.hlines(y=y_pos, xmin=start, xmax=end, colors=color, linewidth=linewidth, zorder=zorder)
+    
+    # For charging: show duration above the bar and SoC at start and end
+    if state == "charging":
+        duration = end - start
+        if duration > 0:
+            # Show duration above the charging bar
+            mid_point = (start + end) / 2
+            ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
+                    fontsize=7, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.3', 
+                    facecolor='white', edgecolor='green', alpha=0.8))
+            
+            # Show SoC at start and end
+            if label_soc:
+                if start_soc is not None:
+                    ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
+                            fontsize=6, color='green', alpha=0.9, weight='bold')
+                if end_soc is not None:
+                    ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
+                            fontsize=6, color='green', alpha=0.9, weight='bold')
+    
+    # For other states: show SoC only at the end (arrival points)
+    elif label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed"]:
         ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', fontsize=5, color='black', alpha=0.7)
 
     if state == "routing":
@@ -578,6 +710,42 @@ def plot_charger_queue_comparison(envs, policy_names, max_time, output_dir):
             waitlist = np.array(history["waitlist"])
             truck_events = history["truck_events"]
             
+            # Process truck charging events - merge consecutive charging sessions
+            merged_sessions = []
+            if len(truck_events) > 0:
+                charging_sessions = []  # (truck_id, start_time, end_time)
+                truck_charging_state = {}  # truck_id -> start_time
+                
+                for event_time, truck_id, event_type in truck_events:
+                    if event_type == 'start':
+                        truck_charging_state[truck_id] = event_time
+                    elif event_type == 'finish' and truck_id in truck_charging_state:
+                        start_time = truck_charging_state[truck_id]
+                        charging_sessions.append((truck_id, start_time, event_time))
+                        del truck_charging_state[truck_id]
+                
+                # Sort charging sessions by start time
+                charging_sessions.sort(key=lambda x: x[1])
+                
+                # Merge consecutive charging sessions for the same truck
+                i = 0
+                while i < len(charging_sessions):
+                    truck_id, start, end = charging_sessions[i]
+                    
+                    # Look ahead to merge consecutive sessions from the same truck
+                    j = i + 1
+                    while j < len(charging_sessions):
+                        next_truck, next_start, next_end = charging_sessions[j]
+                        if next_truck == truck_id and abs(next_start - end) < 0.01:
+                            # Merge this session
+                            end = next_end
+                            j += 1
+                        else:
+                            break
+                    
+                    merged_sessions.append((truck_id, start, end))
+                    i = j
+            
             if len(times) == 0:
                 # No activity for this charger in this policy
                 ax.text(0.5, 0.5, 'No Activity', transform=ax.transAxes,
@@ -591,7 +759,7 @@ def plot_charger_queue_comparison(envs, policy_names, max_time, output_dir):
                 avg_occupancy = occupancy.mean()
                 utilization = stats["occupancy_time"] / max_time if max_time > 0 else 0
                 
-                # Plot stacked area
+                # Plot stacked area (original visualization)
                 ax.fill_between(times, 0, occupancy, alpha=0.4, 
                                color=colors['occupancy'], step='post', linewidth=0)
                 ax.fill_between(times, occupancy, occupancy + waitlist, alpha=0.4, 
@@ -628,9 +796,11 @@ def plot_charger_queue_comparison(envs, policy_names, max_time, output_dir):
             
             # Add statistics text
             if len(times) > 0:
+                # Use merged sessions count for accurate statistics
+                actual_sessions = len(merged_sessions)
                 stats_text = (f'Util: {utilization*100:.0f}% | '
                              f'Peak Queue: {int(max_waitlist)} | '
-                             f'Sessions: {stats["total_charge_sessions"]}')
+                             f'Sessions: {actual_sessions}')
                 ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
                        fontsize=8, verticalalignment='top',
                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))

@@ -18,7 +18,7 @@ eval_freq = 500
 batch_size = 64
 
 # Environment settings
-num_trucks = 20
+num_trucks = 100
 num_stops = 4
 max_time = 200.0
 
@@ -29,7 +29,7 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [512, 1024, 2048],
+    "steps_per_update": [512, 1024],
     "epochs": [10],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
@@ -90,9 +90,9 @@ for config_idx, (
         f" --num-trucks {num_trucks}"
         f" --num-stops {num_stops}"
         f" --max-time {max_time}"
-        f" --wandb-project evpr-experiments"
+        f" --wandb-project evpr-experiments-test"
         f" --wandb-entity stavrosorf"
-        f" --no-wandb --verbose"
+        f" --verbose"
         f" --group-name {sweep_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"

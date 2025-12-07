@@ -177,6 +177,7 @@ class ChargingCurveModel:
         time_elapsed = 0.0
         current_soc = initial_soc
         total_energy = 0.0
+        current_power = 0.0  # Initialize to prevent UnboundLocalError
         
         # Track power curve for logging
         power_curve = []

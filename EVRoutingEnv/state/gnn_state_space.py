@@ -553,20 +553,48 @@ class GNNStateSpace:
                 action_local_indices.append(local_idx)
             action_is_charging.append(bool(is_charging_action))
 
-        # print(f'\n\n env.active_truck_id: {env.active_truck_id}')
-        # print(f'truck_id_to_idx: {truck_id_to_idx}')
-        if env.active_truck_id is not None and env.active_truck_id in truck_id_to_idx:
-            active_truck_idx = truck_id_to_idx[env.active_truck_id]
-            if active_truck_idx is None:
-                # Active truck is completed or failed - should not be requesting actions
-                active_truck = env.trucks[env.active_truck_id]
-                if active_truck.is_complete:
-                    raise ValueError(f"Active truck {env.active_truck_id} has completed all deliveries and should not be active")
-                elif active_truck.failed:
-                    raise ValueError(f"Active truck {env.active_truck_id} has failed and should not be active")
-                else:
-                    raise ValueError(f"Active truck {env.active_truck_id} is not in the truck index mapping")
-            else:
+        # Validate active truck - GNN state should only be called when environment has valid active truck
+        if env.active_truck_id is None:
+            raise ValueError(
+                "Cannot generate GNN state: active_truck_id is None. "
+                "GNN state should only be called when environment is active with a valid truck.\n"
+                f"Truck states: {env.truck_states}\n"
+                f"Global clock: {env.global_clock:.2f}h"
+            )
+        
+        if env.active_truck_id not in truck_id_to_idx:
+            # Active truck not in mapping - likely completed or failed
+            if env.active_truck_id >= len(env.trucks):
+                raise ValueError(
+                    f"Invalid active_truck_id {env.active_truck_id}: out of range (num_trucks={len(env.trucks)})"
+                )
+            
+            active_truck = env.trucks[env.active_truck_id]
+            truck_status = "complete" if active_truck.is_complete else ("failed" if active_truck.failed else "unknown")
+            raise ValueError(
+                f"Cannot generate GNN state: active truck {env.active_truck_id} is {truck_status}.\n"
+                f"Active trucks are filtered out when complete/failed, but environment still has it as active.\n"
+                f"This indicates a bug in the environment's event processing.\n"
+                f"Truck details:\n"
+                f"  - Status: {truck_status}\n"
+                f"  - Current node: {active_truck.current_node}\n"
+                f"  - Battery: {active_truck.current_battery:.2f}/{active_truck.battery_capacity:.2f} kWh\n"
+                f"  - Deliveries: {active_truck.current_sequence_index}/{len(active_truck.delivery_sequence)-1}\n"
+                f"  - Truck state: {env.truck_states.get(env.active_truck_id, 'unknown')}\n"
+                f"  - Global clock: {env.global_clock:.2f}h"
+            )
+        
+        active_truck_idx = truck_id_to_idx[env.active_truck_id]
+        if active_truck_idx is None:
+            # This should be unreachable after the check above, but keep as safety
+            active_truck = env.trucks[env.active_truck_id]
+            raise ValueError(
+                f"Active truck {env.active_truck_id} has idx=None in truck_id_to_idx mapping. "
+                f"Truck complete={active_truck.is_complete}, failed={active_truck.failed}"
+            )
+        
+        # Generate actions for valid active truck
+        if True:  # Keep indentation level
                 active_truck = env.trucks[env.active_truck_id]
                 current_battery = active_truck.current_battery
                 current_location = active_truck.current_node
@@ -743,12 +771,15 @@ class GNNStateSpace:
                             resulting_battery = min(active_truck.battery_capacity, current_battery + charge_amount)
                             
                             # Check if resulting battery is enough to leave
+                            # Must account for energy safety factor (worst-case energy consumption)
                             # Allow charging only if it provides enough energy to reach another location
-                            is_feasible = resulting_battery >= min_energy_to_leave
+                            min_energy_with_safety = min_energy_to_leave * energy_safety_factor
+                            is_feasible = resulting_battery >= min_energy_with_safety
                             
                             if self.verbose:
                                 # Debug: Print each charge duration evaluation
                                 print(f"    Charge {charge_hours}h: +{charge_amount:.2f} kWh → {resulting_battery:.2f} kWh total | "
+                                      f"Need: {min_energy_with_safety:.2f} kWh (base: {min_energy_to_leave:.2f} × {energy_safety_factor:.2f}) | "
                                       f"Feasible: {is_feasible}")
                             
                             action_to_node_map.append((current_location, True))
@@ -819,17 +850,45 @@ class GNNStateSpace:
         feasible_action_is_charging = [action_is_charging[i] for i in feasible_indices]
         feasible_action_durations = [action_charge_durations[i] for i in feasible_indices]
         
-        # Debug: Check if all actions are infeasible
+        # Strict validation: Raise error if all actions are infeasible
         if not feasible_action_to_node_map:
-            if self.verbose:
-                print(f"\n[CRITICAL] ALL ACTIONS INFEASIBLE!")
-                print(f"  Active truck: {env.active_truck_id}")
-                print(f"  Total actions: {len(action_to_node_map)}")
-                print(f"  Feasible count: {sum(feasible_action_mask)}")
-                print(f"  action_to_node_map: {action_to_node_map}")
-                print(f"  feasible_action_mask: {feasible_action_mask}")
-                print(f"  action_is_charging: {action_is_charging}")
-                print(f"  action_charge_durations: {action_charge_durations}")
+            active_truck = env.trucks[env.active_truck_id]
+            diagnostics = self._get_action_feasibility_diagnostics(env, active_truck, charger_node_to_idx)
+            
+            # Build detailed infeasibility breakdown
+            infeasibility_details = []
+            infeasibility_details.append(f"\nAction Infeasibility Breakdown (Total: {len(action_to_node_map)} actions):")
+            
+            # Count action types and their feasibility
+            routing_to_charger = sum(1 for (node_id, is_chg) in action_to_node_map if not is_chg and node_id in charger_node_to_idx)
+            routing_to_delivery = sum(1 for (node_id, is_chg) in action_to_node_map if not is_chg and node_id not in charger_node_to_idx and node_id >= 0)
+            charging_actions = sum(1 for (node_id, is_chg) in action_to_node_map if is_chg)
+            
+            infeasibility_details.append(f"  - Routing to chargers: {routing_to_charger} actions (all infeasible)")
+            infeasibility_details.append(f"  - Routing to delivery: {routing_to_delivery} actions (all infeasible)")
+            infeasibility_details.append(f"  - Charging actions: {charging_actions} actions (all infeasible)")
+            
+            # Explain likely causes
+            infeasibility_details.append(f"\nLikely causes:")
+            if active_truck.current_battery < 50.0:
+                infeasibility_details.append(f"  ⚠ Low battery ({active_truck.current_battery:.2f} kWh) - may not reach any destination")
+            if active_truck.must_leave_charger:
+                infeasibility_details.append(f"  ⚠ Truck must leave charger but cannot reach any destination with current battery")
+            at_charger = active_truck.current_node in charger_node_to_idx
+            if at_charger and not active_truck.must_leave_charger:
+                infeasibility_details.append(f"  ⚠ At charger but all charging durations insufficient to reach any destination")
+            
+            raise ValueError(
+                f"Cannot generate GNN state: ALL ACTIONS ARE INFEASIBLE for truck {env.active_truck_id}.\n"
+                f"This indicates the truck is in an unrecoverable state (e.g., stranded with insufficient battery).\n\n"
+                f"{diagnostics}\n"
+                f"{''.join(infeasibility_details)}\n\n"
+                f"Full action details:\n"
+                f"  action_to_node_map: {action_to_node_map}\n"
+                f"  feasible_action_mask: {feasible_action_mask}\n"
+                f"  action_is_charging: {action_is_charging}\n"
+                f"  action_charge_durations: {action_charge_durations}"
+            )
         
         data.action_graph_features = self._build_action_graph_features(
             env,
@@ -855,6 +914,52 @@ class GNNStateSpace:
         return data
 
     # ==================== Node Feature Functions ====================
+
+    def _get_action_feasibility_diagnostics(self, env, active_truck, charger_node_to_idx) -> str:
+        """Generate detailed diagnostics about why actions may be infeasible."""
+        diagnostics = []
+        diagnostics.append(f"Active Truck {active_truck.truck_id} State:")
+        diagnostics.append(f"  Location: node {active_truck.current_node}")
+        diagnostics.append(f"  Battery: {active_truck.current_battery:.2f}/{active_truck.battery_capacity:.2f} kWh ({active_truck.get_battery_percentage():.1f}%)")
+        diagnostics.append(f"  Must leave charger: {active_truck.must_leave_charger}")
+        diagnostics.append(f"  Is charging: {active_truck.is_charging}")
+        diagnostics.append(f"  Route destination: {active_truck.route_destination}")
+        
+        next_delivery = active_truck.get_next_delivery_target()
+        diagnostics.append(f"  Next delivery: {next_delivery}")
+        
+        if next_delivery is not None:
+            energy_to_delivery = env.transport_graph.get_path_energy(active_truck.current_node, next_delivery)
+            diagnostics.append(f"  Energy to next delivery: {energy_to_delivery:.2f} kWh")
+        
+        # Get energy safety factor
+        energy_safety_factor = 1.0
+        if hasattr(env, 'traffic_config') and env.traffic_config['enable_traffic'] and env.traffic_config['enable_energy_uncertainty']:
+            energy_safety_factor = env.traffic_config['max_energy_multiplier']
+        diagnostics.append(f"  Energy safety factor: {energy_safety_factor:.2f}x")
+        
+        # Check nearest chargers
+        if charger_node_to_idx:
+            charger_distances = []
+            for charger_id in sorted(charger_node_to_idx.keys())[:5]:  # First 5 chargers
+                energy = env.transport_graph.get_path_energy(active_truck.current_node, charger_id)
+                max_energy = energy * energy_safety_factor
+                feasible = max_energy < active_truck.current_battery and not np.isinf(energy)
+                charger_distances.append(f"    Charger {charger_id}: {energy:.2f} kWh (×{energy_safety_factor:.2f}={max_energy:.2f}) - {'✓ feasible' if feasible else '✗ infeasible'}")
+            diagnostics.append(f"  Nearest chargers:")
+            diagnostics.extend(charger_distances)
+        
+        # Check at charger status
+        at_charger = active_truck.current_node in charger_node_to_idx
+        diagnostics.append(f"  At charger: {at_charger}")
+        if at_charger:
+            charger_id = active_truck.current_node
+            occupancy = len(env.charging_station.charger_occupancy.get(charger_id, []))
+            capacity = env.charging_station.charger_capacity.get(charger_id, 1)
+            queue_len = len(env.charging_station.charger_waitlist.get(charger_id, []))
+            diagnostics.append(f"    Occupancy: {occupancy}/{capacity}, Queue: {queue_len}")
+        
+        return "\n".join(diagnostics)
 
     def _get_truck_node_features(self, truck, env) -> list:
         """
@@ -1055,8 +1160,11 @@ class GNNStateSpace:
         Resulting SOC: battery level after taking the action (normalized 0-1)
         """
         if not action_to_node_map:
-            raise ValueError("No action metadata found for active truck")
-            # return torch.zeros((0, 3), dtype=torch.float32, device=self.device)
+            raise ValueError(
+                "INTERNAL ERROR: _build_action_graph_features called with empty action_to_node_map. "
+                "This should have been caught earlier in get_state_GNN. "
+                f"Active truck: {env.active_truck_id if hasattr(env, 'active_truck_id') else 'unknown'}"
+            )
         
         # Get active truck info
         current_battery = 0.0

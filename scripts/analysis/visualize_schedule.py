@@ -28,12 +28,12 @@ from algo.policy_utils import load_policy
 POLICIES = [
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     ("optimal", "optimal"),
-    ("heuristic", "heuristic"),
+    # ("heuristic", "heuristic"),
 ]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 20
-NUM_STOPS = 3
+NUM_STOPS = 5
 MAX_TIME = 200.0
 SEED = 10050
 OUTPUT_DIR = "results/visualization"
@@ -810,7 +810,8 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
     actual_max_time = actual_max_time * 1.05
     
     # Increase figure height to accommodate triple lines
-    fig, ax = plt.subplots(figsize=(20, 14))
+    length = len(truck_ids)
+    fig, ax = plt.subplots(figsize=(20, length))
     
     # Y-axis positions: Truck ID i -> Policy 1 at i+0.3, Policy 2 at i, Policy 3 at i-0.3
     offsets = [0.3, 0, -0.3]

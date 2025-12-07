@@ -80,8 +80,8 @@ def run_scenario(policy_path, policy_type):
     else:
         policy, active_policy_type = load_policy(policy_path, policy_type, gnn_state_space, config, device="cuda")
 
-    # Run Environment
-    env = EventDrivenTruckEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=False, run_id="visualization_temp")
+    # Run Environment with plotting enabled for route visualization
+    env = EventDrivenTruckEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True, run_id="visualization_temp")
     
     print(f"Running scenario with seed {SEED}...")
     obs, info = env.reset(seed=SEED)
@@ -248,17 +248,17 @@ def plot_comparison(envs, policy_names, max_time):
     
     actual_max_time = actual_max_time * 1.05  # Add 5% padding
     
-    # Create figure
+    # Create figure with more height per truck
     length = len(truck_ids)
-    fig, ax = plt.subplots(figsize=(20, length))
+    fig, ax = plt.subplots(figsize=(24, length * 1.3))
     
     # Y-axis positions: offset for each policy (increased spacing to avoid overlap)
     offsets = [0.35, 0, -0.35][:len(policy_names)]
     
     for tid in truck_ids:
-        # Draw background track
+        # Draw background track with more spacing
         ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', 
-                 linestyles=':', alpha=0.1, linewidth=35)
+                 linestyles=':', alpha=0.1, linewidth=42)
         
         # Plot each policy
         for idx, (timelines, policy_name, offset) in enumerate(zip(timelines_list, policy_names, offsets)):
@@ -389,11 +389,11 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes):
     
     elif state == "complete":
         ax.plot(start, y_pos, marker='*', markersize=10,
-               markerfacecolor='gold', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
+               markerfacecolor='gold', markeredgecolor='black', markeredgewidth=0.5, zorder=30)
     
     elif state == "failed":
         ax.plot(start, y_pos, marker='X', markersize=8,
-               markerfacecolor='red', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
+               markerfacecolor='red', markeredgecolor='black', markeredgewidth=0.5, zorder=30)
 
 
 def generate_schedule_log(envs, policy_names, output_dir):
@@ -510,6 +510,236 @@ def generate_schedule_log(envs, policy_names, output_dir):
     return log_path
 
 
+def plot_route_maps(envs, policy_names, output_dir):
+    """Generate geographic route maps for each policy showing truck routes, chargers, and deliveries."""
+    
+    for env, policy_name in zip(envs, policy_names):
+        try:
+            # Check if environment has plotter
+            if not hasattr(env, 'plotter') or env.plotter is None:
+                print(f"  ⚠ Skipping {policy_name}: No plotter available")
+                continue
+            
+            plotter = env.plotter
+            
+            # Check if we have coordinate data
+            if not plotter.node_coords and not plotter.charger_coords:
+                print(f"  ⚠ Skipping {policy_name}: No coordinate data available")
+                continue
+            
+            # Create figure
+            fig, ax = plt.subplots(figsize=(20, 16))
+            
+            # Get coordinate mappings
+            node_coords = plotter._create_node_id_to_osm_map(env.transport_graph)
+            charger_coords = plotter._create_charger_id_to_osm_map(env.transport_graph)
+            
+            if not node_coords:
+                print(f"  ⚠ Skipping {policy_name}: No node coordinates found")
+                continue
+            
+            # Add OSM background
+            plotter._add_osm_background(ax, node_coords)
+            
+            # Draw road network
+            if plotter.road_segments:
+                for segment in plotter.road_segments:
+                    ax.plot(
+                        [segment["start_lon"], segment["end_lon"]],
+                        [segment["start_lat"], segment["end_lat"]],
+                        c="#cccccc",
+                        linewidth=0.4,
+                        alpha=0.3,
+                        zorder=2,
+                    )
+            
+            # Get truck colors
+            num_trucks = len(env.trucks)
+            truck_colors = plt.cm.tab10(range(num_trucks))
+            
+            # Plot each truck's route from event history
+            for truck_id in range(num_trucks):
+                truck = env.trucks[truck_id]
+                truck_color = truck_colors[truck_id]
+                
+                # Extract route from event history
+                route_coords = []
+                route_nodes = []
+                
+                # Start with depot
+                depot_node = truck.delivery_sequence[0]
+                if int(depot_node) in node_coords:
+                    depot_lat, depot_lon = node_coords[int(depot_node)]
+                    route_coords.append((depot_lat, depot_lon))
+                    route_nodes.append(depot_node)
+                    
+                    # Mark depot
+                    ax.scatter(depot_lon, depot_lat, c=[truck_color], s=250, marker="^",
+                             alpha=0.9, edgecolors="black", linewidths=2.5, zorder=9)
+                    ax.text(depot_lon, depot_lat, "D", ha="center", va="center",
+                           fontsize=8, fontweight="bold", color="white", zorder=10)
+                
+                # Extract destinations from routing events
+                for event in truck.event_history:
+                    if event['event_type'] == 'ROUTING_END':
+                        node = event['location']
+                        if int(node) in node_coords:
+                            lat, lon = node_coords[int(node)]
+                            route_coords.append((lat, lon))
+                            route_nodes.append(node)
+                        elif int(node) in charger_coords:
+                            lat, lon = charger_coords[int(node)]
+                            route_coords.append((lat, lon))
+                            route_nodes.append(node)
+                
+                # Draw route line
+                if len(route_coords) > 1:
+                    lats = [coord[0] for coord in route_coords]
+                    lons = [coord[1] for coord in route_coords]
+                    ax.plot(lons, lats, c=truck_color, linewidth=2.5, alpha=0.7, zorder=5)
+                    
+                    # Mark waypoints (excluding depot)
+                    for i, (lat, lon, node) in enumerate(zip(lats[1:], lons[1:], route_nodes[1:]), 1):
+                        is_charger = int(node) in env.charging_nodes
+                        marker = "s" if is_charger else "o"
+                        size = 160 if is_charger else 120
+                        edge_color = "darkred" if is_charger else "black"
+                        
+                        ax.scatter(lon, lat, c=[truck_color], s=size, marker=marker,
+                                 alpha=0.85, edgecolors=edge_color, linewidths=2, zorder=7)
+                        ax.text(lon, lat, str(i), ha="center", va="center",
+                               fontsize=7, fontweight="bold", color="white", zorder=8)
+            
+            # Draw all charging stations overlay
+            if charger_coords:
+                charger_lats = [coord[0] for coord in charger_coords.values()]
+                charger_lons = [coord[1] for coord in charger_coords.values()]
+                ax.scatter(charger_lons, charger_lats, c="red", s=200, marker="^",
+                         alpha=0.4, edgecolors="darkred", linewidths=1.5, zorder=6,
+                         label="Charging Stations")
+            
+            ax.set_xlabel("Longitude", fontsize=11)
+            ax.set_ylabel("Latitude", fontsize=11)
+            ax.set_title(f"Truck Routes - {policy_name} (Seed {SEED})", fontsize=13, pad=10)
+            ax.legend(loc='upper left', fontsize=9)
+            ax.grid(True, alpha=0.2)
+            
+            plt.tight_layout()
+            save_path = os.path.join(output_dir, f"route_map_{policy_name.replace(' ', '_')}.png")
+            plt.savefig(save_path, dpi=200, bbox_inches='tight')
+            plt.close()
+            print(f"  ✓ Route map saved: {save_path}")
+        
+        except Exception as e:
+            print(f"  ✗ Error generating route map for {policy_name}: {e}")
+
+
+def plot_charging_queue_dynamics(envs, policy_names, output_dir):
+    """Plot charging queue dynamics for top 10 busiest chargers."""
+    # Collect charging events from all environments
+    charger_usage = {}  # charger_node -> total_time_occupied
+    
+    for env in envs:
+        for truck in env.trucks:
+            for event in truck.event_history:
+                if event['event_type'] == 'CHARGING_START':
+                    charger_node = event['location']
+                    # Find corresponding end event
+                    for future_event in truck.event_history:
+                        if (future_event['event_type'] == 'CHARGING_END' and 
+                            future_event['location'] == charger_node and
+                            future_event['timestamp'] > event['timestamp']):
+                            duration = future_event['timestamp'] - event['timestamp']
+                            charger_usage[charger_node] = charger_usage.get(charger_node, 0) + duration
+                            break
+    
+    # Get top 10 chargers by usage
+    top_chargers = sorted(charger_usage.items(), key=lambda x: x[1], reverse=True)[:10]
+    if not top_chargers:
+        print("  ⚠ No charging events found to visualize")
+        return
+    
+    top_charger_nodes = [c[0] for c in top_chargers]
+    
+    # Create subplots for each charger
+    n_chargers = len(top_charger_nodes)
+    fig, axes = plt.subplots(n_chargers, 1, figsize=(20, 3 * n_chargers))
+    if n_chargers == 1:
+        axes = [axes]
+    
+    colors_policy = ['#3498db', '#e74c3c', '#2ecc71'][:len(policy_names)]
+    
+    for idx, charger_node in enumerate(top_charger_nodes):
+        ax = axes[idx]
+        
+        for env, policy_name, color in zip(envs, policy_names, colors_policy):
+            # Collect queue events for this charger
+            queue_timeline = []  # [(time, queue_length)]
+            charging_timeline = []  # [(start, end, truck_id)]
+            waiting_timeline = []  # [(start, end, truck_id)]
+            
+            for truck in env.trucks:
+                for i, event in enumerate(truck.event_history):
+                    # Track charging at this node
+                    if event['event_type'] == 'CHARGING_START' and event['location'] == charger_node:
+                        start_time = event['timestamp']
+                        # Find end event
+                        for j in range(i+1, len(truck.event_history)):
+                            if truck.event_history[j]['event_type'] == 'CHARGING_END':
+                                end_time = truck.event_history[j]['timestamp']
+                                charging_timeline.append((start_time, end_time, truck.truck_id))
+                                break
+                    
+                    # Track waiting at this node
+                    if event['event_type'] == 'WAITING_START' and event['location'] == charger_node:
+                        start_time = event['timestamp']
+                        # Find end event
+                        for j in range(i+1, len(truck.event_history)):
+                            if truck.event_history[j]['event_type'] == 'WAITING_END':
+                                end_time = truck.event_history[j]['timestamp']
+                                waiting_timeline.append((start_time, end_time, truck.truck_id))
+                                break
+            
+            # Calculate queue length over time
+            all_times = set()
+            for start, end, _ in charging_timeline + waiting_timeline:
+                all_times.add(start)
+                all_times.add(end)
+            
+            if all_times:
+                all_times = sorted(all_times)
+                queue_lengths = []
+                
+                for t in all_times:
+                    # Count trucks charging or waiting at this time
+                    charging_count = sum(1 for start, end, _ in charging_timeline if start <= t < end)
+                    waiting_count = sum(1 for start, end, _ in waiting_timeline if start <= t < end)
+                    queue_lengths.append(waiting_count)
+                
+                # Plot queue length
+                ax.step(all_times, queue_lengths, where='post', label=policy_name, 
+                       color=color, linewidth=2, alpha=0.8)
+        
+        # Get charger capacity
+        capacity = env.charging_station.charger_capacity.get(charger_node, 1)
+        ax.axhline(y=capacity, color='red', linestyle='--', linewidth=1, alpha=0.5, label=f'Capacity ({capacity})')
+        
+        ax.set_ylabel('Queue Length', fontsize=10)
+        ax.set_title(f'Charger Node {charger_node} (Total Usage: {charger_usage[charger_node]:.1f}h)', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', fontsize=9)
+        
+        if idx == n_chargers - 1:
+            ax.set_xlabel('Time (hours)', fontsize=11)
+    
+    plt.suptitle(f'Charging Queue Dynamics - Top {n_chargers} Busiest Chargers', fontsize=14, y=0.995)
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, "charging_queue_dynamics.png")
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ Charging queue dynamics saved: {save_path}")
+
+
 def main():
     print("="*80)
     print(f"VISUALIZING TRUCK SCHEDULES - Comparing {len(POLICIES)} Policies")
@@ -550,6 +780,14 @@ def main():
     # Generate Schedule Log
     print(f"\nGenerating detailed schedule comparison log...")
     generate_schedule_log(envs, policy_names, OUTPUT_DIR)
+    
+    # Plot Route Maps
+    print(f"\nGenerating route visualization maps...")
+    plot_route_maps(envs, policy_names, OUTPUT_DIR)
+    
+    # Plot Charging Queue Dynamics
+    print(f"\nGenerating charging queue dynamics...")
+    plot_charging_queue_dynamics(envs, policy_names, OUTPUT_DIR)
     
     print(f"\n{'='*80}")
     print("VISUALIZATION COMPLETE")

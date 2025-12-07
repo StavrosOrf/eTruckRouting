@@ -706,9 +706,21 @@ class GNNStateSpace:
                             print(f"  Evaluating charge durations: {charge_durations}")
                         
                         can_charge_here = False
+                        
+                        # Add global use_realistic_curve flag to charger config
+                        charger_config_with_curve = charger_config.copy()
+                        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+                        
                         for charge_hours in charge_durations:
-                            # Calculate resulting battery after this charge duration
-                            charge_amount = charge_hours * charge_rate * efficiency
+                            # Calculate resulting battery after this charge duration using curve model
+                            initial_soc = active_truck.get_battery_percentage() / 100.0
+                            charge_amount, _ = env.charging_curve_model.calculate_charge(
+                                initial_soc=initial_soc,
+                                charge_hours=charge_hours,
+                                battery_capacity=active_truck.battery_capacity,
+                                charger_config=charger_config_with_curve,
+                                charger_type=charger_type
+                            )
                             resulting_battery = min(active_truck.battery_capacity, current_battery + charge_amount)
                             
                             # Check if resulting battery is enough to leave
@@ -1049,16 +1061,28 @@ class GNNStateSpace:
             # Determine action type
             if action_is_charging[action_idx]:
                 action_type_norm = 3.0 / 3.0  # Charging action
-                # After charging, battery will depend on charge duration
+                # After charging, battery will depend on charge duration (using curve model)
                 charger_type = env.charging_station.charger_type[current_location]
                 charging_config = env.config["charging"]
                 if charger_type == "DCFast":
-                    charger_config = charging_config["dcfast"]
+                    charger_config_type = charging_config["dcfast"]
                 else:
-                    charger_config = charging_config["level2"]
-                charge_rate = charger_config["charge_rate"]  # kW
-                efficiency = charger_config["efficiency"]
-                resulting_soc = min(1.0, (current_battery + charge_duration * charge_rate * efficiency) / battery_capacity)
+                    charger_config_type = charging_config["level2"]
+                
+                # Add global use_realistic_curve flag to charger config
+                charger_config_with_curve = charger_config_type.copy()
+                charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+                
+                # Calculate resulting SOC using curve model
+                initial_soc = current_battery / battery_capacity if battery_capacity > 0 else 0.0
+                charge_amount, _ = env.charging_curve_model.calculate_charge(
+                    initial_soc=initial_soc,
+                    charge_hours=charge_duration,
+                    battery_capacity=battery_capacity,
+                    charger_config=charger_config_with_curve,
+                    charger_type=charger_type
+                )
+                resulting_soc = min(1.0, (current_battery + charge_amount) / battery_capacity) if battery_capacity > 0 else 0.0
                 # print(f'Action {action_idx}: Charging for {charge_duration} hours at node {node_id}, resulting_soc: {resulting_soc:.2f}')
             else:
                 # Check if node is a delivery or charger

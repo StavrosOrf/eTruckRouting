@@ -124,19 +124,28 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
                 
                 min_energy_to_leave = closest_charger_energy
             
-            # Get charger configuration for charge rate calculation
+            # Get charger configuration for charge calculation
             charger_type = env.charging_station.charger_type.get(current_location, "Level2")
             charging_config = env.config["charging"]
             if charger_type == "DCFast":
-                charger_config = charging_config["dcfast"]
+                charger_config_type = charging_config["dcfast"]
             else:
-                charger_config = charging_config["level2"]
-            charge_rate = charger_config["charge_rate"]  # kW
-            efficiency = charger_config["efficiency"]
+                charger_config_type = charging_config["level2"]
             
-            # Evaluate each charge duration
+            # Add global use_realistic_curve flag to charger config
+            charger_config_with_curve = charger_config_type.copy()
+            charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+            
+            # Evaluate each charge duration using charging curve model
             for i, charge_hours in enumerate(charge_durations):
-                charge_amount = charge_hours * charge_rate * efficiency
+                initial_soc = active_truck.get_battery_percentage() / 100.0
+                charge_amount, _ = env.charging_curve_model.calculate_charge(
+                    initial_soc=initial_soc,
+                    charge_hours=charge_hours,
+                    battery_capacity=active_truck.battery_capacity,
+                    charger_config=charger_config_with_curve,
+                    charger_type=charger_type
+                )
                 resulting_battery = min(active_truck.battery_capacity, current_battery + charge_amount)
                 
                 # Check if resulting battery is enough to leave

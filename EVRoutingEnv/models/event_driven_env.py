@@ -28,10 +28,12 @@ from EVRoutingEnv.models.truck import Truck
 from EVRoutingEnv.models.event_handlers import EventType, Event, EventHandler
 from EVRoutingEnv.models.loaders import create_truck
 from EVRoutingEnv.models.charging_station import ChargingStation
+from EVRoutingEnv.models.charging_curve import ChargingCurveModel
 from EVRoutingEnv.state.state_space import StateSpace, action_to_string
 from EVRoutingEnv.state.action_mask import get_action_mask
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
 from EVRoutingEnv.utils.statistics import EnvironmentStatistics
+from EVRoutingEnv.utils.charging_logger import ChargingLogger
 
 
 class EventDrivenTruckEnv(gym.Env):
@@ -171,6 +173,18 @@ class EventDrivenTruckEnv(gym.Env):
             waiting_time_lookup_path=waiting_time_path,
             verbose=self.verbose,
         )
+        
+        # Initialize charging curve model
+        self.charging_curve_model = ChargingCurveModel(verbose=self.verbose)
+        
+        # Initialize charging logger if plotting is enabled
+        if self.enable_plotting:
+            self.charging_logger = ChargingLogger(
+                output_dir=self.output_dir,
+                verbose=self.verbose
+            )
+        else:
+            self.charging_logger = None
 
         if self.verbose:
             print(f"Event-Driven Environment initialized:")
@@ -366,11 +380,30 @@ class EventDrivenTruckEnv(gym.Env):
                     charger_node = event.data["charger_node"]
                     charge_amount = event.data["charge_amount"]
                     charge_duration = event.data["charge_duration"]
+                    initial_soc = event.data.get("initial_soc", 0.0)
+                    charging_details = event.data.get("charging_details", {})
 
                     # Complete charging for the truck (update battery)
                     truck.finish_charging(
                         charge_amount=charge_amount, charge_duration=charge_duration
                     )
+                    
+                    # Log charging session if logger is enabled
+                    if self.charging_logger:
+                        final_soc = truck.get_battery_percentage() / 100.0
+                        charger_type = self.charging_station.charger_type[charger_node]
+                        self.charging_logger.log_charging_session(
+                            truck_id=truck.truck_id,
+                            charger_node=charger_node,
+                            charger_type=charger_type,
+                            start_time=self.global_clock - charge_duration,
+                            end_time=self.global_clock,
+                            initial_soc=initial_soc,
+                            final_soc=final_soc,
+                            charge_amount=charge_amount,
+                            battery_capacity=truck.battery_capacity,
+                            charging_details=charging_details
+                        )
 
                     # Finish charging via charging station manager
                     self.charging_station.finish_charging(
@@ -906,27 +939,31 @@ class EventDrivenTruckEnv(gym.Env):
         if not can_proceed:
             raise ValueError("Truck cannot start charging due to gating failure")
 
-        # Get charger type and determine charge rate
+        # Get charger type and configuration
         charger_type = self.charging_station.charger_type[charger_node]
         charging_config = self.config["charging"]
 
         if charger_type == "DCFast":
-            # Temporary fallback: use Level2 parameters until DCFast is implemented
-            charger_config = charging_config["dcfast"]
-            charge_rate = charger_config["charge_rate"]  # kW
-            efficiency = charger_config["efficiency"]
+            charger_config_type = charging_config["dcfast"]
         else:  # Level2
-            charger_config = charging_config["level2"]
-            charge_rate = charger_config["charge_rate"]  # kW
-            efficiency = charger_config["efficiency"]
+            charger_config_type = charging_config["level2"]
+        
+        # Add global use_realistic_curve flag to charger config
+        charger_config_with_curve = charger_config_type.copy()
+        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
 
-        # Calculate charge amount (accounting for efficiency)
-        charge_amount = min(
-            charge_hours * charge_rate * efficiency,
-            truck.battery_capacity - truck.current_battery,
+        # Calculate charge using charging curve model
+        initial_soc = truck.get_battery_percentage() / 100.0
+        charge_amount, charging_details = self.charging_curve_model.calculate_charge(
+            initial_soc=initial_soc,
+            charge_hours=charge_hours,
+            battery_capacity=truck.battery_capacity,
+            charger_config=charger_config_with_curve,
+            charger_type=charger_type
         )
-
-        charge_hours = charge_amount / (charge_rate * efficiency)
+        
+        # Use actual charge time from curve model (may be less if battery fills up)
+        charge_hours = charging_details["actual_charge_hours"]
 
         # Start charging via charging station manager
         self.charging_station.start_charging(
@@ -952,6 +989,8 @@ class EventDrivenTruckEnv(gym.Env):
                     "charge_amount": charge_amount,
                     "charge_duration": charge_hours,
                     "charger_node": charger_node,
+                    "initial_soc": initial_soc,
+                    "charging_details": charging_details,
                 },
             ),
         )
@@ -1180,18 +1219,26 @@ class EventDrivenTruckEnv(gym.Env):
         charging_config = self.config["charging"]
         
         if charger_type == "DCFast":
-            charger_config = charging_config["dcfast"]
+            charger_config_type = charging_config["dcfast"]
         else:  # Level2
-            charger_config = charging_config["level2"]
+            charger_config_type = charging_config["level2"]
         
-        charge_rate = charger_config["charge_rate"]  # kW
-        efficiency = charger_config["efficiency"]
+        # Add global use_realistic_curve flag to charger config
+        charger_config_with_curve = charger_config_type.copy()
+        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
         
-        # Calculate actual charge amount and duration
-        max_charge = truck.battery_capacity - truck.current_battery
-        requested_charge = charge_hours * charge_rate * efficiency
-        charge_amount = min(requested_charge, max_charge)
-        actual_charge_hours = charge_amount / (charge_rate * efficiency)
+        # Calculate charge using charging curve model
+        initial_soc = truck.get_battery_percentage() / 100.0
+        charge_amount, charging_details = self.charging_curve_model.calculate_charge(
+            initial_soc=initial_soc,
+            charge_hours=charge_hours,
+            battery_capacity=truck.battery_capacity,
+            charger_config=charger_config_with_curve,
+            charger_type=charger_type
+        )
+        
+        # Use actual charge time from curve model
+        actual_charge_hours = charging_details["actual_charge_hours"]
         
         # Start charging
         self.charging_station.start_charging(
@@ -1217,6 +1264,8 @@ class EventDrivenTruckEnv(gym.Env):
                     "charge_amount": charge_amount,
                     "charge_duration": actual_charge_hours,
                     "charger_node": charger_node,
+                    "initial_soc": initial_soc,
+                    "charging_details": charging_details,
                 },
             ),
         )
@@ -1419,3 +1468,8 @@ class EventDrivenTruckEnv(gym.Env):
                 self.global_clock,
                 self.num_trucks,
             )
+            
+            # Save charging logs if logger is enabled
+            if self.charging_logger:
+                self.charging_logger.save_session_logs(episode_id=self.run_id)
+                self.charging_logger.save_summary_statistics(episode_id=self.run_id)

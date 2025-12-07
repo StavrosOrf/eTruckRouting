@@ -38,6 +38,11 @@ truck:
 # Charging Configuration
 # ----------------------
 charging:
+  # Realistic charging curve model
+  # When enabled, DC Fast chargers will use SOC-dependent power tapering (CCCV model)
+  # When disabled, all chargers use constant power (linear model)
+  use_realistic_curve: false  # Toggle: true = realistic CCCV, false = linear (default)
+
   # Two charger types based on input data
 
   # Level 2 chargers (slower, more common)
@@ -49,8 +54,12 @@ charging:
 
   # DC Fast chargers (faster, less common)
   dcfast:
-    charge_rate: 50.0 # kW (typical DC Fast charging power)
+    charge_rate: 150.0 # kW (peak DC Fast charging power)
     efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
+    
+    # Realistic charging curve parameters (only used if use_realistic_curve=true)
+    taper_start_soc: 0.8  # SOC percentage (0.0-1.0) when power tapering begins
+    taper_power_min: 30.0  # Minimum power (kW) at 100% SOC during CV phase
 
   # Available charging durations (hours)
   charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

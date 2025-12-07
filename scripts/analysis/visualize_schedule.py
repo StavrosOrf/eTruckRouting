@@ -5,6 +5,7 @@ Visualize truck schedules (Gantt chart) for a single scenario.
 import copy
 import os
 import sys
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -31,10 +32,10 @@ POLICIES = [
 ]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 10
+NUM_TRUCKS = 20
 NUM_STOPS = 3
 MAX_TIME = 200.0
-SEED = 1002
+SEED = 10050
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -122,7 +123,8 @@ def run_scenario(policy_path, policy_type):
     # Run Instrumented Environment
     # Enable plotting to populate truck_routes for accurate event timing
     # but temporarily disable plot generation during reset
-    env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True)
+    # Use fixed run_id to avoid creating timestamped folders
+    env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True, run_id="visualization_temp")
     
     # Temporarily disable plotting to avoid slow initial state plot generation
     original_enable_plotting = env.enable_plotting
@@ -183,6 +185,15 @@ def run_scenario(policy_path, policy_type):
     print(f"Scenario finished. Reward: {env.episode_reward:.2f}")
     print(f"Total Steps: {episode_steps}")
     print(f"Success: {'Yes' if info['all_complete'] else 'No'}")
+    
+    # Clean up temporary output directory
+    if hasattr(env, 'output_dir') and os.path.exists(env.output_dir):
+        try:
+            shutil.rmtree(env.output_dir)
+            print(f"Cleaned up temporary directory: {env.output_dir}")
+        except Exception as e:
+            print(f"Warning: Could not remove temporary directory {env.output_dir}: {e}")
+    
     return (
         env.history,
         config["environment"]["max_time"],

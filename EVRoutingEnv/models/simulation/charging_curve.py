@@ -230,7 +230,15 @@ class ChargingCurveModel:
             # Apply energy step
             total_energy += energy_step
             current_soc += energy_step / battery_capacity
-            current_soc = min(1.0, current_soc)  # Clamp to prevent floating point overflow
+            
+            # Check if we reached full capacity (including floating point overshoot)
+            if current_soc >= 1.0:
+                current_soc = 1.0
+                # Add final sample and break
+                power_curve.append((time_elapsed + dt, current_power, current_soc))
+                time_elapsed += dt
+                break
+            
             time_elapsed += dt
             
             # Sample power curve for logging

@@ -708,26 +708,70 @@ class GNNStateSpace:
                             
                     else:                                                
                         
-                        # if next delivery is final delivery, then energy to deliver is env.transport_graph.get_path_energy(current_location, next_delivery)
-                        deliveries_left = active_truck.get_remaining_deliveries()                                                                        
+                        # Calculate minimum energy needed to leave charger
+                        # Truck must be able to reach at least ONE feasible destination
+                        deliveries_left = active_truck.get_remaining_deliveries()
                         
-                        min_energy_to_leave = env.transport_graph.get_path_energy(current_location, next_delivery)
-                        if self.verbose:
-                            print(f"min_energy_to_leave initial (to next delivery {next_delivery}): {min_energy_to_leave:.2f} kWh")
-                            print(f'deliveries_left: {deliveries_left}')
+                        # Start with energy to next delivery
+                        energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
                         
-                        if not (len(deliveries_left) == 1 and min_energy_to_leave < active_truck.battery_capacity):
-                            #find closest charger from next delivery that is not current location
-                            closest_charger_energy = float('inf')
+                        # Try to find feasible destinations with original safety factor
+                        # If none found, reduce safety factor progressively until feasible destinations exist
+                        # Keep reducing even below 1.0 to allow risky actions (truck will fail later if route is truly impossible)
+                        adjusted_safety_factor = energy_safety_factor
+                        feasible_destinations = []
+                        min_safety_factor = 0.5  # Allow safety factor down to 0.5 (50% margin in reverse)
+                        
+                        while not feasible_destinations and adjusted_safety_factor >= min_safety_factor:
+                            # Check if next delivery is feasible
+                            if energy_to_delivery * adjusted_safety_factor <= active_truck.battery_capacity:
+                                feasible_destinations.append(energy_to_delivery)
+                            
+                            # Check all other chargers
                             for charger_id in charger_node_to_idx.keys():
                                 if charger_id != current_location:
                                     energy_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
-                                    if energy_to_charger < closest_charger_energy:
-                                        closest_charger_energy = energy_to_charger
-                                                                    
-                            min_energy_to_leave = closest_charger_energy
-                            # else:
-                            #     min_energy_to_leave = min_energy_to_leave + closest_charger_energy
+                                    # Only consider if feasible with full battery
+                                    if energy_to_charger * adjusted_safety_factor <= active_truck.battery_capacity:
+                                        feasible_destinations.append(energy_to_charger)
+                            
+                            if not feasible_destinations:
+                                # Reduce safety factor and try again
+                                adjusted_safety_factor -= 0.05
+                                if self.verbose and adjusted_safety_factor >= min_safety_factor:
+                                    print(f"  No feasible destinations with safety factor {adjusted_safety_factor + 0.05:.2f}, trying {adjusted_safety_factor:.2f}")
+                        
+                        if not feasible_destinations:
+                            # Even with minimum safety factor (0.5), no feasible destinations
+                            # This means the truck truly cannot reach ANY destination even with optimistic assumptions
+                            # Fail the truck in the environment - it will handle the failure properly
+                            print(f"\n[CRITICAL] Truck {active_truck.truck_id} at charger {current_location} has NO FEASIBLE DESTINATIONS!")
+                            print(f"  Energy to next delivery {next_delivery}: {energy_to_delivery:.2f} kWh")
+                            print(f"  Battery capacity: {active_truck.battery_capacity:.2f} kWh")
+                            print(f"  Tried safety factors down to {min_safety_factor:.2f}, still no feasible destinations.")
+                            print(f"  FAILING TRUCK - environment will handle the failure.")
+                            
+                            # Fail the truck in the environment
+                            active_truck.failed = True
+                            env.truck_states[active_truck.truck_id] = "failed"
+                            
+                            # Raise error to stop state generation and trigger environment termination check
+                            raise ValueError(
+                                f"Truck {active_truck.truck_id} at charger {current_location} cannot reach any destination "
+                                f"even with reduced safety factor (tried down to {min_safety_factor:.2f}).\n"
+                                f"Next delivery {next_delivery} requires {energy_to_delivery:.2f} kWh base energy.\n"
+                                f"Battery capacity: {active_truck.battery_capacity:.2f} kWh.\n"
+                                f"Delivery sequence is impossible. Truck has been marked as failed."
+                            )
+                        else:
+                            # Use minimum feasible destination
+                            min_energy_to_leave = min(feasible_destinations)
+                            if adjusted_safety_factor < energy_safety_factor and self.verbose:
+                                print(f"  Reduced safety factor from {energy_safety_factor:.2f} to {adjusted_safety_factor:.2f} to find feasible destinations")
+                        
+                        if self.verbose:
+                            print(f"min_energy_to_leave: {min_energy_to_leave:.2f} kWh (feasible destinations: {len(feasible_destinations)})")
+                            print(f'deliveries_left: {deliveries_left}')
                             
                         # Get charger configuration for charge rate calculation
                         charger_type = env.charging_station.charger_type.get(current_location, "Level2")
@@ -771,15 +815,15 @@ class GNNStateSpace:
                             resulting_battery = min(active_truck.battery_capacity, current_battery + charge_amount)
                             
                             # Check if resulting battery is enough to leave
-                            # Must account for energy safety factor (worst-case energy consumption)
+                            # Must account for adjusted safety factor (may be reduced if original was too strict)
                             # Allow charging only if it provides enough energy to reach another location
-                            min_energy_with_safety = min_energy_to_leave * energy_safety_factor
+                            min_energy_with_safety = min_energy_to_leave * adjusted_safety_factor
                             is_feasible = resulting_battery >= min_energy_with_safety
                             
                             if self.verbose:
                                 # Debug: Print each charge duration evaluation
                                 print(f"    Charge {charge_hours}h: +{charge_amount:.2f} kWh → {resulting_battery:.2f} kWh total | "
-                                      f"Need: {min_energy_with_safety:.2f} kWh (base: {min_energy_to_leave:.2f} × {energy_safety_factor:.2f}) | "
+                                      f"Need: {min_energy_with_safety:.2f} kWh (base: {min_energy_to_leave:.2f} × {adjusted_safety_factor:.2f}) | "
                                       f"Feasible: {is_feasible}")
                             
                             action_to_node_map.append((current_location, True))

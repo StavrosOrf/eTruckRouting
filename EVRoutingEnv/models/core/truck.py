@@ -228,7 +228,8 @@ class Truck:
             timestamp: Current simulation time (for event logging)
         """
         initial_soc = self.get_battery_percentage()
-        self.current_battery = min(self.battery_capacity, self.current_battery + charge_amount)
+        # Clamp to prevent exceeding capacity (handle floating point precision errors)
+        self.current_battery = min(self.battery_capacity, max(0.0, self.current_battery + charge_amount))
         final_soc = self.get_battery_percentage()
         
         self.total_charging_time += charge_duration
@@ -394,9 +395,8 @@ class Truck:
     
     def get_battery_percentage(self) -> float:
         """Get current battery level as percentage."""
-        percentage = 100.0 * self.current_battery / self.battery_capacity
-        # Warn if battery exceeds capacity (shouldn't happen)
-        if percentage > 100.0:
+        # Fix battery if it exceeds capacity (handle floating point precision errors)
+        if self.current_battery > self.battery_capacity:
             import os
             from datetime import datetime
             warning_msg = (
@@ -404,13 +404,18 @@ class Truck:
                 f"Truck {self.truck_id}: Battery exceeds capacity! "
                 f"current_battery={self.current_battery:.4f} kWh, "
                 f"battery_capacity={self.battery_capacity:.4f} kWh, "
-                f"percentage={percentage:.4f}%\n"
+                f"percentage={100.0 * self.current_battery / self.battery_capacity:.4f}%. "
+                f"Clamping to capacity.\n"
             )
             # Write to battery_warnings.log in root folder
             log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "battery_warnings.log")
             with open(log_path, "a") as f:
                 f.write(warning_msg)
-        # Clamp to [0, 100] to handle any floating point precision issues
+            # Fix the battery level
+            self.current_battery = self.battery_capacity
+        
+        percentage = 100.0 * self.current_battery / self.battery_capacity
+        # Clamp to [0, 100] to handle any remaining floating point precision issues
         return min(100.0, max(0.0, percentage))
     
 

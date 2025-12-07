@@ -18,8 +18,8 @@ eval_freq = 500
 batch_size = 64
 
 # Environment settings
-num_trucks = 100
-num_stops = 4
+num_trucks = 10
+num_stops = 5
 max_time = 200.0
 
 # Fixed hyperparameters for this sweep

@@ -360,12 +360,12 @@ class OptimalGurobiPolicy:
         Returns:
             Multiplier to apply to travel time (>= 1.0)
         """
-        if not hasattr(env, 'traffic_config') or not env.traffic_config.get('enable_traffic', False):
+        if not hasattr(env, 'traffic_config') or not env.traffic_config['enable_traffic']:
             return 1.0
         
         # Get traffic parameters
-        std_dev_factor = env.traffic_config.get('std_dev_factor', 0.15)
-        rush_hour_multiplier = env.traffic_config.get('rush_hour_multiplier', 2.0)
+        std_dev_factor = env.traffic_config['std_dev_factor']
+        rush_hour_multiplier = env.traffic_config['rush_hour_multiplier']
         
         # Conservative estimate: assume worst-case scenario
         # Base std_dev with rush hour effect
@@ -405,7 +405,7 @@ class OptimalGurobiPolicy:
         Falls back to linear model if curve model is not available or realistic curves disabled.
         """
         # Check if realistic curves are enabled
-        use_realistic = env.charging_config.get("use_realistic_curve", False)
+        use_realistic = env.charging_config["use_realistic_curve"]
         
         if use_realistic and self._charging_curve_model and charger_type == "DCFast":
             # Use realistic charging curve
@@ -419,8 +419,8 @@ class OptimalGurobiPolicy:
             return float(charge_amount)
         else:
             # Use linear (constant-rate) model
-            rate = charger_config.get("charge_rate", 50.0)
-            efficiency = charger_config.get("efficiency", 0.85)
+            rate = charger_config["charge_rate"]
+            efficiency = charger_config["efficiency"]
             max_charge = (1.0 - initial_soc) * battery_capacity
             requested_charge = charge_hours * rate * efficiency
             return min(requested_charge, max_charge)

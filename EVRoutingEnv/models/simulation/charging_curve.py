@@ -69,9 +69,9 @@ class ChargingCurveModel:
             raise ValueError(f"Invalid battery_capacity: {battery_capacity}, must be > 0")
             
         # Extract config parameters
-        peak_power = charger_config.get("charge_rate", 50.0)  # kW
-        efficiency = charger_config.get("efficiency", 0.85)
-        use_realistic = charger_config.get("use_realistic_curve", False)
+        peak_power = charger_config["charge_rate"]  # kW
+        efficiency = charger_config["efficiency"]
+        use_realistic = charger_config["use_realistic_curve"]
         
         # Only apply realistic curve to DC Fast chargers
         if use_realistic and charger_type == "DCFast":
@@ -81,8 +81,8 @@ class ChargingCurveModel:
                 battery_capacity=battery_capacity,
                 peak_power=peak_power,
                 efficiency=efficiency,
-                taper_start_soc=charger_config.get("taper_start_soc", 0.8),
-                taper_power_min=charger_config.get("taper_power_min", 30.0)
+                taper_start_soc=charger_config["taper_start_soc"],
+                taper_power_min=charger_config["taper_power_min"]
             )
         else:
             return self._linear_charge(

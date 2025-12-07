@@ -106,5 +106,21 @@ traffic:
   # Rush hour multiplier: increases variance during rush hours (7-9am, 5-7pm)
   # Example: rush_hour_multiplier: 2.0 means 2x variance during rush hours
   rush_hour_multiplier: 2.0
+  
+  # Energy consumption uncertainty (tied to traffic conditions)
+  # When enabled, traffic conditions affect energy efficiency
+  # Stop-and-go traffic, speed variations increase energy consumption
+  enable_energy_uncertainty: True
+  
+  # Energy uncertainty factor as fraction of base energy consumption
+  # Example: 0.10 means ±10% variation in energy consumption
+  # Energy ~ N(base_energy, (energy_uncertainty_factor * base_energy)^2)
+  energy_uncertainty_factor: 0.10
+  
+  # Maximum energy multiplier bounds to keep energy consumption realistic
+  # min_energy_multiplier: minimum (best case - smooth traffic)
+  # max_energy_multiplier: maximum (worst case - heavy stop-and-go)
+  min_energy_multiplier: 0.90  # -10% (smooth, efficient driving)
+  max_energy_multiplier: 1.20  # +20% (inefficient, stop-and-go)
 
 

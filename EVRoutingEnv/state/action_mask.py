@@ -41,6 +41,11 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     current_location = active_truck.current_node
     charge_durations = env.charging_config['charge_durations']
     
+    # Get energy safety factor for uncertainty
+    energy_safety_factor = 1.0
+    if hasattr(env, 'traffic_config') and env.traffic_config['enable_traffic'] and env.traffic_config['enable_energy_uncertainty']:
+        energy_safety_factor = env.traffic_config['max_energy_multiplier']
+    
     # Check if truck must leave charger (after charging)
     must_leave = active_truck.must_leave_charger
     
@@ -61,7 +66,8 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
             feasible_mask[action_idx] = False
         else:
             energy = env.transport_graph.get_path_energy(current_location, charger_id)
-            is_energy_feasible = energy < current_battery and not np.isinf(energy)
+            max_energy_needed = energy * energy_safety_factor
+            is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
             # Disable routing if truck must charge now
             is_feasible = is_energy_feasible and not must_charge_now
             feasible_mask[action_idx] = is_feasible
@@ -72,12 +78,14 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     
     if next_delivery is not None:
         energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
-        is_energy_feasible = energy_to_delivery < current_battery
+        max_energy_to_delivery = energy_to_delivery * energy_safety_factor
+        is_energy_feasible = max_energy_to_delivery < current_battery
         
         # Additional check: After reaching delivery, can truck reach ANY charger or next delivery?
         can_continue_after_delivery = False
         if is_energy_feasible:
-            battery_after_delivery = current_battery - energy_to_delivery
+            # Use worst-case energy consumption for battery projection
+            battery_after_delivery = current_battery - max_energy_to_delivery
             
             # Check if there are more deliveries after this one
             remaining_after_this = active_truck.get_remaining_deliveries()
@@ -86,10 +94,11 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
             if not has_more_deliveries:
                 can_continue_after_delivery = True
             else:
-                # Check if can reach any charger after delivery
+                # Check if can reach any charger after delivery (with safety factor)
                 for charger_id in env.charging_nodes:
                     energy_to_charger = env.transport_graph.get_path_energy(next_delivery, charger_id)
-                    if battery_after_delivery > energy_to_charger:
+                    max_energy_to_charger = energy_to_charger * energy_safety_factor
+                    if battery_after_delivery > max_energy_to_charger:
                         can_continue_after_delivery = True
                         break
         
@@ -109,11 +118,11 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
             for i, charge_hours in enumerate(charge_durations):
                 feasible_mask[charge_action_start_idx + i] = False
         else:
-            # Determine minimum energy needed to leave charger
+            # Determine minimum energy needed to leave charger (with safety factor)
             deliveries_left = active_truck.get_remaining_deliveries()
             min_energy_to_leave = env.transport_graph.get_path_energy(current_location, next_delivery)
             
-            if not (len(deliveries_left) == 1 and min_energy_to_leave < active_truck.battery_capacity):
+            if not (len(deliveries_left) == 1 and min_energy_to_leave * energy_safety_factor < active_truck.battery_capacity):
                 # Find closest charger from current location (excluding current)
                 closest_charger_energy = float('inf')
                 for charger_id in env.charging_nodes:
@@ -123,6 +132,9 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
                             closest_charger_energy = energy_to_charger
                 
                 min_energy_to_leave = closest_charger_energy
+            
+            # Apply safety factor to minimum energy requirement
+            min_energy_to_leave = min_energy_to_leave * energy_safety_factor
             
             # Get charger configuration for charge calculation
             charger_type = env.charging_station.charger_type.get(current_location, "Level2")
@@ -134,11 +146,12 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
             
             # Add global use_realistic_curve flag to charger config
             charger_config_with_curve = charger_config_type.copy()
-            charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+            charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
             
             # Evaluate each charge duration using charging curve model
             for i, charge_hours in enumerate(charge_durations):
-                initial_soc = active_truck.get_battery_percentage() / 100.0
+                # Clamp to [0.0, 1.0] to handle any floating point precision issues
+                initial_soc = min(1.0, max(0.0, active_truck.get_battery_percentage() / 100.0))
                 charge_amount, _ = env.charging_curve_model.calculate_charge(
                     initial_soc=initial_soc,
                     charge_hours=charge_hours,

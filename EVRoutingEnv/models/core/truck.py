@@ -138,7 +138,24 @@ class Truck:
     
     def get_battery_percentage(self) -> float:
         """Get current battery level as percentage."""
-        return 100.0 * self.current_battery / self.battery_capacity
+        percentage = 100.0 * self.current_battery / self.battery_capacity
+        # Warn if battery exceeds capacity (shouldn't happen)
+        if percentage > 100.0:
+            import os
+            from datetime import datetime
+            warning_msg = (
+                f"[{datetime.now().isoformat()}] "
+                f"Truck {self.truck_id}: Battery exceeds capacity! "
+                f"current_battery={self.current_battery:.4f} kWh, "
+                f"battery_capacity={self.battery_capacity:.4f} kWh, "
+                f"percentage={percentage:.4f}%\n"
+            )
+            # Write to battery_warnings.log in root folder
+            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "battery_warnings.log")
+            with open(log_path, "a") as f:
+                f.write(warning_msg)
+        # Clamp to [0, 100] to handle any floating point precision issues
+        return min(100.0, max(0.0, percentage))
     
 
     def get_state_dict(self) -> Dict:

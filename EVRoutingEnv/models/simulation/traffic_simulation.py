@@ -5,6 +5,7 @@ Provides time-of-day dependent traffic modeling with rush hour effects.
 """
 
 import numpy as np
+from typing import Dict, Tuple
 
 
 class TrafficSimulator:
@@ -21,7 +22,12 @@ class TrafficSimulator:
         std_dev_factor: float,
         max_std_dev_hours: float,
         rush_hour_multiplier: float,
-        verbose: bool = False
+        enable_energy_uncertainty: bool = False,
+        energy_uncertainty_factor: float = 0.10,
+        min_energy_multiplier: float = 0.90,
+        max_energy_multiplier: float = 1.20,
+        verbose: bool = False,
+        seed: int = None
     ):
         """
         Initialize the traffic simulator.
@@ -31,13 +37,33 @@ class TrafficSimulator:
             std_dev_factor: Standard deviation as fraction of mean travel time
             max_std_dev_hours: Maximum standard deviation cap (hours)
             rush_hour_multiplier: Multiplier for variance during rush hours
+            enable_energy_uncertainty: Whether to apply energy consumption uncertainty
+            energy_uncertainty_factor: Std dev as fraction of base energy
+            min_energy_multiplier: Minimum energy multiplier (best case)
+            max_energy_multiplier: Maximum energy multiplier (worst case)
             verbose: Whether to print detailed traffic information
+            seed: Random seed for reproducible uncertainty (if None, uses system random)
         """
         self.enable_traffic = enable_traffic
         self.std_dev_factor = std_dev_factor
         self.max_std_dev_hours = max_std_dev_hours
         self.rush_hour_multiplier = rush_hour_multiplier
+        self.enable_energy_uncertainty = enable_energy_uncertainty
+        self.energy_uncertainty_factor = energy_uncertainty_factor
+        self.min_energy_multiplier = min_energy_multiplier
+        self.max_energy_multiplier = max_energy_multiplier
         self.verbose = verbose
+        
+        # Reproducible uncertainty system
+        self.seed = seed
+        self._uncertainty_cache: Dict[Tuple[int, int, int], Tuple[float, float]] = {}
+        self._journey_counters: Dict[Tuple[int, int], int] = {}
+        
+        # Create separate RNG for traffic/energy if seed provided
+        if seed is not None:
+            self._rng = np.random.RandomState(seed)
+        else:
+            self._rng = np.random
     
     def apply_traffic(
         self,
@@ -45,7 +71,7 @@ class TrafficSimulator:
         current_time: float,
         from_node: int = None,
         to_node: int = None
-    ) -> float:
+    ) -> tuple[float, float]:
         """
         Apply traffic simulation to travel time using time-of-day dependent variance.
         
@@ -56,10 +82,11 @@ class TrafficSimulator:
             to_node: Destination node (unused, kept for API compatibility)
 
         Returns:
-            Travel time with traffic variation applied (hours)
+            Tuple of (actual_travel_time, traffic_multiplier) where traffic_multiplier
+            can be used to correlate energy uncertainty
         """
         if not self.enable_traffic or travel_time <= 0:
-            return travel_time
+            return travel_time, 1.0
         
         # Calculate what fraction of the journey occurs during rush hours
         departure_time = current_time
@@ -76,12 +103,19 @@ class TrafficSimulator:
         if self.max_std_dev_hours > 0:
             std_dev = min(std_dev, self.max_std_dev_hours)
 
+        # Get reproducible random values for this journey
+        traffic_random, energy_random = self._get_uncertainty_values(from_node, to_node, current_time)
+        
         # Sample from normal distribution N(mean=travel_time, std=std_dev)
-        actual_travel_time = np.random.normal(loc=travel_time, scale=std_dev)
+        # Use pre-generated random value for reproducibility
+        actual_travel_time = travel_time + std_dev * traffic_random
 
         # Ensure travel time is bounded (at least 85% of original, at most 250%)
         actual_travel_time = max(actual_travel_time, travel_time * 0.85)
         actual_travel_time = min(actual_travel_time, travel_time * 2.5)
+        
+        # Calculate traffic multiplier (how much worse than base)
+        traffic_multiplier = actual_travel_time / travel_time
 
         if self.verbose:
             variation_percent = ((actual_travel_time - travel_time) / travel_time) * 100
@@ -92,10 +126,77 @@ class TrafficSimulator:
             else:
                 rush_label = ""
             print(
-                f"    Traffic simulation{rush_label}: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%)"
+                f"    Traffic simulation{rush_label}: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%) [multiplier: {traffic_multiplier:.3f}]"
             )
 
-        return actual_travel_time
+        return actual_travel_time, traffic_multiplier
+    
+    def apply_energy_uncertainty(
+        self,
+        base_energy: float,
+        traffic_multiplier: float = 1.0,
+        current_time: float = None,
+        from_node: int = None,
+        to_node: int = None
+    ) -> float:
+        """
+        Apply energy consumption uncertainty correlated with traffic conditions.
+        
+        Traffic conditions (stop-and-go, speed variations) affect energy efficiency.
+        Worse traffic (higher traffic_multiplier) = more inefficient driving = higher energy consumption.
+        
+        Args:
+            base_energy: Base energy consumption from the graph (kWh)
+            traffic_multiplier: Traffic delay multiplier from apply_traffic (>=1.0)
+            current_time: Current simulation time (hours, optional)
+            from_node: Source node (unused, kept for API compatibility)
+            to_node: Destination node (unused, kept for API compatibility)
+        
+        Returns:
+            Energy consumption with traffic-induced variation applied (kWh)
+        """
+        if not self.enable_traffic or not self.enable_energy_uncertainty or base_energy <= 0:
+            return base_energy
+        
+        # Correlation: Worse traffic (traffic_multiplier > 1) increases energy consumption
+        # Map traffic_multiplier [0.85, 2.5] to energy_bias
+        # traffic_multiplier = 1.0 (no delay) -> bias = 0 (neutral)
+        # traffic_multiplier > 1.0 (delay) -> bias > 0 (higher energy)
+        # traffic_multiplier < 1.0 (faster) -> bias < 0 (lower energy)
+        # Use stronger correlation: bias is proportional to traffic deviation
+        traffic_deviation = traffic_multiplier - 1.0  # How much worse/better than normal
+        
+        # Calculate standard deviation for energy
+        std_dev = base_energy * self.energy_uncertainty_factor
+        
+        # Sample from normal distribution with traffic-correlated mean shift
+        # Mean shifts proportionally with traffic (50% of traffic delay affects energy)
+        biased_mean = base_energy * (1.0 + traffic_deviation * 0.5)
+        
+        # Use pre-generated energy random value (already fetched in apply_traffic)
+        # If apply_traffic wasn't called, get new values
+        if from_node is not None and to_node is not None:
+            _, energy_random = self._get_uncertainty_values(from_node, to_node, current_time)
+        else:
+            # Fallback to standard random if nodes not provided
+            if self._rng == np.random:
+                energy_random = np.random.randn()
+            else:
+                energy_random = self._rng.randn()
+        
+        actual_energy = biased_mean + std_dev * energy_random
+        
+        # Apply bounds to keep realistic
+        actual_energy = max(actual_energy, base_energy * self.min_energy_multiplier)
+        actual_energy = min(actual_energy, base_energy * self.max_energy_multiplier)
+        
+        if self.verbose:
+            variation_percent = ((actual_energy - base_energy) / base_energy) * 100
+            print(
+                f"    Energy uncertainty (correlated w/ traffic {traffic_multiplier:.3f}): {base_energy:.2f} kWh → {actual_energy:.2f} kWh ({variation_percent:+.1f}%)"
+            )
+        
+        return actual_energy
     
     def _calculate_rush_hour_fraction(self, start_time: float, end_time: float) -> float:
         """
@@ -130,3 +231,91 @@ class TrafficSimulator:
                 rush_hour_duration += journey_duration / num_samples
         
         return rush_hour_duration / journey_duration
+    
+    def _get_uncertainty_values(
+        self, 
+        from_node: int, 
+        to_node: int, 
+        current_time: float
+    ) -> Tuple[float, float]:
+        """
+        Get reproducible random values for traffic and energy uncertainty.
+        
+        Uses a seeded RNG and caching to ensure the same journey at the same time
+        with the same seed produces identical uncertainty values across different algorithms.
+        
+        Args:
+            from_node: Source node ID
+            to_node: Destination node ID
+            current_time: Current simulation time (hours)
+            
+        Returns:
+            Tuple of (traffic_random, energy_random) - standard normal samples
+        """
+        if from_node is None or to_node is None:
+            # No caching for anonymous journeys
+            if self._rng == np.random:
+                return np.random.randn(), np.random.randn()
+            else:
+                return self._rng.randn(), self._rng.randn()
+        
+        # Create cache key: (from, to, time_bucket)
+        # Use 0.5-hour buckets for time to balance granularity vs cache size
+        time_bucket = int(current_time / 0.5)
+        
+        # Track journey count for this edge to handle multiple journeys at same time
+        edge_key = (from_node, to_node)
+        if edge_key not in self._journey_counters:
+            self._journey_counters[edge_key] = 0
+        
+        journey_idx = self._journey_counters[edge_key]
+        cache_key = (from_node, to_node, time_bucket, journey_idx)
+        
+        # Increment counter for next journey on this edge
+        self._journey_counters[edge_key] += 1
+        
+        # Check cache
+        if cache_key in self._uncertainty_cache:
+            return self._uncertainty_cache[cache_key]
+        
+        # Generate new values using seeded RNG
+        if self._rng == np.random:
+            traffic_random = np.random.randn()
+            energy_random = np.random.randn()
+        else:
+            # Use deterministic seed based on cache key for reproducibility
+            # This ensures same journey gets same random values across runs
+            state = self._rng.get_state()
+            
+            # Create deterministic seed from cache key
+            deterministic_seed = hash(cache_key) % (2**31)
+            temp_rng = np.random.RandomState(deterministic_seed)
+            
+            traffic_random = temp_rng.randn()
+            energy_random = temp_rng.randn()
+            
+            # Restore original state for other random calls
+            self._rng.set_state(state)
+        
+        # Cache for future use
+        self._uncertainty_cache[cache_key] = (traffic_random, energy_random)
+        
+        return traffic_random, energy_random
+    
+    def reset_journey_counters(self):
+        """
+        Reset journey counters for a new episode.
+        
+        Call this at the start of each episode to ensure consistent
+        uncertainty across episodes with the same seed.
+        """
+        self._journey_counters.clear()
+    
+    def clear_cache(self):
+        """
+        Clear the uncertainty cache.
+        
+        Useful for freeing memory if running many episodes.
+        """
+        self._uncertainty_cache.clear()
+        self._journey_counters.clear()

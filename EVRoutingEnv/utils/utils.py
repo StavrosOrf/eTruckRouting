@@ -64,6 +64,7 @@ def check_navigation_feasibility(
     discharge: float,
     transport_graph,
     charging_nodes: list,
+    energy_safety_factor: float = 1.0,
     verbose: bool = False
 ) -> bool:
     """
@@ -73,9 +74,10 @@ def check_navigation_feasibility(
     Args:
         truck: Truck object
         target_node: Delivery node to navigate to
-        discharge: Energy needed to reach target_node
+        discharge: Energy needed to reach target_node (actual energy with uncertainty)
         transport_graph: TransportationGraph object
         charging_nodes: List of charging station node IDs
+        energy_safety_factor: Safety factor for worst-case energy (e.g., 1.20 for 20% uncertainty)
         verbose: Whether to print debug information
         
     Returns:
@@ -95,7 +97,8 @@ def check_navigation_feasibility(
     can_reach_charger = False
     for charger_node in charging_nodes:
         energy_to_charger = transport_graph.get_path_energy(target_node, int(charger_node))
-        if energy_to_charger != float('inf') and energy_to_charger <= battery_after_arrival:
+        max_energy_to_charger = energy_to_charger * energy_safety_factor
+        if energy_to_charger != float('inf') and max_energy_to_charger <= battery_after_arrival:
             can_reach_charger = True
             break
     
@@ -109,10 +112,11 @@ def check_navigation_feasibility(
     
     for delivery_node in remaining_after_target:
         energy_needed = transport_graph.get_path_energy(temp_node, delivery_node)
-        if energy_needed == float('inf') or energy_needed > temp_battery:
+        max_energy_needed = energy_needed * energy_safety_factor
+        if energy_needed == float('inf') or max_energy_needed > temp_battery:
             can_complete_remaining = False
             break
-        temp_battery -= energy_needed
+        temp_battery -= max_energy_needed
         temp_node = delivery_node
     
     if can_complete_remaining:
@@ -122,13 +126,15 @@ def check_navigation_feasibility(
     if remaining_after_target:
         next_delivery = remaining_after_target[0]
         energy_to_next = transport_graph.get_path_energy(target_node, next_delivery)
+        max_energy_to_next = energy_to_next * energy_safety_factor
         
-        if energy_to_next != float('inf') and energy_to_next <= battery_after_arrival:
-            battery_after_next = battery_after_arrival - energy_to_next
+        if energy_to_next != float('inf') and max_energy_to_next <= battery_after_arrival:
+            battery_after_next = battery_after_arrival - max_energy_to_next
             
             for charger_node in charging_nodes:
                 energy_to_charger = transport_graph.get_path_energy(next_delivery, int(charger_node))
-                if energy_to_charger != float('inf') and energy_to_charger <= battery_after_next:
+                max_energy_to_charger = energy_to_charger * energy_safety_factor
+                if energy_to_charger != float('inf') and max_energy_to_charger <= battery_after_next:
                     return True
     
     # No feasible action found
@@ -155,11 +161,11 @@ def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
         config = load_config()
     
     # Get network configuration
-    network_config = config.get("network", {})
-    data_path = network_config.get("data_path", "data/")
-    energy_file = network_config.get("shortest_path_energy_file", "shortest_path_energy_dict.json")
-    time_file = network_config.get("shortest_path_time_file", "shortest_path_time_dict.json")
-    station_file = network_config.get("station_info_file", "station_info_dict.json")
+    network_config = config["network"]
+    data_path = network_config["data_path"]
+    energy_file = network_config["shortest_path_energy_file"]
+    time_file = network_config["shortest_path_time_file"]
+    station_file = network_config["station_info_file"]
 
     # Get the directory where this file is located (EVRoutingEnv/utils)
     current_dir = os.path.dirname(os.path.abspath(__file__))

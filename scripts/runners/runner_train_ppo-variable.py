@@ -92,6 +92,7 @@ for config_idx, (
         f" --max-time {max_time}"
         f" --wandb-project evpr-experiments"
         f" --wandb-entity stavrosorf"
+        f" --no-wandb"
         f" --group-name {sweep_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"

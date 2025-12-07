@@ -126,12 +126,18 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Traffic simulation settings
         self.traffic_config = self.config["traffic"]
+        # Note: seed will be set in reset() method for reproducibility
         self.traffic_simulator = TrafficSimulator(
             enable_traffic=self.traffic_config["enable_traffic"],
             std_dev_factor=self.traffic_config["std_dev_factor"],
             max_std_dev_hours=self.traffic_config["max_std_dev_hours"],
             rush_hour_multiplier=self.traffic_config["rush_hour_multiplier"],
-            verbose=self.verbose
+            enable_energy_uncertainty=self.traffic_config["enable_energy_uncertainty"],
+            energy_uncertainty_factor=self.traffic_config["energy_uncertainty_factor"],
+            min_energy_multiplier=self.traffic_config["min_energy_multiplier"],
+            max_energy_multiplier=self.traffic_config["max_energy_multiplier"],
+            verbose=self.verbose,
+            seed=None  # Will be set in reset()
         )
 
         # Load graph and initialize transportation network
@@ -246,6 +252,13 @@ class EventDrivenTruckEnv(gym.Env):
 
         if seed is not None:
             np.random.seed(seed)
+            # Set traffic simulator seed for reproducible uncertainty
+            self.traffic_simulator.seed = seed
+            if self.traffic_simulator.seed is not None:
+                self.traffic_simulator._rng = np.random.RandomState(seed)
+        
+        # Reset traffic simulator journey counters for new episode
+        self.traffic_simulator.reset_journey_counters()
 
         # Reset simulation time and event queue
         self.global_clock = 0.0
@@ -758,11 +771,21 @@ class EventDrivenTruckEnv(gym.Env):
 
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
         discharge = energy_used
+        
         distance = travel_time * truck.base_speed
 
-        # Apply traffic simulation if enabled
-        actual_travel_time = self.traffic_simulator.apply_traffic(
+        # Apply traffic simulation if enabled (returns time and multiplier for correlation)
+        actual_travel_time, traffic_multiplier = self.traffic_simulator.apply_traffic(
             travel_time=travel_time,
+            current_time=self.global_clock,
+            from_node=current_node,
+            to_node=target_node
+        )
+        
+        # Apply energy uncertainty correlated with traffic conditions
+        discharge = self.traffic_simulator.apply_energy_uncertainty(
+            base_energy=discharge,
+            traffic_multiplier=traffic_multiplier,
             current_time=self.global_clock,
             from_node=current_node,
             to_node=target_node
@@ -781,12 +804,18 @@ class EventDrivenTruckEnv(gym.Env):
         
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
         if not is_charger_nav and target_node == truck.get_next_delivery_target():
+            # Get energy safety factor for feasibility check
+            energy_safety_factor = 1.0
+            if self.traffic_config['enable_traffic'] and self.traffic_config['enable_energy_uncertainty']:
+                energy_safety_factor = self.traffic_config['max_energy_multiplier']
+            
             is_feasible = check_navigation_feasibility(
                 truck=truck,
                 target_node=target_node,
                 discharge=discharge,
                 transport_graph=self.transport_graph,
                 charging_nodes=self.charging_nodes,
+                energy_safety_factor=energy_safety_factor,
                 verbose=self.verbose
             )
             
@@ -825,7 +854,7 @@ class EventDrivenTruckEnv(gym.Env):
         # Schedule truck routing (arrival) event
         # BUG FIX: Use the actual time when truck became ready (event.time from TRUCK_READY event)
         # not the current global_clock which may have advanced during event processing
-        departure_time = self.truck_ready_times.get(truck.truck_id, self.global_clock)
+        departure_time = self.truck_ready_times[truck.truck_id] if truck.truck_id in self.truck_ready_times else self.global_clock
         completion_time = departure_time + actual_travel_time
         
         if self.verbose:
@@ -925,10 +954,11 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Add global use_realistic_curve flag to charger config
         charger_config_with_curve = charger_config_type.copy()
-        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+        charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
 
         # Calculate charge using charging curve model
-        initial_soc = truck.get_battery_percentage() / 100.0
+        # Clamp to [0.0, 1.0] to handle any floating point precision issues
+        initial_soc = min(1.0, max(0.0, truck.get_battery_percentage() / 100.0))
         charge_amount, charging_details = self.charging_curve_model.calculate_charge(
             initial_soc=initial_soc,
             charge_hours=charge_hours,
@@ -936,6 +966,11 @@ class EventDrivenTruckEnv(gym.Env):
             charger_config=charger_config_with_curve,
             charger_type=charger_type
         )
+        
+        # Defensive: Ensure charge_amount doesn't exceed remaining capacity
+        remaining_capacity = truck.battery_capacity - truck.current_battery
+        if charge_amount > remaining_capacity:
+            charge_amount = remaining_capacity
         
         # Use actual charge time from curve model (may be less if battery fills up)
         charge_hours = charging_details["actual_charge_hours"]
@@ -1029,11 +1064,21 @@ class EventDrivenTruckEnv(gym.Env):
         
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
         discharge = energy_used
+        
         distance = travel_time * truck.base_speed
         
-        # Apply traffic simulation
-        actual_travel_time = self.traffic_simulator.apply_traffic(
+        # Apply traffic simulation (returns time and multiplier for correlation)
+        actual_travel_time, traffic_multiplier = self.traffic_simulator.apply_traffic(
             travel_time=travel_time,
+            current_time=self.global_clock,
+            from_node=current_node,
+            to_node=target_node
+        )
+        
+        # Apply energy uncertainty correlated with traffic conditions
+        discharge = self.traffic_simulator.apply_energy_uncertainty(
+            base_energy=discharge,
+            traffic_multiplier=traffic_multiplier,
             current_time=self.global_clock,
             from_node=current_node,
             to_node=target_node
@@ -1085,7 +1130,7 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Schedule truck routing event
         # BUG FIX: Use the actual time when truck became ready, not global_clock
-        departure_time = self.truck_ready_times.get(truck.truck_id, self.global_clock)
+        departure_time = self.truck_ready_times[truck.truck_id] if truck.truck_id in self.truck_ready_times else self.global_clock
         completion_time = departure_time + actual_travel_time
         heapq.heappush(
             self.event_queue,
@@ -1205,10 +1250,11 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Add global use_realistic_curve flag to charger config
         charger_config_with_curve = charger_config_type.copy()
-        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+        charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
         
         # Calculate charge using charging curve model
-        initial_soc = truck.get_battery_percentage() / 100.0
+        # Clamp to [0.0, 1.0] to handle any floating point precision issues
+        initial_soc = min(1.0, max(0.0, truck.get_battery_percentage() / 100.0))
         charge_amount, charging_details = self.charging_curve_model.calculate_charge(
             initial_soc=initial_soc,
             charge_hours=charge_hours,
@@ -1216,6 +1262,11 @@ class EventDrivenTruckEnv(gym.Env):
             charger_config=charger_config_with_curve,
             charger_type=charger_type
         )
+        
+        # Defensive: Ensure charge_amount doesn't exceed remaining capacity
+        remaining_capacity = truck.battery_capacity - truck.current_battery
+        if charge_amount > remaining_capacity:
+            charge_amount = remaining_capacity
         
         # Use actual charge time from curve model
         actual_charge_hours = charging_details["actual_charge_hours"]

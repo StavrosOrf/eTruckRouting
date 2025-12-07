@@ -254,6 +254,13 @@ class GNNStateSpace:
 
         # Get max truck battery capacity for feasibility checks
         max_battery_capacity = max(truck.battery_capacity for truck in env.trucks)
+        
+        # Get energy uncertainty factor for safety margin
+        # If energy uncertainty is enabled, we need to account for worst-case energy consumption
+        energy_safety_factor = 1.0
+        if hasattr(env, 'traffic_config') and env.traffic_config['enable_traffic'] and env.traffic_config['enable_energy_uncertainty']:
+            # Use max_energy_multiplier as safety factor (e.g., 1.20 = 20% higher energy consumption)
+            energy_safety_factor = env.traffic_config['max_energy_multiplier']
    
         edge_dict = {
             ('truck', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
@@ -311,8 +318,10 @@ class GNNStateSpace:
                         time = env.transport_graph.get_time_distance(current_location, next_delivery)
                         time_inv = env.transport_graph.get_time_distance(next_delivery, current_location)
 
-                    # Only add edge if energy is feasible (< current battery)
-                    if energy < current_battery and not np.isinf(energy):
+                    # Only add edge if energy is feasible (< current battery with safety margin)
+                    # Account for worst-case energy consumption due to uncertainty
+                    max_energy_needed = energy * energy_safety_factor
+                    if max_energy_needed < current_battery and not np.isinf(energy):
                         # Normalize edge features                        
                         edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, delivery_idx])
                         edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])                        
@@ -340,8 +349,10 @@ class GNNStateSpace:
                     time = env.transport_graph.get_time_distance(current_location, charger_id)
                     time_inv = env.transport_graph.get_time_distance(charger_id, current_location)
                     
-                    # Only add edge if energy is feasible (< current battery)
-                    if energy < current_battery and not np.isinf(energy):
+                    # Only add edge if energy is feasible (< current battery with safety margin)
+                    # Account for worst-case energy consumption due to uncertainty
+                    max_energy_needed = energy * energy_safety_factor
+                    if max_energy_needed < current_battery and not np.isinf(energy):
                         # Normalize edge features
                         edge_dict[('truck', 'to', 'charger')]['edge_index'].append([truck_idx, charger_idx])
                         edge_dict[('truck', 'to', 'charger')]['edge_attr'].append([energy/1000.0, time/self.max_time])
@@ -394,12 +405,13 @@ class GNNStateSpace:
                 time_to_traverse = env.transport_graph.get_time_distance(charger1_id, charger2_id)
                 time_to_traverse_back = env.transport_graph.get_time_distance(charger2_id, charger1_id)
                 
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
+                # Account for energy uncertainty in feasibility checks
+                if energy_dist * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist):
                     # Normalize edge features                    
                     edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger1_idx, charger2_idx])
                     edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist/1000.0, time_to_traverse/self.max_time])
                 
-                if energy_dist_back <= max_battery_capacity and not np.isinf(energy_dist_back):
+                if energy_dist_back * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist_back):
                     edge_dict[('charger', 'to', 'charger')]['edge_index'].append([charger2_idx, charger1_idx])
                     edge_dict[('charger', 'to', 'charger')]['edge_attr'].append([energy_dist_back/1000.0, time_to_traverse_back/self.max_time])
 
@@ -416,7 +428,8 @@ class GNNStateSpace:
                 energy_dist = env.transport_graph.get_path_energy(charger_id, delivery_id)                
                 time_to_traverse = env.transport_graph.get_time_distance(charger_id, delivery_id)
                 
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
+                # Account for energy uncertainty in feasibility checks
+                if energy_dist * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist):
                     # Normalize edge features
                     energy_norm = energy_dist / 1000.0
                     time_norm = time_to_traverse / self.max_time
@@ -435,7 +448,8 @@ class GNNStateSpace:
                 energy_dist = env.transport_graph.get_path_energy(delivery_id, charger_id)
                 time_to_traverse = env.transport_graph.get_time_distance(delivery_id, charger_id)
                 
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
+                # Account for energy uncertainty in feasibility checks
+                if energy_dist * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist):
                     # Normalize edge features
                     energy_norm = energy_dist / 1000.0
                     time_norm = time_to_traverse / self.max_time
@@ -453,7 +467,8 @@ class GNNStateSpace:
                 energy_dist = env.transport_graph.get_path_energy(delivery1_id, delivery2_id)
                 time_to_traverse = env.transport_graph.get_time_distance(delivery1_id, delivery2_id)
                 
-                if energy_dist <= max_battery_capacity and not np.isinf(energy_dist):
+                # Account for energy uncertainty in feasibility checks
+                if energy_dist * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist):
                     # Normalize edge features
                     energy_norm = energy_dist / 1000.0
                     time_norm = time_to_traverse / self.max_time
@@ -462,7 +477,7 @@ class GNNStateSpace:
                     
                 energy_dist_back = env.transport_graph.get_path_energy(delivery2_id, delivery1_id)
                 time_to_traverse_back = env.transport_graph.get_time_distance(delivery2_id, delivery1_id)
-                if energy_dist_back <= max_battery_capacity and not np.isinf(energy_dist_back):                    
+                if energy_dist_back * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_dist_back):                    
                     # Normalize edge features
                     energy_norm_back = energy_dist_back / 1000.0
                     time_norm_back = time_to_traverse_back / self.max_time
@@ -579,8 +594,8 @@ class GNNStateSpace:
                         action_charge_durations.append(0.0)
                     else:
                         energy = env.transport_graph.get_path_energy(current_location, charger_id)
-                        
-                        is_energy_feasible = energy < current_battery and not np.isinf(energy)
+                        max_energy_needed = energy * energy_safety_factor
+                        is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
                         # Disable routing if truck must charge now
                         is_feasible = is_energy_feasible and not must_charge_now
                         action_to_node_map.append((charger_id, False))
@@ -591,16 +606,18 @@ class GNNStateSpace:
                 # Action N: Go to next delivery (must come after all chargers)
                 if next_delivery is not None:
                     energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
-                    is_energy_feasible = energy_to_delivery < current_battery
+                    max_energy_to_delivery = energy_to_delivery * energy_safety_factor
+                    is_energy_feasible = max_energy_to_delivery < current_battery
                     
                     if self.verbose:
-                        print(f'[RoutingToDel] Energy to next delivery {next_delivery}: {energy_to_delivery:.2f} kWh, current battery: {current_battery:.2f} kWh, is_energy_feasible: {is_energy_feasible}')
+                        print(f'[RoutingToDel] Energy to next delivery {next_delivery}: {energy_to_delivery:.2f} kWh (max: {max_energy_to_delivery:.2f} kWh), current battery: {current_battery:.2f} kWh, is_energy_feasible: {is_energy_feasible}')
                     
                     # Additional check: After reaching the delivery, can the truck reach ANY charger or next delivery?
                     # This prevents the truck from getting stranded after completing this delivery
                     can_continue_after_delivery = False
                     if is_energy_feasible:
-                        battery_after_delivery = current_battery - energy_to_delivery
+                        # Use worst-case energy for battery projection
+                        battery_after_delivery = current_battery - max_energy_to_delivery
                         
                         # Check if there are more deliveries after this one
                         remaining_after_this = active_truck.get_remaining_deliveries()
@@ -618,7 +635,8 @@ class GNNStateSpace:
                         else:
                             for charger_id in charger_node_to_idx.keys():
                                 energy_to_charger = env.transport_graph.get_path_energy(next_delivery, charger_id)
-                                if battery_after_delivery > energy_to_charger:
+                                max_energy_to_charger = energy_to_charger * energy_safety_factor
+                                if battery_after_delivery > max_energy_to_charger:
                                     can_continue_after_delivery = True
                                     break
                         
@@ -709,11 +727,12 @@ class GNNStateSpace:
                         
                         # Add global use_realistic_curve flag to charger config
                         charger_config_with_curve = charger_config.copy()
-                        charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+                        charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
                         
                         for charge_hours in charge_durations:
                             # Calculate resulting battery after this charge duration using curve model
-                            initial_soc = active_truck.get_battery_percentage() / 100.0
+                            # Clamp to [0.0, 1.0] to handle any floating point precision issues
+                            initial_soc = min(1.0, max(0.0, active_truck.get_battery_percentage() / 100.0))
                             charge_amount, _ = env.charging_curve_model.calculate_charge(
                                 initial_soc=initial_soc,
                                 charge_hours=charge_hours,
@@ -1071,10 +1090,11 @@ class GNNStateSpace:
                 
                 # Add global use_realistic_curve flag to charger config
                 charger_config_with_curve = charger_config_type.copy()
-                charger_config_with_curve["use_realistic_curve"] = charging_config.get("use_realistic_curve", False)
+                charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
                 
                 # Calculate resulting SOC using curve model
-                initial_soc = current_battery / battery_capacity if battery_capacity > 0 else 0.0
+                # Clamp to [0.0, 1.0] to handle any floating point precision issues
+                initial_soc = min(1.0, max(0.0, current_battery / battery_capacity)) if battery_capacity > 0 else 0.0
                 charge_amount, _ = env.charging_curve_model.calculate_charge(
                     initial_soc=initial_soc,
                     charge_hours=charge_duration,

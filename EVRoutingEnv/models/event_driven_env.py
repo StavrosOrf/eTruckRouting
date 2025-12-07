@@ -397,10 +397,18 @@ class EventDrivenTruckEnv(gym.Env):
                         Event=Event,
                         truck_states=self.truck_states,
                     )
+                    
+                    # Truck just finished charging - skip gating check and become ready immediately
+                    # The truck should leave the charger, not wait for other trucks
+                    # Continue to make this truck active (skip the gating check below)
+                    skip_gating_check = True
+                else:
+                    skip_gating_check = False
 
                 # Charger gating: enforce FCFS waitlist with capacity ports
+                # Skip this check if truck just finished charging
                 node = int(truck.current_node)
-                if node in self.charging_nodes:
+                if not skip_gating_check and node in self.charging_nodes:
                     can_proceed, next_check_time = (
                         self.charging_station.check_charger_gating(
                             truck_id=truck.truck_id,

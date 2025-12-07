@@ -45,6 +45,7 @@ class InstrumentedEnv(EventDrivenTruckEnv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.history = []  # List of (t_start, t_end, truck_details)
+        self.action_log = []  # List of action decisions
 
     def _advance_to_next_decision(self):
         """
@@ -131,6 +132,20 @@ def run_scenario(policy_path, policy_type):
     episode_policy = OptimalGurobiPolicy(verbose=False) if active_policy_type == "optimal" else policy
     
     while not (done or truncated):
+        # Log state before action selection
+        active_truck_id = env.active_truck_id
+        if active_truck_id is not None:
+            active_truck = env.trucks[active_truck_id]
+            pre_action_state = {
+                "step": episode_steps,
+                "global_clock": env.global_clock,
+                "truck_id": active_truck_id,
+                "location": int(active_truck.current_node),
+                "soc": active_truck.get_battery_percentage(),
+                "state": env.truck_states.get(active_truck_id, "unknown"),
+                "destination": int(active_truck.route_destination) if active_truck.route_destination is not None else None,
+            }
+        
         if active_policy_type == "optimal" or active_policy_type == "heuristic":
             # Baseline policies don't need GNN state
             action = episode_policy.get_action(env)
@@ -147,6 +162,11 @@ def run_scenario(policy_path, policy_type):
                     action = raw_action
                 else:
                     action = int(raw_action) % env.action_space.n
+        
+        # Log the action taken
+        if active_truck_id is not None:
+            pre_action_state["action"] = action
+            env.action_log.append(pre_action_state)
 
         obs, reward, done, truncated, info = env.step(action)
         episode_steps += 1
@@ -484,6 +504,162 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
             f.write(f"  Total Deliveries Completed: {total_deliveries}\n")
             f.write(f"  Avg Distance per Truck: {total_distance/len(env.trucks):.2f} km\n")
             f.write(f"  Avg Charging Time per Truck: {total_charging_time/len(env.trucks):.2f} hours\n")
+        
+        # Add detailed action log section
+        f.write("\n\n" + "="*120 + "\n")
+        f.write("DETAILED ACTION LOG (Decision Points)\n")
+        f.write("="*120 + "\n")
+        f.write("This section logs every time a truck becomes active and selects an action.\n")
+        f.write("="*120 + "\n\n")
+        
+        for env, policy_name in zip(envs, policy_names):
+            if not hasattr(env, 'action_log') or not env.action_log:
+                continue
+            
+            f.write(f"\n{'='*120}\n")
+            f.write(f"POLICY: {policy_name}\n")
+            f.write(f"{'='*120}\n\n")
+            
+            f.write(f"{'Step':<6} {'Time (h)':<10} {'Truck':<7} {'At Node':<10} {'SoC (%)':<10} {'State':<20} {'Action Description':<80}\n")
+            f.write("-"*140 + "\n")
+            
+            # Get charging nodes and action space info for better action descriptions
+            charging_nodes = set(env.charging_nodes) if hasattr(env, 'charging_nodes') else set()
+            charging_nodes_list = list(env.charging_nodes) if hasattr(env, 'charging_nodes') else []
+            num_charging_nodes = len(charging_nodes_list)
+            num_navigation_actions = num_charging_nodes + 1  # chargers + next delivery
+            charge_durations = env.charging_config.get('charge_durations', [1, 2, 3, 4]) if hasattr(env, 'charging_config') else [1, 2, 3, 4]
+            
+            for log_entry in env.action_log:
+                step = log_entry['step']
+                time = log_entry['global_clock']
+                truck_id = log_entry['truck_id']
+                location = log_entry['location']
+                soc = log_entry['soc']
+                state = log_entry['state']
+                action = log_entry['action']
+                
+                # Format action for readability with detailed context
+                if isinstance(action, tuple) and len(action) == 3:
+                    # Variable action: (node_id, charging_duration, is_charging)
+                    node_id, charge_dur, is_charging = action
+                    dest_type = "Charger" if int(node_id) in charging_nodes else "Delivery"
+                    
+                    if is_charging:
+                        action_str = f"CHARGE at Node {int(node_id)} ({dest_type}) for {charge_dur:.1f}h"
+                    else:
+                        action_str = f"ROUTE from Node {location} → Node {int(node_id)} ({dest_type})"
+                elif isinstance(action, tuple) and len(action) == 2:
+                    # Some other tuple format
+                    dest_type = "Charger" if int(action[0]) in charging_nodes else "Delivery"
+                    action_str = f"ROUTE from Node {location} → Node {int(action[0])} ({dest_type})"
+                elif isinstance(action, int):
+                    # Fixed action space (Optimal, Heuristic) - decode the action
+                    if action < num_charging_nodes:
+                        # Navigation to charger
+                        charger_node = charging_nodes_list[action]
+                        action_str = f"ROUTE from Node {location} → Node {charger_node} (Charger)"
+                    elif action == num_charging_nodes:
+                        # Navigation to next delivery
+                        action_str = f"ROUTE from Node {location} → Next Delivery"
+                    else:
+                        # Charging action
+                        charge_idx = action - num_navigation_actions
+                        if 0 <= charge_idx < len(charge_durations):
+                            hours = charge_durations[charge_idx]
+                        else:
+                            hours = charge_idx + 1  # Fallback for unknown format
+                        node_type = "Charger" if location in charging_nodes else "Delivery"
+                        action_str = f"CHARGE at Node {location} ({node_type}) for {hours}h"
+                else:
+                    action_str = str(action)
+                
+                f.write(f"{step:<6} {time:<10.2f} {truck_id:<7} {location:<10} {soc:<10.1f} {state:<20} {action_str:<80}\n")
+            
+            f.write(f"\nTotal decision points: {len(env.action_log)}\n")
+        
+        # Add per-truck action log section
+        f.write("\n\n" + "="*120 + "\n")
+        f.write("PER-TRUCK ACTION LOG\n")
+        f.write("="*120 + "\n")
+        f.write("This section shows the decision timeline for each individual truck.\n")
+        f.write("="*120 + "\n\n")
+        
+        for env, policy_name in zip(envs, policy_names):
+            if not hasattr(env, 'action_log') or not env.action_log:
+                continue
+            
+            f.write(f"\n{'='*120}\n")
+            f.write(f"POLICY: {policy_name}\n")
+            f.write(f"{'='*120}\n\n")
+            
+            # Organize actions by truck
+            truck_actions = {}
+            for log_entry in env.action_log:
+                truck_id = log_entry['truck_id']
+                if truck_id not in truck_actions:
+                    truck_actions[truck_id] = []
+                truck_actions[truck_id].append(log_entry)
+            
+            # Write per-truck logs
+            # Get charging nodes and action space info for better action descriptions
+            charging_nodes = set(env.charging_nodes) if hasattr(env, 'charging_nodes') else set()
+            charging_nodes_list = list(env.charging_nodes) if hasattr(env, 'charging_nodes') else []
+            num_charging_nodes = len(charging_nodes_list)
+            num_navigation_actions = num_charging_nodes + 1  # chargers + next delivery
+            charge_durations = env.charging_config.get('charge_durations', [1, 2, 3, 4]) if hasattr(env, 'charging_config') else [1, 2, 3, 4]
+            
+            for truck_id in sorted(truck_actions.keys()):
+                f.write(f"\n--- Truck {truck_id} ---\n")
+                f.write(f"{'Step':<6} {'Time (h)':<10} {'At Node':<10} {'SoC (%)':<10} {'State':<20} {'Action Description':<80}\n")
+                f.write("-"*130 + "\n")
+                
+                for log_entry in truck_actions[truck_id]:
+                    step = log_entry['step']
+                    time = log_entry['global_clock']
+                    location = log_entry['location']
+                    soc = log_entry['soc']
+                    state = log_entry['state']
+                    action = log_entry['action']
+                    
+                    # Format action for readability with detailed context
+                    if isinstance(action, tuple) and len(action) == 3:
+                        # Variable action: (node_id, charging_duration, is_charging)
+                        node_id, charge_dur, is_charging = action
+                        dest_type = "Charger" if int(node_id) in charging_nodes else "Delivery"
+                        
+                        if is_charging:
+                            action_str = f"CHARGE at Node {int(node_id)} ({dest_type}) for {charge_dur:.1f}h"
+                        else:
+                            action_str = f"ROUTE from Node {location} → Node {int(node_id)} ({dest_type})"
+                    elif isinstance(action, tuple) and len(action) == 2:
+                        # Some other tuple format
+                        dest_type = "Charger" if int(action[0]) in charging_nodes else "Delivery"
+                        action_str = f"ROUTE from Node {location} → Node {int(action[0])} ({dest_type})"
+                    elif isinstance(action, int):
+                        # Fixed action space (Optimal, Heuristic) - decode the action
+                        if action < num_charging_nodes:
+                            # Navigation to charger
+                            charger_node = charging_nodes_list[action]
+                            action_str = f"ROUTE from Node {location} → Node {charger_node} (Charger)"
+                        elif action == num_charging_nodes:
+                            # Navigation to next delivery
+                            action_str = f"ROUTE from Node {location} → Next Delivery"
+                        else:
+                            # Charging action
+                            charge_idx = action - num_navigation_actions
+                            if 0 <= charge_idx < len(charge_durations):
+                                hours = charge_durations[charge_idx]
+                            else:
+                                hours = charge_idx + 1  # Fallback for unknown format
+                            node_type = "Charger" if location in charging_nodes else "Delivery"
+                            action_str = f"CHARGE at Node {location} ({node_type}) for {hours}h"
+                    else:
+                        action_str = str(action)
+                    
+                    f.write(f"{step:<6} {time:<10.2f} {location:<10} {soc:<10.1f} {state:<20} {action_str:<80}\n")
+                
+                f.write(f"\nTotal actions for Truck {truck_id}: {len(truck_actions[truck_id])}\n")
     
     print(f"  ✓ Schedule comparison log saved to: {log_path}")
     return log_path

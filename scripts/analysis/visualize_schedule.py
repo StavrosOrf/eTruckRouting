@@ -35,7 +35,7 @@ CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 5
 MAX_TIME = 200.0
-SEED = 10050
+SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
 

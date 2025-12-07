@@ -115,6 +115,9 @@ class ChargingCurveModel:
         # Actual charge is minimum of requested and max possible
         actual_charge_kwh = min(requested_charge_kwh, max_charge_kwh)
         
+        # Additional safety: Ensure charge doesn't exceed capacity (handle floating point errors)
+        actual_charge_kwh = min(actual_charge_kwh, max_charge_kwh)
+        
         # Calculate actual time taken
         actual_charge_hours = actual_charge_kwh / (peak_power * efficiency)
         
@@ -226,6 +229,7 @@ class ChargingCurveModel:
             # Apply energy step
             total_energy += energy_step
             current_soc += energy_step / battery_capacity
+            current_soc = min(1.0, current_soc)  # Clamp to prevent floating point overflow
             time_elapsed += dt
             
             # Sample power curve for logging
@@ -240,7 +244,11 @@ class ChargingCurveModel:
         # Calculate metrics
         actual_charge_kwh = total_energy
         actual_charge_hours = time_elapsed
-        final_soc = current_soc
+        final_soc = min(1.0, current_soc)  # Clamp final SOC to [0, 1]
+        
+        # Additional safety: ensure charge doesn't exceed battery capacity
+        max_possible_charge = (1.0 - initial_soc) * battery_capacity
+        actual_charge_kwh = min(actual_charge_kwh, max_possible_charge)
         
         # Calculate average power and taper factor
         average_power = actual_charge_kwh / (actual_charge_hours * efficiency) if actual_charge_hours > 0 else 0

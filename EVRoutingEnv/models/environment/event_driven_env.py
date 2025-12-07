@@ -673,25 +673,33 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Execute action based on format
         if isinstance(action, tuple):
-            # New GNN format
+            # New GNN format: (node_id, charging_duration, is_charging)
             node_id, charging_duration, is_charging = action
             if is_charging:
                 # Charging action at specified node
-                reward += self._execute_charge_action_gnn(truck, node_id, charging_duration)
+                reward += self._execute_charge_action(truck, charging_duration, node_id)
             else:
                 # Navigation action to specified node
-                reward += self._execute_navigation_action_gnn(truck, node_id)
+                reward += self._execute_navigation_action(truck, node_id)
         else:
-            # Legacy integer format
+            # Legacy integer format - convert to node_id format
             if action < self.num_navigation_actions:
                 # Navigation action
-                reward += self._execute_navigation_action(truck, action)
+                if action < self.num_charging_nodes:
+                    # Go to charging station
+                    target_node = self.charging_nodes[action]
+                else:
+                    # Go to next delivery
+                    target_node = truck.get_next_delivery_target()
+                    if target_node is None:
+                        raise ValueError("No remaining deliveries for truck")
+                reward += self._execute_navigation_action(truck, target_node)
             else:
                 # Charging action
                 charge_idx = action - self.num_navigation_actions
                 charge_durations = self.charging_config["charge_durations"]
                 charge_hours = charge_durations[charge_idx]
-                reward += self._execute_charge_action(truck, charge_hours)
+                reward += self._execute_charge_action(truck, charge_hours, truck.current_node)
 
         # Accumulate reward
         self.episode_reward += reward
@@ -720,21 +728,8 @@ class EventDrivenTruckEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def _execute_navigation_action(self, truck: Truck, action: int) -> float:
+    def _execute_navigation_action(self, truck: Truck, target_node: int) -> float:
         """Execute navigation action and schedule route completion event."""
-        is_charger_nav = False
-        if action < self.num_charging_nodes:
-            # Go to charging station
-            target_node = self.charging_nodes[action]
-            is_charger_nav = True
-        elif action == self.num_charging_nodes:
-            # Go to next delivery
-            target_node = truck.get_next_delivery_target()
-            if target_node is None:
-                raise ValueError("No remaining deliveries for truck")
-        else:
-            raise ValueError("Invalid navigation action")
-
         # Convert numpy types to native Python int
         if hasattr(target_node, "item"):
             target_node = int(target_node.item())
@@ -745,14 +740,11 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Check if already at target
         if current_node == target_node:
+            if self.verbose:
+                print(f"  Already at target node {target_node}")
+            # If at a charger, default to charging for 1 hour
             if target_node in self.charging_nodes:
-                if self.verbose:
-                    print(f"  Already at node {target_node}")
-                    print(f"  Simulating charging for 1 hour at current location")
-                # Simulate charging for 1 hour at current location
-                charge_durations = self.charging_config["charge_durations"]
-                charge_hours = charge_durations[0]
-                return self._execute_charge_action(truck, charge_hours=charge_hours)
+                return self._execute_charge_action(truck, 1.0, target_node)
             else:
                 # go to next delivery
                 if self.verbose:
@@ -762,7 +754,7 @@ class EventDrivenTruckEnv(gym.Env):
                     truck, action=self.num_charging_nodes
                 )
 
-        # Calculate energy used for the trip
+        # Calculate energy and time for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
 
         # Check if path is reachable
@@ -771,7 +763,6 @@ class EventDrivenTruckEnv(gym.Env):
 
         travel_time = self.transport_graph.get_time_distance(current_node, target_node)
         discharge = energy_used
-        
         distance = travel_time * truck.base_speed
 
         # Apply traffic simulation if enabled (returns time and multiplier for correlation)
@@ -794,16 +785,18 @@ class EventDrivenTruckEnv(gym.Env):
         # Check if truck can make it
         if discharge > truck.current_battery:
             if self.verbose:
-                print(
-                    f"  ERROR: Insufficient battery ({truck.current_battery:.1f} kWh < {discharge:.1f} kWh needed)"
-                )
-            # Truck will fail - mark as failed and update state
+                print(f"  ERROR: Insufficient battery ({truck.current_battery:.1f} kWh < {discharge:.1f} kWh needed)")
             truck.failed = True
             self.truck_states[truck.truck_id] = "failed"
             return self.reward_config["failure_penalty"]
         
+        # Determine if this is navigation to a charger or delivery
+        is_charger_nav = target_node in self.charging_nodes
+        next_delivery = truck.get_next_delivery_target()
+        is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+        
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
-        if not is_charger_nav and target_node == truck.get_next_delivery_target():
+        if is_delivery_nav:
             # Get energy safety factor for feasibility check
             energy_safety_factor = 1.0
             if self.traffic_config['enable_traffic'] and self.traffic_config['enable_energy_uncertainty']:
@@ -820,25 +813,18 @@ class EventDrivenTruckEnv(gym.Env):
             )
             
             if not is_feasible:
-                # Truck will fail - mark as failed
                 truck.failed = True
                 self.truck_states[truck.truck_id] = "failed"
                 return self.reward_config["failure_penalty"]
 
-        queue_penalty = 0.0
         if is_charger_nav and self.verbose:
-            charger_info = self.charging_station.get_charger_info(
-                target_node, self.global_clock
-            )
+            charger_info = self.charging_station.get_charger_info(target_node, self.global_clock)
             print(f"  Going to charger @ node {target_node}")
-            print(
-                f"    Current occupancy: {charger_info['current_occupancy']}/{charger_info['capacity']}"
-            )
+            print(f"    Current occupancy: {charger_info['current_occupancy']}/{charger_info['capacity']}")
 
         # If leaving a charger to navigate elsewhere, remove from its waitlist and wake others
         if (not is_charger_nav) and (current_node in self.charging_nodes):
             self.charging_station.remove_from_waitlist(truck.truck_id, current_node)
-            # Wake other trucks waiting at this charger since a spot may have opened
             self.charging_station.wake_waiting_trucks(
                 charger_node=current_node,
                 global_clock=self.global_clock,
@@ -871,7 +857,7 @@ class EventDrivenTruckEnv(gym.Env):
                     "distance": distance,
                     "travel_time": actual_travel_time,
                     "discharge": discharge,
-                    "departure_time": departure_time,  # Track when truck actually departed
+                    "departure_time": departure_time,
                 },
             ),
         )
@@ -883,22 +869,15 @@ class EventDrivenTruckEnv(gym.Env):
 
         if self.verbose:
             print(f"  Routing to node {target_node}")
-            print(
-                f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h (base: {travel_time:.2f}h)"
-            )
+            print(f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h (base: {travel_time:.2f}h)")
+            print(f"    Battery: {truck.current_battery:.1f} → {truck.current_battery - discharge:.1f} kWh")
             print(f"    Will arrive at t={completion_time:.2f}h")
-            print(f"    Current Battery: {truck.current_battery:.1f} kWh")
-            print(
-                f"    Battery after trip: {truck.current_battery - discharge:.1f} kWh"
-            )
-            # Waiting at charger will be determined upon arrival via queue gating
 
         # Calculate reward (using actual travel time, not base time)
         time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
-        # distance_penalty = -distance * self.reward_config["distance_penalty"]
 
         # Bonus if this is a delivery
-        if target_node == truck.get_next_delivery_target():
+        if is_delivery_nav:
             delivery_bonus = self.reward_config["delivery_bonus"]
             return time_penalty + delivery_bonus
 
@@ -906,280 +885,8 @@ class EventDrivenTruckEnv(gym.Env):
 
 
 
-    def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
+    def _execute_charge_action(self, truck: Truck, charge_hours: float, charger_node: int) -> float:
         """Execute charging action and schedule charge completion event."""
-        # Check if at a charging station
-        if truck.current_node not in self.charging_nodes:
-            # go to next delivery instead
-
-            if self.verbose:
-                print(f"  Truck {truck.truck_id} not at charging station")
-                print(f"  Executing navigation to next delivery instead")
-
-            return self._execute_navigation_action(
-                truck, action=self.num_charging_nodes
-            )
-
-        charger_node = truck.current_node
-
-        # If battery already essentially full, redirect to next delivery
-        battery_deficit = truck.battery_capacity - truck.current_battery
-        if battery_deficit <= 1e-3:
-            next_delivery = truck.get_next_delivery_target()
-            if self.verbose:
-                print(f"  Truck {truck.truck_id} battery full; skipping charge action")
-            if next_delivery is not None:
-                return self._execute_navigation_action(truck, action=self.num_charging_nodes)
-            # Nothing left to do, no reward/penalty
-            return 0.0
-
-        # Check if truck can start charging (enforce waitlist eligibility)
-        can_proceed, next_check_time = self.charging_station.check_charger_gating(
-            truck_id=truck.truck_id,
-            charger_node=charger_node,
-            global_clock=self.global_clock,
-        )
-
-        if not can_proceed:
-            raise ValueError("Truck cannot start charging due to gating failure")
-
-        # Get charger type and configuration
-        charger_type = self.charging_station.charger_type[charger_node]
-        charging_config = self.config["charging"]
-
-        if charger_type == "DCFast":
-            charger_config_type = charging_config["dcfast"]
-        else:  # Level2
-            charger_config_type = charging_config["level2"]
-        
-        # Add global use_realistic_curve flag to charger config
-        charger_config_with_curve = charger_config_type.copy()
-        charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
-
-        # Calculate charge using charging curve model
-        # Clamp to [0.0, 1.0] to handle any floating point precision issues
-        initial_soc = min(1.0, max(0.0, truck.get_battery_percentage() / 100.0))
-        charge_amount, charging_details = self.charging_curve_model.calculate_charge(
-            initial_soc=initial_soc,
-            charge_hours=charge_hours,
-            battery_capacity=truck.battery_capacity,
-            charger_config=charger_config_with_curve,
-            charger_type=charger_type
-        )
-        
-        # Defensive: Ensure charge_amount doesn't exceed remaining capacity
-        remaining_capacity = truck.battery_capacity - truck.current_battery
-        if charge_amount > remaining_capacity:
-            charge_amount = remaining_capacity
-        
-        # Use actual charge time from curve model (may be less if battery fills up)
-        charge_hours = charging_details["actual_charge_hours"]
-
-        # Start charging via charging station manager
-        self.charging_station.start_charging(
-            truck_id=truck.truck_id,
-            charger_node=charger_node,
-            charge_hours=charge_hours,
-            global_clock=self.global_clock,
-        )
-
-        # Remove any pending TRUCK_READY events for this truck (e.g., from previous charge/wait)
-        self._remove_pending_events(truck.truck_id, EventType.TRUCK_READY)
-        
-        # Schedule TRUCK_READY event when charging completes
-        completion_time = self.global_clock + charge_hours
-        heapq.heappush(
-            self.event_queue,
-            Event(
-                time=completion_time,
-                event_type=EventType.TRUCK_READY,
-                truck_id=truck.truck_id,
-                data={
-                    "reason": "charge_complete",
-                    "charge_amount": charge_amount,
-                    "charge_duration": charge_hours,
-                    "charger_node": charger_node,
-                    "initial_soc": initial_soc,
-                    "charging_details": charging_details,
-                },
-            ),
-        )
-
-        # Update truck state to charging
-        self.truck_states[truck.truck_id] = "charging"
-        truck.start_charging(self.global_clock)
-
-        if self.verbose:
-            print(f"  Charging for {charge_hours}h")
-            print(f"    Will charge {charge_amount:.1f} kWh")
-            print(f"    Will complete at t={completion_time:.2f}h")
-            print(
-                f"    Charger: {self.charging_station.charger_type[charger_node]} @ node {charger_node}"
-            )
-
-        # Calculate reward (penalty for time spent charging only, no queue penalty)
-        # charge_penalty = -charge_hours * self.reward_config["charge_penalty"]
-        return -charge_hours
-
-    def _execute_navigation_action_gnn(self, truck: Truck, target_node: int) -> float:
-        """
-        Execute navigation action from GNN agent (new format).
-        
-        Args:
-            truck: Truck to execute action for
-            target_node: Node ID to navigate to
-            
-        Returns:
-            Reward for this action
-        """
-        # Convert to int if needed
-        if hasattr(target_node, "item"):
-            target_node = int(target_node.item())
-        else:
-            target_node = int(target_node)
-        
-        current_node = int(truck.current_node)
-        
-        # Check if already at target
-        if current_node == target_node:
-            if self.verbose:
-                print(f"  Already at target node {target_node}")
-            # If at a charger, default to charging for 1 hour
-            if target_node in self.charging_nodes:
-                return self._execute_charge_action_gnn(truck, target_node, 1.0)
-            else:
-                # At delivery - just return small penalty for wasted action
-                return -0.01
-        
-        # Calculate energy and time for the trip
-        energy_used = self.transport_graph.get_path_energy(current_node, target_node)
-        
-        # Check if path is reachable
-        if energy_used == float("inf"):
-            if self.verbose:
-                print(f"  ERROR: No valid path from {current_node} to {target_node}")
-            truck.failed = True
-            self.truck_states[truck.truck_id] = "failed"
-            return self.reward_config["failure_penalty"]
-        
-        travel_time = self.transport_graph.get_time_distance(current_node, target_node)
-        discharge = energy_used
-        
-        distance = travel_time * truck.base_speed
-        
-        # Apply traffic simulation (returns time and multiplier for correlation)
-        actual_travel_time, traffic_multiplier = self.traffic_simulator.apply_traffic(
-            travel_time=travel_time,
-            current_time=self.global_clock,
-            from_node=current_node,
-            to_node=target_node
-        )
-        
-        # Apply energy uncertainty correlated with traffic conditions
-        discharge = self.traffic_simulator.apply_energy_uncertainty(
-            base_energy=discharge,
-            traffic_multiplier=traffic_multiplier,
-            current_time=self.global_clock,
-            from_node=current_node,
-            to_node=target_node
-        )
-        
-        # Check if truck can make it
-        if discharge > truck.current_battery:
-            if self.verbose:
-                print(f"  ERROR: Insufficient battery ({truck.current_battery:.1f} kWh < {discharge:.1f} kWh needed)")
-            truck.failed = True
-            self.truck_states[truck.truck_id] = "failed"
-            return self.reward_config["failure_penalty"]
-        
-        # Check if this is navigation to a charger vs delivery
-        is_charger_nav = target_node in self.charging_nodes
-        next_delivery = truck.get_next_delivery_target()
-        is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
-        
-        # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
-        if is_delivery_nav:
-            is_feasible = check_navigation_feasibility(
-                truck=truck,
-                target_node=target_node,
-                discharge=discharge,
-                transport_graph=self.transport_graph,
-                charging_nodes=self.charging_nodes,
-                verbose=self.verbose
-            )
-            
-            if not is_feasible:
-                truck.failed = True
-                self.truck_states[truck.truck_id] = "failed"
-                return self.reward_config["failure_penalty"]
-        
-        # If leaving a charger to navigate elsewhere, remove from waitlist
-        if (not is_charger_nav) and (current_node in self.charging_nodes):
-            self.charging_station.remove_from_waitlist(truck.truck_id, current_node)
-            self.charging_station.wake_waiting_trucks(
-                charger_node=current_node,
-                global_clock=self.global_clock,
-                event_queue=self.event_queue,
-                EventType=EventType,
-                Event=Event,
-                truck_states=self.truck_states,
-            )
-        
-        # Remove any existing routing events for this truck before scheduling new one
-        self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
-        
-        # Schedule truck routing event
-        # BUG FIX: Use the actual time when truck became ready, not global_clock
-        departure_time = self.truck_ready_times[truck.truck_id] if truck.truck_id in self.truck_ready_times else self.global_clock
-        completion_time = departure_time + actual_travel_time
-        heapq.heappush(
-            self.event_queue,
-            Event(
-                time=completion_time,
-                event_type=EventType.TRUCK_ROUTING,
-                truck_id=truck.truck_id,
-                data={
-                    "destination": target_node,
-                    "distance": distance,
-                    "travel_time": actual_travel_time,
-                    "discharge": discharge,
-                },
-            ),
-        )
-        
-        # Update truck state
-        self.truck_states[truck.truck_id] = "routing"
-        truck.route_destination = target_node
-        truck.route_arrival_time = completion_time
-        
-        if self.verbose:
-            print(f"  Routing to node {target_node}")
-            print(f"    Distance: {distance:.2f} km, Time: {actual_travel_time:.2f}h")
-            print(f"    Battery: {truck.current_battery:.1f} → {truck.current_battery - discharge:.1f} kWh")
-            print(f"    Will arrive at t={completion_time:.2f}h")
-        
-        # Calculate reward
-        time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
-        
-        # Bonus if this is a delivery
-        if is_delivery_nav:
-            delivery_bonus = self.reward_config["delivery_bonus"]
-            return time_penalty + delivery_bonus
-        
-        return time_penalty
-
-    def _execute_charge_action_gnn(self, truck: Truck, charger_node: int, charge_hours: float) -> float:
-        """
-        Execute charging action from GNN agent (new format).
-        
-        Args:
-            truck: Truck to execute action for
-            charger_node: Charger node ID (should match truck's current location)
-            charge_hours: Hours to charge
-            
-        Returns:
-            Reward for this action
-        """
         # Convert to int if needed
         if hasattr(charger_node, "item"):
             charger_node = int(charger_node.item())
@@ -1188,13 +895,14 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Validate truck is at a charger
         if truck.current_node not in self.charging_nodes:
-            if self.verbose:
-                print(f"  ERROR: Truck not at charging station (current: {truck.current_node})")
-            # Navigate to next delivery instead
-            next_delivery = truck.get_next_delivery_target()
-            if next_delivery is not None:
-                return self._execute_navigation_action_gnn(truck, next_delivery)
-            return -0.01
+            raise RuntimeError("Truck cannot charge when not at a charging station")
+            # if self.verbose:
+            #     print(f"  ERROR: Truck not at charging station (current: {truck.current_node})")
+            # # Navigate to next delivery instead
+            # next_delivery = truck.get_next_delivery_target()
+            # if next_delivery is not None:
+            #     return self._execute_navigation_action(truck, next_delivery)
+            # return -0.01
         
         # Validate charger_node matches current location
         if charger_node != truck.current_node:
@@ -1202,7 +910,7 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  WARNING: Charger node {charger_node} doesn't match current {truck.current_node}")
                 print(f"  Using current location {truck.current_node}")
             charger_node = truck.current_node
-        
+
         # If battery full, go to next delivery instead
         battery_deficit = truck.battery_capacity - truck.current_battery
         if battery_deficit <= 1e-3:
@@ -1210,7 +918,7 @@ class EventDrivenTruckEnv(gym.Env):
             if self.verbose:
                 print(f"  Truck {truck.truck_id} battery full; rerouting instead of charging")
             if next_delivery is not None:
-                return self._execute_navigation_action_gnn(truck, next_delivery)
+                return self._execute_navigation_action(truck, next_delivery)
             return 0.0
 
         # Check charger gating
@@ -1219,26 +927,27 @@ class EventDrivenTruckEnv(gym.Env):
             charger_node=charger_node,
             global_clock=self.global_clock,
         )
-        
+
         if not can_proceed:
-            # Should not happen if GNN action selection is correct
-            if self.verbose:
-                print(f"  ERROR: Cannot charge - no free port")
-            self.truck_states[truck.truck_id] = "waiting_to_charge"
-            if truck.truck_id not in self.waiting_start_times:
-                self.waiting_start_times[truck.truck_id] = self.global_clock
-            if next_check_time is not None:
-                heapq.heappush(
-                    self.event_queue,
-                    Event(
-                        time=next_check_time,
-                        event_type=EventType.TRUCK_READY,
-                        truck_id=truck.truck_id,
-                        data={"reason": "recheck_charge_attempt_gnn"},
-                    ),
-                )
-            return -0.01
-        
+            raise RuntimeError("Truck cannot start charging when port should be available")
+            # Should not happen if action selection is correct
+            # if self.verbose:
+            #     print(f"  ERROR: Cannot charge - no free port")
+            # self.truck_states[truck.truck_id] = "waiting_to_charge"
+            # if truck.truck_id not in self.waiting_start_times:
+            #     self.waiting_start_times[truck.truck_id] = self.global_clock
+            # if next_check_time is not None:
+            #     heapq.heappush(
+            #         self.event_queue,
+            #         Event(
+            #             time=next_check_time,
+            #             event_type=EventType.TRUCK_READY,
+            #             truck_id=truck.truck_id,
+            #             data={"reason": "recheck_charge_attempt"},
+            #         ),
+            #     )
+            # return -0.01
+
         # Get charger configuration
         charger_type = self.charging_station.charger_type[charger_node]
         charging_config = self.config["charging"]
@@ -1279,7 +988,7 @@ class EventDrivenTruckEnv(gym.Env):
             global_clock=self.global_clock,
         )
         
-        # Remove any pending TRUCK_READY events for this truck (e.g., from previous charge/wait)
+        # Remove any pending TRUCK_READY events for this truck
         self._remove_pending_events(truck.truck_id, EventType.TRUCK_READY)
         
         # Schedule charge completion

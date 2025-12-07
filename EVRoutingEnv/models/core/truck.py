@@ -34,8 +34,8 @@ class Truck:
         self.battery_capacity = battery_capacity
         self.base_speed = base_speed
         
-        # Current state
-        self.current_battery = initial_battery
+        # Current state - clamp initial battery to capacity
+        self.current_battery = min(battery_capacity, initial_battery)
         self.current_node = delivery_sequence[0]
         self.current_sequence_index = 0  # Index in delivery_sequence
         

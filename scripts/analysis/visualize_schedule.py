@@ -34,7 +34,7 @@ CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10
 NUM_STOPS = 3
 MAX_TIME = 200.0
-SEED = 1000
+SEED = 1002
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -121,10 +121,19 @@ def run_scenario(policy_path, policy_type):
 
     # Run Instrumented Environment
     # Enable plotting to populate truck_routes for accurate event timing
+    # but temporarily disable plot generation during reset
     env = InstrumentedEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True)
+    
+    # Temporarily disable plotting to avoid slow initial state plot generation
+    original_enable_plotting = env.enable_plotting
+    env.enable_plotting = False
     
     print(f"Running scenario with seed {SEED}...")
     obs, info = env.reset(seed=SEED)
+    
+    # Re-enable plotting for truck_routes population
+    env.enable_plotting = original_enable_plotting
+    
     done = truncated = False
     episode_steps = 0
     
@@ -200,10 +209,100 @@ def process_truck_routes(env):
     """
     truck_timelines = {}
     
-    # First, build routing segments from truck_routes (accurate timing)
+    # First, collect charging periods per truck from history
+    charging_periods = {}  # truck_id -> [(start_time, end_time, node, state), ...]
+    
+    if hasattr(env, 'history') and env.history:
+        for entry in env.history:
+            start = entry["start"]
+            end = entry["end"]
+            trucks_info = entry["trucks"]
+            
+            for truck_id, details in trucks_info.items():
+                state = details.get("state", "unknown")
+                
+                if state in ["charging", "waiting_to_charge"]:
+                    node = details.get("current_node")
+                    
+                    if truck_id not in charging_periods:
+                        charging_periods[truck_id] = []
+                    
+                    charging_periods[truck_id].append((start, end, node, state))
+    
+    # Also infer waiting periods from truck_routes: if truck arrives at charger but doesn't charge immediately
+    charging_nodes_set = set(env.charging_nodes) if hasattr(env, 'charging_nodes') else set()
+    
+    for truck_id, route_events in env.truck_routes.items():
+        arrivals_at_chargers = {}  # node -> arrival_time
+        
+        for i, event in enumerate(route_events):
+            if len(event) >= 3:
+                node, time, event_type = int(event[0]), event[1], event[2]
+                
+                # Track arrivals at charging nodes
+                if event_type in ["charger", "travel"] and node in charging_nodes_set:
+                    arrivals_at_chargers[node] = time
+        
+        # Now check charging periods to see if there's a gap between arrival and charging
+        if truck_id in charging_periods:
+            truck_periods = charging_periods[truck_id]
+            
+            for node, arrival_time in arrivals_at_chargers.items():
+                # Find first charging period at this node
+                charging_at_node = [p for p in truck_periods if p[2] == node and p[3] == "charging"]
+                
+                if charging_at_node:
+                    # Sort by start time and get the first one
+                    first_charge = min(charging_at_node, key=lambda x: x[0])
+                    charge_start = first_charge[0]
+                    
+                    # If there's a gap > 0.1h between arrival and charging, infer waiting
+                    if charge_start > arrival_time + 0.1:
+                        # Check if we already have a waiting period covering this
+                        existing_wait = any(
+                            p[2] == node and p[3] == "waiting_to_charge" and
+                            abs(p[0] - arrival_time) < 0.1
+                            for p in truck_periods
+                        )
+                        
+                        if not existing_wait:
+                            # Add inferred waiting period
+                            truck_periods.append((arrival_time, charge_start, node, "waiting_to_charge"))
+            
+            # Re-sort after adding inferred periods
+            charging_periods[truck_id] = sorted(truck_periods, key=lambda x: x[0])
+        
+        # Merge consecutive periods of SAME state only (don't merge waiting with charging)
+        for truck_id in charging_periods:
+            periods = sorted(charging_periods[truck_id], key=lambda x: x[0])
+            merged = []
+            
+            if periods:
+                current_start, current_end, current_node, current_state = periods[0]
+                
+                for i in range(1, len(periods)):
+                    next_start, next_end, next_node, next_state = periods[i]
+                    
+                    # Only merge if consecutive, same node, AND same state
+                    if (abs(current_end - next_start) < 0.01 and 
+                        current_node == next_node and
+                        current_state == next_state):
+                        current_end = next_end
+                    else:
+                        merged.append((current_start, current_end, current_node, current_state))
+                        current_start, current_end, current_node, current_state = next_start, next_end, next_node, next_state
+                
+                merged.append((current_start, current_end, current_node, current_state))
+            
+            charging_periods[truck_id] = merged
+    
+    # Now build routing segments from truck_routes, avoiding charging periods
     for truck_id, route_events in env.truck_routes.items():
         timeline = []
         prev_time = 0.0
+        prev_node = None
+        
+        truck_charging_periods = charging_periods.get(truck_id, [])
         
         for i, event in enumerate(route_events):
             # Handle both old 3-tuple and new 4-tuple formats
@@ -215,29 +314,74 @@ def process_truck_routes(env):
             
             if event_type == "start":
                 prev_time = time
+                prev_node = node
                 continue
             
-            # Create routing segment from previous time to this arrival
-            if i > 0 and time > prev_time:
-                timeline.append({
-                    "start": prev_time,
-                    "end": time,
-                    "state": "routing",
-                    "meta": {"destination": node},
-                    "end_soc": soc
-                })
+            # Check if there's charging/waiting between prev_time and current time
+            # Include any period that overlaps with [prev_time, time]
+            charging_in_range = [
+                (c_start, c_end, c_node, c_state) 
+                for c_start, c_end, c_node, c_state in truck_charging_periods
+                if c_end > prev_time + 0.01 and c_start < time - 0.01
+            ]
+            
+            if charging_in_range:
+                # Split routing around charging periods
+                for c_start, c_end, c_node, c_state in sorted(charging_in_range, key=lambda x: x[0]):
+                    # Clamp charging period to the current interval [prev_time, time]
+                    actual_start = max(c_start, prev_time)
+                    actual_end = min(c_end, time)
+                    
+                    # Add routing segment before charging/waiting (if any)
+                    if actual_start > prev_time + 0.01:
+                        timeline.append({
+                            "start": prev_time,
+                            "end": actual_start,
+                            "state": "routing",
+                            "meta": {"destination": c_node},
+                            "end_soc": None
+                        })
+                    
+                    # Add charging/waiting segment (clamped to current interval)
+                    if actual_end > actual_start + 0.001:
+                        timeline.append({
+                            "start": actual_start,
+                            "end": actual_end,
+                            "state": c_state,
+                            "meta": {"current_node": c_node},
+                            "start_soc": None,
+                            "end_soc": None
+                        })
+                    
+                    prev_time = actual_end
+                
+                # Add routing segment after last charging period to destination (if any)
+                if time > prev_time + 0.01:
+                    timeline.append({
+                        "start": prev_time,
+                        "end": time,
+                        "state": "routing",
+                        "meta": {"destination": node},
+                        "end_soc": soc
+                    })
+            else:
+                # No charging in this period, just add routing segment
+                if time > prev_time + 0.01:
+                    timeline.append({
+                        "start": prev_time,
+                        "end": time,
+                        "state": "routing",
+                        "meta": {"destination": node},
+                        "end_soc": soc
+                    })
             
             prev_time = time
+            prev_node = node
         
         truck_timelines[truck_id] = timeline
     
-    # Now merge in charging and waiting segments from history
-    # History has these states but with timing issues for routing
-    # We only extract charging/waiting states
+    # Add SoC information from history to charging/waiting segments
     if hasattr(env, 'history') and env.history:
-        # First collect all charging/waiting segments per truck
-        temp_segments = {}  # truck_id -> list of segments
-        
         for entry in env.history:
             start = entry["start"]
             end = entry["end"]
@@ -246,70 +390,26 @@ def process_truck_routes(env):
             for truck_id, details in trucks_info.items():
                 state = details.get("state", "unknown")
                 
-                # Only add charging and waiting states from history
-                if state in ["charging", "waiting_to_charge"]:
-                    meta = {}
-                    if state in ["charging", "waiting_to_charge"]:
-                        meta["current_node"] = details.get("current_node")
-                    
+                if state in ["charging", "waiting_to_charge"] and truck_id in truck_timelines:
                     start_soc = details.get("start_soc")
                     end_soc = details.get("end_soc")
+                    node = details.get("current_node")
                     
-                    if truck_id not in temp_segments:
-                        temp_segments[truck_id] = []
-                    
-                    temp_segments[truck_id].append({
-                        "start": start,
-                        "end": end,
-                        "state": state,
-                        "meta": meta,
-                        "start_soc": start_soc,
-                        "end_soc": end_soc
-                    })
-        
-        # Now merge consecutive segments with same state and node
-        for truck_id, segments in temp_segments.items():
-            if not segments:
-                continue
-            
-            # Sort by start time
-            segments.sort(key=lambda x: x["start"])
-            
-            # Merge consecutive segments
-            merged = []
-            current = segments[0]
-            
-            for i in range(1, len(segments)):
-                next_seg = segments[i]
-                
-                # Check if we should merge: same state, same node, consecutive time
-                if (current["state"] == next_seg["state"] and 
-                    current["meta"].get("current_node") == next_seg["meta"].get("current_node") and
-                    abs(current["end"] - next_seg["start"]) < 0.01):
-                    # Merge: extend end time and update end_soc
-                    current["end"] = next_seg["end"]
-                    current["end_soc"] = next_seg["end_soc"]
-                else:
-                    # Not mergeable, save current and move to next
-                    merged.append(current)
-                    current = next_seg
-            
-            # Don't forget the last segment
-            merged.append(current)
-            
-            # Now insert merged segments into timeline
-            timeline = truck_timelines.get(truck_id, [])
-            for seg in merged:
-                # Find where to insert (maintain chronological order)
-                insert_idx = len(timeline)
-                for idx, existing_seg in enumerate(timeline):
-                    if existing_seg["start"] >= seg["start"]:
-                        insert_idx = idx
-                        break
-                
-                timeline.insert(insert_idx, seg)
-            
-            truck_timelines[truck_id] = timeline
+                    # Find matching segment in timeline and update SoC
+                    for segment in truck_timelines[truck_id]:
+                        if (segment["state"] == state and  # Match exact state
+                            segment["meta"].get("current_node") == node):
+                            
+                            # Check if this history entry overlaps with segment
+                            seg_start = segment["start"]
+                            seg_end = segment["end"]
+                            
+                            # If history entry is within or overlaps the segment
+                            if (start >= seg_start - 0.01 and start <= seg_end + 0.01):
+                                if segment.get("start_soc") is None or start <= seg_start + 0.01:
+                                    segment["start_soc"] = start_soc
+                                if end <= seg_end + 0.01:
+                                    segment["end_soc"] = end_soc
     
     # Add final state if truck is complete or failed
     for truck_id in truck_timelines:
@@ -738,7 +838,8 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
     legend_elements = [
         mpatches.Patch(color=colors["routing"], label='Routing'),
         mpatches.Patch(color=colors["charging"], label='Charging'),
-        mpatches.Patch(color=colors["waiting_to_charge"], label='Waiting'),
+        mpatches.Patch(color=colors["waiting_to_charge"], label='Waiting in Queue'),
+        plt.Line2D([0], [0], marker='D', color='w', markerfacecolor='#e74c3c', markeredgecolor='darkred', markersize=6, markeredgewidth=1.5, label='Queue Wait Point'),
         plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='white', markeredgecolor=colors["charging"], markersize=8, markeredgewidth=2, label='Charger Node'),
         plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='white', markeredgecolor=colors["routing"], markersize=8, markeredgewidth=2, label='Delivery Node'),
         plt.Line2D([0], [0], marker='*', color='gold', markerfacecolor='gold', markeredgecolor='black', markersize=12, label='Completed'),
@@ -788,15 +889,15 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
             ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
                     fontsize=7, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.3', 
                     facecolor='white', edgecolor='green', alpha=0.8))
-            
-            # Show SoC at start and end
-            if label_soc:
-                if start_soc is not None:
-                    ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
-                            fontsize=6, color='green', alpha=0.9, weight='bold')
-                if end_soc is not None:
-                    ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
-                            fontsize=6, color='green', alpha=0.9, weight='bold')
+        
+        # Always show SoC at start and end of charging
+        if label_soc:
+            if start_soc is not None:
+                ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
+                        fontsize=6, color='green', alpha=0.9, weight='bold')
+            if end_soc is not None:
+                ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
+                        fontsize=6, color='green', alpha=0.9, weight='bold')
     
     # For routing: show duration above the bar
     elif state == "routing":
@@ -806,13 +907,36 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
                     fontsize=6, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
                     facecolor='white', edgecolor='#3498db', alpha=0.7, linewidth=0.8))
     
-    # For waiting_to_charge: show duration above the bar
+    # For waiting_to_charge: show duration and make it visually distinct
     elif state == "waiting_to_charge":
-        if duration > 0.05:  # Only show if duration is significant
+        # Always show wait duration with "WAIT" prefix for any duration > 0
+        if duration > 0.001:
             mid_point = (start + end) / 2
-            ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
-                    fontsize=6, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
-                    facecolor='white', edgecolor='#e74c3c', alpha=0.7, linewidth=0.8))
+            wait_label = f"WAIT {duration:.1f}h"
+            ax.text(mid_point, y_pos + 0.12, wait_label, ha='center', va='bottom', 
+                    fontsize=6, color='darkred', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
+                    facecolor='white', edgecolor='#e74c3c', alpha=0.9, linewidth=1.2))
+        
+        # Mark the waiting location with a special indicator at both ends
+        node = meta.get("current_node")
+        if node is not None:
+            # Show markers at start and end of wait
+            ax.plot(start, y_pos, marker='D', markersize=5, 
+                   markerfacecolor='#e74c3c', markeredgecolor='darkred', 
+                   markeredgewidth=1.5, zorder=zorder+2, alpha=0.9)
+            if duration > 0.1:  # Only show end marker if wait is substantial
+                ax.plot(end, y_pos, marker='D', markersize=5, 
+                       markerfacecolor='#e74c3c', markeredgecolor='darkred', 
+                       markeredgewidth=1.5, zorder=zorder+2, alpha=0.9)
+        
+        # Show SoC at start and end of waiting
+        if label_soc:
+            if start_soc is not None:
+                ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
+                        fontsize=6, color='#e74c3c', alpha=0.9, weight='bold')
+            if end_soc is not None:
+                ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
+                        fontsize=6, color='#e74c3c', alpha=0.9, weight='bold')
     
     # For other states: show SoC only at the end (arrival points)
     if label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed", "charging"]:
@@ -827,12 +951,247 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
                     markerfacecolor='white', markeredgecolor=color, markeredgewidth=1.5, zorder=10)
             ax.text(end, y_pos + 0.1, str(dest), ha='center', va='bottom', fontsize=6, fontweight='bold', color=color)
     
+    elif state == "waiting_to_charge":
+        # Add node label at waiting location
+        node = meta.get("current_node")
+        if node is not None:
+            ax.text(start, y_pos - 0.15, f"@{node}", ha='center', va='top', 
+                   fontsize=5, color='darkred', weight='bold', alpha=0.8)
+    
     elif state == "complete":
         ax.plot(start, y_pos, marker='*', markersize=10, 
                 markerfacecolor='gold', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
     elif state == "failed":
         ax.plot(start, y_pos, marker='X', markersize=8, 
                 markerfacecolor='red', markeredgecolor='black', markeredgewidth=0.5, zorder=15)
+
+def plot_route_maps(envs, policy_names, output_dir):
+    """Generate geographic route maps for each policy showing truck routes, chargers, and deliveries."""
+    
+    print(f"\nGenerating geographic route maps for each policy...")
+    
+    for env, policy_name in zip(envs, policy_names):
+        try:
+            # Check if environment has plotter
+            if not hasattr(env, 'plotter') or env.plotter is None:
+                print(f"  ⚠ Skipping {policy_name}: No plotter available")
+                continue
+            
+            plotter = env.plotter
+            
+            # Check if we have coordinate data
+            if not plotter.node_coords and not plotter.charger_coords:
+                print(f"  ⚠ Skipping {policy_name}: No coordinate data available")
+                continue
+            
+            # Create figure with higher quality
+            fig, ax = plt.subplots(figsize=(24, 20), dpi=300)
+            
+            # Get coordinate mappings
+            node_coords = plotter._create_node_id_to_osm_map(env.transport_graph)
+            charger_coords = plotter._create_charger_id_to_osm_map(env.transport_graph)
+            
+            if not node_coords:
+                print(f"  ⚠ Skipping {policy_name}: No node coordinates found")
+                continue
+            
+            # Add OSM background
+            plotter._add_osm_background(ax, node_coords)
+            
+            # Draw road network
+            if plotter.road_segments:
+                for segment in plotter.road_segments:
+                    ax.plot(
+                        [segment["start_lon"], segment["end_lon"]],
+                        [segment["start_lat"], segment["end_lat"]],
+                        c="#cccccc",
+                        linewidth=0.5,
+                        alpha=0.3,
+                        zorder=2,
+                    )
+            
+            # Draw all network nodes (background)
+            if node_coords:
+                all_lats = [coord[0] for coord in node_coords.values()]
+                all_lons = [coord[1] for coord in node_coords.values()]
+                ax.scatter(
+                    all_lons,
+                    all_lats,
+                    c="#888888",
+                    s=10,
+                    alpha=0.3,
+                    zorder=3,
+                    edgecolors="none",
+                )
+            
+            # Get truck colors
+            num_trucks = len(env.trucks)
+            truck_colors = plt.cm.tab10(range(num_trucks))
+            
+            # First, plot initial depot positions for all trucks
+            for truck_id in range(num_trucks):
+                truck = env.trucks[truck_id]
+                # Depot is the first node in delivery_sequence
+                depot_node = truck.delivery_sequence[0]
+                truck_color = truck_colors[truck_id]
+                
+                # Get depot coordinates
+                if int(depot_node) in node_coords:
+                    depot_lat, depot_lon = node_coords[int(depot_node)]
+                    
+                    # Draw depot marker (large triangle)
+                    ax.scatter(
+                        depot_lon,
+                        depot_lat,
+                        c=[truck_color],
+                        s=300,
+                        marker="^",
+                        alpha=0.95,
+                        edgecolors="black",
+                        linewidths=3,
+                        zorder=9,
+                        label=f"Truck {truck_id} Depot" if truck_id < 3 else "",
+                    )
+                    
+                    # Add "D" label for depot
+                    ax.text(
+                        depot_lon,
+                        depot_lat,
+                        "D",
+                        ha="center",
+                        va="center",
+                        fontsize=10,
+                        fontweight="bold",
+                        color="white",
+                        zorder=10,
+                    )
+            
+            # Plot each truck's route
+            for truck_id in range(num_trucks):
+                if truck_id not in env.truck_routes:
+                    continue
+                
+                route = env.truck_routes[truck_id]
+                truck_color = truck_colors[truck_id]
+                
+                # Extract route nodes and coordinates
+                route_nodes = []
+                route_coords = []
+                event_types = []
+                
+                for entry in route:
+                    if len(entry) >= 3:
+                        node, time, event_type = entry[0], entry[1], entry[2]
+                        route_nodes.append(int(node))
+                        event_types.append(event_type)
+                        
+                        # Get coordinates
+                        if int(node) in node_coords:
+                            route_coords.append(node_coords[int(node)])
+                        elif int(node) in charger_coords:
+                            route_coords.append(charger_coords[int(node)])
+                
+                # Draw route segments
+                if len(route_coords) > 1:
+                    lats = [coord[0] for coord in route_coords]
+                    lons = [coord[1] for coord in route_coords]
+                    
+                    # Draw the route line
+                    ax.plot(
+                        lons,
+                        lats,
+                        c=truck_color,
+                        linewidth=3,
+                        alpha=0.75,
+                        zorder=5,
+                        label=f"Truck {truck_id} Route",
+                    )
+                    
+                    # Mark waypoints with sequence numbers
+                    for i, (lat, lon, node, event) in enumerate(zip(lats, lons, route_nodes, event_types)):
+                        if event == "start":
+                            continue
+                        
+                        # Different markers for different node types
+                        if int(node) in env.charging_nodes:
+                            marker = "s"  # Square for chargers
+                            size = 180
+                            edge_color = "darkred"
+                        else:
+                            marker = "o"  # Circle for deliveries
+                            size = 140
+                            edge_color = "black"
+                        
+                        ax.scatter(
+                            lon,
+                            lat,
+                            c=[truck_color],
+                            s=size,
+                            marker=marker,
+                            alpha=0.9,
+                            edgecolors=edge_color,
+                            linewidths=2.5,
+                            zorder=7,
+                        )
+                        
+                        # Add sequence number
+                        ax.text(
+                            lon,
+                            lat,
+                            str(i),
+                            ha="center",
+                            va="center",
+                            fontsize=9,
+                            fontweight="bold",
+                            color="white",
+                            zorder=8,
+                        )
+            
+            # Draw all charging stations (overlay)
+            charger_lats = [coord[0] for coord in charger_coords.values()]
+            charger_lons = [coord[1] for coord in charger_coords.values()]
+            
+            if charger_lats:
+                ax.scatter(
+                    charger_lons,
+                    charger_lats,
+                    c="red",
+                    s=250,
+                    marker="s",
+                    edgecolors="darkred",
+                    linewidths=2.5,
+                    alpha=0.6,
+                    label="Charging Stations",
+                    zorder=6,
+                )
+            
+            # Formatting
+            ax.set_xlabel("Longitude", fontsize=16, fontweight="bold")
+            ax.set_ylabel("Latitude", fontsize=16, fontweight="bold")
+            ax.set_title(
+                f"Truck Routes - {policy_name}\n({num_trucks} Trucks, Seed {SEED})",
+                fontsize=18,
+                fontweight="bold",
+                pad=20,
+            )
+            ax.set_facecolor("#f5f5f5")
+            ax.grid(True, alpha=0.2, linestyle="--", linewidth=0.5)
+            ax.legend(loc="upper left", fontsize=11, framealpha=0.95, edgecolor="black", ncol=2)
+            
+            # Save plot with higher quality
+            safe_policy_name = policy_name.replace(" ", "_").replace("/", "_")
+            filepath = os.path.join(output_dir, f"route_map_{safe_policy_name}.png")
+            plt.tight_layout()
+            plt.savefig(filepath, dpi=300, bbox_inches="tight")
+            plt.close()
+            
+            print(f"  ✓ Route map saved: {filepath}")
+        
+        except Exception as e:
+            print(f"  ✗ Error generating route map for {policy_name}: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 def plot_charger_queue_comparison(envs, policy_names, max_time, output_dir):
     """Generate comparison of charger queue dynamics across multiple policies."""
@@ -1069,6 +1428,10 @@ def main():
     # Plot Queue Dynamics Comparison
     print(f"\nGenerating charger queue dynamics comparison...")
     plot_charger_queue_comparison(envs, policy_names, max_time, OUTPUT_DIR)
+    
+    # Plot Route Maps
+    print(f"\nGenerating geographic route maps...")
+    plot_route_maps(envs, policy_names, OUTPUT_DIR)
     
     # Generate Schedule Log
     print(f"\nGenerating detailed schedule comparison log...")

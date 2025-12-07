@@ -26,7 +26,7 @@ from sb3_contrib.common.maskable.evaluation import (
 )
 from wandb.integration.sb3 import WandbCallback
 
-from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.action_mask import get_action_mask
 
 

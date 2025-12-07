@@ -15,7 +15,7 @@ import torch
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
-from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
@@ -32,7 +32,7 @@ POLICIES = [
 ]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 20
+NUM_TRUCKS = 10
 NUM_STOPS = 5
 MAX_TIME = 200.0
 SEED = 10050

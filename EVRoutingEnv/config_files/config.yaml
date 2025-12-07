@@ -41,7 +41,7 @@ charging:
   # Realistic charging curve model
   # When enabled, DC Fast chargers will use SOC-dependent power tapering (CCCV model)
   # When disabled, all chargers use constant power (linear model)
-  use_realistic_curve: false  # Toggle: true = realistic CCCV, false = linear (default)
+  use_realistic_curve: True  # Toggle: true = realistic CCCV, false = linear (default)
 
   # Two charger types based on input data
 
@@ -54,12 +54,12 @@ charging:
 
   # DC Fast chargers (faster, less common)
   dcfast:
-    charge_rate: 150.0 # kW (peak DC Fast charging power)
+    charge_rate: 50.0 # kW (peak DC Fast charging power)
     efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
     
     # Realistic charging curve parameters (only used if use_realistic_curve=true)
     taper_start_soc: 0.8  # SOC percentage (0.0-1.0) when power tapering begins
-    taper_power_min: 30.0  # Minimum power (kW) at 100% SOC during CV phase
+    taper_power_min: 25.0  # Minimum power (kW) at 100% SOC during CV phase
 
   # Available charging durations (hours)
   charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -90,16 +90,21 @@ network:
 # Traffic Simulation Settings
 # ----------------------------
 traffic:
-  # Enable traffic simulation (applies normal distribution to travel times)
-  enable_traffic: false
+  # Enable traffic simulation (applies stochastic variation to travel times)
+  # Uses time-of-day dependent model with rush hour effects
+  enable_traffic: True
   
   # Standard deviation of travel time distribution as fraction of mean time
-  # Example: std_dev_factor: 0.2 means std_dev = 0.2 * mean_time
+  # Example: std_dev_factor: 0.15 means std_dev = 15% of mean_time during off-peak
   # Travel time ~ N(mean_time, (std_dev_factor * mean_time)^2)
   std_dev_factor: 0.15
   
-  # Optionally cap the std_dev to avoid extreme values
+  # Maximum std_dev cap to avoid extreme values (hours)
   # Set to 0 or negative to disable capping
   max_std_dev_hours: 1.0
+  
+  # Rush hour multiplier: increases variance during rush hours (7-9am, 5-7pm)
+  # Example: rush_hour_multiplier: 2.0 means 2x variance during rush hours
+  rush_hour_multiplier: 2.0
 
 

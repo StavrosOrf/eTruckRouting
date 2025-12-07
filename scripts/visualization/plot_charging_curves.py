@@ -16,7 +16,7 @@ from matplotlib.gridspec import GridSpec
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from EVRoutingEnv.models.charging_curve import ChargingCurveModel
+from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 
 
 def plot_power_vs_soc():

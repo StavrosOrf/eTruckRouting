@@ -10,7 +10,7 @@ from typing import Dict, Tuple, Optional, Union, List
 import copy
 from collections import defaultdict
 
-from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 
 
 class CurriculumStrategy:

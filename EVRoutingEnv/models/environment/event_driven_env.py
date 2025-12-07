@@ -23,12 +23,13 @@ import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from EVRoutingEnv.utils.utils import get_graph, load_config, check_navigation_feasibility
-from EVRoutingEnv.models.transportation_graph import TransportationGraph
-from EVRoutingEnv.models.truck import Truck
-from EVRoutingEnv.models.event_handlers import EventType, Event, EventHandler
-from EVRoutingEnv.models.loaders import create_truck
-from EVRoutingEnv.models.charging_station import ChargingStation
-from EVRoutingEnv.models.charging_curve import ChargingCurveModel
+from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
+from EVRoutingEnv.models.core.truck import Truck
+from EVRoutingEnv.models.environment.event_handlers import EventType, Event, EventHandler
+from EVRoutingEnv.models.environment.loaders import create_truck
+from EVRoutingEnv.models.simulation.charging_station import ChargingStation
+from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
+from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.state.state_space import StateSpace, action_to_string
 from EVRoutingEnv.state.action_mask import get_action_mask
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
@@ -125,9 +126,13 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Traffic simulation settings
         self.traffic_config = self.config["traffic"]
-        self.enable_traffic = self.traffic_config["enable_traffic"]
-        self.traffic_std_factor = self.traffic_config["std_dev_factor"]
-        self.traffic_max_std = self.traffic_config["max_std_dev_hours"]
+        self.traffic_simulator = TrafficSimulator(
+            enable_traffic=self.traffic_config["enable_traffic"],
+            std_dev_factor=self.traffic_config["std_dev_factor"],
+            max_std_dev_hours=self.traffic_config["max_std_dev_hours"],
+            rush_hour_multiplier=self.traffic_config["rush_hour_multiplier"],
+            verbose=self.verbose
+        )
 
         # Load graph and initialize transportation network
         graph = get_graph(self.config)
@@ -162,8 +167,9 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"[Env] Warning: failed to print charger summary: {e}")
 
         # Initialize charging station manager
+        # Go up two levels from models/environment/ to EVRoutingEnv/
         waiting_time_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             "data",
             "waiting_time_lookup.json",
         )
@@ -755,7 +761,12 @@ class EventDrivenTruckEnv(gym.Env):
         distance = travel_time * truck.base_speed
 
         # Apply traffic simulation if enabled
-        actual_travel_time = self._apply_traffic_simulation(travel_time)
+        actual_travel_time = self.traffic_simulator.apply_traffic(
+            travel_time=travel_time,
+            current_time=self.global_clock,
+            from_node=current_node,
+            to_node=target_node
+        )
         
         # Check if truck can make it
         if discharge > truck.current_battery:
@@ -864,43 +875,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         return time_penalty
 
-    def _apply_traffic_simulation(self, travel_time: float) -> float:
-        """
-        Apply traffic simulation to travel time using normal distribution.
 
-        Args:
-            travel_time: Base travel time from the graph (hours)
-
-        Returns:
-            Travel time with traffic variation applied (hours)
-        """
-        if not self.enable_traffic or travel_time <= 0:
-            return travel_time
-        raise RuntimeError("Traffic simulation is disabled or travel time is non-positive.")
-    
-        # Calculate standard deviation
-        std_dev = travel_time * self.traffic_std_factor
-
-        # Cap the std_dev if max is specified
-        if self.traffic_max_std > 0:
-            std_dev = min(std_dev, self.traffic_max_std)
-
-        # Sample from normal distribution N(mean=travel_time, std=std_dev)
-        actual_travel_time = np.random.normal(loc=travel_time, scale=std_dev)
-
-        # Ensure travel time is positive (at least 1% of original)
-        actual_travel_time = max(actual_travel_time, travel_time * 0.01)
-        actual_travel_time = min(
-            actual_travel_time, travel_time * 2.0
-        )  # Cap to 2x original
-
-        if self.verbose:
-            variation_percent = ((actual_travel_time - travel_time) / travel_time) * 100
-            print(
-                f"    Traffic simulation: {travel_time:.2f}h → {actual_travel_time:.2f}h ({variation_percent:+.1f}%)"
-            )
-
-        return actual_travel_time
 
     def _execute_charge_action(self, truck: Truck, charge_hours: int) -> float:
         """Execute charging action and schedule charge completion event."""
@@ -1057,7 +1032,12 @@ class EventDrivenTruckEnv(gym.Env):
         distance = travel_time * truck.base_speed
         
         # Apply traffic simulation
-        actual_travel_time = self._apply_traffic_simulation(travel_time)
+        actual_travel_time = self.traffic_simulator.apply_traffic(
+            travel_time=travel_time,
+            current_time=self.global_clock,
+            from_node=current_node,
+            to_node=target_node
+        )
         
         # Check if truck can make it
         if discharge > truck.current_battery:

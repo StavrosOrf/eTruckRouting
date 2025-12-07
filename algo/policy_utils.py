@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple
 
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
-from EVRoutingEnv.models.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 
 # Importing only for type checking / documentation purposes.
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace  # noqa: F401

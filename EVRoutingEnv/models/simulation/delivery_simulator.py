@@ -129,6 +129,10 @@ class DeliverySimulator:
         # Apply bounds to keep unloading time realistic
         min_time = self.base_unloading_time * self.min_unloading_multiplier
         max_time = self.base_unloading_time * self.max_unloading_multiplier
+        
+        # Ensure minimum time is always positive
+        min_time = max(min_time, 0.1)  # At least 0.1 hours (6 minutes)
+        
         actual_unloading_time = max(actual_unloading_time, min_time)
         actual_unloading_time = min(actual_unloading_time, max_time)
         

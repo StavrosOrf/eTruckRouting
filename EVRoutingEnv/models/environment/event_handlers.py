@@ -80,6 +80,7 @@ class EventHandler:
             distance=data["distance"],
             travel_time=data["travel_time"],
             discharge=data["discharge"],
+            timestamp=global_clock,
         )
 
         # Clear route tracking information
@@ -127,13 +128,14 @@ class EventHandler:
             print(f"    Remaining deliveries: {remaining_deliveries}")
             print(f"    is_complete flag: {truck.is_complete}")
 
-        # Check if truck failed
+        # Check if truck failed (already logged in move_to_node)
         if truck.failed:
             truck_states[truck.truck_id] = "failed"
             if self.verbose:
                 print(f"  Truck {truck.truck_id} FAILED: battery depleted")
         # Check if truck completed all deliveries
         elif truck.is_complete:
+            truck.mark_complete(timestamp=global_clock)
             truck_states[truck.truck_id] = "complete"
             if self.verbose:
                 print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
@@ -145,12 +147,8 @@ class EventHandler:
                 current_time=global_clock
             )
             
-            # Track unloading time in truck state
-            if hasattr(truck, 'total_unloading_time'):
-                truck.total_unloading_time += unloading_time
-            
-            # Add unloading time to truck's total elapsed time
-            truck.total_time_elapsed += unloading_time
+            # Start unloading event
+            truck.start_unloading(timestamp=global_clock, delivery_node=destination)
             
             # Schedule TRUCK_READY event after unloading completes
             heapq.heappush(
@@ -159,7 +157,10 @@ class EventHandler:
                     time=global_clock + unloading_time,
                     event_type=EventType.TRUCK_READY,
                     truck_id=truck.truck_id,
-                    data={"reason": "unloading_complete"}
+                    data={
+                        "reason": "unloading_complete",
+                        "unloading_duration": unloading_time
+                    }
                 )
             )
             
@@ -173,6 +174,7 @@ class EventHandler:
         else:
             # Truck is ready for next action - update state
             # Note: TRUCK_READY event will be scheduled by the main event loop
+            truck.mark_ready(timestamp=global_clock, reason="arrived_at_charger")
             truck_states[truck.truck_id] = "ready"
 
 

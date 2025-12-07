@@ -295,16 +295,16 @@ def train(args):
             save_code=True
         )
         _run.log_code(".")
-
+    verbose = args.verbose
     env = EventDrivenTruckEnv(
         config=config,
-        verbose=False,
+        verbose=verbose,
         enable_plotting=False,
         run_id=args.exp_name
     )
     eval_env = EventDrivenTruckEnv(
         config=copy.deepcopy(config),
-        verbose=False,
+        verbose=verbose,
         enable_plotting=False,
         run_id=f"{args.exp_name}_eval"
     )
@@ -315,7 +315,7 @@ def train(args):
         max_time=config['environment']['max_time'],
         num_charging_nodes=env.num_charging_nodes,
         device="cpu",  # Always create states on CPU for buffer storage
-        verbose=False  # Disable verbose output during training
+        verbose=verbose  # Disable verbose output during training
     )
 
     action_dim = env.action_space.n

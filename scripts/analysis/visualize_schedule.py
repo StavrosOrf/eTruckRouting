@@ -220,7 +220,7 @@ def process_truck_routes(env):
     """
     truck_timelines = {}
     
-    # First, collect charging periods per truck from history
+    # First, collect charging and unloading periods per truck from history
     charging_periods = {}  # truck_id -> [(start_time, end_time, node, state), ...]
     
     if hasattr(env, 'history') and env.history:
@@ -232,7 +232,7 @@ def process_truck_routes(env):
             for truck_id, details in trucks_info.items():
                 state = details.get("state", "unknown")
                 
-                if state in ["charging", "waiting_to_charge"]:
+                if state in ["charging", "waiting_to_charge", "unloading"]:
                     node = details.get("current_node")
                     
                     if truck_id not in charging_periods:
@@ -259,8 +259,8 @@ def process_truck_routes(env):
             truck_periods = charging_periods[truck_id]
             
             for node, arrival_time in arrivals_at_chargers.items():
-                # Find first charging period at this node
-                charging_at_node = [p for p in truck_periods if p[2] == node and p[3] == "charging"]
+                # Find first charging or unloading period at this node
+                charging_at_node = [p for p in truck_periods if p[2] == node and p[3] in ["charging", "unloading"]]
                 
                 if charging_at_node:
                     # Sort by start time and get the first one
@@ -328,7 +328,7 @@ def process_truck_routes(env):
                 prev_node = node
                 continue
             
-            # Check if there's charging/waiting between prev_time and current time
+            # Check if there's charging/waiting/unloading between prev_time and current time
             # Include any period that overlaps with [prev_time, time]
             charging_in_range = [
                 (c_start, c_end, c_node, c_state) 
@@ -337,13 +337,13 @@ def process_truck_routes(env):
             ]
             
             if charging_in_range:
-                # Split routing around charging periods
+                # Split routing around charging/waiting/unloading periods
                 for c_start, c_end, c_node, c_state in sorted(charging_in_range, key=lambda x: x[0]):
-                    # Clamp charging period to the current interval [prev_time, time]
+                    # Clamp period to the current interval [prev_time, time]
                     actual_start = max(c_start, prev_time)
                     actual_end = min(c_end, time)
                     
-                    # Add routing segment before charging/waiting (if any)
+                    # Add routing segment before event (if any)
                     if actual_start > prev_time + 0.01:
                         timeline.append({
                             "start": prev_time,
@@ -353,7 +353,7 @@ def process_truck_routes(env):
                             "end_soc": None
                         })
                     
-                    # Add charging/waiting segment (clamped to current interval)
+                    # Add event segment (clamped to current interval)
                     if actual_end > actual_start + 0.001:
                         timeline.append({
                             "start": actual_start,
@@ -366,7 +366,7 @@ def process_truck_routes(env):
                     
                     prev_time = actual_end
                 
-                # Add routing segment after last charging period to destination (if any)
+                # Add routing segment after last event period to destination (if any)
                 if time > prev_time + 0.01:
                     timeline.append({
                         "start": prev_time,
@@ -391,7 +391,7 @@ def process_truck_routes(env):
         
         truck_timelines[truck_id] = timeline
     
-    # Add SoC information from history to charging/waiting segments
+    # Add SoC information from history to charging/waiting/unloading segments
     if hasattr(env, 'history') and env.history:
         for entry in env.history:
             start = entry["start"]
@@ -401,7 +401,7 @@ def process_truck_routes(env):
             for truck_id, details in trucks_info.items():
                 state = details.get("state", "unknown")
                 
-                if state in ["charging", "waiting_to_charge"] and truck_id in truck_timelines:
+                if state in ["charging", "waiting_to_charge", "unloading"] and truck_id in truck_timelines:
                     start_soc = details.get("start_soc")
                     end_soc = details.get("end_soc")
                     node = details.get("current_node")
@@ -538,8 +538,116 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
                             "event": "arrive"
                         })
                 
-                # TODO: Add charging events from history if needed
-                # For now, just show arrivals which are the most important
+                # Collect and merge charging/unloading events from history
+                if hasattr(env, 'history') and env.history:
+                    # Collect all charging and unloading periods
+                    charging_periods = []  # (start, end, node, start_soc, end_soc)
+                    unloading_periods = []  # (start, end, node, start_soc, end_soc)
+                    
+                    # Build a map of arrival times at delivery nodes from truck_routes
+                    delivery_arrivals = {}  # node -> arrival_time
+                    if truck_id in truck_routes:
+                        for event in truck_routes[truck_id]:
+                            if len(event) >= 3:
+                                node, time, event_type = event[0], event[1], event[2]
+                                if event_type == "delivery":
+                                    delivery_arrivals[int(node)] = time
+                    
+                    for entry in env.history:
+                        start = entry["start"]
+                        end = entry["end"]
+                        trucks_info = entry["trucks"]
+                        
+                        if truck_id in trucks_info:
+                            details = trucks_info[truck_id]
+                            state = details.get("state", "unknown")
+                            node = details.get("current_node")
+                            start_soc = details.get("start_soc")
+                            end_soc = details.get("end_soc")
+                            
+                            if state == "charging":
+                                charging_periods.append((start, end, node, start_soc, end_soc))
+                            elif state == "unloading":
+                                # Use arrival time from truck_routes if available, otherwise use history start
+                                actual_start = delivery_arrivals.get(node, start)
+                                unloading_periods.append((actual_start, end, node, start_soc, end_soc))
+                    
+                    # Merge consecutive periods for charging
+                    merged_charging = []
+                    if charging_periods:
+                        charging_periods.sort(key=lambda x: x[0])
+                        current_start, current_end, current_node, current_start_soc, _ = charging_periods[0]
+                        
+                        for i in range(1, len(charging_periods)):
+                            next_start, next_end, next_node, _, next_end_soc = charging_periods[i]
+                            
+                            # Merge if consecutive (within 0.01h) and same node
+                            if abs(current_end - next_start) < 0.01 and current_node == next_node:
+                                current_end = next_end
+                            else:
+                                # Save current period and start new one
+                                merged_charging.append((current_start, current_end, current_node, current_start_soc, charging_periods[i-1][4]))
+                                current_start, current_end, current_node, current_start_soc = next_start, next_end, next_node, charging_periods[i][3]
+                        
+                        # Add the last period
+                        merged_charging.append((current_start, current_end, current_node, current_start_soc, charging_periods[-1][4]))
+                    
+                    # Merge consecutive periods for unloading
+                    merged_unloading = []
+                    if unloading_periods:
+                        unloading_periods.sort(key=lambda x: x[0])
+                        current_start, current_end, current_node, current_start_soc, _ = unloading_periods[0]
+                        
+                        for i in range(1, len(unloading_periods)):
+                            next_start, next_end, next_node, _, next_end_soc = unloading_periods[i]
+                            
+                            # Merge if consecutive (within 0.01h) and same node
+                            if abs(current_end - next_start) < 0.01 and current_node == next_node:
+                                current_end = next_end
+                            else:
+                                # Save current period and start new one
+                                merged_unloading.append((current_start, current_end, current_node, current_start_soc, unloading_periods[i-1][4]))
+                                current_start, current_end, current_node, current_start_soc = next_start, next_end, next_node, unloading_periods[i][3]
+                        
+                        # Add the last period
+                        merged_unloading.append((current_start, current_end, current_node, current_start_soc, unloading_periods[-1][4]))
+                    
+                    # Add merged charging events to schedule
+                    for start, end, node, start_soc, end_soc in merged_charging:
+                        duration = end - start
+                        schedule.append({
+                            "time": start,
+                            "node": node,
+                            "soc": start_soc,
+                            "event": "start_charging",
+                            "duration": duration
+                        })
+                        schedule.append({
+                            "time": end,
+                            "node": node,
+                            "soc": end_soc,
+                            "event": "finish_charging"
+                        })
+                    
+                    # Add merged unloading events to schedule
+                    for start, end, node, start_soc, end_soc in merged_unloading:
+                        duration = end - start
+                        schedule.append({
+                            "time": start,
+                            "node": node,
+                            "soc": start_soc,
+                            "event": "start_unloading",
+                            "duration": duration
+                        })
+                        schedule.append({
+                            "time": end,
+                            "node": node,
+                            "soc": end_soc,
+                            "event": "finish_unloading"
+                        })
+                
+                # Sort schedule by time
+                schedule.sort(key=lambda x: x['time'])
                 
                 schedules[truck_id] = schedule
             all_schedules[policy_name] = schedules
@@ -569,6 +677,10 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
                         node_str = str(event['node']) if event['node'] is not None else "N/A"
                         soc_str = f"{event['soc']:.1f}" if event['soc'] is not None else "N/A"
                         
+                        # Add duration info for start events
+                        if 'duration' in event and event['duration'] is not None:
+                            event_str += f" ({event['duration']:.2f}h)"
+                        
                         f.write(f"{time_str:<12} {event_str:<25} {node_str:<10} {soc_str:<10}\n")
                 
                 # Summary statistics from environment
@@ -580,14 +692,18 @@ def generate_schedule_log(histories, envs, policy_names, output_dir):
                     final_soc = schedule[-1]['soc'] if schedule and schedule[-1]['soc'] is not None else 0
                     num_arrivals = len([e for e in schedule if e['event'] == 'arrive'])
                     num_charges = len([e for e in schedule if e['event'] == 'start_charging'])
+                    num_unloadings = len([e for e in schedule if e['event'] == 'start_unloading'])
+                    total_unloading_time = sum(e.get('duration', 0) for e in schedule if e['event'] == 'start_unloading')
                     
                     f.write(f"\nSummary:\n")
                     f.write(f"  Total Time: {total_time:.2f} hours\n")
                     f.write(f"  Final SoC: {final_soc:.1f}%\n")
                     f.write(f"  Total Distance: {truck.total_distance_traveled:.2f} km\n")
                     f.write(f"  Total Charging Time: {truck.total_charging_time:.2f} hours\n")
+                    f.write(f"  Total Unloading Time: {total_unloading_time:.2f} hours\n")
                     f.write(f"  Node Arrivals: {num_arrivals}\n")
                     f.write(f"  Charging Sessions: {num_charges}\n")
+                    f.write(f"  Unloading Sessions: {num_unloadings}\n")
                     f.write(f"  Deliveries Remaining: {len(truck.get_remaining_deliveries())}\n")
                     f.write(f"  Status: {'Complete' if truck.is_complete else 'Failed' if truck.failed else 'Incomplete'}\n")
         
@@ -785,6 +901,7 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
         "routing": "#3498db",      # Blue
         "charging": "#2ecc71",     # Green
         "waiting_to_charge": "#e74c3c", # Red
+        "unloading": "#ff8c00",    # Orange
         "ready": "#95a5a6",        # Gray
         "complete": "#f1c40f",     # Gold
         "failed": "#34495e"        # Dark Blue/Black
@@ -829,9 +946,9 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
                 if segment["state"] == "routing":
                     _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
             
-            # Second pass: draw charging and waiting on top
+            # Second pass: draw charging, unloading, and waiting on top
             for segment in timelines[tid]:
-                if segment["state"] in ["charging", "waiting_to_charge", "complete", "failed"]:
+                if segment["state"] in ["charging", "unloading", "waiting_to_charge", "complete", "failed"]:
                     _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=True)
             
             # Add label for policy
@@ -849,6 +966,7 @@ def plot_comparison(histories, envs, policy_names, max_time, charging_nodes):
     # Legend
     legend_elements = [
         mpatches.Patch(color=colors["routing"], label='Routing'),
+        mpatches.Patch(color=colors["unloading"], label='Unloading'),
         mpatches.Patch(color=colors["charging"], label='Charging'),
         mpatches.Patch(color=colors["waiting_to_charge"], label='Waiting in Queue'),
         plt.Line2D([0], [0], marker='D', color='w', markerfacecolor='#e74c3c', markeredgecolor='darkred', markersize=6, markeredgewidth=1.5, label='Queue Wait Point'),
@@ -878,6 +996,9 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
     if state == "charging":
         linewidth = 6  # Thicker for charging
         zorder = 20  # Draw on top
+    elif state == "unloading":
+        linewidth = 5.5  # Thick for unloading
+        zorder = 18  # Draw near top
     elif state == "waiting_to_charge":
         linewidth = 5  # Thick for waiting
         zorder = 19
@@ -899,24 +1020,32 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
             # Show duration above the charging bar
             mid_point = (start + end) / 2
             ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
-                    fontsize=7, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.3', 
+                    fontsize=5.5, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
                     facecolor='white', edgecolor='green', alpha=0.8))
         
         # Always show SoC at start and end of charging
         if label_soc:
             if start_soc is not None:
                 ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
-                        fontsize=6, color='green', alpha=0.9, weight='bold')
+                        fontsize=5, color='green', alpha=0.9, weight='bold')
             if end_soc is not None:
                 ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
-                        fontsize=6, color='green', alpha=0.9, weight='bold')
+                        fontsize=5, color='green', alpha=0.9, weight='bold')
+    
+    # For unloading: show duration above the bar
+    elif state == "unloading":
+        if duration > 0:
+            mid_point = (start + end) / 2
+            ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
+                    fontsize=5.5, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
+                    facecolor='white', edgecolor='#ff8c00', alpha=0.8))
     
     # For routing: show duration above the bar
     elif state == "routing":
         if duration > 0.1:  # Only show if duration is significant
             mid_point = (start + end) / 2
             ax.text(mid_point, y_pos + 0.12, f"{duration:.1f}h", ha='center', va='bottom', 
-                    fontsize=6, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
+                    fontsize=5, color='black', weight='bold', bbox=dict(boxstyle='round,pad=0.15', 
                     facecolor='white', edgecolor='#3498db', alpha=0.7, linewidth=0.8))
     
     # For waiting_to_charge: show duration and make it visually distinct
@@ -926,8 +1055,8 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
             mid_point = (start + end) / 2
             wait_label = f"WAIT {duration:.1f}h"
             ax.text(mid_point, y_pos + 0.12, wait_label, ha='center', va='bottom', 
-                    fontsize=6, color='darkred', weight='bold', bbox=dict(boxstyle='round,pad=0.2', 
-                    facecolor='white', edgecolor='#e74c3c', alpha=0.9, linewidth=1.2))
+                    fontsize=5, color='darkred', weight='bold', bbox=dict(boxstyle='round,pad=0.15', 
+                    facecolor='white', edgecolor='#e74c3c', alpha=0.9, linewidth=1.0))
         
         # Mark the waiting location with a special indicator at both ends
         node = meta.get("current_node")
@@ -945,14 +1074,14 @@ def _plot_segment(ax, segment, y_pos, colors, charging_nodes, label_soc=False):
         if label_soc:
             if start_soc is not None:
                 ax.text(start, y_pos - 0.08, f"{start_soc:.0f}%", ha='center', va='top', 
-                        fontsize=6, color='#e74c3c', alpha=0.9, weight='bold')
+                        fontsize=5, color='#e74c3c', alpha=0.9, weight='bold')
             if end_soc is not None:
                 ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', 
-                        fontsize=6, color='#e74c3c', alpha=0.9, weight='bold')
+                        fontsize=5, color='#e74c3c', alpha=0.9, weight='bold')
     
     # For other states: show SoC only at the end (arrival points)
-    if label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed", "charging"]:
-        ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', fontsize=5, color='black', alpha=0.7)
+    if label_soc and end_soc is not None and state not in ["waiting_to_charge", "complete", "failed", "charging", "unloading"]:
+        ax.text(end, y_pos - 0.08, f"{end_soc:.0f}%", ha='center', va='top', fontsize=4.5, color='black', alpha=0.7)
 
     if state == "routing":
         dest = meta.get("destination")

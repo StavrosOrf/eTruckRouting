@@ -424,9 +424,11 @@ class EventDrivenTruckEnv(gym.Env):
                     initial_soc = event.data.get("initial_soc", 0.0)
                     charging_details = event.data.get("charging_details", {})
 
-                    # Complete charging for the truck (update battery)
+                    # Complete charging for the truck (update battery and record event)
                     truck.finish_charging(
-                        charge_amount=charge_amount, charge_duration=charge_duration
+                        charge_amount=charge_amount,
+                        charge_duration=charge_duration,
+                        timestamp=self.global_clock
                     )
                     
                     # Log charging session if logger is enabled
@@ -498,6 +500,8 @@ class EventDrivenTruckEnv(gym.Env):
                         # Track when truck starts waiting (if not already tracked)
                         if truck.truck_id not in self.waiting_start_times:
                             self.waiting_start_times[truck.truck_id] = self.global_clock
+                            # Record waiting start event
+                            truck.start_waiting(timestamp=self.global_clock, reason="charger_queue")
 
                         # Pure event-driven: truck will be woken by wake_waiting_trucks
                         # No time-based predictions or scheduled rechecks
@@ -520,8 +524,8 @@ class EventDrivenTruckEnv(gym.Env):
                         waiting_penalty = -waiting_duration * self.reward_config["time_multiplier"]
                         self.waiting_penalty_buffer = waiting_penalty
                         
-                        # Update truck's waiting time stat
-                        truck.add_waiting_time(waiting_duration)
+                        # Update truck's waiting time stat and record event
+                        truck.add_waiting_time(waiting_duration, timestamp=self.global_clock)
                         
                         if self.verbose:
                             print(f"  Truck {truck.truck_id} finished waiting at {self.global_clock:.2f}h")
@@ -530,6 +534,15 @@ class EventDrivenTruckEnv(gym.Env):
                     
                     # Clear waiting start time
                     del self.waiting_start_times[truck.truck_id]
+                
+                # Handle unloading completion
+                if reason == "unloading_complete":
+                    unloading_duration = event.data.get("unloading_duration", 0.0)
+                    if unloading_duration > 0:
+                        truck.finish_unloading(unloading_duration=unloading_duration, timestamp=self.global_clock)
+                
+                # Mark truck as ready with appropriate reason
+                truck.mark_ready(timestamp=self.global_clock, reason=reason if reason else "unknown")
                 
                 # Final check: ensure truck is not complete or failed before setting as active
                 # This can happen if a TRUCK_READY event was scheduled before truck completed
@@ -590,6 +603,8 @@ class EventDrivenTruckEnv(gym.Env):
                             # Track when truck starts waiting (if not already tracked)
                             if truck.truck_id not in self.waiting_start_times:
                                 self.waiting_start_times[truck.truck_id] = self.global_clock
+                                # Record waiting start event
+                                truck.start_waiting(timestamp=self.global_clock, reason="charger_queue")
 
                             # Only schedule recheck if we have a specific time
                             if next_check_time is not None:
@@ -868,6 +883,9 @@ class EventDrivenTruckEnv(gym.Env):
         departure_time = self.truck_ready_times[truck.truck_id] if truck.truck_id in self.truck_ready_times else self.global_clock
         completion_time = departure_time + actual_travel_time
         
+        # Record routing start event
+        truck.start_routing(destination=target_node, timestamp=departure_time)
+        
         if self.verbose:
             print(f"  DEBUG: Scheduling arrival - Departure: {departure_time:.4f}h, Travel: {actual_travel_time:.4f}h, Arrival: {completion_time:.4f}h")
         
@@ -1035,9 +1053,9 @@ class EventDrivenTruckEnv(gym.Env):
             ),
         )
         
-        # Update truck state
+        # Update truck state and record charging start event
         self.truck_states[truck.truck_id] = "charging"
-        truck.start_charging(self.global_clock)
+        truck.start_charging(current_time=self.global_clock)
         
         if self.verbose:
             print(f"  Charging for {actual_charge_hours:.2f}h")

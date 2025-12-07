@@ -51,6 +51,7 @@ class EventHandler:
         event_queue: List,
         global_clock: float,
         enable_plotting: bool,
+        delivery_simulator: Any = None,
     ):
         """
         Handle truck arrival at a node (after routing).
@@ -63,6 +64,7 @@ class EventHandler:
             event_queue: Priority queue of events
             global_clock: Current simulation time
             enable_plotting: Whether plotting is enabled
+            delivery_simulator: DeliverySimulator instance for stochastic unloading time
         """
         truck = trucks[event.truck_id]
         data = event.data
@@ -135,6 +137,39 @@ class EventHandler:
             truck_states[truck.truck_id] = "complete"
             if self.verbose:
                 print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
+        # If this was a delivery (and not complete/failed), apply unloading time
+        elif is_delivery and delivery_simulator is not None:
+            # Apply stochastic unloading time
+            unloading_time = delivery_simulator.apply_unloading_time(
+                delivery_node=destination,
+                current_time=global_clock
+            )
+            
+            # Track unloading time in truck state
+            if hasattr(truck, 'total_unloading_time'):
+                truck.total_unloading_time += unloading_time
+            
+            # Add unloading time to truck's total elapsed time
+            truck.total_time_elapsed += unloading_time
+            
+            # Schedule TRUCK_READY event after unloading completes
+            heapq.heappush(
+                event_queue,
+                Event(
+                    time=global_clock + unloading_time,
+                    event_type=EventType.TRUCK_READY,
+                    truck_id=truck.truck_id,
+                    data={"reason": "unloading_complete"}
+                )
+            )
+            
+            # Mark truck as "unloading" state
+            truck_states[truck.truck_id] = "unloading"
+            
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} unloading at delivery node {destination}")
+                print(f"    Unloading time: {unloading_time:.3f}h ({unloading_time*60:.1f} min)")
+                print(f"    Will be ready at: {global_clock + unloading_time:.2f}h")
         else:
             # Truck is ready for next action - update state
             # Note: TRUCK_READY event will be scheduled by the main event loop

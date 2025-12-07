@@ -45,6 +45,7 @@ class Truck:
         self.total_charging_time = 0.0
         self.num_charging_sessions = 0
         self.waiting_time = 0.0
+        self.total_unloading_time = 0.0  # Track cumulative unloading time at deliveries
         self.is_charging = False
         self.charge_start_time = None
         
@@ -184,6 +185,7 @@ class Truck:
             "total_distance": self.total_distance_traveled,
             "total_time": self.total_time_elapsed,
             "total_charging_time": self.total_charging_time,
+            "total_unloading_time": self.total_unloading_time,
             "waiting_time": self.waiting_time,
             "num_charging_sessions": self.num_charging_sessions,
             "total_distance_to_travel": sum(

@@ -64,6 +64,38 @@ charging:
   # Available charging durations (hours)
   charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
+# Delivery Configuration
+# ----------------------
+delivery:
+  # Enable stochastic unloading time at delivery locations
+  # When enabled, unloading time varies based on time-of-day
+  # When disabled, constant base_unloading_time is used
+  enable_stochastic_unloading: True
+  
+  # Base unloading time at delivery locations (hours)
+  # Typical value: 0.5 hours = 30 minutes
+  base_unloading_time: 0.5
+  
+  # Standard deviation of unloading time as fraction of base time
+  # Example: 0.20 means std_dev = 20% of base_unloading_time during off-hours
+  # Unloading time ~ N(base_time, (std_dev_factor * base_time)^2)
+  std_dev_factor: 0.20
+  
+  # Maximum std_dev cap to avoid extreme values (hours)
+  # Set to 0 or negative to disable capping
+  max_std_dev_hours: 0.25  # 15 minutes max deviation
+  
+  # Business hours multiplier: increases variance during business hours (9am-5pm)
+  # Example: 1.5 means 1.5x variance during 9am-5pm vs. off-hours
+  # Represents variability from dock availability, facility traffic, staffing
+  business_hours_multiplier: 1.5
+  
+  # Unloading time bounds to keep values realistic
+  # min_unloading_multiplier: minimum bound (best case - quick unload)
+  # max_unloading_multiplier: maximum bound (worst case - delays)
+  min_unloading_multiplier: 0.75  # -25% (fast unload)
+  max_unloading_multiplier: 1.5   # +50% (slow unload)
+
 # Reward Function
 # ---------------
 rewards:

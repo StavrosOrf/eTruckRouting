@@ -30,6 +30,7 @@ from EVRoutingEnv.models.environment.loaders import create_truck
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
 from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
+from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
 from EVRoutingEnv.state.state_space import StateSpace, action_to_string
 from EVRoutingEnv.state.action_mask import get_action_mask
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
@@ -139,6 +140,21 @@ class EventDrivenTruckEnv(gym.Env):
             verbose=self.verbose,
             seed=None  # Will be set in reset()
         )
+        
+        # Delivery simulation settings
+        self.delivery_config = self.config["delivery"]
+        # Note: seed will be set in reset() method for reproducibility
+        self.delivery_simulator = DeliverySimulator(
+            enable_stochastic_unloading=self.delivery_config["enable_stochastic_unloading"],
+            base_unloading_time=self.delivery_config["base_unloading_time"],
+            std_dev_factor=self.delivery_config["std_dev_factor"],
+            max_std_dev_hours=self.delivery_config["max_std_dev_hours"],
+            business_hours_multiplier=self.delivery_config["business_hours_multiplier"],
+            min_unloading_multiplier=self.delivery_config["min_unloading_multiplier"],
+            max_unloading_multiplier=self.delivery_config["max_unloading_multiplier"],
+            verbose=self.verbose,
+            seed=None  # Will be set in reset()
+        )
 
         # Load graph and initialize transportation network
         graph = get_graph(self.config)
@@ -238,7 +254,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.trucks = []
         self.truck_states = (
             {}
-        )  # truck_id -> "active", "routing", "charging", "complete", "failed"
+        )  # truck_id -> "ready", "routing", "waiting_to_charge", "charging", "unloading", "complete", "failed"
         self.episode_reward = 0.0
         self.episode_steps = 0  # Track number of steps in current episode
         self.waiting_start_times = {}  # Track when trucks enter waiting_to_charge state
@@ -256,9 +272,15 @@ class EventDrivenTruckEnv(gym.Env):
             self.traffic_simulator.seed = seed
             if self.traffic_simulator.seed is not None:
                 self.traffic_simulator._rng = np.random.RandomState(seed)
+            # Set delivery simulator seed for reproducible uncertainty
+            self.delivery_simulator.seed = seed
+            if self.delivery_simulator.seed is not None:
+                self.delivery_simulator._rng = np.random.RandomState(seed)
         
         # Reset traffic simulator journey counters for new episode
         self.traffic_simulator.reset_journey_counters()
+        # Reset delivery simulator delivery counters for new episode
+        self.delivery_simulator.reset_delivery_counters()
 
         # Reset simulation time and event queue
         self.global_clock = 0.0
@@ -545,6 +567,7 @@ class EventDrivenTruckEnv(gym.Env):
                     self.event_queue,
                     self.global_clock,
                     self.enable_plotting,
+                    self.delivery_simulator,
                 )
 
                 # Check the truck's state after arrival - it may have become complete or failed
@@ -605,8 +628,10 @@ class EventDrivenTruckEnv(gym.Env):
                                     data={"reason": "arrived_at_charger"},
                                 ),
                             )
-                    else:
-                        # Arrived at delivery node - schedule immediate TRUCK_READY
+                    # Check if truck is in unloading state (already scheduled by event_handler)
+                    elif self.truck_states[truck.truck_id] != "unloading":
+                        # Arrived at delivery node (but not unloading) - schedule immediate TRUCK_READY
+                        # If truck is unloading, the event_handler already scheduled TRUCK_READY
                         heapq.heappush(
                             self.event_queue,
                             Event(

@@ -29,7 +29,7 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [512],
+    "steps_per_update": [512, 1024, 2048],
     "epochs": [10],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
@@ -92,7 +92,6 @@ for config_idx, (
         f" --max-time {max_time}"
         f" --wandb-project evpr-experiments"
         f" --wandb-entity stavrosorf"
-        f" --no-wandb"
         f" --group-name {sweep_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"

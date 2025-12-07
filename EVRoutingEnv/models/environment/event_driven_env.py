@@ -922,7 +922,17 @@ class EventDrivenTruckEnv(gym.Env):
         # Bonus if this is a delivery
         if is_delivery_nav:
             delivery_bonus = self.reward_config["delivery_bonus"]
-            return time_penalty + delivery_bonus
+            # Include exact unloading time penalty together with delivery reward
+            # Get the actual unloading time that will occur at this delivery
+            if self.delivery_simulator:
+                actual_unloading_time = self.delivery_simulator.apply_unloading_time(
+                    delivery_node=target_node,
+                    current_time=completion_time  # Use arrival time at delivery
+                )
+            else:
+                actual_unloading_time = 0.0
+            unloading_penalty = -actual_unloading_time * self.reward_config["time_multiplier"]
+            return time_penalty + delivery_bonus + unloading_penalty
 
         return time_penalty
 

@@ -29,7 +29,8 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [512, 1024],
+    "steps_per_update": [128],
+    # "steps_per_update": [128, 512, 1024],
     "epochs": [10],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],

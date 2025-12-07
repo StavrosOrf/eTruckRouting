@@ -193,6 +193,10 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
     eval_waiting_time = []
     eval_total_distance = []
     eval_episode_time = []
+    eval_total_routing_time = []
+    eval_total_unloading_time = []
+    eval_total_failures = []
+    eval_total_deliveries = []
     
     for episode in range(eval_episodes):
         obs, info = env.reset(seed=seed + episode)
@@ -225,7 +229,7 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
         
         # Collect episode metrics from environment info
         eval_rewards.append(episode_reward)
-        eval_success_rate.append(1.0 if info.get('all_complete', False) else 0.0)
+        eval_success_rate.append(1.0 if info['all_complete'] else 0.0)
         eval_episode_lengths.append(episode_steps)
         
         # Extract metrics from truck states in info (these are episode-specific)
@@ -233,20 +237,47 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
         num_charging_sessions = 0
         total_waiting_time = 0.0
         total_distance = 0.0
+        total_routing_time = 0.0
+        total_unloading_time = 0.0
+        num_failures = 0
+        num_deliveries = 0
         
-        for truck_info in info.get('trucks', []):
-            total_charging_time += truck_info.get('total_charging_time', 0.0)
-            num_charging_sessions += truck_info.get('num_charging_sessions', 0)
-            total_waiting_time += truck_info.get('waiting_time', 0.0)
-            total_distance += truck_info.get('total_distance', 0.0)
+        for truck_info in info['trucks']:
+            total_charging_time += truck_info['total_charging_time']
+            num_charging_sessions += truck_info['num_charging_sessions']
+            total_waiting_time += truck_info['waiting_time']
+            total_distance += truck_info['total_distance']
+            total_unloading_time += truck_info['total_unloading_time']
+            
+            # Count failures
+            if truck_info['failed']:
+                num_failures += 1
+            
+            # Count completed deliveries (total deliveries - remaining deliveries)
+            total_deliveries = len(truck_info['delivery_sequence']) - 1  # Exclude depot
+            deliveries_remaining = truck_info['deliveries_remaining']
+            deliveries_completed = total_deliveries - deliveries_remaining
+            num_deliveries += deliveries_completed
+            
+            # Calculate routing time: total_time - charging - unloading - waiting
+            truck_total_time = truck_info['total_time']
+            truck_charging_time = truck_info['total_charging_time']
+            truck_unloading_time = truck_info['total_unloading_time']
+            truck_waiting_time = truck_info['waiting_time']
+            truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
+            total_routing_time += max(0.0, truck_routing_time)  # Ensure non-negative
         
         eval_total_charging_time.append(total_charging_time)
         eval_num_charging_sessions.append(num_charging_sessions)
         eval_waiting_time.append(total_waiting_time)
         eval_total_distance.append(total_distance)
+        eval_total_routing_time.append(total_routing_time)
+        eval_total_unloading_time.append(total_unloading_time)
+        eval_total_failures.append(num_failures)
+        eval_total_deliveries.append(num_deliveries)
         
         # Get episode time from global clock
-        eval_episode_time.append(info.get('global_clock', 0.0))
+        eval_episode_time.append(info['global_clock'])
     
     return {
         'mean_reward': np.mean(eval_rewards),
@@ -257,7 +288,11 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
         'mean_num_charging_sessions': np.mean(eval_num_charging_sessions),
         'mean_waiting_time': np.mean(eval_waiting_time),
         'mean_total_distance': np.mean(eval_total_distance),
-        'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0
+        'mean_episode_time': np.mean(eval_episode_time) if eval_episode_time else 0.0,
+        'mean_routing_time': np.mean(eval_total_routing_time),
+        'mean_unloading_time': np.mean(eval_total_unloading_time),
+        'mean_failures': np.mean(eval_total_failures),
+        'mean_deliveries': np.mean(eval_total_deliveries)
     }
 
 def train(args):
@@ -428,9 +463,9 @@ def train(args):
             update_stats = policy.update(last_value)
             if update_stats and not args.no_wandb:
                 wandb.log({
-                    'train/policy_loss': update_stats.get('policy_loss', 0.0),
-                    'train/value_loss': update_stats.get('value_loss', 0.0),
-                    'train/entropy': update_stats.get('entropy', 0.0),
+                    'train/policy_loss': update_stats['policy_loss'],
+                    'train/value_loss': update_stats['value_loss'],
+                    'train/entropy': update_stats['entropy'],
                     'train/timestep': total_timesteps
                 })
 
@@ -440,12 +475,12 @@ def train(args):
                     'train/episode_reward': episode_reward,
                     'train/episode_length': episode_timesteps,
                     'train/episode': episode_num,
-                    'train/success': 1.0 if info.get('all_complete', False) else 0.0,
+                    'train/success': 1.0 if info['all_complete'] else 0.0,
                     'train/timestep': total_timesteps
                 })
 
             print(f"PPO Episode {episode_num}: Reward={episode_reward:.2f}, "
-                  f"Steps={episode_timesteps}, Success={info.get('all_complete', False)}")
+                  f"Steps={episode_timesteps}, Success={info['all_complete']}")
 
             obs, info = env.reset(seed=args.seed + episode_num + 1)
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -469,8 +504,12 @@ def train(args):
             print(f"Episode Length: {eval_results['mean_episode_length']:.1f} steps")
             print(f"Charging Time: {eval_results['mean_charging_time']:.2f} hours")
             print(f"Charging Sessions: {eval_results['mean_num_charging_sessions']:.1f}")
+            print(f"Routing Time: {eval_results['mean_routing_time']:.2f} hours")
+            print(f"Unloading Time: {eval_results['mean_unloading_time']:.2f} hours")
             print(f"Waiting Time: {eval_results['mean_waiting_time']:.2f} hours")
             print(f"Distance Traveled: {eval_results['mean_total_distance']:.1f} km")
+            print(f"Truck Failures: {eval_results['mean_failures']:.1f}")
+            print(f"Deliveries Completed: {eval_results['mean_deliveries']:.1f}")
             if eval_results['mean_episode_time'] > 0:
                 print(f"Episode Time: {eval_results['mean_episode_time']:.2f} hours")
 
@@ -491,9 +530,13 @@ def train(args):
                     'eval/episode_length': eval_results['mean_episode_length'],
                     'eval/charging_time': eval_results['mean_charging_time'],
                     'eval/num_charging_sessions': eval_results['mean_num_charging_sessions'],
+                    'eval/routing_time': eval_results['mean_routing_time'],
+                    'eval/unloading_time': eval_results['mean_unloading_time'],
                     'eval/waiting_time': eval_results['mean_waiting_time'],
                     'eval/total_distance': eval_results['mean_total_distance'],
                     'eval/episode_time': eval_results['mean_episode_time'],
+                    'eval/failures': eval_results['mean_failures'],
+                    'eval/deliveries': eval_results['mean_deliveries'],
                     'eval/timestep': total_timesteps
                 })
 

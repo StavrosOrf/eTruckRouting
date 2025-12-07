@@ -611,6 +611,37 @@ class GNNStateSpace:
                 if self.verbose:
                     print(f'\n-- at_charger: {at_charger}, must_leave: {must_leave}, must_charge_now: {must_charge_now}, next_delivery: {next_delivery}')
 
+                # Progressively reduce safety factor for routing actions if needed
+                # This allows risky routing when truck has limited options
+                routing_safety_factor = energy_safety_factor
+                min_routing_safety = 0.5  # Minimum safety factor for routing
+                
+                # Check if any routing action would be feasible with current safety factor
+                def check_routing_feasible(safety_factor):
+                    """Check if at least one routing action is feasible with given safety factor."""
+                    # Check chargers
+                    for cid in charger_node_to_idx.keys():
+                        if cid != current_location:
+                            energy = env.transport_graph.get_path_energy(current_location, cid)
+                            if energy * safety_factor < current_battery and not np.isinf(energy):
+                                return True
+                    # Check delivery
+                    if next_delivery is not None:
+                        energy = env.transport_graph.get_path_energy(current_location, next_delivery)
+                        if energy * safety_factor < current_battery and not np.isinf(energy):
+                            return True
+                    return False
+                
+                # If must_leave and no routing actions feasible, reduce safety factor
+                if must_leave and not must_charge_now:
+                    while not check_routing_feasible(routing_safety_factor) and routing_safety_factor >= min_routing_safety:
+                        routing_safety_factor -= 0.05
+                        if self.verbose and routing_safety_factor >= min_routing_safety:
+                            print(f"  [Routing] No feasible routes with safety {routing_safety_factor + 0.05:.2f}, trying {routing_safety_factor:.2f}")
+                    
+                    if routing_safety_factor < energy_safety_factor and self.verbose:
+                        print(f"  [Routing] Reduced safety factor from {energy_safety_factor:.2f} to {routing_safety_factor:.2f} for routing actions")
+
                 # Actions 0 to N-1: Go to charger i (must match environment action order)
                 # Note: Include current location to match environment's action indexing
                 for charger_id in sorted(charger_node_to_idx.keys()):
@@ -622,7 +653,7 @@ class GNNStateSpace:
                         action_charge_durations.append(0.0)
                     else:
                         energy = env.transport_graph.get_path_energy(current_location, charger_id)
-                        max_energy_needed = energy * energy_safety_factor
+                        max_energy_needed = energy * routing_safety_factor
                         is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
                         # Disable routing if truck must charge now
                         is_feasible = is_energy_feasible and not must_charge_now
@@ -634,7 +665,7 @@ class GNNStateSpace:
                 # Action N: Go to next delivery (must come after all chargers)
                 if next_delivery is not None:
                     energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
-                    max_energy_to_delivery = energy_to_delivery * energy_safety_factor
+                    max_energy_to_delivery = energy_to_delivery * routing_safety_factor
                     is_energy_feasible = max_energy_to_delivery < current_battery
                     
                     if self.verbose:
@@ -663,7 +694,7 @@ class GNNStateSpace:
                         else:
                             for charger_id in charger_node_to_idx.keys():
                                 energy_to_charger = env.transport_graph.get_path_energy(next_delivery, charger_id)
-                                max_energy_to_charger = energy_to_charger * energy_safety_factor
+                                max_energy_to_charger = energy_to_charger * routing_safety_factor
                                 if battery_after_delivery > max_energy_to_charger:
                                     can_continue_after_delivery = True
                                     break
@@ -671,8 +702,10 @@ class GNNStateSpace:
                         if self.verbose:
                             print(f'  can_continue_after_delivery: {can_continue_after_delivery} (battery after delivery: {battery_after_delivery:.2f} kWh)')
                         
-                    # Disable routing if truck must charge now OR if truck would be stranded after delivery
-                    is_feasible = is_energy_feasible and not must_charge_now and can_continue_after_delivery
+                    # Disable routing if truck must charge now
+                    # OR if truck would be stranded after delivery (UNLESS truck must leave charger)
+                    # If must_leave=True, allow risky routing since truck has no choice but to leave
+                    is_feasible = is_energy_feasible and not must_charge_now and (can_continue_after_delivery or must_leave)
                     action_to_node_map.append((next_delivery, False))
                     feasible_action_mask.append(is_feasible)
                     _append_action_metadata(next_delivery, False)

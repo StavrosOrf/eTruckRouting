@@ -44,18 +44,9 @@ def read_file(filename: str) -> Any:
 
 
 def map_charger_type(charger_type_str: str) -> str:
-    """Map charger type strings to standardized names."""
-    charger_type_lower = charger_type_str.lower()
-    if "level2" in charger_type_lower or "level 2" in charger_type_lower:
-        return "Level2"
-    elif (
-        "dcfast" in charger_type_lower
-        or "dc fast" in charger_type_lower
-        or "dc_fast" in charger_type_lower
-    ):
-        return "DCFast"
-    else:
-        return charger_type_str
+    """Map charger type strings to standardized names. All chargers are mapped to DCFast."""
+    # Force all chargers to be DC Fast chargers
+    return "DCFast"
 
 
 def check_navigation_feasibility(

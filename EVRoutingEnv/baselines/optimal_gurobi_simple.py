@@ -2,7 +2,7 @@
 Simplified optimal charging planner built with Gurobi with stochastic considerations.
 
 Key features:
-- Applies 20% safety margin to all energy consumption to account for stochastic variations
+- Applies energy safety margin based on config settings to account for stochastic variations
 - Uses nominal (base) travel times without traffic variations
 - Ignores charger queues and contention (assumes always available)
 - Conservative charging: always rounds up to ensure sufficient charge
@@ -35,7 +35,7 @@ class OptimalGurobiSimplePolicy:
     Simplified per-truck optimal policy using MILP with stochastic robustness.
     
     Maintains high success rate in stochastic environments by:
-    - Applying 20% energy safety margin to account for stochastic consumption
+    - Applying energy safety margin based on config to account for stochastic consumption
     - Rounding charging durations up
     - Adding minimum battery buffers
     - Using conservative planning to handle uncertainty
@@ -45,11 +45,18 @@ class OptimalGurobiSimplePolicy:
         self.verbose = verbose
         self._plans: Dict[int, List[PlanStep]] = {}
         self._cursors: Dict[int, int] = {}
+        self._energy_safety_factor = None  # Will be set from env config
 
     def get_action(self, env) -> int:
         """Return the next action for the currently active truck."""
         if env.active_truck_id is None:
             return env.action_space.sample()
+
+        # Initialize energy safety factor from config on first call
+        if self._energy_safety_factor is None:
+            self._energy_safety_factor = self._compute_energy_safety_factor(env)
+            if self.verbose:
+                print(f"[Simple Optimal] Energy safety factor set to {self._energy_safety_factor:.2f}")
 
         truck_id = env.active_truck_id
         truck = env.trucks[truck_id]
@@ -241,13 +248,36 @@ class OptimalGurobiSimplePolicy:
 
         return plan
 
+    def _compute_energy_safety_factor(self, env) -> float:
+        """
+        Compute energy safety factor from environment config.
+        
+        Returns:
+            Safety factor (multiplier) based on energy uncertainty settings.
+            If energy uncertainty is disabled, returns 1.0 (no safety margin).
+            If enabled, returns max_energy_multiplier from config.
+        """
+        traffic_config = getattr(env, 'traffic_config', {})
+        
+        # Check if energy uncertainty is enabled
+        enable_energy_uncertainty = traffic_config.get('enable_energy_uncertainty', False)
+        
+        if not enable_energy_uncertainty:
+            # No energy uncertainty - use deterministic values
+            return 1.0
+        
+        # Energy uncertainty enabled - use max multiplier from config as safety factor
+        max_energy_multiplier = traffic_config.get('max_energy_multiplier', 1.20)
+        
+        return float(max_energy_multiplier)
+
     def _build_segments(self, deliveries: Sequence[int], env) -> List[Dict]:
-        """Precompute travel options for each leg with 20% energy safety margin."""
+        """Precompute travel options for each leg with energy safety margin from config."""
         segments = []
         graph = env.transport_graph
-        # Add 20% safety margin to account for stochastic energy consumption
-        energy_safety_factor = 1.20
-        energy_safety_factor = 1
+        
+        # Use cached safety factor computed from config
+        energy_safety_factor = self._energy_safety_factor if self._energy_safety_factor is not None else 1.0
         
         for idx in range(len(deliveries) - 1):
             start = deliveries[idx]

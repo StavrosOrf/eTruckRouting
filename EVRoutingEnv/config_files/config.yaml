@@ -79,7 +79,7 @@ delivery:
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
-  base_unloading_time: 0.1
+  base_unloading_time: 0.5
   
   # Standard deviation of unloading time as fraction of base time
   # Example: 0.20 means std_dev = 20% of base_unloading_time during off-hours

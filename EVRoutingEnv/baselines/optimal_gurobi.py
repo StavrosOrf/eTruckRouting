@@ -1,18 +1,14 @@
 """
 Deterministic optimal charging planner built with Gurobi.
 
-Assumptions kept intentionally simple:
-- The delivery order for each truck is fixed by the environment.
-- Trucks do not compete for charger capacity or induce queueing delays.
-- Travel times: deterministic from graph, with conservative adjustment when traffic enabled.
-- At most one charger may be visited between two consecutive deliveries.
-- Charging durations are chosen from the environment's discrete duration set.
-- Supports realistic DC fast charging curves (CCCV) when enabled in config.
-
-Traffic Handling:
-- When traffic simulation is enabled, applies conservative multipliers to travel times.
-- Uses mean + 1 std_dev under worst-case (rush hour) conditions for robust planning.
-- This ensures the optimal solution remains feasible under traffic variability (~84% of cases).
+Assumptions:
+- Fixed delivery order per truck (provided by the environment)
+- No charger queueing or contention (deterministic service)
+- Travel times are deterministic (no traffic uncertainty)
+- At most one charger visit between consecutive deliveries
+- Continuous charging durations
+- Optional realistic DC fast charging curves (CCCV) when enabled in config
+- Energy use per trip inflated by a small safety factor (1.1×) to guard against minor underestimation
 """
 
 from __future__ import annotations
@@ -25,7 +21,6 @@ import gurobipy as gp
 from gurobipy import GRB
 
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
-from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
 
 
 @dataclass
@@ -53,6 +48,7 @@ class OptimalGurobiPolicy:
         self._plans: Dict[int, List[PlanStep]] = {}
         self._cursors: Dict[int, int] = {}
         self._charging_curve_model = ChargingCurveModel(verbose=False)
+        self.energy_safety_factor = 1.1  # Inflate energy needs slightly to stay feasible
 
     # ---------- Public API ----------
     def get_action(self, env) -> int:
@@ -303,30 +299,26 @@ class OptimalGurobiPolicy:
             start = deliveries[idx]
             target = deliveries[idx + 1]
             try:
-                base_direct_time = graph.get_time_distance(start, target)
-                # Apply traffic multiplier for robust planning
-                traffic_mult = self._get_traffic_multiplier(env, base_direct_time)
-                direct_time = base_direct_time * traffic_mult
+                direct_time = graph.get_time_distance(start, target)
             except Exception:
                 direct_time = float("inf")
             direct_energy = graph.get_path_energy(start, target)
+            if math.isfinite(direct_energy):
+                direct_energy *= self.energy_safety_factor
 
             charger_options = []
             for charger in env.charging_nodes:
                 try:
-                    base_to_time = graph.get_time_distance(start, charger)
-                    base_from_time = graph.get_time_distance(charger, target)
-                    # Apply traffic multipliers to both legs
-                    traffic_mult_to = self._get_traffic_multiplier(env, base_to_time)
-                    traffic_mult_from = self._get_traffic_multiplier(env, base_from_time)
-                    to_time = base_to_time * traffic_mult_to
-                    from_time = base_from_time * traffic_mult_from
+                    to_time = graph.get_time_distance(start, charger)
+                    from_time = graph.get_time_distance(charger, target)
                 except Exception:
                     continue
                 to_energy = graph.get_path_energy(start, charger)
                 from_energy = graph.get_path_energy(charger, target)
                 if not math.isfinite(to_energy) or not math.isfinite(from_energy):
                     continue
+                to_energy *= self.energy_safety_factor
+                from_energy *= self.energy_safety_factor
                 rate, eff = self._charger_profile(env, charger)
                 charger_options.append(
                     {
@@ -352,33 +344,8 @@ class OptimalGurobiPolicy:
         return segments
 
     def _get_traffic_multiplier(self, env, base_travel_time: float) -> float:
-        """Calculate conservative traffic multiplier for robust planning.
-        
-        When traffic is enabled, use expected worst-case multiplier to ensure
-        the optimal solution remains feasible under traffic variability.
-        
-        Returns:
-            Multiplier to apply to travel time (>= 1.0)
-        """
-        if not hasattr(env, 'traffic_config') or not env.traffic_config['enable_traffic']:
-            return 1.0
-        
-        # Get traffic parameters
-        std_dev_factor = env.traffic_config['std_dev_factor']
-        rush_hour_multiplier = env.traffic_config['rush_hour_multiplier']
-        
-        # Conservative estimate: assume worst-case scenario
-        # Base std_dev with rush hour effect
-        worst_case_std_dev = std_dev_factor * rush_hour_multiplier
-        
-        # Use mean + 1 std_dev for robust planning (covers ~84% of cases)
-        # This ensures solution feasibility under most traffic conditions
-        traffic_multiplier = 1.0 + worst_case_std_dev
-        
-        # Cap at reasonable maximum (2.5x from traffic simulation bounds)
-        traffic_multiplier = min(traffic_multiplier, 2.5)
-        
-        return traffic_multiplier
+        """No traffic uncertainty: deterministic travel times."""
+        return 1.0
     
     def _charger_profile(self, env, node: int) -> Tuple[float, float]:
         """Return (rate, efficiency) for a charger node."""

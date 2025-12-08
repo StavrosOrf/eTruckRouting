@@ -8,10 +8,10 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 10
+  num_trucks: 20
 
   # Number of delivery stops per truck episode
-  num_stops: 3
+  num_stops: 5
 
   # Minimum energy consumption between consecutive delivery stops (kWh)
   min_hop_distance: 100.0
@@ -20,7 +20,7 @@ environment:
   max_hop_distance: 250.0
 
   # Maximum simulation time in hours (for event-driven environments)
-  max_time: 200
+  max_time: 250
 
   # Maximum number of steps per episode (prevents infinite episodes)
   max_episode_steps: 200
@@ -75,11 +75,11 @@ delivery:
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used
-  enable_stochastic_unloading: false
+  enable_stochastic_unloading: true
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
-  base_unloading_time: 0.1
+  base_unloading_time: 0.5
   
   # Standard deviation of unloading time as fraction of base time
   # Example: 0.20 means std_dev = 20% of base_unloading_time during off-hours

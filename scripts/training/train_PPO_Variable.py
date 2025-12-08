@@ -74,7 +74,7 @@ def parse_args():
                             help='Maximum number of timesteps')
     train_group.add_argument('--eval-freq', type=int, default=500,
                             help='Evaluation frequency (in timesteps)')
-    train_group.add_argument('--eval-episodes', type=int, default=10,
+    train_group.add_argument('--eval-episodes', type=int, default=30,
                             help='Number of episodes for evaluation')
     train_group.add_argument('--batch-size', type=int, default=256,
                             help='Batch size for training')

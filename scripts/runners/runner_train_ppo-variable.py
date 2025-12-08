@@ -8,7 +8,8 @@ import itertools
 
 # Configuration
 config = "EVRoutingEnv/config_files/config.yaml"
-python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+# python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+python_path = "/home/sorfanoudakis/EVRP/.venv/bin/python"
 
 # Training parameters
 counter = 0
@@ -18,9 +19,9 @@ eval_freq = 500
 batch_size = 64
 
 # Environment settings
-num_trucks = 10
+num_trucks = 20
 num_stops = 5
-max_time = 200.0
+max_time = 250.0
 
 # Fixed hyperparameters for this sweep
 learning_rate = 3e-4
@@ -29,11 +30,11 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [128],
-    # "steps_per_update": [128, 512, 1024],
-    "epochs": [10],
+    # "steps_per_update": [128],
+    "steps_per_update": [128, 512, 1024, 2048],
+    "epochs": [2], #10
     "entropy_coef": [0.1],
-    "gnn_hidden_dim": [32],
+    "gnn_hidden_dim": [64],
     "mlp_hidden_dim": [256],
     "seed": [0],
 }
@@ -72,7 +73,7 @@ for config_idx, (
     # Build experiment name
     exp_name = f"NewActions_Traffic_CCCV_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
-    sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
+    sweep_name = f"NewConfig_Sweep_Trucks_{num_trucks}_stops_{num_stops}"
 
     # Build command
     command = (
@@ -91,9 +92,9 @@ for config_idx, (
         f" --num-trucks {num_trucks}"
         f" --num-stops {num_stops}"
         f" --max-time {max_time}"
-        f" --wandb-project evpr-experiments-test"
+        f" --wandb-project evpr-experiments"
         f" --wandb-entity stavrosorf"
-        f" --verbose"
+        # f" --verbose"
         f" --group-name {sweep_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"

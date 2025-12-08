@@ -46,7 +46,7 @@ POLICIES = [
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 20
+NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 # =============================================
 

@@ -143,6 +143,8 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Delivery simulation settings
         self.delivery_config = self.config["delivery"]
+        self.enable_flexible_delivery_order = self.delivery_config.get("enable_flexible_delivery_order", False)
+        
         # Note: seed will be set in reset() method for reproducibility
         self.delivery_simulator = DeliverySimulator(
             enable_stochastic_unloading=self.delivery_config["enable_stochastic_unloading"],
@@ -222,13 +224,18 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"  - Max simulation time: {self.max_time} hours")
 
         # Define action space - Discrete for single active truck
-        # Actions: [chargers (0 to num_charging_nodes-1), next_delivery (num_charging_nodes),
-        #           charge_1h, charge_2h, charge_3h, charge_4h]
+        # Sequential mode: [chargers (0 to num_charging_nodes-1), next_delivery (num_charging_nodes), charge_1h, ...]
+        # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, charge_1h, ...]
         charge_durations = self.charging_config["charge_durations"]
-        self.num_navigation_actions = (
-            self.num_charging_nodes + 1
-        )  # Chargers + next delivery
-        self.num_charge_actions = len(charge_durations)  # Charge for 1-4 hours
+        
+        if self.enable_flexible_delivery_order:
+            # Flexible mode: separate action for each delivery node
+            self.num_navigation_actions = self.num_charging_nodes + self.num_stops
+        else:
+            # Sequential mode: single next delivery action
+            self.num_navigation_actions = self.num_charging_nodes + 1
+        
+        self.num_charge_actions = len(charge_durations)  # Charge for 1-N hours
 
         # Discrete action space (single agent)
         self.action_space = spaces.Discrete(
@@ -358,6 +365,7 @@ class EventDrivenTruckEnv(gym.Env):
             min_hop_distance=self.min_hop_distance,
             max_hop_distance=self.max_hop_distance,
             charging_nodes=self.charging_nodes,
+            enable_flexible_delivery_order=self.enable_flexible_delivery_order,
         )
 
         self.trucks.append(truck)
@@ -729,10 +737,20 @@ class EventDrivenTruckEnv(gym.Env):
                     # Go to charging station
                     target_node = self.charging_nodes[action]
                 else:
-                    # Go to next delivery
-                    target_node = truck.get_next_delivery_target()
-                    if target_node is None:
-                        raise ValueError("No remaining deliveries for truck")
+                    # Go to delivery
+                    if self.enable_flexible_delivery_order:
+                        # Flexible mode: decode which delivery from action index
+                        delivery_idx = action - self.num_charging_nodes
+                        # Map action index to delivery node in sequence (skip depot at index 0)
+                        if delivery_idx < len(truck.delivery_sequence) - 1:
+                            target_node = truck.delivery_sequence[delivery_idx + 1]
+                        else:
+                            raise ValueError(f"Invalid delivery action index: {delivery_idx}")
+                    else:
+                        # Sequential mode: go to next delivery
+                        target_node = truck.get_next_delivery_target()
+                        if target_node is None:
+                            raise ValueError("No remaining deliveries for truck")
                 reward += self._execute_navigation_action(truck, target_node)
             else:
                 # Charging action
@@ -786,13 +804,10 @@ class EventDrivenTruckEnv(gym.Env):
             if target_node in self.charging_nodes:
                 return self._execute_charge_action(truck, 1.0, target_node)
             else:
-                # go to next delivery
+                # Already at delivery - no movement needed, return 0 reward
                 if self.verbose:
-                    print(f"  Already at node {target_node}")
-                    print(f"  go to next delivery")
-                return self.execute_navigation_action(
-                    truck, action=self.num_charging_nodes
-                )
+                    print(f"  Already at delivery node {target_node}, no movement needed")
+                return 0.0
 
         # Calculate energy and time for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
@@ -833,7 +848,15 @@ class EventDrivenTruckEnv(gym.Env):
         # Determine if this is navigation to a charger or delivery
         is_charger_nav = target_node in self.charging_nodes
         next_delivery = truck.get_next_delivery_target()
-        is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+        
+        # Check if this is a delivery navigation
+        if self.enable_flexible_delivery_order:
+            # Flexible mode: check if target is any remaining delivery
+            remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
+            is_delivery_nav = target_node in remaining_deliveries
+        else:
+            # Sequential mode: check if target is next delivery
+            is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
         
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
         if is_delivery_nav:

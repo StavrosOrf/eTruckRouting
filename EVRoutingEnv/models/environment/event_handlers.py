@@ -72,7 +72,15 @@ class EventHandler:
         # Check if this will be a delivery event BEFORE updating truck state
         destination = data["destination"]
         next_delivery_target = truck.get_next_delivery_target()
-        is_delivery = destination == next_delivery_target
+        
+        # Handle both sequential and flexible modes
+        if truck.enable_flexible_delivery_order:
+            # Flexible mode: check if destination is any remaining delivery
+            remaining_deliveries = next_delivery_target if isinstance(next_delivery_target, list) else []
+            is_delivery = destination in remaining_deliveries
+        else:
+            # Sequential mode: check if destination is next delivery
+            is_delivery = destination == next_delivery_target
 
         # Update truck position and state
         truck.move_to_node(
@@ -118,14 +126,26 @@ class EventHandler:
             remaining_deliveries = truck.get_remaining_deliveries()
             next_delivery = truck.get_next_delivery_target()
             total_deliveries = len(truck.delivery_sequence) - 1  # Exclude depot
-            completed_deliveries = truck.current_sequence_index
-            print(
-                f"    Delivery progress: {completed_deliveries}/{total_deliveries} complete, "
-                f"{len(remaining_deliveries)} remaining"
-            )
-            print(f"    Current sequence index: {truck.current_sequence_index}/{len(truck.delivery_sequence)-1}")
-            print(f"    Next delivery target: {next_delivery}")
-            print(f"    Remaining deliveries: {remaining_deliveries}")
+            
+            if truck.enable_flexible_delivery_order:
+                completed_deliveries = len(truck.delivered_nodes)
+                print(
+                    f"    Delivery progress: {completed_deliveries}/{total_deliveries} complete, "
+                    f"{len(remaining_deliveries)} remaining (flexible mode)"
+                )
+                print(f"    Delivered nodes: {truck.delivered_nodes}")
+                print(f"    Next delivery targets: {next_delivery}")
+                print(f"    Remaining deliveries: {remaining_deliveries}")
+            else:
+                completed_deliveries = truck.current_sequence_index
+                print(
+                    f"    Delivery progress: {completed_deliveries}/{total_deliveries} complete, "
+                    f"{len(remaining_deliveries)} remaining (sequential mode)"
+                )
+                print(f"    Current sequence index: {truck.current_sequence_index}/{len(truck.delivery_sequence)-1}")
+                print(f"    Next delivery target: {next_delivery}")
+                print(f"    Remaining deliveries: {remaining_deliveries}")
+            
             print(f"    is_complete flag: {truck.is_complete}")
 
         # Check if truck failed (already logged in move_to_node)

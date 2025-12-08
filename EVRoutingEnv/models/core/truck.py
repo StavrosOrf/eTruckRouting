@@ -16,6 +16,7 @@ class Truck:
         initial_battery: float,
         battery_capacity: float,
         base_speed: float,
+        enable_flexible_delivery_order: bool = False,
     ):
         """
         Initialize a truck.
@@ -27,17 +28,22 @@ class Truck:
             initial_battery: Starting battery level (kWh)
             battery_capacity: Maximum battery capacity (kWh)
             base_speed: Base speed of truck (km/h)
+            enable_flexible_delivery_order: If True, allow flexible delivery order selection
         """
         self.truck_id = truck_id
         self.truck_type = truck_type
         self.delivery_sequence = delivery_sequence.copy()
         self.battery_capacity = battery_capacity
         self.base_speed = base_speed
+        self.enable_flexible_delivery_order = enable_flexible_delivery_order
         
         # Current state - clamp initial battery to capacity
         self.current_battery = min(battery_capacity, initial_battery)
         self.current_node = delivery_sequence[0]
         self.current_sequence_index = 0  # Index in delivery_sequence
+        
+        # For flexible delivery order: track completed deliveries as set
+        self.delivered_nodes = set()  # Set of delivered node IDs
         
         # Statistics
         self.total_distance_traveled = 0.0
@@ -98,30 +104,60 @@ class Truck:
         
         self.event_history.append(event)
     
-    def get_next_delivery_target(self) -> Optional[int]:
+    def get_next_delivery_target(self):
         """
-        Get the next delivery destination in the sequence.
+        Get the next delivery destination(s).
         
         Returns:
-            Next node ID, or None if sequence is complete
+            - If flexible delivery order is disabled: Single int (next node ID) or None
+            - If flexible delivery order is enabled: List of remaining delivery node IDs (may be empty)
         """
-        if self.current_sequence_index + 1 < len(self.delivery_sequence):
-            return self.delivery_sequence[self.current_sequence_index + 1]
-        return None
+        if self.enable_flexible_delivery_order:
+            # Return all undelivered nodes (excluding depot at index 0)
+            remaining = [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+            return remaining
+        else:
+            # Sequential mode: return next in sequence
+            if self.current_sequence_index + 1 < len(self.delivery_sequence):
+                return self.delivery_sequence[self.current_sequence_index + 1]
+            return None
     
     def get_remaining_deliveries(self) -> List[int]:
         """Get list of remaining delivery nodes."""
-        return self.delivery_sequence[self.current_sequence_index + 1:]
+        if self.enable_flexible_delivery_order:
+            # Return all undelivered nodes (excluding depot at index 0)
+            return [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+        else:
+            # Sequential mode: return remaining in sequence
+            return self.delivery_sequence[self.current_sequence_index + 1:]
     
-    def advance_to_next_delivery(self):
-        """Mark current delivery as complete and advance to next."""
-        if self.current_sequence_index + 1 < len(self.delivery_sequence):
-            self.current_sequence_index += 1
-            self.current_node = self.delivery_sequence[self.current_sequence_index]
+    def advance_to_next_delivery(self, delivered_node: Optional[int] = None):
+        """
+        Mark delivery as complete and advance.
+        
+        Args:
+            delivered_node: Specific node to mark as delivered (for flexible order mode).
+                           If None, advances to next in sequence (sequential mode).
+        """
+        if self.enable_flexible_delivery_order:
+            # Flexible mode: mark specific node as delivered
+            if delivered_node is not None:
+                self.delivered_nodes.add(delivered_node)
+                self.current_node = delivered_node
             
-            # Check if all deliveries complete
-            if self.current_sequence_index == len(self.delivery_sequence) - 1:
+            # Check if all deliveries complete (excluding depot at index 0)
+            all_delivery_nodes = set(self.delivery_sequence[1:])
+            if self.delivered_nodes == all_delivery_nodes:
                 self.is_complete = True
+        else:
+            # Sequential mode: advance to next in sequence
+            if self.current_sequence_index + 1 < len(self.delivery_sequence):
+                self.current_sequence_index += 1
+                self.current_node = self.delivery_sequence[self.current_sequence_index]
+                
+                # Check if all deliveries complete
+                if self.current_sequence_index == len(self.delivery_sequence) - 1:
+                    self.is_complete = True
     
     def start_routing(self, destination: int, timestamp: float):
         """
@@ -186,8 +222,15 @@ class Truck:
             )
         
         # Check if this was a delivery target
-        if node == self.get_next_delivery_target():
-            self.advance_to_next_delivery()
+        if self.enable_flexible_delivery_order:
+            # Flexible mode: check if node is any remaining delivery
+            remaining_deliveries = self.get_next_delivery_target()
+            if node in remaining_deliveries:
+                self.advance_to_next_delivery(delivered_node=node)
+        else:
+            # Sequential mode: check if node is next delivery
+            if node == self.get_next_delivery_target():
+                self.advance_to_next_delivery()
         
         # Check if out of battery
         if self.current_battery <= 0:

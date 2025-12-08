@@ -67,6 +67,11 @@ charging:
 # Delivery Configuration
 # ----------------------
 delivery:
+  # Enable flexible delivery order selection
+  # When enabled, trucks can navigate to any remaining delivery (not just next in sequence)
+  # When disabled, trucks must follow strict sequential delivery order
+  enable_flexible_delivery_order: false
+  
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used

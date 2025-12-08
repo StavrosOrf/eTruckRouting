@@ -78,6 +78,9 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
     current_time = env.global_clock
     actions = []
     
+    # Get action mask (ground truth feasibility from environment)
+    env_action_mask = env.mask_fn()
+    
     # Get GNN feasibility if available
     gnn_feasible_mask = None
     if gnn_state_space is not None:
@@ -92,12 +95,23 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
         if action_idx < env.num_charging_nodes:
             target_node = int(env.charging_nodes[action_idx])
             nav_stats = compute_navigation_stats(env, current_node, target_node)
-            feasible = (
-                nav_stats["energy"] is not None
-                and nav_stats["energy"] < truck.current_battery
-                and not truck.failed
-            )
-            reason = None if feasible else "Insufficient battery or unreachable path"
+            
+            # Use actual action mask from environment for accurate feasibility
+            feasible = bool(env_action_mask[action_idx])
+            if not feasible:
+                if nav_stats["energy"] is None or np.isinf(nav_stats["energy"]):
+                    reason = "Unreachable path"
+                elif nav_stats["energy"] >= truck.current_battery:
+                    energy_safety = 1.0
+                    if hasattr(env, 'traffic_config') and env.traffic_config.get('enable_traffic') and env.traffic_config.get('enable_energy_uncertainty'):
+                        energy_safety = env.traffic_config.get('max_energy_multiplier', 1.0)
+                    reason = f"Insufficient battery (need {nav_stats['energy'] * energy_safety:.1f}kWh with safety factor, have {truck.current_battery:.1f}kWh)"
+                elif truck.current_node in env.charging_nodes and not truck.must_leave_charger:
+                    reason = "Must charge now (at charger)"
+                else:
+                    reason = "Insufficient battery with safety margin"
+            else:
+                reason = None
             action_type = "route:charger"
             charge_hours = None
             
@@ -116,12 +130,82 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
                 avg_charge_time = np.median(charge_durations) if charge_durations else 1.0
                 estimated_wait = (queue_length + 1) * avg_charge_time / capacity
             
-        elif action_idx == env.num_charging_nodes:
-            target_node = truck.get_next_delivery_target()
-            nav_stats = compute_navigation_stats(env, current_node, target_node)
-            feasible = target_node is not None and nav_stats["energy"] is not None and nav_stats["energy"] < truck.current_battery
-            reason = None if feasible else "No deliveries left or too expensive"
-            action_type = "route:delivery"
+        elif action_idx < env.num_navigation_actions:
+            # Delivery action(s) - handle both sequential and flexible modes
+            if truck.enable_flexible_delivery_order:
+                # Flexible mode: decode which delivery from action index
+                delivery_idx = action_idx - env.num_charging_nodes
+                if delivery_idx < len(truck.delivery_sequence) - 1:
+                    target_node = truck.delivery_sequence[delivery_idx + 1]
+                    # Check if this delivery is still remaining
+                    remaining_deliveries = truck.get_next_delivery_target()
+                    if isinstance(remaining_deliveries, list) and target_node not in remaining_deliveries:
+                        # Already delivered
+                        nav_stats = {"energy": None, "time": None}
+                        feasible = False
+                        reason = f"Delivery at node {target_node} already completed"
+                    else:
+                        nav_stats = compute_navigation_stats(env, current_node, target_node)
+                        # Use actual action mask from environment for accurate feasibility
+                        feasible = bool(env_action_mask[action_idx])
+                        if not feasible:
+                            if nav_stats["energy"] is None or np.isinf(nav_stats["energy"]):
+                                reason = "Unreachable path"
+                            elif nav_stats["energy"] >= truck.current_battery:
+                                reason = "Insufficient battery"
+                            else:
+                                # Check if it's a stranding issue
+                                energy_safety = 1.0
+                                if hasattr(env, 'traffic_config') and env.traffic_config.get('enable_traffic') and env.traffic_config.get('enable_energy_uncertainty'):
+                                    energy_safety = env.traffic_config.get('max_energy_multiplier', 1.0)
+                                
+                                battery_after = truck.current_battery - (nav_stats["energy"] * energy_safety)
+                                
+                                # Check if can reach any charger from delivery
+                                can_reach_charger = False
+                                min_charger_dist = float('inf')
+                                for charger_id in env.charging_nodes:
+                                    charger_energy = env.transport_graph.get_path_energy(target_node, charger_id)
+                                    if charger_energy < min_charger_dist:
+                                        min_charger_dist = charger_energy
+                                    if battery_after > charger_energy * energy_safety:
+                                        can_reach_charger = True
+                                        break
+                                
+                                if not can_reach_charger and min_charger_dist != float('inf'):
+                                    reason = f"Would be stranded (need {min_charger_dist * energy_safety:.1f}kWh to nearest charger, have {battery_after:.1f}kWh after)"
+                                elif truck.current_node in env.charging_nodes and not truck.must_leave_charger:
+                                    reason = "Must charge now (at charger)"
+                                else:
+                                    reason = "Would be stranded after delivery"
+                        else:
+                            reason = None
+                else:
+                    # No delivery at this position
+                    target_node = None
+                    nav_stats = {"energy": None, "time": None}
+                    feasible = False
+                    reason = "No delivery at this sequence position"
+                action_type = f"route:delivery[{delivery_idx}]"
+            else:
+                # Sequential mode: single next delivery
+                target_node = truck.get_next_delivery_target()
+                nav_stats = compute_navigation_stats(env, current_node, target_node)
+                # Use actual action mask from environment for accurate feasibility
+                feasible = bool(env_action_mask[action_idx])
+                if not feasible:
+                    if target_node is None:
+                        reason = "No deliveries left"
+                    elif nav_stats["energy"] is None or np.isinf(nav_stats["energy"]):
+                        reason = "Unreachable path"
+                    elif nav_stats["energy"] >= truck.current_battery:
+                        reason = "Insufficient battery"
+                    else:
+                        reason = "Would be stranded after delivery or must charge now"
+                else:
+                    reason = None
+                action_type = "route:delivery"
+            
             charge_hours = None
             arrival_time = current_time + nav_stats["time"] if nav_stats["time"] is not None else None
             queue_length = None
@@ -145,9 +229,21 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
             queue_length = None
             estimated_wait = None
 
-        label = env._action_to_string(action_idx)
-        if charge_hours is not None:
+        # Generate label based on action type
+        if action_type.startswith("charge"):
             label = f"Charge for {charge_hours}h"
+        elif action_type.startswith("route:charger"):
+            label = f"Go to charger @ node {target_node}"
+        elif action_type.startswith("route:delivery"):
+            if truck.enable_flexible_delivery_order:
+                if target_node is not None:
+                    label = f"Go to delivery @ node {target_node}"
+                else:
+                    label = "No delivery at this position"
+            else:
+                label = "Go to next delivery"
+        else:
+            label = env._action_to_string(action_idx)
 
         # Get GNN feasibility for this action
         gnn_feasible = None
@@ -225,10 +321,16 @@ def heuristic_action(env: EventDrivenTruckEnv, actions: List[Dict]) -> Optional[
             charger_actions.sort()
             return charger_actions[0][1]
 
-    # Otherwise try to deliver.
-    for action in actions:
-        if action["type"] == "route:delivery" and action["feasible"]:
-            return action["index"]
+    # Otherwise try to deliver - handle both sequential and flexible modes
+    delivery_actions = [
+        (action["navigation"]["energy"], action["index"])
+        for action in actions
+        if action["type"].startswith("route:delivery") and action["feasible"]
+    ]
+    if delivery_actions:
+        # In flexible mode, choose closest delivery
+        delivery_actions.sort()
+        return delivery_actions[0][1]
 
     # Fall back to any feasible charger navigation.
     for action in actions:
@@ -261,6 +363,16 @@ def print_state_statistics(env: EventDrivenTruckEnv) -> None:
         truck_id = truck_state['truck_id']
         truck = env.trucks[truck_id]
         
+        # Get delivery info based on mode
+        if truck.enable_flexible_delivery_order:
+            remaining = truck.get_remaining_deliveries()
+            next_del_info = f"remaining={len(remaining)}"
+            if remaining:
+                next_del_info += f" {remaining}"
+        else:
+            next_del = truck_state.get('next_delivery_target')
+            next_del_info = f"next={next_del}"
+        
         flag = ""
         time_info = ""
         
@@ -284,9 +396,9 @@ def print_state_statistics(env: EventDrivenTruckEnv) -> None:
 
         print(
             f"  Truck {truck_state['truck_id']:2d} | {flag:<8} {time_info:<55} | node={truck_state['current_node']:4d} "
-            f"| next_delivery={truck_state['next_delivery_target']:4d} "
+            f"| {next_del_info:<40} "
             f"| battery={truck_state['current_battery']:.1f}/{truck_state['battery_capacity']:.1f} "
-            f"({truck_state['battery_percentage']:.1f}%) | remaining={truck_state['deliveries_remaining']}"
+            f"({truck_state['battery_percentage']:.1f}%)"
         )
 
     print("-" * 120)

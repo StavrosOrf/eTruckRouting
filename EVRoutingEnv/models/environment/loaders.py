@@ -12,6 +12,7 @@ def create_truck(
     min_hop_distance: float,
     max_hop_distance: float,
     charging_nodes: list,
+    enable_flexible_delivery_order: bool = False,
 ) -> tuple:
     """
     Create a new truck with random delivery sequence.
@@ -24,6 +25,7 @@ def create_truck(
         min_hop_distance: Minimum distance between stops
         max_hop_distance: Maximum distance between stops
         charging_nodes: List of charging station nodes
+        enable_flexible_delivery_order: If True, allow flexible delivery order selection
 
     Returns:
         Tuple of (truck, delivery_sequence, start_node)
@@ -127,6 +129,7 @@ def create_truck(
         initial_battery=initial_battery,
         battery_capacity=battery_capacity,
         base_speed=base_speed,
+        enable_flexible_delivery_order=enable_flexible_delivery_order,
     )
 
     return truck, delivery_sequence, start_node

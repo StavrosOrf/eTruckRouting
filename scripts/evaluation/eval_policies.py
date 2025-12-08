@@ -12,6 +12,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
+from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
@@ -30,8 +31,8 @@ POLICIES = [
     # GNN-based policies
     # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
-    ("saved_models/NewActions_Traffic_CCCV_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/NewActions_Traffic_CCCV_steps=512_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewActions_Traffic_CCCV_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewActions_Traffic_CCCV_steps=512_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
     # SB3 policies
@@ -40,12 +41,13 @@ POLICIES = [
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("optimal-simple", "optimal-simple"),  # MP Robust - Gurobi solver with 20% energy safety margin
     # ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
-NUM_STOPS = 5
+NUM_STOPS = 1
 NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 # =============================================
@@ -55,7 +57,20 @@ def evaluate_policy(
     env, policy, gnn_state_space, policy_type, num_episodes, seed, config
 ):
     """Evaluate a policy over multiple episodes."""
-    rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
+    rewards = []
+    successes = []
+    distances = []
+    charging_times = []
+    steps = []
+    completion_times = []
+    total_deliveries = []
+    num_charging_sessions = []
+    waiting_times = []
+    routing_times = []
+    unloading_times = []
+    failures = []
+    max_time_terminations = []
+    max_steps_terminations = []
     
     # Check if this is an SB3 policy
     is_sb3_policy = policy_type.startswith("sb3-")
@@ -64,8 +79,13 @@ def evaluate_policy(
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
-        # Recreate optimal planner per episode to avoid stale plans across seeds
-        episode_policy = OptimalGurobiPolicy(verbose=False) if policy_type == "optimal" else policy
+        # Recreate optimal planners per episode to avoid stale plans across seeds
+        if policy_type == "optimal":
+            episode_policy = OptimalGurobiPolicy(verbose=False)
+        elif policy_type == "optimal-simple":
+            episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+        else:
+            episode_policy = policy
 
         while not (done or truncated):
             if is_sb3_policy:
@@ -79,7 +99,7 @@ def evaluate_policy(
                     action, _states = policy.predict(obs, deterministic=True)
             else:
                 # Custom policies
-                if policy_type == "optimal":
+                if policy_type == "optimal" or policy_type == "optimal-simple":
                     action = episode_policy.get_action(env)
                 elif policy_type == "heuristic":
                     action = policy.get_action(env)
@@ -104,24 +124,57 @@ def evaluate_policy(
         successes.append(1.0 if info["all_complete"] else 0.0)
         steps.append(episode_steps)
         completion_times.append(env.global_clock)
-
-        # Extract metrics from truck info
-        trucks_info = info["trucks"]
-        total_dist = sum(t["total_distance"] for t in trucks_info)
-        total_charge = sum(t["total_charging_time"] for t in trucks_info)
         
-        # Count deliveries completed: total sequence length - remaining deliveries - 1 (for start)
+        # Track termination reasons
+        max_time_reached = 1.0 if truncated and env.global_clock >= env.max_time else 0.0
+        max_steps_reached = 1.0 if truncated and episode_steps >= env.max_episode_steps else 0.0
+        max_time_terminations.append(max_time_reached)
+        max_steps_terminations.append(max_steps_reached)
+
+        # Extract detailed metrics from truck info
+        trucks_info = info["trucks"]
+        total_dist = 0.0
+        total_charge = 0.0
+        total_sessions = 0
+        total_waiting = 0.0
+        total_routing = 0.0
+        total_unloading = 0.0
+        num_failed = 0
         num_deliveries = 0
+        
         for t in trucks_info:
+            total_dist += t["total_distance"]
+            total_charge += t["total_charging_time"]
+            total_sessions += t["num_charging_sessions"]
+            total_waiting += t["waiting_time"]
+            total_unloading += t["total_unloading_time"]
+            
+            # Count failures
+            if t["failed"]:
+                num_failed += 1
+            
+            # Count deliveries completed
             total_stops = len(t["delivery_sequence"])
             remaining = t["deliveries_remaining"]
-            # Deliveries made = total stops - start node - remaining deliveries
             if total_stops > 0:
                 num_deliveries += max(0, total_stops - 1 - remaining)
+            
+            # Calculate routing time: total_time - charging - unloading - waiting
+            truck_total_time = t["total_time"]
+            truck_charging_time = t["total_charging_time"]
+            truck_unloading_time = t["total_unloading_time"]
+            truck_waiting_time = t["waiting_time"]
+            truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
+            total_routing += max(0.0, truck_routing_time)
         
         distances.append(total_dist)
         charging_times.append(total_charge)
         total_deliveries.append(num_deliveries)
+        num_charging_sessions.append(total_sessions)
+        waiting_times.append(total_waiting)
+        routing_times.append(total_routing)
+        unloading_times.append(total_unloading)
+        failures.append(num_failed)
 
     return {
         "mean_reward": np.mean(rewards),
@@ -137,6 +190,18 @@ def evaluate_policy(
         "std_completion_time": np.std(completion_times),
         "mean_deliveries": np.mean(total_deliveries),
         "std_deliveries": np.std(total_deliveries),
+        "mean_charging_sessions": np.mean(num_charging_sessions),
+        "std_charging_sessions": np.std(num_charging_sessions),
+        "mean_waiting_time": np.mean(waiting_times),
+        "std_waiting_time": np.std(waiting_times),
+        "mean_routing_time": np.mean(routing_times),
+        "std_routing_time": np.std(routing_times),
+        "mean_unloading_time": np.mean(unloading_times),
+        "std_unloading_time": np.std(unloading_times),
+        "mean_failures": np.mean(failures),
+        "std_failures": np.std(failures),
+        "max_time_terminations": np.sum(max_time_terminations),
+        "max_steps_terminations": np.sum(max_steps_terminations),
     }
 
 
@@ -186,6 +251,14 @@ def main():
                     "Optimal (Gurobi) policy requires gurobipy to be installed."
                 ) from exc
             resolved_type = "optimal"
+        elif policy_type == "optimal-simple":
+            try:
+                policy = OptimalGurobiSimplePolicy(verbose=False)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Optimal Simple (Gurobi) policy requires gurobipy to be installed."
+                ) from exc
+            resolved_type = "optimal-simple"
         else:
             # Load GNN-based policies using existing function
             policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
@@ -195,6 +268,8 @@ def main():
             name = "Heuristic"
         elif policy_path == "optimal":
             name = "Optimal (Gurobi)"
+        elif policy_path == "optimal-simple":
+            name = "MP Robust"
         elif policy_type.startswith("sb3-"):
             # For SB3 models, create readable name from directory path
             dir_path = os.path.dirname(policy_path) if policy_path.endswith('.zip') else policy_path
@@ -238,29 +313,97 @@ def main():
 
     eval_env.close()
 
-    # Print results table
-    print(f"\n{'='*160}")
-    print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)\n")
-    print(
-        f"{'Policy':<50} {'Reward':<18} {'Success':<12} {'Deliveries':<15} {'Steps':<15} "
-        f"{'Time (h)':<18} {'Distance (km)':<18} {'Charging (h)':<18}"
-    )
-    print("-" * 160)
-
-    for name in sorted(results.keys()):
-        r = results[name]
-        print(
-            f"{name:<50} "
-            f"{r['mean_reward']:>7.0f}±{r['std_reward']:<7.0f}  "
-            f"{r['success_rate']*100:>5.1f}%      "
-            f"{r['mean_deliveries']:>6.1f}±{r['std_deliveries']:<5.1f}  "
-            f"{r['mean_steps']:>6.1f}±{r['std_steps']:<5.1f}  "
-            f"{r['mean_completion_time']:>7.1f}±{r['std_completion_time']:<7.1f}  "
-            f"{r['mean_total_distance']:>7.0f}±{r['std_total_distance']:<7.0f}  "
-            f"{r['mean_charging_time']:>7.1f}±{r['std_charging_time']:<7.1f}"
-        )
-
-    print(f"{'='*160}\n")
+    # Print results in vertical format with policies side-by-side
+    def wrap_name(name, width=20):
+        """Wrap long policy names into multiple lines."""
+        if len(name) <= width:
+            return [name.ljust(width)]
+        words = name.replace('_', ' ').replace('-', ' ').split()
+        lines = []
+        current_line = ""
+        for word in words:
+            if len(current_line) + len(word) + 1 <= width:
+                current_line += (" " if current_line else "") + word
+            else:
+                if current_line:
+                    lines.append(current_line.ljust(width))
+                current_line = word
+        if current_line:
+            lines.append(current_line.ljust(width))
+        return lines if lines else [name[:width].ljust(width)]
+    
+    sorted_names = sorted(results.keys())
+    col_width = 22
+    metric_col_width = 25
+    # Calculate total width including vertical separators
+    separator_width = metric_col_width + 1 + (col_width + 1) * len(sorted_names) + 1
+    
+    print(f"\n{'='*separator_width}")
+    print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)")
+    print(f"Environment: {NUM_TRUCKS} trucks, {NUM_STOPS} stops")
+    print(f"{'='*separator_width}\n")
+    
+    # Print policy names (wrapped if needed)
+    name_lines = [wrap_name(name, col_width) for name in sorted_names]
+    max_name_lines = max(len(lines) for lines in name_lines)
+    
+    print("Metric".ljust(metric_col_width), end="")
+    print("|", end="")
+    for i in range(max_name_lines):
+        for j, lines in enumerate(name_lines):
+            if i < len(lines):
+                print(f" {lines[i]}", end="")
+            else:
+                print(f" {' '*col_width}", end="")
+            if j < len(name_lines) - 1:
+                print("|", end="")
+        if i < max_name_lines - 1:
+            print()
+            print(" " * metric_col_width + "|", end="")
+    print(" |")
+    print("-" * separator_width)
+    
+    # Define metrics to display
+    metrics = [
+        ("Reward", "mean_reward", "std_reward", ".0f"),
+        ("Success Rate (%)", "success_rate", None, ".1f", 100),
+        ("Deliveries", "mean_deliveries", "std_deliveries", ".1f"),
+        ("Steps", "mean_steps", "std_steps", ".1f"),
+        ("Total Time (h)", "mean_completion_time", "std_completion_time", ".1f"),
+        ("Distance (km)", "mean_total_distance", "std_total_distance", ".0f"),
+        ("Charging Time (h)", "mean_charging_time", "std_charging_time", ".1f"),
+        ("Charging Sessions", "mean_charging_sessions", "std_charging_sessions", ".1f"),
+        ("Waiting Time (h)", "mean_waiting_time", "std_waiting_time", ".1f"),
+        ("Routing Time (h)", "mean_routing_time", "std_routing_time", ".1f"),
+        ("Unloading Time (h)", "mean_unloading_time", "std_unloading_time", ".1f"),
+        ("Failures", "mean_failures", "std_failures", ".1f"),
+        ("Max Time Reached", "max_time_terminations", None, ".0f"),
+        ("Max Steps Reached", "max_steps_terminations", None, ".0f"),
+    ]
+    
+    for metric_info in metrics:
+        label = metric_info[0]
+        mean_key = metric_info[1]
+        std_key = metric_info[2] if len(metric_info) > 2 else None
+        fmt = metric_info[3] if len(metric_info) > 3 else ".1f"
+        multiplier = metric_info[4] if len(metric_info) > 4 else 1
+        
+        print(f"{label:<{metric_col_width}}", end="")
+        print("|", end="")
+        for idx, name in enumerate(sorted_names):
+            r = results[name]
+            mean_val = r[mean_key] * multiplier
+            if std_key and std_key in r:
+                std_val = r[std_key] * multiplier
+                value_str = f"{mean_val:{fmt}} ±{std_val:{fmt}}"
+            else:
+                value_str = f"{mean_val:{fmt}}"
+            print(f" {value_str:>{col_width}}", end="")
+            if idx < len(sorted_names) - 1:
+                print(" |", end="")
+        print(" |")
+    
+    print(f"{'='*separator_width}\n")
 
 
 if __name__ == "__main__":

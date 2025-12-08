@@ -8,7 +8,8 @@ Assumptions:
 - At most one charger visit between consecutive deliveries
 - Continuous charging durations
 - Optional realistic DC fast charging curves (CCCV) when enabled in config
-- Energy use per trip inflated by a small safety factor (1.1×) to guard against minor underestimation
+- Energy use per trip inflated by safety factor matching environment's max_energy_multiplier
+  to ensure robust plans under energy consumption uncertainty
 """
 
 from __future__ import annotations
@@ -48,7 +49,8 @@ class OptimalGurobiPolicy:
         self._plans: Dict[int, List[PlanStep]] = {}
         self._cursors: Dict[int, int] = {}
         self._charging_curve_model = ChargingCurveModel(verbose=False)
-        self.energy_safety_factor = 1.1  # Inflate energy needs slightly to stay feasible
+        # Energy safety factor - will be set dynamically based on environment config
+        self.energy_safety_factor = 1.22  # Default value with 22% buffer
 
     # ---------- Public API ----------
     def get_action(self, env) -> int:
@@ -71,9 +73,24 @@ class OptimalGurobiPolicy:
         if needs_plan:
             try:
                 plan = self._solve_truck(truck=truck, env=env)
-            except Exception:
-                # Fall back to naive delivery navigation on solver failure
-                return env.num_charging_nodes
+            except Exception as e:
+                # Log the error for debugging
+                if self.verbose:
+                    print(f"[Optimal Policy] Solver failed for truck {truck_id}: {e}")
+                # Try with increased safety margin
+                try:
+                    original_factor = self.energy_safety_factor
+                    self.energy_safety_factor = min(1.25, original_factor * 1.05)  # Slightly more conservative
+                    plan = self._solve_truck(truck=truck, env=env)
+                    if self.verbose:
+                        print(f"[Optimal Policy] Retry with factor {self.energy_safety_factor} succeeded")
+                except Exception as e2:
+                    if self.verbose:
+                        print(f"[Optimal Policy] Retry also failed: {e2}. Using fallback strategy.")
+                    # Emergency fallback: go to nearest charger first
+                    plan = self._create_emergency_plan(truck, env)
+                finally:
+                    self.energy_safety_factor = original_factor
             self._plans[truck_id] = plan
             self._cursors[truck_id] = 0
 
@@ -89,6 +106,13 @@ class OptimalGurobiPolicy:
     # ---------- Core solver ----------
     def _solve_truck(self, truck, env) -> List[PlanStep]:
         """Build and solve the MILP for a single truck."""
+        # Set energy safety factor based on environment's worst-case energy multiplier
+        if hasattr(env, 'traffic_config') and env.traffic_config.get('enable_energy_uncertainty', False):
+            # Use max multiplier directly - it already represents worst case
+            self.energy_safety_factor = env.traffic_config.get('max_energy_multiplier', 1.2)
+        else:
+            self.energy_safety_factor = 1.12  # 12% safety margin without uncertainty
+        
         deliveries = [int(truck.current_node)] + [
             int(n) for n in truck.get_remaining_deliveries()
         ]
@@ -136,8 +160,10 @@ class OptimalGurobiPolicy:
         model.Params.OutputFlag = 0
 
         num_segments = len(segments)
+        # Add minimum battery safety buffer (5% of capacity) to avoid running too close to empty
+        min_battery_buffer = 0.05 * battery_cap
         battery = model.addVars(
-            num_segments + 1, lb=0.0, ub=battery_cap, name="battery"
+            num_segments + 1, lb=min_battery_buffer, ub=battery_cap, name="battery"
         )
         direct = model.addVars(num_segments, vtype=GRB.BINARY, name="direct")
         use_charger: Dict[Tuple[int, int], gp.Var] = {}
@@ -222,7 +248,8 @@ class OptimalGurobiPolicy:
                     # Use conservative approximation for realistic charging
                     # Apply a taper efficiency factor to account for reduced power at high SOC
                     # Based on validation: realistic charging delivers ~89.4% of linear charging
-                    taper_efficiency = 0.85  # Conservative estimate (worst-case taper)
+                    # Using 87% for safety margin (2.4% buffer below validated average)
+                    taper_efficiency = 0.87  # Conservative but accurate estimate
                     effective_rate = opt["rate"] * opt["efficiency"] * taper_efficiency
                     added_energy = effective_rate * ct_var
                 else:
@@ -261,8 +288,20 @@ class OptimalGurobiPolicy:
         model.setObjective(gp.quicksum(objective_terms), GRB.MINIMIZE)
         model.optimize()
 
-        if model.Status != GRB.OPTIMAL:
-            raise RuntimeError(f"Gurobi solver status {model.Status}")
+        if model.Status == GRB.INFEASIBLE:
+            if self.verbose:
+                print(f"[Optimal Policy] Model is infeasible. Computing IIS...")
+            model.computeIIS()
+            raise RuntimeError(f"Gurobi model is INFEASIBLE - no feasible solution exists")
+        elif model.Status == GRB.UNBOUNDED:
+            raise RuntimeError(f"Gurobi model is UNBOUNDED")
+        elif model.Status != GRB.OPTIMAL:
+            # Try to use best bound if available
+            if model.SolCount > 0:
+                if self.verbose:
+                    print(f"[Optimal Policy] Using suboptimal solution (status {model.Status})")
+            else:
+                raise RuntimeError(f"Gurobi solver failed with status {model.Status}")
 
         plan: List[PlanStep] = []
         if start_charge_time is not None and start_charge_time.X > 1e-6:
@@ -392,6 +431,56 @@ class OptimalGurobiPolicy:
             requested_charge = charge_hours * rate * efficiency
             return min(requested_charge, max_charge)
 
+    def _create_emergency_plan(self, truck, env) -> List[PlanStep]:
+        """
+        Create an emergency plan when the optimal solver fails.
+        Strategy: Go to nearest reachable charger and charge to near-full.
+        """
+        plan = []
+        current_node = truck.current_node
+        current_battery = truck.current_battery
+        battery_cap = truck.battery_capacity
+        
+        # Find nearest reachable charger
+        min_energy = float('inf')
+        best_charger = None
+        
+        for charger_node in env.charging_nodes:
+            try:
+                energy_needed = env.transport_graph.get_path_energy(current_node, int(charger_node))
+                # Apply safety factor
+                energy_needed *= self.energy_safety_factor
+                if energy_needed < current_battery and energy_needed < min_energy:
+                    min_energy = energy_needed
+                    best_charger = charger_node
+            except Exception:
+                continue
+        
+        if best_charger is not None:
+            # Navigate to nearest charger
+            plan.append(PlanStep(kind="nav_charger", target=best_charger))
+            
+            # Charge to 90% capacity (conservative, leaves room for uncertainty)
+            battery_after_travel = current_battery - min_energy
+            soc_after_travel = battery_after_travel / battery_cap
+            target_soc = 0.90
+            charge_needed = (target_soc - soc_after_travel) * battery_cap
+            
+            # Get charger rate and efficiency
+            rate, eff = self._charger_profile(env, best_charger)
+            charge_hours_needed = charge_needed / (rate * eff)
+            
+            # Add to plan with buffer
+            plan.append(PlanStep(kind="charge", duration=charge_hours_needed * 1.15))
+        
+        # Navigate to next delivery
+        plan.append(PlanStep(kind="nav_delivery"))
+        
+        if self.verbose:
+            print(f"[Optimal Policy] Emergency plan: {len(plan)} steps")
+        
+        return plan
+
     def _to_env_action(self, step: PlanStep, env) -> int:
         """Map a PlanStep to the environment's discrete action index."""
         if step.kind == "nav_delivery":
@@ -405,10 +494,16 @@ class OptimalGurobiPolicy:
         if step.kind == "charge":
             durations = [float(d) for d in env.charging_config["charge_durations"]]
             requested = max(0.0, float(step.duration or 0.0))
+            # Add 7% safety buffer to requested duration to account for:
+            # 1. Quantization errors from continuous->discrete mapping
+            # 2. Potential charging curve variations
+            # 3. Battery capacity uncertainty
+            # 4. Edge cases in energy consumption
+            requested_with_buffer = requested * 1.07
             # Pick the smallest available duration that is >= requested; if none, pick the max.
             candidate = None
             for d in sorted(durations):
-                if d >= requested - 1e-6:  # small tolerance
+                if d >= requested_with_buffer - 1e-6:  # small tolerance
                     candidate = d
                     break
             if candidate is None:

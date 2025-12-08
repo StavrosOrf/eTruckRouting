@@ -20,6 +20,22 @@ from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
+import yaml
+
+
+def save_environment_config(save_dir, config_dict):
+    """Save environment configuration to YAML file in the save directory.
+    
+    Args:
+        save_dir: Directory where the config should be saved
+        config_dict: Dictionary containing the environment configuration
+    """
+    config_file = os.path.join(save_dir, "config.yaml")
+    
+    with open(config_file, 'w') as f:
+        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+    
+    print(f"Environment configuration saved to: {config_file}")
 
 
 def save_network_config(save_dir, config_dict):
@@ -358,6 +374,9 @@ def train(args):
     save_dir = os.path.join("saved_models", args.exp_name)
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "ppo_model")
+    
+    # Save the environment configuration used for training
+    save_environment_config(save_dir, config)
     best_eval_reward = None
     best_model_path = None
 

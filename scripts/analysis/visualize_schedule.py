@@ -22,6 +22,7 @@ from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
+from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from scripts.training.train_PPO_Variable import compute_action_mask
 from algo.policy_utils import load_policy
 
@@ -29,7 +30,8 @@ from algo.policy_utils import load_policy
 # Policies to compare
 POLICIES = [
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("optimal", "optimal"),
+    # ("optimal", "optimal"),
+    ("optimal-simple", "optimal-simple"),
     # ("heuristic", "heuristic"),
 ]
 
@@ -73,6 +75,14 @@ def run_scenario(policy_path, policy_type):
             raise RuntimeError(
                 "Optimal (Gurobi) policy requires gurobipy to be installed."
             ) from exc
+    elif policy_type == "optimal-simple":
+        try:
+            policy = OptimalGurobiSimplePolicy(verbose=False)
+            active_policy_type = "optimal-simple"
+        except ImportError as exc:
+            raise RuntimeError(
+                "Optimal Simple (Gurobi) policy requires gurobipy to be installed."
+            ) from exc
     elif policy_type == "heuristic":
         from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
         policy = HeuristicPolicy()
@@ -90,10 +100,15 @@ def run_scenario(policy_path, policy_type):
     episode_steps = 0
     
     # Recreate optimal planner per episode to avoid stale plans
-    episode_policy = OptimalGurobiPolicy(verbose=False) if active_policy_type == "optimal" else policy
+    if active_policy_type == "optimal":
+        episode_policy = OptimalGurobiPolicy(verbose=False)
+    elif active_policy_type == "optimal-simple":
+        episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+    else:
+        episode_policy = policy
     
     while not (done or truncated):
-        if active_policy_type == "optimal" or active_policy_type == "heuristic":
+        if active_policy_type in ["optimal", "optimal-simple", "heuristic"]:
             action = episode_policy.get_action(env)
         else:
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -253,7 +268,7 @@ def plot_comparison(envs, policy_names, max_time):
     fig, ax = plt.subplots(figsize=(24, length * 1.3))
     
     # Y-axis positions: offset for each policy (increased spacing to avoid overlap)
-    offsets = [0.35, 0, -0.35][:len(policy_names)]
+    offsets = [0.35, 0, -0.35, -0.7][:len(policy_names)]
     
     for tid in truck_ids:
         # Draw background track with more spacing
@@ -667,7 +682,7 @@ def plot_charging_queue_dynamics(envs, policy_names, output_dir):
     if n_chargers == 1:
         axes = [axes]
     
-    colors_policy = ['#3498db', '#e74c3c', '#2ecc71'][:len(policy_names)]
+    colors_policy = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6'][:len(policy_names)]
     
     for idx, charger_node in enumerate(top_charger_nodes):
         ax = axes[idx]
@@ -765,6 +780,8 @@ def main():
             name = "Heuristic"
         elif policy_path == "optimal":
             name = "Optimal"
+        elif policy_path == "optimal-simple":
+            name = "MP Robust"
         else:
             base = os.path.basename(policy_path.rstrip('/'))
             name = base[:20] if len(base) > 20 else base

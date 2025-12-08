@@ -201,6 +201,8 @@ class TransportationGraph:
     def get_time_distance(self, from_node: int, to_node: int) -> float:
         """
         Get the travel time between two nodes.
+        
+        Uses shortest path computation similar to get_path_energy for consistency.
 
         Args:
             from_node: Starting node
@@ -209,15 +211,38 @@ class TransportationGraph:
         Returns:
             Travel time in hours, or float('inf') if no path exists
         """
+        # Check cache first
+        cache_key = (from_node, to_node, 'time')
+        if hasattr(self, '_time_cache') and cache_key in self._time_cache:
+            return self._time_cache[cache_key]
+        
+        # Initialize time cache if needed
+        if not hasattr(self, '_time_cache'):
+            self._time_cache = {}
+        
         # If same node, time distance is 0
         if from_node == to_node:
+            self._time_cache[cache_key] = 0.0
             return 0.0
         
+        # Check if direct edge exists
         if self.graph.has_edge(from_node, to_node):
-            return self.graph[from_node][to_node]["time"]
+            time_val = self.graph[from_node][to_node]["time"]
+            self._time_cache[cache_key] = time_val
+            return time_val
         
-        raise ValueError(f"No edge exists from {from_node} to {to_node}")
-        # return float("inf")
+        # Compute shortest path using Bellman-Ford (multi-hop)
+        try:
+            lengths = nx.single_source_bellman_ford_path_length(
+                self.graph, from_node, weight="time"
+            )
+            time_val = lengths.get(to_node, float('inf'))
+            self._time_cache[cache_key] = time_val
+            return time_val
+        except nx.NetworkXError:
+            # If path doesn't exist or negative cycle detected
+            self._time_cache[cache_key] = float('inf')
+            return float('inf')
 
     def get_edge_data(self, from_node: int, to_node: int) -> Dict:
         """

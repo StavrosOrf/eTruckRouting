@@ -5,6 +5,7 @@ Experiment runner for EVPR - runs various hyperparameter configurations in separ
 import os
 import time
 import itertools
+import yaml
 
 # Configuration
 config = "EVRoutingEnv/config_files/config.yaml"
@@ -29,9 +30,9 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [128],
+    "steps_per_update": [512],
     # "steps_per_update": [128, 512, 1024],
-    "epochs": [10],
+    "epochs": [5],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
@@ -50,11 +51,27 @@ all_combinations = list(
     )
 )
 
-# Sweep name for grouping in wandb
+# Load config file to extract uncertainty settings
+with open(config, 'r') as f:
+    config_data = yaml.safe_load(f)
 
+# Build uncertainty suffix for group name (short format)
+uncertainty_flags = []
+if config_data.get('traffic', {}).get('enable_traffic', False):
+    uncertainty_flags.append('T')  # Traffic
+    if config_data.get('traffic', {}).get('enable_energy_uncertainty', False):
+        uncertainty_flags.append('E')  # Energy uncertainty
+if config_data.get('delivery', {}).get('enable_stochastic_unloading', False):
+    uncertainty_flags.append('U')  # Unloading
+if config_data.get('charging', {}).get('use_realistic_curve', False):
+    uncertainty_flags.append('C')  # Charging curve (CCCV)
+if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False):
+    uncertainty_flags.append('F')  # Flexible delivery
+
+uncertainty_suffix = ''.join(uncertainty_flags) if uncertainty_flags else 'Det'  # Deterministic if none
 
 print(f"Total configurations to run: {len(all_combinations)}")
-# print(f"Sweep name: {sweep_name}\n")
+print(f"Uncertainty flags: {uncertainty_suffix}\n")
 
 for config_idx, (
     steps_per_update,
@@ -72,7 +89,9 @@ for config_idx, (
     # Build experiment name
     exp_name = f"NewActions_Traffic_CCCV_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
-    sweep_name = f"Sweep_Trucks_{num_trucks}_stops_{num_stops}"
+    
+    # Group name includes environment size and uncertainty types
+    group_name = f"{num_trucks}T{num_stops}S_{uncertainty_suffix}"
 
     # Build command
     command = (
@@ -91,10 +110,9 @@ for config_idx, (
         f" --num-trucks {num_trucks}"
         f" --num-stops {num_stops}"
         f" --max-time {max_time}"
-        f" --wandb-project evpr-experiments-test"
-        f" --wandb-entity stavrosorf"
-        f" --verbose"
-        f" --group-name {sweep_name}"
+        f" --wandb-project evpr-experiments"
+        f" --wandb-entity stavrosorf"        
+        f" --group-name {group_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"
         f" --ppo-minibatch-size 256"

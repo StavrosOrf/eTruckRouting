@@ -1,4 +1,4 @@
-# SimpleTruckEnv Configuration File
+# Configuration File
 # =================================
 # This file contains all problem-specific initialization parameters
 # for the electric truck routing and charging environment.
@@ -41,7 +41,7 @@ charging:
   # Realistic charging curve model
   # When enabled, DC Fast chargers will use SOC-dependent power tapering (CCCV model)
   # When disabled, all chargers use constant power (linear model)
-  use_realistic_curve: True  # Toggle: true = realistic CCCV, false = linear (default)
+  use_realistic_curve: true  # Toggle: true = realistic CCCV, false = linear (default)
 
   # Two charger types based on input data
 
@@ -75,7 +75,7 @@ delivery:
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used
-  enable_stochastic_unloading: false
+  enable_stochastic_unloading: true
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
@@ -129,7 +129,7 @@ network:
 traffic:
   # Enable traffic simulation (applies stochastic variation to travel times)
   # Uses time-of-day dependent model with rush hour effects
-  enable_traffic: True
+  enable_traffic: true
   
   # Standard deviation of travel time distribution as fraction of mean time
   # Example: std_dev_factor: 0.15 means std_dev = 15% of mean_time during off-peak
@@ -147,12 +147,12 @@ traffic:
   # Energy consumption uncertainty (tied to traffic conditions)
   # When enabled, traffic conditions affect energy efficiency
   # Stop-and-go traffic, speed variations increase energy consumption
-  enable_energy_uncertainty: True
+  enable_energy_uncertainty: true
   
   # Energy uncertainty factor as fraction of base energy consumption
   # Example: 0.10 means ±10% variation in energy consumption
   # Energy ~ N(base_energy, (energy_uncertainty_factor * base_energy)^2)
-  energy_uncertainty_factor: 0.10
+  energy_uncertainty_factor: 0.05
   
   # Maximum energy multiplier bounds to keep energy consumption realistic
   # min_energy_multiplier: minimum (best case - smooth traffic)

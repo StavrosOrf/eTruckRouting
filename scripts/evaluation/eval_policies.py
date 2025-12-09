@@ -44,8 +44,8 @@ POLICIES = [
     # ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 10  # Must match the configuration used during training
-NUM_STOPS = 3
+NUM_TRUCKS = 15  # Must match the configuration used during training
+NUM_STOPS = 5
 NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================

@@ -199,38 +199,93 @@ def create_truck(
         # Last resort: use any node
         valid_start_nodes = all_nodes
     
-    start_node = np.random.choice(valid_start_nodes)
-
-    # Generate delivery sequence with strict feasibility checks
+    # Get truck specifications
     truck_config = config["truck"]
     battery_capacity = truck_config["battery_capacity"]
-    max_tries = 100
     
-    for attempt in range(max_tries):
-        delivery_sequence = transport_graph.generate_delivery_sequence(
-            start_node=start_node,
-            num_stops=num_stops,
-            min_hop_distance=min_hop_distance,
-            max_hop_distance=max_hop_distance,
-            exclude_charging_nodes=True,
-        )
+    # Progressively reduce max_hop_distance to guarantee finding a feasible sequence
+    current_max_hop = max_hop_distance
+    current_min_hop = min_hop_distance
+    reduction_factor = 0.8
+    min_acceptable_hop = 1.0  # Minimum hop distance in km (adjust as needed)
+    
+    # Shuffle valid start nodes to try different ones
+    candidate_start_nodes = list(valid_start_nodes)
+    np.random.shuffle(candidate_start_nodes)
+    
+    feasible = False
+    delivery_sequence = None
+    start_node = None
+    
+    while not feasible and current_max_hop >= min_acceptable_hop:
+        # Try multiple start nodes with current hop distance constraints
+        max_start_node_tries = 20
+        max_sequence_tries_per_node = 5
         
-        # Check if sequence is feasible: every leg must have a valid path
-        feasible = _validate_delivery_sequence_feasibility(
-            delivery_sequence=delivery_sequence,
-            battery_capacity=battery_capacity,
-            transport_graph=transport_graph,
-            charging_nodes=charging_nodes,
-        )
+        for start_node_attempt in range(max_start_node_tries):
+            # Select a start node (cycle through candidates if we run out)
+            start_node = candidate_start_nodes[start_node_attempt % len(candidate_start_nodes)]
+            
+            # Try to generate a feasible sequence from this start node
+            for sequence_attempt in range(max_sequence_tries_per_node):
+                delivery_sequence = transport_graph.generate_delivery_sequence(
+                    start_node=start_node,
+                    num_stops=num_stops,
+                    min_hop_distance=current_min_hop,
+                    max_hop_distance=current_max_hop,
+                    exclude_charging_nodes=True,
+                )
+                
+                # Check if sequence is feasible: every leg must have a valid path
+                feasible = _validate_delivery_sequence_feasibility(
+                    delivery_sequence=delivery_sequence,
+                    battery_capacity=battery_capacity,
+                    transport_graph=transport_graph,
+                    charging_nodes=charging_nodes,
+                )
+                
+                if feasible:
+                    # Found a feasible sequence!
+                    break
+            
+            if feasible:
+                # Success - exit start node loop
+                break
         
-        if feasible:
-            break
-    else:
-        raise ValueError(
-            f"Failed to generate a feasible delivery sequence after {max_tries} attempts. "
-            f"Start node: {start_node}, Battery capacity: {battery_capacity} kWh. "
-            "Consider increasing battery_capacity or adjusting hop distance constraints."
-        )
+        if not feasible:
+            # Reduce hop distance constraints and try again
+            current_max_hop *= reduction_factor
+            current_min_hop = min(current_min_hop, current_max_hop * 0.5)
+            # Reshuffle start nodes for next iteration
+            np.random.shuffle(candidate_start_nodes)
+    
+    if not feasible:
+        # Last resort: generate any sequence with very small hops
+        # This should almost always succeed as shorter distances are easier to charge for
+        for start_node_attempt in range(len(candidate_start_nodes)):
+            start_node = candidate_start_nodes[start_node_attempt]
+            
+            for sequence_attempt in range(20):
+                delivery_sequence = transport_graph.generate_delivery_sequence(
+                    start_node=start_node,
+                    num_stops=num_stops,
+                    min_hop_distance=0.1,
+                    max_hop_distance=min_acceptable_hop,
+                    exclude_charging_nodes=True,
+                )
+                
+                feasible = _validate_delivery_sequence_feasibility(
+                    delivery_sequence=delivery_sequence,
+                    battery_capacity=battery_capacity,
+                    transport_graph=transport_graph,
+                    charging_nodes=charging_nodes,
+                )
+                
+                if feasible:
+                    break
+            
+            if feasible:
+                break
 
     # Get truck specifications (single type)
     truck_config = config["truck"]

@@ -200,8 +200,29 @@ def compute_action_mask(env):
     return mask
 
 
-def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
-    """Evaluate the current policy and collect detailed metrics."""
+def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_parallel_envs=5):
+    """Evaluate the current policy using multiple parallel environments for faster evaluation.
+    
+    Args:
+        env: Base environment (used to get config for creating parallel envs)
+        policy: Policy to evaluate
+        gnn_state_space: GNN state space for creating states
+        eval_episodes: Total number of evaluation episodes
+        seed: Base random seed
+        num_parallel_envs: Number of parallel environments to run
+    """
+    # Initialize parallel environments
+    parallel_envs = []
+    for i in range(num_parallel_envs):
+        eval_env = EventDrivenTruckEnv(
+            config=copy.deepcopy(env.config),
+            verbose=False,
+            enable_plotting=False,
+            run_id=f"eval_parallel_{i}"
+        )
+        parallel_envs.append(eval_env)
+    
+    # Metrics storage
     eval_rewards = []
     eval_success_rate = []
     eval_episode_lengths = []
@@ -215,87 +236,119 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
     eval_total_failures = []
     eval_total_deliveries = []
     
+    # Track state for each parallel environment
+    env_states = []
+    episode_rewards = [0.0] * num_parallel_envs
+    episode_steps = [0] * num_parallel_envs
+    episodes_completed = 0
     
-    for episode in trange(eval_episodes, desc="Eval episodes"):
-        obs, info = env.reset(seed=seed + episode)
-        episode_reward = 0
-        episode_steps = 0
-        done = False
-        truncated = False
-        
-        while not (done or truncated):
-            # Get GNN state from the CORRECT environment (eval_env, not train env)
-            gnn_state = gnn_state_space.get_state_GNN(env)
-            
-            # Select action without exploration noise (greedy)
-            # For PPO-variable, don't pass action_mask since GNN state has its own action space
-            if isinstance(policy, PPOVariableActionGNN):
-                raw_action = policy.select_action(gnn_state, expl_noise=0)
-                action = policy.to_env_action(gnn_state, int(raw_action))
-            else:
-                action_mask = compute_action_mask(env)
-                raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
-                if isinstance(raw_action, tuple):
-                    action = raw_action
+    # Initialize all environments
+    for i, penv in enumerate(parallel_envs):
+        obs, info = penv.reset(seed=seed + i)
+        gnn_state = gnn_state_space.get_state_GNN(penv)
+        env_states.append({
+            'env': penv,
+            'gnn_state': gnn_state,
+            'done': False,
+            'episode_num': i
+        })
+    
+    # Run episodes in parallel
+    with trange(eval_episodes, desc="Eval episodes") as pbar:
+        while episodes_completed < eval_episodes:
+            # Step through each active environment
+            for i, state in enumerate(env_states):
+                if state['done']:
+                    continue
+                
+                penv = state['env']
+                gnn_state = state['gnn_state']
+                
+                # Select action without exploration noise (greedy)
+                if isinstance(policy, PPOVariableActionGNN):
+                    raw_action = policy.select_action(gnn_state, expl_noise=0)
+                    action = policy.to_env_action(gnn_state, int(raw_action))
                 else:
-                    action = int(raw_action) % env.action_space.n
-            
-            # Take action
-            obs, reward, done, truncated, info = env.step(action)
-            episode_reward += reward
-            episode_steps += 1
-        
-        # Collect episode metrics from environment info
-        eval_rewards.append(episode_reward)
-        eval_success_rate.append(1.0 if info['all_complete'] else 0.0)
-        eval_episode_lengths.append(episode_steps)
-        
-        # Extract metrics from truck states in info (these are episode-specific)
-        total_charging_time = 0.0
-        num_charging_sessions = 0
-        total_waiting_time = 0.0
-        total_distance = 0.0
-        total_routing_time = 0.0
-        total_unloading_time = 0.0
-        num_failures = 0
-        num_deliveries = 0
-        
-        for truck_info in info['trucks']:
-            total_charging_time += truck_info['total_charging_time']
-            num_charging_sessions += truck_info['num_charging_sessions']
-            total_waiting_time += truck_info['waiting_time']
-            total_distance += truck_info['total_distance']
-            total_unloading_time += truck_info['total_unloading_time']
-            
-            # Count failures
-            if truck_info['failed']:
-                num_failures += 1
-            
-            # Count completed deliveries (total deliveries - remaining deliveries)
-            total_deliveries = len(truck_info['delivery_sequence']) - 1  # Exclude depot
-            deliveries_remaining = truck_info['deliveries_remaining']
-            deliveries_completed = total_deliveries - deliveries_remaining
-            num_deliveries += deliveries_completed
-            
-            # Calculate routing time: total_time - charging - unloading - waiting
-            truck_total_time = truck_info['total_time']
-            truck_charging_time = truck_info['total_charging_time']
-            truck_unloading_time = truck_info['total_unloading_time']
-            truck_waiting_time = truck_info['waiting_time']
-            truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
-            total_routing_time += max(0.0, truck_routing_time)  # Ensure non-negative
-        
-        eval_total_charging_time.append(total_charging_time)
-        eval_num_charging_sessions.append(num_charging_sessions)
-        eval_waiting_time.append(total_waiting_time)
-        eval_total_distance.append(total_distance)
-        eval_total_routing_time.append(total_routing_time)
-        eval_total_unloading_time.append(total_unloading_time)
-        eval_total_failures.append(num_failures)
-        eval_total_deliveries.append(num_deliveries)
-        
-        # Get episode time from global clock
-        eval_episode_time.append(info['global_clock'])
+                    action_mask = compute_action_mask(penv)
+                    raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
+                    if isinstance(raw_action, tuple):
+                        action = raw_action
+                    else:
+                        action = int(raw_action) % penv.action_space.n
+                
+                # Take action
+                obs, reward, done, truncated, info = penv.step(action)
+                episode_rewards[i] += reward
+                episode_steps[i] += 1
+                
+                if done or truncated:
+                    # Episode finished - collect metrics
+                    eval_rewards.append(episode_rewards[i])
+                    eval_success_rate.append(1.0 if info['all_complete'] else 0.0)
+                    eval_episode_lengths.append(episode_steps[i])
+                    
+                    # Extract metrics from truck states
+                    total_charging_time = 0.0
+                    num_charging_sessions = 0
+                    total_waiting_time = 0.0
+                    total_distance = 0.0
+                    total_routing_time = 0.0
+                    total_unloading_time = 0.0
+                    num_failures = 0
+                    num_deliveries = 0
+                    
+                    for truck_info in info['trucks']:
+                        total_charging_time += truck_info['total_charging_time']
+                        num_charging_sessions += truck_info['num_charging_sessions']
+                        total_waiting_time += truck_info['waiting_time']
+                        total_distance += truck_info['total_distance']
+                        total_unloading_time += truck_info['total_unloading_time']
+                        
+                        if truck_info['failed']:
+                            num_failures += 1
+                        
+                        total_deliveries = len(truck_info['delivery_sequence']) - 1
+                        deliveries_remaining = truck_info['deliveries_remaining']
+                        deliveries_completed = total_deliveries - deliveries_remaining
+                        num_deliveries += deliveries_completed
+                        
+                        truck_total_time = truck_info['total_time']
+                        truck_charging_time = truck_info['total_charging_time']
+                        truck_unloading_time = truck_info['total_unloading_time']
+                        truck_waiting_time = truck_info['waiting_time']
+                        truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
+                        total_routing_time += max(0.0, truck_routing_time)
+                    
+                    eval_total_charging_time.append(total_charging_time)
+                    eval_num_charging_sessions.append(num_charging_sessions)
+                    eval_waiting_time.append(total_waiting_time)
+                    eval_total_distance.append(total_distance)
+                    eval_total_routing_time.append(total_routing_time)
+                    eval_total_unloading_time.append(total_unloading_time)
+                    eval_total_failures.append(num_failures)
+                    eval_total_deliveries.append(num_deliveries)
+                    eval_episode_time.append(info['global_clock'])
+                    
+                    episodes_completed += 1
+                    pbar.update(1)
+                    
+                    # Start a new episode if we haven't reached the target
+                    if episodes_completed < eval_episodes:
+                        episode_rewards[i] = 0.0
+                        episode_steps[i] = 0
+                        next_episode_num = episodes_completed + num_parallel_envs - 1
+                        obs, info = penv.reset(seed=seed + next_episode_num)
+                        state['gnn_state'] = gnn_state_space.get_state_GNN(penv)
+                        state['done'] = False
+                    else:
+                        state['done'] = True
+                else:
+                    # Episode continues - update state
+                    state['gnn_state'] = gnn_state_space.get_state_GNN(penv)
+    
+    # Clean up parallel environments
+    for penv in parallel_envs:
+        penv.close()
     
     return {
         'mean_reward': np.mean(eval_rewards),

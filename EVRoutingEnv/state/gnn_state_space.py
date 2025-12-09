@@ -93,6 +93,7 @@ class GNNStateSpace:
         self._edge_feature_dim = 2
         
         self.BIDIRECTIONAL_EDGES = True
+        self.FILTER_CHARGERS = False  # Filter to top 3 chargers based on fitness
 
     def get_state_GNN(self, env) -> HeteroData:
         """
@@ -396,7 +397,52 @@ class GNNStateSpace:
                                 #     # Log this for debugging
                                 #     if not (np.isinf(energy) or np.isinf(time)):
                                 #         print(f"[GNN State] WARNING: Skipping reverse edge {next_delivery}->{current_location} (inf) while forward exists")                # Connect to all chargers (if feasible with current battery)
-                for charger_id, charger_idx in charger_node_to_idx.items():
+                # Apply charger filtering if enabled and in sequential delivery mode
+                chargers_to_connect = list(charger_node_to_idx.items())
+                
+                if self.FILTER_CHARGERS and not truck.enable_flexible_delivery_order and next_delivery is not None:
+                    # Calculate fitness for each charger based on whether it's an intermediate stop
+                    charger_fitness = []
+                    
+                    # Get direct distance from current location to next delivery
+                    direct_distance = env.transport_graph.get_path_energy(current_location, next_delivery)
+                    
+                    for charger_id, charger_idx in charger_node_to_idx.items():
+                        if charger_id == current_location:
+                            # Current location gets highest priority (0 distance)
+                            charger_fitness.append((charger_id, charger_idx, -1.0))  # Negative for highest priority
+                            continue
+                        
+                        # Calculate detour: distance via charger vs direct distance
+                        dist_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
+                        dist_from_charger = env.transport_graph.get_path_energy(charger_id, next_delivery)
+                        
+                        # Skip if any distance is infinite
+                        if np.isinf(dist_to_charger) or np.isinf(dist_from_charger) or np.isinf(direct_distance):
+                            continue
+                        
+                        # Calculate total distance via charger
+                        total_via_charger = dist_to_charger + dist_from_charger
+                        
+                        # Fitness metric: extra distance taken by going via this charger
+                        # Lower is better (chargers on the way to delivery have lower detour)
+                        detour = total_via_charger - direct_distance
+                        
+                        # Check if charger is feasible with current battery
+                        max_energy_needed = dist_to_charger * energy_safety_factor
+                        if max_energy_needed < current_battery:
+                            charger_fitness.append((charger_id, charger_idx, detour))
+                    
+                    # Sort by fitness (detour) and keep top 3
+                    charger_fitness.sort(key=lambda x: x[2])
+                    chargers_to_connect = [(cid, cidx) for cid, cidx, _ in charger_fitness[:3]]
+                    
+                    if self.verbose and len(charger_fitness) > 3:
+                        print(f"[GNN State] Filtered chargers for truck {truck.truck_id}: {len(charger_fitness)} -> {len(chargers_to_connect)}")
+                        print(f"  Top 3 chargers: {[(cid, f'{detour:.1f}') for cid, _, detour in charger_fitness[:3]]}")
+                
+                # Add edges for selected chargers
+                for charger_id, charger_idx in chargers_to_connect:
                     # Skip self-loop (truck already at this charger)
                     if charger_id == current_location:
                         # Add 0-weight edge to current location

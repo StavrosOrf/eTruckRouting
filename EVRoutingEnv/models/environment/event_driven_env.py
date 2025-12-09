@@ -955,7 +955,25 @@ class EventDrivenTruckEnv(gym.Env):
             else:
                 actual_unloading_time = 0.0
             unloading_penalty = -actual_unloading_time * self.reward_config["time_multiplier"]
-            return time_penalty + delivery_bonus + unloading_penalty
+            
+            # Check if this is the last delivery for this truck
+            # Apply leftover battery penalty if enabled
+            leftover_battery_penalty = 0.0
+            remaining_deliveries = truck.get_remaining_deliveries()
+            is_last_delivery = len(remaining_deliveries) == 1 and target_node in remaining_deliveries
+            
+            if is_last_delivery and self.reward_config["enable_leftover_battery_penalty"]:
+                # Calculate expected battery at completion (after this delivery)
+                expected_battery_at_completion = truck.current_battery - discharge
+                remaining_soc_percentage = (expected_battery_at_completion / truck.battery_capacity) * 100.0
+                penalty_coef = self.reward_config["leftover_battery_penalty_coef"]
+                leftover_battery_penalty = -penalty_coef * remaining_soc_percentage
+                
+                if self.verbose:
+                    print(f"  Last delivery! Expected SOC at completion: {remaining_soc_percentage:.1f}%")
+                    print(f"  Leftover battery penalty: {leftover_battery_penalty:.2f}")
+            
+            return time_penalty + delivery_bonus + unloading_penalty + leftover_battery_penalty
 
         return time_penalty
 

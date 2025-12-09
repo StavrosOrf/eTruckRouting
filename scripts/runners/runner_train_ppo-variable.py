@@ -15,7 +15,7 @@ python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 counter = 0
 max_episodes = 100_000_000
 max_timesteps = 10_000_000
-eval_freq = 500
+eval_freq = 5000
 batch_size = 64
 
 # Environment settings
@@ -30,7 +30,7 @@ num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [512,1024],
+    "steps_per_update": [1024],
     # "steps_per_update": [128, 512, 1024],
     "epochs": [5],
     "entropy_coef": [0.1],
@@ -87,7 +87,7 @@ for config_idx, (
     )
 
     # Build experiment name
-    exp_name = f"Base_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"PenalizeSoC_Base_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     
     # Group name includes environment size and uncertainty types

@@ -75,7 +75,7 @@ delivery:
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used
-  enable_stochastic_unloading: false
+  enable_stochastic_unloading: true
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
@@ -112,6 +112,12 @@ rewards:
 
   # Penalty for battery failure
   failure_penalty: -1000.0
+  
+  # Leftover battery penalty (encourages efficient battery usage)
+  # When enabled, trucks are penalized for remaining battery at completion
+  # Penalty = leftover_battery_penalty_coef * (remaining_soc_percentage)
+  enable_leftover_battery_penalty: false
+  leftover_battery_penalty_coef: 1.0  # Penalty per percentage point of remaining SOC
 
 
 
@@ -129,7 +135,7 @@ network:
 traffic:
   # Enable traffic simulation (applies stochastic variation to travel times)
   # Uses time-of-day dependent model with rush hour effects
-  enable_traffic: false
+  enable_traffic: true
   
   # Standard deviation of travel time distribution as fraction of mean time
   # Example: std_dev_factor: 0.15 means std_dev = 15% of mean_time during off-peak
@@ -147,7 +153,7 @@ traffic:
   # Energy consumption uncertainty (tied to traffic conditions)
   # When enabled, traffic conditions affect energy efficiency
   # Stop-and-go traffic, speed variations increase energy consumption
-  enable_energy_uncertainty: false
+  enable_energy_uncertainty: true
   
   # Energy uncertainty factor as fraction of base energy consumption
   # Example: 0.10 means ±10% variation in energy consumption

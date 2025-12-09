@@ -58,6 +58,7 @@ class Truck:
         # Completion tracking
         self.is_complete = False
         self.failed = False  # True if ran out of battery
+        self.battery_at_completion = None  # Store battery level when completing last delivery
         
         # Route tracking (for GNN state representation)
         self.route_destination = None  # Next destination when on route
@@ -149,6 +150,8 @@ class Truck:
             all_delivery_nodes = set(self.delivery_sequence[1:])
             if self.delivered_nodes == all_delivery_nodes:
                 self.is_complete = True
+                # Store battery level at completion for penalty calculation
+                self.battery_at_completion = self.current_battery
         else:
             # Sequential mode: advance to next in sequence
             if self.current_sequence_index + 1 < len(self.delivery_sequence):
@@ -158,6 +161,8 @@ class Truck:
                 # Check if all deliveries complete
                 if self.current_sequence_index == len(self.delivery_sequence) - 1:
                     self.is_complete = True
+                    # Store battery level at completion for penalty calculation
+                    self.battery_at_completion = self.current_battery
     
     def start_routing(self, destination: int, timestamp: float):
         """

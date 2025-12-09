@@ -307,6 +307,7 @@ class GNNStateSpace:
                 next_delivery = truck.get_next_delivery_target()
                 
                 if truck.enable_flexible_delivery_order:
+                    raise NotImplementedError("Flexible delivery order not implemented in GNN state yet")
                     # Flexible mode: connect to all remaining deliveries
                     remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
                     
@@ -325,6 +326,15 @@ class GNNStateSpace:
                             energy_inv = env.transport_graph.get_path_energy(delivery_node, current_location)
                             time = env.transport_graph.get_time_distance(current_location, delivery_node)
                             time_inv = env.transport_graph.get_time_distance(delivery_node, current_location)
+                            
+                            # Debug: Check for asymmetric paths
+                            if np.isinf(energy) and not np.isinf(energy_inv):
+                                print(f"[GNN State] ERROR: Asymmetric path! {current_location}->{delivery_node} is inf but reverse is {energy_inv}")
+                            if np.isinf(energy_inv) and not np.isinf(energy):
+                                print(f"[GNN State] ERROR: Asymmetric path! {delivery_node}->{current_location} is inf but forward path exists")
+                                print(f"  Forward: energy={energy}, time={time}")
+                                print(f"  Reverse: energy_inv={energy_inv}, time_inv={time_inv}")
+                                print(f"  This suggests a directed graph issue or missing edges in transport_graph")
                         
                         # Only add edge if energy is feasible
                         max_energy_needed = energy * energy_safety_factor
@@ -333,8 +343,18 @@ class GNNStateSpace:
                             edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])
                             
                             if self.BIDIRECTIONAL_EDGES:
-                                edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
-                                edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
+                                # Only add reverse edge if it's valid (not inf/nan)
+                                # Inf means no path exists, so we shouldn't add the edge
+                                if not (np.isnan(energy_inv) or np.isinf(energy_inv) or 
+                                       np.isnan(time_inv) or np.isinf(time_inv)):
+                                    energy_norm = energy_inv / 1000.0
+                                    time_norm = time_inv / self.max_time if self.max_time > 0 else 0.0
+                                    edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
+                                    edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_norm, time_norm])
+                                else:
+                                    # Log this for debugging
+                                    if not (np.isinf(energy) or np.isinf(time)):
+                                        print(f"[GNN State] WARNING: Skipping reverse edge {delivery_node}->{current_location} (inf) while forward exists")
                 else:
                     # Sequential mode: connect to next delivery only
                     if next_delivery is not None and next_delivery in delivery_node_to_idx:
@@ -349,20 +369,33 @@ class GNNStateSpace:
                             
                             time = env.transport_graph.get_time_distance(current_location, next_delivery)
                             time_inv = env.transport_graph.get_time_distance(next_delivery, current_location)
+                            
+                            # # Debug: Check for asymmetric paths
+                            # if np.isinf(energy_inv) and not np.isinf(energy):
+                            #     print(f"[GNN State] ERROR: Asymmetric path (sequential)! {next_delivery}->{current_location} is inf but forward path exists")
+                            #     print(f"  Forward: energy={energy}, time={time}")
+                            #     print(f"  Reverse: energy_inv={energy_inv}, time_inv={time_inv}")
 
                         # Only add edge if energy is feasible (< current battery with safety margin)
                         # Account for worst-case energy consumption due to uncertainty
                         max_energy_needed = energy * energy_safety_factor
                         if max_energy_needed < current_battery and not np.isinf(energy):
-                            # Normalize edge features                        
                             edge_dict[('truck', 'to', 'delivery')]['edge_index'].append([truck_idx, delivery_idx])
-                            edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])                        
+                            edge_dict[('truck', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])
                             
                             if self.BIDIRECTIONAL_EDGES:
-                                edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
-                                edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
-                
-                # Connect to all chargers (if feasible with current battery)
+                                # Only add reverse edge if it's valid (not inf/nan)
+                                # Inf means no path exists, so we shouldn't add the edge
+                                if not (np.isnan(energy_inv) or np.isinf(energy_inv) or 
+                                       np.isnan(time_inv) or np.isinf(time_inv)):
+                                    energy_norm = energy_inv / 1000.0
+                                    time_norm = time_inv / self.max_time if self.max_time > 0 else 0.0
+                                    edge_dict[('delivery', 'to', 'truck')]['edge_index'].append([delivery_idx, truck_idx])
+                                    edge_dict[('delivery', 'to', 'truck')]['edge_attr'].append([energy_norm, time_norm])
+                                # else:
+                                #     # Log this for debugging
+                                #     if not (np.isinf(energy) or np.isinf(time)):
+                                #         print(f"[GNN State] WARNING: Skipping reverse edge {next_delivery}->{current_location} (inf) while forward exists")                # Connect to all chargers (if feasible with current battery)
                 for charger_id, charger_idx in charger_node_to_idx.items():
                     # Skip self-loop (truck already at this charger)
                     if charger_id == current_location:

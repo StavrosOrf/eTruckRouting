@@ -8,10 +8,10 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 10
+  num_trucks: 15
 
   # Number of delivery stops per truck episode
-  num_stops: 3
+  num_stops: 5
 
   # Minimum energy consumption between consecutive delivery stops (kWh)
   min_hop_distance: 100.0
@@ -62,7 +62,7 @@ charging:
     taper_power_min: 25.0  # Minimum power (kW) at 100% SOC during CV phase
 
   # Available charging durations (hours)
-  charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
 # Delivery Configuration
 # ----------------------
@@ -75,7 +75,7 @@ delivery:
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used
-  enable_stochastic_unloading: true
+  enable_stochastic_unloading: false
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
@@ -129,7 +129,7 @@ network:
 traffic:
   # Enable traffic simulation (applies stochastic variation to travel times)
   # Uses time-of-day dependent model with rush hour effects
-  enable_traffic: true
+  enable_traffic: false
   
   # Standard deviation of travel time distribution as fraction of mean time
   # Example: std_dev_factor: 0.15 means std_dev = 15% of mean_time during off-peak
@@ -147,7 +147,7 @@ traffic:
   # Energy consumption uncertainty (tied to traffic conditions)
   # When enabled, traffic conditions affect energy efficiency
   # Stop-and-go traffic, speed variations increase energy consumption
-  enable_energy_uncertainty: true
+  enable_energy_uncertainty: false
   
   # Energy uncertainty factor as fraction of base energy consumption
   # Example: 0.10 means ±10% variation in energy consumption

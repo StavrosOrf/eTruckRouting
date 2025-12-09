@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import wandb
 from datetime import datetime
+from tqdm import trange
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -90,7 +91,7 @@ def parse_args():
                             help='Maximum number of timesteps')
     train_group.add_argument('--eval-freq', type=int, default=500,
                             help='Evaluation frequency (in timesteps)')
-    train_group.add_argument('--eval-episodes', type=int, default=10,
+    train_group.add_argument('--eval-episodes', type=int, default=50,
                             help='Number of episodes for evaluation')
     train_group.add_argument('--batch-size', type=int, default=256,
                             help='Batch size for training')
@@ -214,7 +215,8 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0):
     eval_total_failures = []
     eval_total_deliveries = []
     
-    for episode in range(eval_episodes):
+    
+    for episode in trange(eval_episodes, desc="Eval episodes"):
         obs, info = env.reset(seed=seed + episode)
         episode_reward = 0
         episode_steps = 0
@@ -508,8 +510,8 @@ def train(args):
             episode_num += 1
 
             if episode_num >= args.max_episodes:
-                if args.verbose:
-                    print(f"Reached max episodes ({args.max_episodes}). Ending PPO training loop.")
+                
+                print(f"Reached max episodes ({args.max_episodes}). Ending PPO training loop.")
                 break
 
         if (t + 1) % args.eval_freq == 0:

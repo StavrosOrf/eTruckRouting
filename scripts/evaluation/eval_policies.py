@@ -29,10 +29,8 @@ from sb3_contrib import MaskablePPO, QRDQN
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # GNN-based policies
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
-    # ("saved_models/NewActions_Traffic_CCCV_steps=128_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/NewActions_Traffic_CCCV_steps=512_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
     # SB3 policies
@@ -47,8 +45,8 @@ POLICIES = [
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 10  # Must match the configuration used during training
-NUM_STOPS = 1
-NUM_EVAL_SCENARIOS = 10
+NUM_STOPS = 3
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================
 

@@ -19,6 +19,7 @@ from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
+from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 
 # Import compute_action_mask from train module
 from scripts.training.train_PPO_Variable import compute_action_mask
@@ -40,18 +41,19 @@ POLICIES = [
     ("saved_models/curriculum_staged_seed0_44739/", "variable-ppo"),
     # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
     # SB3 policies
-    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
+    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
+    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
     # Baselines
-    ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
-    ("heuristic", "heuristic"),
+    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
+    ("optimal_simple", "optimal_simple"),  # Simplified conservative Gurobi-based solver
+    # ("heuristic", "heuristic"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [5, 10]
-NUM_STOPS_GRID = [2, 3, 8]
+NUM_TRUCKS_GRID = [5, 10, 15]
+NUM_STOPS_GRID = [2, 3]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_EVAL_SCENARIOS = 15
@@ -59,7 +61,7 @@ SEED = 1000
 
 # Parallel processing
 USE_PARALLEL = True  # Run policies in parallel (each on GPU), configs sequential
-NUM_PARALLEL_POLICIES = 3  # Number of policies to evaluate in parallel (adjust based on GPU memory)
+NUM_PARALLEL_POLICIES = 4  # Number of policies to evaluate in parallel (adjust based on GPU memory)
 # =============================================
 
 
@@ -79,6 +81,8 @@ def evaluate_policy_single_config(
     
     # Evaluate
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
+    failures_per_episode = []
+    truncated_flags = []
 
     episode_iter = range(num_episodes)
     if show_progress and position is not None:
@@ -91,14 +95,19 @@ def evaluate_policy_single_config(
         done = truncated = False
         
         # Recreate optimal planner per episode to avoid stale plans across seeds
-        episode_policy = OptimalGurobiPolicy(verbose=False) if resolved_type == "optimal" else policy
+        if resolved_type == "optimal":
+            episode_policy = OptimalGurobiPolicy(verbose=False)
+        elif resolved_type == "optimal_simple":
+            episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+        else:
+            episode_policy = policy
 
         while not (done or truncated):
             if sb3_model is not None:
                 # SB3 policy: use raw observation
                 # (don't compute GNN state for SB3 models)
                 pass
-            elif resolved_type == "optimal" or resolved_type == "heuristic":
+            elif resolved_type in ("optimal", "optimal_simple", "heuristic"):
                 # Optimal and heuristic policies don't need GNN state
                 pass
             else:
@@ -116,7 +125,7 @@ def evaluate_policy_single_config(
                     action, _ = sb3_model.predict(obs, deterministic=True)
             else:
                 # Custom policies
-                if resolved_type == "optimal":
+                if resolved_type in ("optimal", "optimal_simple"):
                     action = episode_policy.get_action(env)
                 elif resolved_type == "heuristic":
                     action = episode_policy.get_action(env)
@@ -135,10 +144,21 @@ def evaluate_policy_single_config(
             episode_reward += reward
             episode_steps += 1
 
+        # Episode-level metrics
         rewards.append(episode_reward)
         successes.append(1.0 if info["all_complete"] else 0.0)
         steps.append(episode_steps)
         completion_times.append(env.global_clock)
+
+        # Failures: count trucks that failed during the episode
+        num_failures = 0
+        for t in info.get("trucks", []):
+            if t.get("failed", False):
+                num_failures += 1
+        failures_per_episode.append(num_failures)
+
+        # Truncation: whether the episode ended due to truncation flag
+        truncated_flags.append(1.0 if truncated else 0.0)
 
         # Extract metrics from truck info
         trucks_info = info["trucks"]
@@ -172,6 +192,10 @@ def evaluate_policy_single_config(
         "std_completion_time": np.std(completion_times),
         "mean_deliveries": np.mean(total_deliveries),
         "std_deliveries": np.std(total_deliveries),
+        "mean_failures": np.mean(failures_per_episode),
+        "std_failures": np.std(failures_per_episode),
+        "mean_truncated": np.mean(truncated_flags),
+        "std_truncated": np.std(truncated_flags),
     }
 
 
@@ -286,6 +310,8 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
         policy_name = "Heuristic"
     elif policy_path == "optimal":
         policy_name = "Optimal (Gurobi)"
+    elif policy_path == "optimal_simple":
+        policy_name = "Optimal (Simple)"
     else:
         base_name = os.path.basename(policy_path.rstrip('/'))
         # For SB3 policies, extract algorithm name from folder (e.g., "ppo_seed0_20251204_202437" -> "PPO")
@@ -337,6 +363,15 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
                 "Optimal (Gurobi) policy requires gurobipy to be installed."
             ) from exc
         resolved_type = "optimal"
+    elif policy_type == "optimal_simple":
+        # Simplified optimal (Gurobi) policy
+        try:
+            policy = OptimalGurobiSimplePolicy(verbose=False)
+        except ImportError as exc:
+            raise RuntimeError(
+                "Optimal Simple policy requires gurobipy to be installed."
+            ) from exc
+        resolved_type = "optimal_simple"
     else:
         # Custom policies
         config_temp = copy.deepcopy(config)

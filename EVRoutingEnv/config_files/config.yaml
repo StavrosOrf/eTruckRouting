@@ -108,7 +108,7 @@ rewards:
   time_multiplier: 1.0
 
   # Bonus for completing all deliveries
-  delivery_bonus: 100.0
+  delivery_bonus: 500.0
 
   # Penalty for battery failure
   failure_penalty: -1000.0
@@ -118,8 +118,6 @@ rewards:
   # Penalty = leftover_battery_penalty_coef * (remaining_soc_percentage)
   enable_leftover_battery_penalty: false
   leftover_battery_penalty_coef: 1.0  # Penalty per percentage point of remaining SOC
-
-
 
 # Graph/Network Settings
 # -----------------------

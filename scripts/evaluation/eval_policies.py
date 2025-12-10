@@ -29,7 +29,11 @@ from sb3_contrib import MaskablePPO, QRDQN
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # GNN-based policies
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6143/", "variable-ppo"),
+    # ("saved_models/Base_r=1000_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6128/", "variable-ppo"),
     # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
@@ -44,9 +48,9 @@ POLICIES = [
     # ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 15  # Must match the configuration used during training
-NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 50
+NUM_TRUCKS = 1  # Must match the configuration used during training
+NUM_STOPS = 10
+NUM_EVAL_SCENARIOS = 20
 SEED = 1000
 # =============================================
 
@@ -177,6 +181,7 @@ def evaluate_policy(
     return {
         "mean_reward": np.mean(rewards),
         "std_reward": np.std(rewards),
+        "episode_rewards": rewards,  # Store individual episode rewards for comparison
         "success_rate": np.mean(successes),
         "mean_total_distance": np.mean(distances),
         "std_total_distance": np.std(distances),
@@ -311,6 +316,50 @@ def main():
 
     eval_env.close()
 
+    # Calculate reward gap vs optimal-simple baseline if it exists
+    baseline_name = None
+    for name in results.keys():
+        if "MP Robust" in name or "optimal-simple" in name.lower():
+            baseline_name = name
+            break
+    
+    if baseline_name:
+        baseline_rewards = np.array(results[baseline_name]["episode_rewards"])
+        baseline_mean = results[baseline_name]["mean_reward"]
+        print(f"\n{'='*90}")
+        print(f"Episode-by-Episode Win Rate Analysis (vs {baseline_name})")
+        print(f"{'='*90}")
+        print(f"Baseline Mean Reward: {baseline_mean:.0f}\n")
+        
+        # Calculate win rate for each policy (% of episodes where policy beats baseline)
+        for name in sorted(results.keys()):
+            if name == baseline_name:
+                continue
+            policy_rewards = np.array(results[name]["episode_rewards"])
+            policy_mean = results[name]["mean_reward"]
+            
+            # Count episodes where policy beats baseline
+            wins = np.sum(policy_rewards > baseline_rewards)
+            ties = np.sum(policy_rewards == baseline_rewards)
+            losses = np.sum(policy_rewards < baseline_rewards)
+            win_rate = (wins / len(policy_rewards)) * 100
+            
+            # Calculate mean reward difference
+            mean_diff = policy_mean - baseline_mean
+            diff_str = f"+{mean_diff:.0f}" if mean_diff >= 0 else f"{mean_diff:.0f}"
+            
+            print(f"  {name:40s}: Win Rate: {win_rate:5.1f}% ({wins}W/{ties}T/{losses}L)  Δ Reward: {diff_str}")
+        print(f"{'='*90}\n")
+        
+        # Store win rate in results for later display
+        for name in results.keys():
+            if name == baseline_name:
+                results[name]["win_rate_vs_baseline"] = 50.0  # Baseline against itself
+            else:
+                policy_rewards = np.array(results[name]["episode_rewards"])
+                wins = np.sum(policy_rewards > baseline_rewards)
+                results[name]["win_rate_vs_baseline"] = (wins / len(policy_rewards)) * 100
+
     # Print results in vertical format with policies side-by-side
     def wrap_name(name, width=20):
         """Wrap long policy names into multiple lines."""
@@ -364,6 +413,13 @@ def main():
     # Define metrics to display
     metrics = [
         ("Reward", "mean_reward", "std_reward", ".0f"),
+    ]
+    
+    # Add win rate if baseline exists
+    if baseline_name:
+        metrics.append(("Win Rate vs Baseline (%)", "win_rate_vs_baseline", None, ".1f"))
+    
+    metrics.extend([
         ("Success Rate (%)", "success_rate", None, ".1f", 100),
         ("Deliveries", "mean_deliveries", "std_deliveries", ".1f"),
         ("Steps", "mean_steps", "std_steps", ".1f"),
@@ -377,7 +433,7 @@ def main():
         ("Failures", "mean_failures", "std_failures", ".1f"),
         ("Max Time Reached", "max_time_terminations", None, ".0f"),
         ("Max Steps Reached", "max_steps_terminations", None, ".0f"),
-    ]
+    ])
     
     for metric_info in metrics:
         label = metric_info[0]

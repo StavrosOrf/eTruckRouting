@@ -236,6 +236,11 @@ def create_truck(
                     exclude_charging_nodes=True,
                 )
                 
+                # Check if sequence has the correct number of stops
+                # delivery_sequence includes start node, so should have num_stops + 1 nodes
+                if len(delivery_sequence) != num_stops + 1:
+                    continue  # Try again
+                
                 # Check if sequence is feasible: every leg must have a valid path
                 feasible = _validate_delivery_sequence_feasibility(
                     delivery_sequence=delivery_sequence,
@@ -273,6 +278,10 @@ def create_truck(
                     max_hop_distance=min_acceptable_hop,
                     exclude_charging_nodes=True,
                 )
+                
+                # Check if sequence has the correct number of stops
+                if len(delivery_sequence) != num_stops + 1:
+                    continue  # Try again
                 
                 feasible = _validate_delivery_sequence_feasibility(
                     delivery_sequence=delivery_sequence,

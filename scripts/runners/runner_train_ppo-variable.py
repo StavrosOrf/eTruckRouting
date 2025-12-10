@@ -1,5 +1,6 @@
 """
 Experiment runner for EVPR - runs various hyperparameter configurations in separate tmux panes.
+Automatically selects between sequential and parallel training based on num_parallel_envs setting.
 """
 
 import os
@@ -16,25 +17,29 @@ counter = 0
 max_episodes = 100_000_000
 max_timesteps = 10_000_000
 eval_freq = 5000
-batch_size = 64
+
+# Parallel environment settings
+# Set to 1 for sequential training (original), >1 for parallel training
+num_parallel_envs = 12  # Number of parallel training environments
+num_eval_envs = 12     # Number of parallel evaluation environments
 
 # Environment settings
-num_trucks = 15
+num_trucks = 30
 num_stops = 5
 max_time = 200.0
 
 # Fixed hyperparameters for this sweep
 learning_rate = 3e-4
-hidden_dim = 64
+# hidden_dim = 64
 num_gcn_layers = 3
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [1024],
+    "steps_per_update": [1024, 2048, 4096],
     # "steps_per_update": [128, 512, 1024],
-    "epochs": [5],
+    "epochs": [10],
     "entropy_coef": [0.1],
-    "gnn_hidden_dim": [32],
+    "gnn_hidden_dim": [64],
     "mlp_hidden_dim": [256],
     "seed": [0],
 }
@@ -70,8 +75,20 @@ if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False):
 
 uncertainty_suffix = ''.join(uncertainty_flags) if uncertainty_flags else 'Det'  # Deterministic if none
 
+# Select training script based on parallel environment setting
+if num_parallel_envs > 1:
+    training_script = "scripts/training/train_PPO_Variable_parallel.py"
+    training_mode = "PARALLEL"
+    print(f"🚀 Using PARALLEL training with {num_parallel_envs} environments")
+    print(f"   Expected speedup: ~{num_parallel_envs}x for data collection")
+else:
+    training_script = "scripts/training/train_PPO_Variable.py"
+    training_mode = "SEQUENTIAL"
+    print(f"Using SEQUENTIAL training (original)")
+
 print(f"Total configurations to run: {len(all_combinations)}")
-print(f"Uncertainty flags: {uncertainty_suffix}\n")
+print(f"Uncertainty flags: {uncertainty_suffix}")
+print(f"Training mode: {training_mode}\n")
 
 for config_idx, (
     steps_per_update,
@@ -87,15 +104,17 @@ for config_idx, (
     )
 
     # Build experiment name
-    exp_name = f"PenalizeSoC_Base_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"Base_r=500_updatedDelivery_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
+    #add random number as suffix to avoid overwriting
+    exp_name += f"_{int(time.time())%10000}"
     
     # Group name includes environment size and uncertainty types
     group_name = f"{num_trucks}T{num_stops}S_{uncertainty_suffix}"
 
-    # Build command
+    # Build command with appropriate training script
     command = (
-        f'tmux new-session -d \\; send-keys " {python_path} scripts/training/train_PPO_Variable.py'
+        f'tmux new-session -d \\; send-keys " {python_path} {training_script}'
         f" --config {config}"
         f" --seed {seed}"
         f" --lr {learning_rate}"
@@ -103,7 +122,6 @@ for config_idx, (
         f" --mlp-hidden-dim {mlp_hidden_dim}"
         f" --actor-gcn-layers {num_gcn_layers}"
         f" --critic-gcn-layers {num_gcn_layers}"
-        f" --batch-size {batch_size}"
         f" --max-episodes {max_episodes}"
         f" --max-timesteps {max_timesteps}"
         f" --eval-freq {eval_freq}"
@@ -115,12 +133,18 @@ for config_idx, (
         f" --group-name {group_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"
-        f" --ppo-minibatch-size 256"
+        f" --ppo-minibatch-size {steps_per_update // 4}"
         f" --ppo-clip 0.2"
         f" --ppo-entropy-coef {entropy_coef}"
         f" --exp-name {exp_name}"
-        f'" Enter'
     )
+    
+    # Add parallel-specific arguments if using parallel training
+    if num_parallel_envs > 1:
+        command += f" --num-parallel-envs {num_parallel_envs}"
+        command += f" --num-eval-envs {num_eval_envs}"
+    
+    command += f'" Enter'
 
     # Execute command
     os.system(command)

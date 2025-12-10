@@ -250,7 +250,7 @@ class PPOVariableActionGNN:
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr)
         self.buffer = VariableRolloutBuffer()
 
-    def act(self, state: HeteroData, action_mask: torch.Tensor = None, **_):
+    def act(self, state: HeteroData, action_mask: torch.Tensor = None, deterministic: bool = False, **_):
         _, feasible_idx = self._prepare_feasible_actions(state, action_mask, device=self.device)
         action_features, ptr = self._build_action_graph_inputs([state], [feasible_idx], device=self.device)
         data = state.to(self.device)
@@ -261,10 +261,72 @@ class PPOVariableActionGNN:
         if logits.numel() == 0:
             raise RuntimeError("No feasible actions available for the current state.")
         dist = Categorical(logits=logits)
-        action_choice = dist.sample()
-        logprob = dist.log_prob(action_choice)
+        if deterministic:
+            action_choice = torch.argmax(logits)
+            logprob = dist.log_prob(action_choice)
+        else:
+            action_choice = dist.sample()
+            logprob = dist.log_prob(action_choice)
         global_action_idx = feasible_idx[action_choice]
         return int(global_action_idx.item()), float(logprob.item()), float(value.squeeze().item())
+    
+    def act_batch(self, states: List[HeteroData], action_masks: Optional[List[torch.Tensor]] = None, 
+                  deterministic: bool = False) -> Tuple[List[int], List[float], List[float]]:
+        """Batch action selection for multiple states.
+        
+        Args:
+            states: List of HeteroData states
+            action_masks: Optional list of action masks
+            deterministic: Whether to select actions deterministically
+            
+        Returns:
+            Tuple of (actions, logprobs, values) lists
+        """
+        if action_masks is None:
+            action_masks = [None] * len(states)
+        
+        # Prepare feasible actions for all states
+        feasible_indices = []
+        for state, mask in zip(states, action_masks):
+            _, feasible_idx = self._prepare_feasible_actions(state, mask, device=self.device)
+            feasible_indices.append(feasible_idx)
+        
+        # Build batch action graph inputs
+        action_features, ptr = self._build_action_graph_inputs(states, feasible_indices, device=self.device)
+        
+        # Batch the states
+        batch_data = Batch.from_data_list([s.to(self.device) for s in states], exclude_keys=VARIABLE_BATCH_EXCLUDE_KEYS)
+        
+        # Forward pass
+        action_output, values = self.policy(batch_data, action_features, ptr)
+        
+        # Process outputs for each state
+        actions = []
+        logprobs = []
+        value_list = []
+        
+        for i in range(len(states)):
+            start = action_output.ptr[i].item()
+            end = action_output.ptr[i + 1].item()
+            logits = action_output.logits[start:end]
+            
+            if logits.numel() == 0:
+                raise RuntimeError(f"No feasible actions available for state {i}.")
+            
+            dist = Categorical(logits=logits)
+            if deterministic:
+                action_choice = torch.argmax(logits)
+                logprob = dist.log_prob(action_choice)
+            else:
+                action_choice = dist.sample()
+                logprob = dist.log_prob(action_choice)
+            
+            global_action_idx = feasible_indices[i][action_choice]
+            actions.append(int(global_action_idx.item()))
+            logprobs.append(float(logprob.item()))
+            value_list.append(float(values[i].item()))
+        
+        return actions, logprobs, value_list
 
     def to_env_action(self, state: HeteroData, action_idx: int) -> Tuple[int, float, bool]:
         """Map a chosen action index to the environment tuple API."""
@@ -455,6 +517,21 @@ class PPOVariableActionGNN:
             embedding = self.policy.encoder(data)
             value = self.policy.value_head(embedding).squeeze(-1)
         return float(value.mean().item())
+    
+    def value_batch(self, states: List[HeteroData]) -> List[float]:
+        """Batch value estimation for multiple states.
+        
+        Args:
+            states: List of HeteroData states
+            
+        Returns:
+            List of value estimates
+        """
+        batch_data = Batch.from_data_list([s.to(self.device) for s in states], exclude_keys=VARIABLE_BATCH_EXCLUDE_KEYS)
+        with torch.no_grad():
+            embedding = self.policy.encoder(batch_data)
+            values = self.policy.value_head(embedding).squeeze(-1)
+        return [float(v.item()) for v in values]
 
     def save(self, path: str):
         torch.save(self.policy.state_dict(), f"{path}_actor.pt")

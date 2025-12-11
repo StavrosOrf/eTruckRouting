@@ -91,6 +91,8 @@ class GNNStateSpace:
         self._delivery_feature_dim = 3
         self._charger_feature_dim = 4
         self._edge_feature_dim = 2
+        # Action graph feature dimension: [action_type_norm, resulting_soc, charge_duration_norm]
+        self.action_feature_dim = 3
         
         self.BIDIRECTIONAL_EDGES = True
         self.FILTER_CHARGERS = False  # Filter to top 3 chargers based on fitness

@@ -56,6 +56,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         max_nodes_in_graph: int = 500,
         device: str = "cpu",
         verbose: bool = False,
+        route_delivery_after_charge_only: bool = True,
     ):
         """Initialize detour-based GNN state space."""
         super().__init__(
@@ -70,6 +71,8 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         # Override charger filtering flag
         self.FILTER_CHARGERS = True
         self.NUM_CHARGERS_TO_KEEP = 2  # Keep top-2 chargers by minimum detour
+        # Optional routing restriction: after charging, try delivery first
+        self.route_delivery_after_charge_only = route_delivery_after_charge_only
     
     def get_state_GNN(self, env) -> HeteroData:
         """
@@ -117,11 +120,35 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         if hasattr(env, 'traffic_config') and env.traffic_config.get('enable_traffic', False):
             if env.traffic_config.get('enable_energy_uncertainty', False):
                 energy_safety_factor = env.traffic_config.get('max_energy_multiplier', 1.0)
+
+        # Flag: after charging, prioritize routing directly to delivery; allow chargers only if needed
+        route_delivery_first = bool(
+            self.route_delivery_after_charge_only
+            or env.config.get('gnn', {}).get('route_delivery_after_charge_only', False)
+            or env.config.get('environment', {}).get('route_delivery_after_charge_only', False)
+        )
         
         # Determine truck state
         at_charger = current_location in env.charging_nodes
         must_leave = active_truck.must_leave_charger
         must_charge_now = at_charger and not must_leave
+
+        # Pre-compute whether routing directly to next delivery is feasible (used for route_delivery_first)
+        delivery_feasible = False
+        if next_delivery is not None and not must_charge_now:
+            energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery)
+            if not np.isinf(energy_to_delivery):
+                max_energy = energy_to_delivery * energy_safety_factor
+                if current_battery >= max_energy:
+                    delivery_feasible = check_navigation_feasibility(
+                        truck=active_truck,
+                        target_node=next_delivery,
+                        discharge=max_energy,
+                        transport_graph=env.transport_graph,
+                        charging_nodes=env.charging_nodes,
+                        energy_safety_factor=energy_safety_factor,
+                        verbose=self.verbose,
+                    )
         
         # Select top-2 chargers by detour
         top_chargers_by_detour = []
@@ -261,6 +288,9 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                 elif must_charge_now and not allow_escape_routing:
                     # Must charge now - cannot route away
                     new_feasible_mask[action_idx] = False
+                elif route_delivery_first and must_leave and delivery_feasible and not allow_escape_routing:
+                    # After charging: prefer direct delivery; suppress charger routing if delivery is feasible
+                    new_feasible_mask[action_idx] = False
                 else:
                     # Check if this charger is in top-2
                     top_charger_ids = [c['id'] for c in top_chargers_by_detour]
@@ -316,9 +346,52 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                             new_feasible_mask[action_idx] = False
                     else:
                         new_feasible_mask[action_idx] = False
+
+                    # If we wanted delivery-only but it is infeasible, keep chargers enabled elsewhere
         
         # Update the mask
+        # If no feasible actions remain, provide a safe fallback to avoid empty masks
+        if not any(new_feasible_mask):
+            # Prefer enabling direct delivery if it exists in the action map
+            delivery_idx = None
+            for idx, (nid, is_chg) in enumerate(action_to_node_map):
+                if not is_chg and nid == next_delivery:
+                    delivery_idx = idx
+                    break
+            if delivery_idx is not None:
+                new_feasible_mask[delivery_idx] = True
+            else:
+                # Otherwise enable the first charger action that is not current location
+                charger_idx = None
+                for idx, (nid, is_chg) in enumerate(action_to_node_map):
+                    if not is_chg and nid in env.charging_nodes and nid != current_location:
+                        charger_idx = idx
+                        break
+                if charger_idx is not None:
+                    new_feasible_mask[charger_idx] = True
+                elif action_to_node_map:
+                    # Last resort: enable the first action
+                    new_feasible_mask[0] = True
+
         data.feasible_action_mask = torch.tensor(new_feasible_mask, dtype=torch.bool, device=self.device)
+
+        # Rebuild action_graph_features to match the updated feasible set
+        feasible_indices = [i for i, is_feas in enumerate(new_feasible_mask) if is_feas]
+        if feasible_indices:
+            action_is_charging_list = data.action_is_charging.tolist() if hasattr(data, 'action_is_charging') else []
+            action_charge_durations_list = [float(data.action_charge_durations[i].item()) for i in feasible_indices]
+            feasible_action_to_node_map = [action_to_node_map[i] for i in feasible_indices]
+            feasible_action_is_charging = [action_is_charging_list[i] for i in feasible_indices]
+            data.action_graph_features = self._build_action_graph_features(
+                env,
+                feasible_action_to_node_map,
+                feasible_action_is_charging,
+                action_charge_durations_list,
+                env.active_truck_id,
+            )
+        else:
+            # Empty feasible set should be handled upstream, but keep tensor aligned
+            data.action_graph_features = torch.zeros((0, self.action_feature_dim), dtype=torch.float32, device=self.device)
         
         if self.verbose:
             num_feasible = sum(new_feasible_mask)

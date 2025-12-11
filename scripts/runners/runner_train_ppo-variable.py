@@ -37,7 +37,7 @@ minibatch_size = 256
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [256, 512],
+    "steps_per_update": [256],
     # "steps_per_update": [128, 512, 1024],
     "epochs": [5],
     "entropy_coef": [0.1],
@@ -106,13 +106,13 @@ for config_idx, (
     )
 
     # Build experiment name
-    exp_name = f"Base_r=500_updatedDelivery_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
+    exp_name = f"Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
     exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
     #add random number as suffix to avoid overwriting
     exp_name += f"_{int(time.time())%10000}"
     
     # Group name includes environment size and uncertainty types
-    group_name = f"{num_trucks}T{num_stops}S_{uncertainty_suffix}"
+    group_name = f"L_{num_trucks}T{num_stops}S_{uncertainty_suffix}"
 
     # Build command with appropriate training script
     command = (

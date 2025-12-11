@@ -15,6 +15,7 @@ from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.state.action_mask import get_action_mask
 
@@ -28,32 +29,24 @@ from sb3_contrib import MaskablePPO, QRDQN
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
-    # GNN-based policies
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ## ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6143/", "variable-ppo"),
-    # ("saved_models/Base_r=1000_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6128/", "variable-ppo"),
-    # ("saved_models/Base_r=1000_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6128/", "variable-ppo"),
-    ## ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=64_mlphd=256_8127/", "variable-ppo"),
-    ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256_2551/", "variable-ppo"),
-    # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
-    # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
-    # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
+    # GNN-based policies: (path, policy_type, gnn_state_space)
+    # ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.01_seed=0_gnnhd=32_mlphd=256_6343/", "variable-ppo", "detour"),
+    ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
+    ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
     # SB3 policies
-    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
+    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
+    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
+    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn", "base"),
     # Baselines
-    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
-    ("optimal-simple", "optimal-simple"),  # MP Robust - Gurobi solver with 20% energy safety margin
-    # ("heuristic", "heuristic"),
+    # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
+    ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
+    # ("heuristic", "heuristic", "base"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 30  # Must match the configuration used during training
+NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 50
+NUM_EVAL_SCENARIOS = 200
 SEED = 1000
 # =============================================
 
@@ -219,18 +212,32 @@ def main():
     config["environment"]["num_stops"] = NUM_STOPS
 
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
-    gnn_state_space = GNNStateSpace(
-        num_trucks=NUM_TRUCKS,
-        num_stops=NUM_STOPS,
-        max_time=config["environment"]["max_time"],
-        num_charging_nodes=env_init.num_charging_nodes,
-    )
+    # Build the required GNN state spaces once, based on policy list
+    requested_spaces = set(entry[2] if len(entry) > 2 else "base" for entry in POLICIES)
+    gnn_state_spaces = {}
+    for space in requested_spaces:
+        if space == "detour":
+            gnn_state_spaces[space] = GNNStateSpaceDetourBased(
+                num_trucks=NUM_TRUCKS,
+                num_stops=NUM_STOPS,
+                max_time=config["environment"]["max_time"],
+                num_charging_nodes=env_init.num_charging_nodes,
+            )
+        else:
+            gnn_state_spaces[space] = GNNStateSpace(
+                num_trucks=NUM_TRUCKS,
+                num_stops=NUM_STOPS,
+                max_time=config["environment"]["max_time"],
+                num_charging_nodes=env_init.num_charging_nodes,
+            )
     env_init.close()
 
     # Load policies
     policies = {}
     policy_counter = {}  # Track duplicate names
-    for policy_path, policy_type in POLICIES:
+    for policy_entry in POLICIES:
+        policy_path, policy_type = policy_entry[0], policy_entry[1]
+        gnn_space_type = policy_entry[2] if len(policy_entry) > 2 else "base"
         print(f"Loading: {policy_path} ({policy_type})...")
         
         # Handle SB3 policies differently
@@ -267,7 +274,7 @@ def main():
             resolved_type = "optimal-simple"
         else:
             # Load GNN-based policies using existing function
-            policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config)
+            policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_spaces[gnn_space_type], config)
         
         # Generate unique name for each policy
         if policy_path == "heuristic":
@@ -294,7 +301,7 @@ def main():
                 policy_counter[base_name] = 1
                 name = base_name
         
-        policies[name] = {"policy": policy, "type": resolved_type}
+        policies[name] = {"policy": policy, "type": resolved_type, "gnn_space_type": gnn_space_type}
 
     # Evaluate all policies
     eval_env = EventDrivenTruckEnv(
@@ -310,7 +317,7 @@ def main():
         results[policy_name] = evaluate_policy(
             eval_env,
             policy_info["policy"],
-            gnn_state_space,
+            gnn_state_spaces[policy_info["gnn_space_type"]],
             policy_info["type"],
             NUM_EVAL_SCENARIOS,
             SEED,

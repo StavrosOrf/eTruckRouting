@@ -23,6 +23,7 @@ sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
 import yaml
@@ -58,7 +59,7 @@ def save_network_config(save_dir, config_dict):
     print(f"Network configuration saved to: {config_file}")
 
 
-def worker_process(remote, parent_remote, env_config, worker_id, verbose=False):
+def worker_process(remote, parent_remote, env_config, worker_id, state_space_type, verbose=False):
     """Worker process that runs a single environment.
     
     Args:
@@ -80,13 +81,14 @@ def worker_process(remote, parent_remote, env_config, worker_id, verbose=False):
         )
         
         # Create GNN state space in this process
-        gnn_state_space = GNNStateSpace(
+        gnn_state_space = create_gnn_state_space(
+            state_space_type=state_space_type,
             num_trucks=env_config['environment']['num_trucks'],
             num_stops=env_config['environment']['num_stops'],
             max_time=env_config['environment']['max_time'],
             num_charging_nodes=env.num_charging_nodes,
             device="cpu",
-            verbose=False
+            verbose=False,
         )
         
         current_obs = None
@@ -149,7 +151,7 @@ def worker_process(remote, parent_remote, env_config, worker_id, verbose=False):
 class ParallelEnvs:
     """Manages multiple environments running in parallel processes."""
     
-    def __init__(self, env_config: dict, num_envs: int, verbose: bool = False):
+    def __init__(self, env_config: dict, num_envs: int, state_space_type: str = 'base', verbose: bool = False):
         """Initialize parallel environments.
         
         Args:
@@ -160,6 +162,7 @@ class ParallelEnvs:
         self.num_envs = num_envs
         self.env_config = env_config
         self.verbose = verbose
+        self.state_space_type = state_space_type
         
         # Create pipes for communication
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(num_envs)])
@@ -169,7 +172,7 @@ class ParallelEnvs:
         for i, (work_remote, remote) in enumerate(zip(self.work_remotes, self.remotes)):
             p = Process(
                 target=worker_process,
-                args=(work_remote, remote, env_config, i, verbose),
+                args=(work_remote, remote, env_config, i, self.state_space_type, verbose),
                 daemon=True
             )
             p.start()
@@ -298,7 +301,7 @@ def evaluate_policy_parallel(
         Dictionary of evaluation metrics
     """
     # Create parallel environments for evaluation
-    parallel_envs = ParallelEnvs(config, num_parallel_envs, verbose=False)
+    parallel_envs = ParallelEnvs(config, num_parallel_envs, state_space_type=args.gnn_state_space, verbose=False)
     
     # Storage for metrics
     eval_rewards = []
@@ -460,6 +463,8 @@ def parse_args():
                           help='Maximum simulation time in hours (overrides config)')
     env_group.add_argument('--enable-traffic', action='store_true',
                           help='Enable traffic simulation')
+    env_group.add_argument('--gnn-state-space', type=str, default='base', choices=['base', 'detour'],
+                          help='Which GNN state space to use (base or detour-based)')
     
     # Parallel training parameters
     parallel_group = parser.add_argument_group('Parallel Training')
@@ -535,6 +540,25 @@ def parse_args():
     return parser.parse_args()
 
 
+def create_gnn_state_space(state_space_type: str, num_trucks: int, num_stops: int,
+                           max_time: float, num_charging_nodes: int, device: str = "cpu",
+                           verbose: bool = False):
+    """Factory for selecting between base and detour-based state spaces."""
+    if state_space_type == 'detour':
+        cls = GNNStateSpaceDetourBased
+    else:
+        cls = GNNStateSpace
+
+    return cls(
+        num_trucks=num_trucks,
+        num_stops=num_stops,
+        max_time=max_time,
+        num_charging_nodes=num_charging_nodes,
+        device=device,
+        verbose=verbose,
+    )
+
+
 def train(args):
     """PPO-Variable training loop with TRUE parallel environments."""
     torch.manual_seed(args.seed)
@@ -588,13 +612,14 @@ def train(args):
         run_id="temp_env"
     )
     
-    temp_gnn_state_space = GNNStateSpace(
+    temp_gnn_state_space = create_gnn_state_space(
+        state_space_type=args.gnn_state_space,
         num_trucks=config['environment']['num_trucks'],
         num_stops=config['environment']['num_stops'],
         max_time=config['environment']['max_time'],
         num_charging_nodes=temp_env.num_charging_nodes,
         device="cpu",
-        verbose=False
+        verbose=False,
     )
     
     # Get state dimensions from temporary environment
@@ -669,7 +694,7 @@ def train(args):
     print(f"{'='*80}\n")
 
     # Create parallel training environments
-    parallel_envs = ParallelEnvs(config, args.num_parallel_envs, verbose=args.verbose)
+    parallel_envs = ParallelEnvs(config, args.num_parallel_envs, state_space_type=args.gnn_state_space, verbose=args.verbose)
 
     # Initialize training state
     best_eval_reward = None

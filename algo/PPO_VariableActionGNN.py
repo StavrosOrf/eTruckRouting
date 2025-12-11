@@ -366,6 +366,18 @@ class PPOVariableActionGNN:
         if expl_noise is not None:
             deterministic = expl_noise == 0
         _, feasible_idx = self._prepare_feasible_actions(state, action_mask, device=self.device)
+        
+        # Debug: Check what feasible_idx contains
+        state_mask = state.feasible_action_mask
+        state_feasible = torch.nonzero(state_mask, as_tuple=False).view(-1)
+        if feasible_idx.numel() != state_feasible.numel():
+            print(f"\nDEBUG in select_action:")
+            print(f"  state.feasible_action_mask sum: {state_mask.sum().item()}")
+            print(f"  state_feasible indices: {state_feasible.tolist()}")
+            print(f"  returned feasible_idx: {feasible_idx.tolist()}")
+            if action_mask is not None:
+                print(f"  action_mask: {action_mask.tolist() if action_mask.numel() < 50 else f'size={action_mask.numel()}, sum={action_mask.sum()}'}")
+        
         action_features, ptr = self._build_action_graph_inputs([state], [feasible_idx], device=self.device)
         data = state.to(self.device)
         action_output, _ = self.policy(data, action_features, ptr)
@@ -548,23 +560,44 @@ class PPOVariableActionGNN:
         features = []
         ptr = [0]
         for state, global_indices in zip(states, feasible_indices):
-            # action_graph_features contains features for feasible actions in state.feasible_action_mask
-            # global_indices are the indices we actually want to use (subset of feasible actions)
+            # action_graph_features contains features for ALL feasible actions in state.feasible_action_mask
+            # global_indices are the actual feasible action indices (same as what's in the mask)
             # We need to map global_indices to positions in action_graph_features
             
             # Get the indices of feasible actions from the state's mask
             feasible_mask = state.feasible_action_mask
             state_feasible_indices = torch.nonzero(feasible_mask, as_tuple=False).view(-1)
             
+            # Debug information
+            if state_feasible_indices.numel() == 0:
+                raise RuntimeError("State has no feasible actions in feasible_action_mask")
+            
             # Create mapping from global action index to local index in action_graph_features
             global_to_local = {int(g.item()): i for i, g in enumerate(state_feasible_indices)}
             
             # Map the requested global indices to local indices
-            # All global_indices must be in the state's feasible set
-            local_indices = torch.tensor(
-                [global_to_local[int(g.item())] for g in global_indices],
-                dtype=torch.long
-            )
+            # Filter out any indices that aren't in the feasible set (defensive programming)
+            local_indices = []
+            for g in global_indices:
+                g_int = int(g.item())
+                if g_int in global_to_local:
+                    local_indices.append(global_to_local[g_int])
+                else:
+                    # Debug: print state of masks
+                    print(f"\nDEBUG: Action index {g_int} not in feasible set")
+                    print(f"  state_feasible_indices: {state_feasible_indices.tolist()}")
+                    print(f"  global_indices: {global_indices.tolist()}")
+                    print(f"  feasible_mask shape: {feasible_mask.shape}, sum: {feasible_mask.sum().item()}")
+                    if hasattr(state, 'action_graph_features'):
+                        print(f"  action_graph_features shape: {state.action_graph_features.shape}")
+                    raise KeyError(f"Action index {g_int} not found in feasible action set {state_feasible_indices.tolist()}")
+            
+            if not local_indices:
+                # If no valid indices, use all feasible actions
+                print("Warning: No valid local indices found, using all feasible actions")
+                local_indices = list(range(len(state_feasible_indices)))
+            
+            local_indices = torch.tensor(local_indices, dtype=torch.long)
             
             node_features = self._action_node_features(state, local_indices)
             features.append(node_features)
@@ -605,14 +638,36 @@ class PPOVariableActionGNN:
         if not hasattr(state, "feasible_action_mask"):
             raise ValueError("State is missing feasible_action_mask attribute.")
         mask = torch.as_tensor(state.feasible_action_mask, dtype=torch.bool)
+        
+        # If an additional action_mask is provided, combine it with the state's feasible mask
         if action_mask is not None:
             env_mask = torch.as_tensor(action_mask, dtype=torch.bool)
-            mask = self._align_and_combine_masks(mask, env_mask)
+            # The env_mask might have different length, so align and combine
+            combined_mask = self._align_and_combine_masks(mask, env_mask)
+            
+            # If combining results in no feasible actions, use only the state's mask
+            # This happens when env_mask doesn't overlap with state's feasible actions
+            if combined_mask.any():
+                mask = combined_mask
+            # else: keep mask = state.feasible_action_mask (already set above)
+        
+        # Ensure we have at least one feasible action (use state's feasible actions as fallback)
         if not mask.any():
-            mask = torch.ones_like(mask, dtype=torch.bool)
+            # If somehow the state mask is also empty, this is an error in state construction
+            # But provide a safe fallback
+            mask = torch.as_tensor(state.feasible_action_mask, dtype=torch.bool)
+            if not mask.any():
+                # Last resort: allow all actions
+                mask = torch.ones_like(mask, dtype=torch.bool)
+        
+        # Get indices where mask is True - these are the feasible action indices
         indices = torch.nonzero(mask, as_tuple=False).view(-1)
         if indices.numel() == 0:
-            indices = torch.arange(mask.numel(), dtype=torch.long)
+            # This should never happen given the checks above, but be defensive
+            indices = torch.nonzero(torch.as_tensor(state.feasible_action_mask, dtype=torch.bool), as_tuple=False).view(-1)
+            if indices.numel() == 0:
+                indices = torch.arange(mask.numel(), dtype=torch.long)
+        
         if device is not None:
             mask = mask.to(device)
             indices = indices.to(device)

@@ -19,6 +19,7 @@ sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
 import yaml
@@ -80,6 +81,8 @@ def parse_args():
                           help='Maximum simulation time in hours (overrides config)')
     env_group.add_argument('--enable-traffic', action='store_true',
                           help='Enable traffic simulation')
+    env_group.add_argument('--gnn-state-space', type=str, default='base', choices=['base', 'detour'],
+                          help='Which GNN state space to use (base or detour-based)')
     
     # Training parameters
     train_group = parser.add_argument_group('Training')
@@ -154,6 +157,25 @@ def parse_args():
                           help='Enable verbose output')
     
     return parser.parse_args()
+
+
+def create_gnn_state_space(state_space_type: str, num_trucks: int, num_stops: int,
+                           max_time: float, num_charging_nodes: int, device: str = "cpu",
+                           verbose: bool = False):
+    """Factory for selecting between base and detour-based state spaces."""
+    if state_space_type == 'detour':
+        cls = GNNStateSpaceDetourBased
+    else:
+        cls = GNNStateSpace
+
+    return cls(
+        num_trucks=num_trucks,
+        num_stops=num_stops,
+        max_time=max_time,
+        num_charging_nodes=num_charging_nodes,
+        device=device,
+        verbose=verbose,
+    )
 
 
 def compute_action_mask(env):
@@ -415,7 +437,8 @@ def train(args):
         run_id=f"{args.exp_name}_eval"
     )
 
-    gnn_state_space = GNNStateSpace(
+    gnn_state_space = create_gnn_state_space(
+        state_space_type=args.gnn_state_space,
         num_trucks=config['environment']['num_trucks'],
         num_stops=config['environment']['num_stops'],
         max_time=config['environment']['max_time'],
@@ -554,7 +577,8 @@ def train(args):
                 })
 
             print(f"PPO Episode {episode_num}: Reward={episode_reward:.2f}, "
-                  f"Steps={episode_timesteps}, Success={info['all_complete']}")
+                  f"Steps={episode_timesteps}, Total Timesteps={total_timesteps}, "
+                  f"Success={info['all_complete']}")
 
             obs, info = env.reset(seed=args.seed + episode_num + 1)
             gnn_state = gnn_state_space.get_state_GNN(env)

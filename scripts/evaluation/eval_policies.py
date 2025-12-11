@@ -32,8 +32,11 @@ POLICIES = [
     # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/Base_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6143/", "variable-ppo"),
+    ## ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6143/", "variable-ppo"),
     # ("saved_models/Base_r=1000_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6128/", "variable-ppo"),
+    # ("saved_models/Base_r=1000_updatedDelivery_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_6128/", "variable-ppo"),
+    ## ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=64_mlphd=256_8127/", "variable-ppo"),
+    ("saved_models/Base_r=500_updatedDelivery_steps=1024_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256_2551/", "variable-ppo"),
     # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
     # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
@@ -48,9 +51,9 @@ POLICIES = [
     # ("heuristic", "heuristic"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 10
-NUM_EVAL_SCENARIOS = 20
+NUM_TRUCKS = 30  # Must match the configuration used during training
+NUM_STOPS = 5
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================
 

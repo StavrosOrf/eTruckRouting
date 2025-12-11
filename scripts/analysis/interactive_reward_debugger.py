@@ -21,6 +21,7 @@ import numpy as np
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from EVRoutingEnv.utils.utils import load_config
 
 
@@ -29,9 +30,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
-    parser.add_argument("--num-trucks", type=int, default=2,
+    parser.add_argument("--num-trucks", type=int, default=1,
                         help="Override number of trucks from the config.")
-    parser.add_argument("--num-stops", type=int, default=3,
+    parser.add_argument("--num-stops", type=int, default=5,
                         help="Override number of delivery stops from the config.")
     parser.add_argument("--max-time", type=float, default=None,
                         help="Override maximum simulation time from the config.")
@@ -67,7 +68,8 @@ def compute_navigation_stats(env: EventDrivenTruckEnv, src: int, dst: Optional[i
     return {"energy": energy, "time": travel_time}
 
 
-def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStateSpace] = None) -> List[Dict]:
+def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStateSpace] = None, 
+                     gnn_single_charger: Optional[GNNStateSpaceDetourBased] = None) -> List[Dict]:
     """Build metadata for every discrete action."""
     if env.active_truck_id is None:
         return []
@@ -90,6 +92,24 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
         except Exception as e:
             print(f"Warning: Could not compute GNN feasibility: {e}")
             gnn_feasible_mask = None
+    
+    # Get single-charger GNN feasibility if available
+    gnn_single_feasible_mask = None
+    if gnn_single_charger is not None:
+        try:
+            gnn_single_state = gnn_single_charger.get_state_GNN(env)
+            gnn_single_feasible_mask = gnn_single_state.feasible_action_mask.cpu().numpy()
+        except Exception as e:
+            print(f"Warning: Could not compute single-charger GNN feasibility: {e}")
+            gnn_single_feasible_mask = None
+    
+    # Get next delivery info for additional metrics
+    next_delivery = truck.get_next_delivery_target()
+    if truck.enable_flexible_delivery_order:
+        remaining_deliveries = truck.get_remaining_deliveries()
+        next_delivery_node = remaining_deliveries[0] if remaining_deliveries else None
+    else:
+        next_delivery_node = next_delivery
 
     for action_idx in range(env.action_space.n):
         if action_idx < env.num_charging_nodes:
@@ -129,6 +149,18 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
                 # Assume average charging session is the median charge duration
                 avg_charge_time = np.median(charge_durations) if charge_durations else 1.0
                 estimated_wait = (queue_length + 1) * avg_charge_time / capacity
+            
+            # Calculate energy from charger to next delivery
+            energy_to_next_delivery = None
+            if next_delivery_node is not None:
+                energy_to_next_delivery = env.transport_graph.get_path_energy(target_node, next_delivery_node)
+                if np.isinf(energy_to_next_delivery):
+                    energy_to_next_delivery = None
+            
+            # Calculate battery at arrival (after navigation)
+            battery_at_arrival = None
+            if nav_stats["energy"] is not None:
+                battery_at_arrival = truck.current_battery - nav_stats["energy"]
             
         elif action_idx < env.num_navigation_actions:
             # Delivery action(s) - handle both sequential and flexible modes
@@ -211,6 +243,25 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
             queue_length = None
             estimated_wait = None
             
+            # Calculate distance to closest charger from this delivery node
+            energy_to_next_delivery = None
+            if target_node is not None and target_node not in env.charging_nodes:
+                # Find closest charger from this delivery
+                min_charger_energy = float('inf')
+                for charger_id in env.charging_nodes:
+                    charger_energy = env.transport_graph.get_path_energy(target_node, charger_id)
+                    if charger_energy < min_charger_energy:
+                        min_charger_energy = charger_energy
+                if not np.isinf(min_charger_energy):
+                    energy_to_next_delivery = min_charger_energy
+                else:
+                    energy_to_next_delivery = None
+            
+            # Calculate battery at arrival (after navigation)
+            battery_at_arrival = None
+            if nav_stats["energy"] is not None:
+                battery_at_arrival = truck.current_battery - nav_stats["energy"]
+            
         else:
             target_node = current_node
             nav_stats = {"energy": None, "time": None}
@@ -228,20 +279,36 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
             arrival_time = None
             queue_length = None
             estimated_wait = None
+            energy_to_next_delivery = None
+            
+            # Calculate battery after charging
+            battery_at_arrival = None
+            if can_charge_here:
+                # Get charging rate and calculate energy added
+                charger_type = env.charging_station.charger_type.get(target_node, "DCFast")
+                charging_config = env.config["charging"]
+                if charger_type == "DCFast":
+                    charger_config = charging_config["dcfast"]
+                else:
+                    charger_config = charging_config["level2"]
+                
+                charging_rate = charger_config["charge_rate"] * charger_config["efficiency"]
+                energy_added = charging_rate * charge_hours
+                battery_at_arrival = min(truck.current_battery + energy_added, truck.battery_capacity)
 
         # Generate label based on action type
         if action_type.startswith("charge"):
-            label = f"Charge for {charge_hours}h"
+            label = f"Charge {charge_hours}h"
         elif action_type.startswith("route:charger"):
-            label = f"Go to charger @ node {target_node}"
+            label = f"→Charger {target_node}"
         elif action_type.startswith("route:delivery"):
             if truck.enable_flexible_delivery_order:
                 if target_node is not None:
-                    label = f"Go to delivery @ node {target_node}"
+                    label = f"→Delivery {target_node}"
                 else:
-                    label = "No delivery at this position"
+                    label = "No delivery"
             else:
-                label = "Go to next delivery"
+                label = "→Next delivery"
         else:
             label = env._action_to_string(action_idx)
 
@@ -249,6 +316,11 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
         gnn_feasible = None
         if gnn_feasible_mask is not None and action_idx < len(gnn_feasible_mask):
             gnn_feasible = bool(gnn_feasible_mask[action_idx])
+        
+        # Get single-charger GNN feasibility for this action
+        gnn_single_feasible = None
+        if gnn_single_feasible_mask is not None and action_idx < len(gnn_single_feasible_mask):
+            gnn_single_feasible = bool(gnn_single_feasible_mask[action_idx])
         
         actions.append({
             "index": action_idx,
@@ -259,10 +331,13 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStat
             "navigation": nav_stats,
             "feasible": feasible,
             "gnn_feasible": gnn_feasible,
+            "gnn_single_feasible": gnn_single_feasible,
             "infeasible_reason": reason,
             "arrival_time": arrival_time,
             "queue_length": queue_length,
             "estimated_wait": estimated_wait,
+            "energy_to_next_delivery": energy_to_next_delivery,
+            "battery_at_arrival": battery_at_arrival,
         })
 
     return actions
@@ -424,10 +499,9 @@ def format_sim_result(action: Dict) -> str:
     if not sim:
         return "N/A"
     if "error" in sim:
-        return f"ERR: {sim['error']}"
-    status = "done" if sim["done"] else ("trunc" if sim["truncated"] else "ongoing")
+        return "ERROR"
     reward = sim["reward"]
-    return f"{reward:+8.2f} | {status}"
+    return f"{reward:+7.2f}"
 
 
 def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> None:
@@ -436,37 +510,88 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
         print("No actions available.")
         return
 
-    header = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'GNN':<4} {'Type':<16} {'Description':<28} {'Target':<8} {'ΔEnergy':<9} {'TravelTime':<11} {'ArrivalAt':<11} {'EstWait':<9} {'Sim reward/status'}"
-    print(header)
-    print("-" * len(header))
+    # ANSI color codes
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+
+    # Two-line header with units on second line
+    header_line1 = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'GNN':<4} {'1Chr':<4} {'Description':<18} {'ΔEnergy':<7} {'→NextDel':<8} {'Total':<7} {'TravelTime':<11} {'BatteryAtArr':<12} {'Reason':<20} {'SimReward':<10}"
+    header_line2 = f"{'':4} {'':2} {'':5} {'':4} {'':4} {'':18} {'(kWh)':<7} {'(kWh)':<8} {'(kWh)':<7} {'(h)':<11} {'(kWh)':<12} {'':20} {'':<10}"
+    print(header_line1)
+    print(header_line2)
+    print("-" * len(header_line1))
 
     for action in actions:
         nav_energy = action["navigation"]["energy"]
         nav_time = action["navigation"]["time"]
-        energy_str = f"{nav_energy:>6.1f}kWh" if nav_energy is not None else "   N/A"
+        energy_str = f"{nav_energy:>5.1f}" if nav_energy is not None else "  N/A"
         time_str = f"{nav_time:>6.2f}h" if nav_time is not None else "   N/A"
-        arrival_str = f"{action['arrival_time']:>6.2f}h" if action['arrival_time'] is not None else "   N/A"
-        wait_str = f"{action['estimated_wait']:>5.2f}h" if action['estimated_wait'] is not None else "  N/A"
         
-        target = action["target"] if action["target"] is not None else "-"
-        feasible = "yes" if action["feasible"] else "no"
-        gnn_feas = "yes" if action.get("gnn_feasible") else ("no" if action.get("gnn_feasible") is not None else "-")
+        # Energy to next delivery (for chargers) or closest charger (for deliveries)
+        next_del_energy = action.get("energy_to_next_delivery")
+        next_del_str = f"{next_del_energy:>5.1f}" if next_del_energy is not None else "  N/A"
+        
+        # Total energy (sum of nav_energy and next_del_energy)
+        if nav_energy is not None and next_del_energy is not None:
+            total_energy = nav_energy + next_del_energy
+            total_str = f"{total_energy:>5.1f}"
+        else:
+            total_str = "  N/A"
+        
+        # Battery at arrival
+        battery_at_arrival = action.get("battery_at_arrival")
+        battery_str = f"{battery_at_arrival:>6.1f}" if battery_at_arrival is not None else "   N/A"
+        
+        # Shorten reason for display
+        reason = action.get("infeasible_reason", "")
+        if reason:
+            # Abbreviate common reasons
+            if "Insufficient battery" in reason:
+                reason = "Low battery"
+            elif "Unreachable" in reason:
+                reason = "Unreachable"
+            elif "already completed" in reason or "already full" in reason:
+                reason = "Already done"
+            elif "stranded" in reason:
+                reason = "Would strand"
+            elif "Must charge now" in reason:
+                reason = "Must charge"
+            elif "Not at" in reason:
+                reason = "Wrong location"
+            elif "No deliver" in reason:
+                reason = "No delivery"
+            # Truncate if still too long
+            if len(reason) > 18:
+                reason = reason[:17] + "…"
+        reason_str = reason if reason else "-"
+        
+        feasible = action["feasible"]
+        feasible_str = "yes" if feasible else "no"
+        gnn_feas = action.get("gnn_feasible")
+        gnn_feas_str = "yes" if gnn_feas else ("no" if gnn_feas is not None else "-")
+        gnn_single_feas = action.get("gnn_single_feasible")
+        gnn_single_feas_str = "yes" if gnn_single_feas else ("no" if gnn_single_feas is not None else "-")
         heur_mark = "*" if heuristic_idx is not None and action["index"] == heuristic_idx else ""
         desc = action["label"]
         sim_summary = format_sim_result(action)
         
+        # Apply color based on feasibility
+        if feasible:
+            color = GREEN
+        else:
+            color = RED
+        
         print(
-            f"{action['index']:<4} {heur_mark:<2} {feasible:<5} {gnn_feas:<4} {action['type']:<16} "
-            f"{desc:<28} {str(target):<8} {energy_str:<9} {time_str:<11} {arrival_str:<11} {wait_str:<9} {sim_summary}"
+            f"{color}{action['index']:<4} {heur_mark:<2} {feasible_str:<5} {gnn_feas_str:<4} {gnn_single_feas_str:<4} "
+            f"{desc:<18} {energy_str:<7} {next_del_str:<8} {total_str:<7} {time_str:<11} {battery_str:<12} {reason_str:<20} {sim_summary:<10}{RESET}"
         )
         
-        # Show additional context for infeasible actions
-        if not action["feasible"] and action["infeasible_reason"]:
-            print(f"      ↳ reason: {action['infeasible_reason']}")
-        
-        # Show queue info for charger navigation actions
+        # Show queue info for charger navigation actions (still useful to keep)
         if action['type'] == 'route:charger' and action['queue_length'] is not None and action['queue_length'] > 0:
-            print(f"      ↳ queue: {action['queue_length']} trucks waiting")
+            print(f"      {YELLOW}↳ queue: {action['queue_length']} trucks waiting{RESET}")
 
     print()
 
@@ -499,12 +624,20 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
     done = False
     truncated = False
     
-    # Initialize GNN state space
+    # Initialize GNN state spaces
     gnn_state_space = GNNStateSpace(
         num_trucks=env.num_trucks,
         num_stops=env.num_stops,
         max_time=env.max_time,
         num_charging_nodes=env.num_charging_nodes,
+    )
+    
+    gnn_single_charger = GNNStateSpaceDetourBased(
+        num_trucks=env.num_trucks,
+        num_stops=env.num_stops,
+        max_time=env.max_time,
+        num_charging_nodes=env.num_charging_nodes,
+        verbose=False,  # Set to True for debugging single-charger selection
     )
 
     while not (done or truncated):
@@ -517,7 +650,7 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
         if env.active_truck_id is None:
             break
 
-        actions = describe_actions(env, gnn_state_space)
+        actions = describe_actions(env, gnn_state_space, gnn_single_charger)
         heuristic_idx = heuristic_action(env, actions)
         evaluate_actions(env, actions)
         print_actions_table(actions, heuristic_idx)

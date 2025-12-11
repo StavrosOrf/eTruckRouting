@@ -989,14 +989,14 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Validate truck is at a charger
         if truck.current_node not in self.charging_nodes:
-            raise RuntimeError("Truck cannot charge when not at a charging station")
-            # if self.verbose:
-            #     print(f"  ERROR: Truck not at charging station (current: {truck.current_node})")
-            # # Navigate to next delivery instead
-            # next_delivery = truck.get_next_delivery_target()
-            # if next_delivery is not None:
-            #     return self._execute_navigation_action(truck, next_delivery)
-            # return -0.01
+            if self.verbose:
+                print(f"  WARNING: Truck not at charging station (current: {truck.current_node})")
+                print(f"  Fallback: Navigating to next delivery instead")
+            # Navigate to next delivery instead
+            next_delivery = truck.get_next_delivery_target()
+            if next_delivery is not None:
+                return self._execute_navigation_action(truck, next_delivery)
+            raise RuntimeError("Truck attempted to charge while not at a charging station")
         
         # Validate charger_node matches current location
         if charger_node != truck.current_node:

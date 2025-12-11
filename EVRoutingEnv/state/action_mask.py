@@ -53,6 +53,10 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     at_charger = current_location in env.charging_nodes
     must_charge_now = at_charger and not must_leave
     
+    # Debug: Print must_leave flag status
+    if hasattr(env, 'verbose') and env.verbose and at_charger:
+        print(f"  [MASK] Truck {active_truck.truck_id} at charger, must_leave={must_leave}, num_sessions={active_truck.num_charging_sessions}")
+    
     next_delivery = active_truck.get_next_delivery_target()
     
     # Determine if flexible delivery order is enabled
@@ -170,6 +174,7 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     
     if at_charger:
         # If truck must leave charger, disable all charging actions
+        # This prevents charging immediately after just finishing a charging session
         if must_leave:
             for i, charge_hours in enumerate(charge_durations):
                 feasible_mask[charge_action_start_idx + i] = False
@@ -193,18 +198,33 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
                 # Sequential mode
                 next_delivery_for_charge = next_delivery
             
-            min_energy_to_leave = env.transport_graph.get_path_energy(current_location, next_delivery_for_charge) if next_delivery_for_charge is not None else float('inf')
-            
-            if not (len(deliveries_left) == 1 and min_energy_to_leave * energy_safety_factor < active_truck.battery_capacity):
-                # Find closest charger from current location (excluding current)
-                closest_charger_energy = float('inf')
+            # Calculate minimum energy needed to leave charger
+            if next_delivery_for_charge is not None:
+                # Energy to reach next delivery
+                energy_to_delivery = env.transport_graph.get_path_energy(current_location, next_delivery_for_charge)
+                
+                # If this is the last delivery, just need energy to reach it
+                if len(deliveries_left) == 1:
+                    min_energy_to_leave = energy_to_delivery
+                else:
+                    # Not the last delivery - need energy to reach delivery + nearest charger from there
+                    # Find closest charger from the delivery location
+                    min_charger_from_delivery = float('inf')
+                    for charger_id in env.charging_nodes:
+                        energy_delivery_to_charger = env.transport_graph.get_path_energy(next_delivery_for_charge, charger_id)
+                        if energy_delivery_to_charger < min_charger_from_delivery:
+                            min_charger_from_delivery = energy_delivery_to_charger
+                    
+                    # Total energy needed: to delivery + from delivery to nearest charger
+                    min_energy_to_leave = energy_to_delivery + min_charger_from_delivery
+            else:
+                # No deliveries left - need energy to reach nearest charger
+                min_energy_to_leave = float('inf')
                 for charger_id in env.charging_nodes:
                     if charger_id != current_location:
                         energy_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
-                        if energy_to_charger < closest_charger_energy:
-                            closest_charger_energy = energy_to_charger
-                
-                min_energy_to_leave = closest_charger_energy
+                        if energy_to_charger < min_energy_to_leave:
+                            min_energy_to_leave = energy_to_charger
             
             # Apply safety factor to minimum energy requirement
             min_energy_to_leave = min_energy_to_leave * energy_safety_factor

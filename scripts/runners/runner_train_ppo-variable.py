@@ -20,26 +20,28 @@ eval_freq = 5000
 
 # Parallel environment settings
 # Set to 1 for sequential training (original), >1 for parallel training
-num_parallel_envs = 12  # Number of parallel training environments
+num_parallel_envs = 1  # Number of parallel training environments
 num_eval_envs = 12     # Number of parallel evaluation environments
 
 # Environment settings
-num_trucks = 30
+num_trucks = 1
 num_stops = 5
 max_time = 200.0
+gnn_state_space = "detour"  # options: base, detour
 
 # Fixed hyperparameters for this sweep
 learning_rate = 3e-4
 # hidden_dim = 64
 num_gcn_layers = 3
+minibatch_size = 256
 
 # Define hyperparameter grids
 hyperparam_grids = {
-    "steps_per_update": [1024, 2048, 4096],
+    "steps_per_update": [256, 512],
     # "steps_per_update": [128, 512, 1024],
-    "epochs": [10],
+    "epochs": [5],
     "entropy_coef": [0.1],
-    "gnn_hidden_dim": [64],
+    "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
     "seed": [0],
 }
@@ -76,7 +78,7 @@ if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False):
 uncertainty_suffix = ''.join(uncertainty_flags) if uncertainty_flags else 'Det'  # Deterministic if none
 
 # Select training script based on parallel environment setting
-if num_parallel_envs > 1:
+if num_parallel_envs > 1 or num_eval_envs > 1:
     training_script = "scripts/training/train_PPO_Variable_parallel.py"
     training_mode = "PARALLEL"
     print(f"🚀 Using PARALLEL training with {num_parallel_envs} environments")
@@ -118,6 +120,7 @@ for config_idx, (
         f" --config {config}"
         f" --seed {seed}"
         f" --lr {learning_rate}"
+        f" --gnn-state-space {gnn_state_space}"
         f" --gnn-hidden-dim {gnn_hidden_dim}"
         f" --mlp-hidden-dim {mlp_hidden_dim}"
         f" --actor-gcn-layers {num_gcn_layers}"
@@ -133,14 +136,14 @@ for config_idx, (
         f" --group-name {group_name}"
         f" --ppo-steps-per-update {steps_per_update}"
         f" --ppo-epochs {epochs}"
-        f" --ppo-minibatch-size {steps_per_update // 4}"
+        f" --ppo-minibatch-size {minibatch_size}"
         f" --ppo-clip 0.2"
         f" --ppo-entropy-coef {entropy_coef}"
         f" --exp-name {exp_name}"
     )
     
     # Add parallel-specific arguments if using parallel training
-    if num_parallel_envs > 1:
+    if num_parallel_envs > 1 or num_eval_envs > 1:
         command += f" --num-parallel-envs {num_parallel_envs}"
         command += f" --num-eval-envs {num_eval_envs}"
     

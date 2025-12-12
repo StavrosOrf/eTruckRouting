@@ -198,7 +198,7 @@ def run_episode(env, gnn, seed=None, max_steps=1000):
 
 def main():
     config = load_config("EVRoutingEnv/config_files/config.yaml")
-    config["environment"]["num_trucks"] = 30  # Start simple
+    config["environment"]["num_trucks"] = 10  # Start simple
     config["environment"]["num_stops"] = 5
     
     config = load_config("EVRoutingEnv/config_files/config_small.yaml")

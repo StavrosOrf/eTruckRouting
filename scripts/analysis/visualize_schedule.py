@@ -20,6 +20,7 @@ sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
@@ -30,6 +31,8 @@ from algo.policy_utils import load_policy
 # Policies to compare
 POLICIES = [
     ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
+    # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
     # ("optimal", "optimal"),
     ("optimal-simple", "optimal-simple"),
     # ("heuristic", "heuristic"),
@@ -44,7 +47,25 @@ OUTPUT_DIR = "results/visualization"
 # =======================================
 
 
-def run_scenario(policy_path, policy_type):
+def _create_gnn_state_space(env_init, gnn_space_type: str, max_time: float):
+    """Instantiate the requested GNN state space; defaults to base if unknown."""
+    gnn_space_type = (gnn_space_type or "base").lower()
+    if gnn_space_type == "detour":
+        return GNNStateSpaceDetourBased(
+            num_trucks=NUM_TRUCKS,
+            num_stops=NUM_STOPS,
+            max_time=max_time,
+            num_charging_nodes=env_init.num_charging_nodes,
+        )
+    return GNNStateSpace(
+        num_trucks=NUM_TRUCKS,
+        num_stops=NUM_STOPS,
+        max_time=max_time,
+        num_charging_nodes=env_init.num_charging_nodes,
+    )
+
+
+def run_scenario(policy_path, policy_type, gnn_space_type="base"):
     """Run a single scenario with the given policy and collect truck event logs."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
@@ -56,12 +77,7 @@ def run_scenario(policy_path, policy_type):
     
     # Initialize State Space
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
-    gnn_state_space = GNNStateSpace(
-        num_trucks=NUM_TRUCKS,
-        num_stops=NUM_STOPS,
-        max_time=config["environment"]["max_time"],
-        num_charging_nodes=env_init.num_charging_nodes,
-    )
+    gnn_state_space = _create_gnn_state_space(env_init, gnn_space_type, config["environment"]["max_time"])
     env_init.close()
 
     # Load Policy
@@ -263,21 +279,35 @@ def plot_comparison(envs, policy_names, max_time):
     
     actual_max_time = actual_max_time * 1.05  # Add 5% padding
     
+    # Map each truck to a vertically spaced track to reduce overlap between trucks
+    spacing_scale = 1.6
+    y_tracks = {tid: idx * spacing_scale for idx, tid in enumerate(truck_ids)}
+
     # Create figure with more height per truck
     length = len(truck_ids)
-    fig, ax = plt.subplots(figsize=(24, length * 1.3))
+    fig, ax = plt.subplots(figsize=(24, length * 1.9))
     
     # Y-axis positions: offset for each policy (increased spacing to avoid overlap)
-    offsets = [0.35, 0, -0.35, -0.7][:len(policy_names)]
+    if len(policy_names) == 1:
+        offsets = [0.0]
+    elif len(policy_names) == 2:
+        offsets = [0.25, -0.25]
+    elif len(policy_names) == 3:
+        offsets = [0.35, 0.0, -0.35]
+    else:
+        step = 0.3
+        start = step * (len(policy_names) - 1) / 2
+        offsets = [start - i * step for i in range(len(policy_names))]
     
     for tid in truck_ids:
+        y_base = y_tracks[tid]
         # Draw background track with more spacing
-        ax.hlines(y=tid, xmin=0, xmax=actual_max_time, colors='gray', 
+        ax.hlines(y=y_base, xmin=0, xmax=actual_max_time, colors='gray', 
                  linestyles=':', alpha=0.1, linewidth=42)
         
         # Plot each policy
         for idx, (timelines, policy_name, offset) in enumerate(zip(timelines_list, policy_names, offsets)):
-            y_pos = tid + offset
+            y_pos = y_base + offset
             
             # Draw segments (routing first, then others on top)
             for segment in timelines[tid]:
@@ -288,16 +318,16 @@ def plot_comparison(envs, policy_names, max_time):
                 if segment["state"] in ["charging", "unloading", "waiting_to_charge", "complete", "failed"]:
                     _plot_segment(ax, segment, y_pos, colors, charging_nodes)
             
-            # Add policy label
-            ax.text(-1.0, y_pos, policy_name, ha='right', va='center', 
-                   fontsize=8, color='gray', weight='bold')
+                    # Add policy label
+                    ax.text(-1.0, y_pos, policy_name, ha='right', va='center', 
+                                    fontsize=8, color='gray', weight='bold')
     
     # Formatting
     ax.set_xlabel("Simulation Time (hours)", fontsize=12)
     ax.set_ylabel("Truck ID", fontsize=12)
     ax.set_title(f"Schedule Comparison: {', '.join(policy_names)} - Seed {SEED}", fontsize=14)
     ax.set_xlim(0, actual_max_time)
-    ax.set_yticks(truck_ids)
+    ax.set_yticks([y_tracks[tid] for tid in truck_ids])
     ax.set_yticklabels([f"Truck {tid}" for tid in truck_ids])
     ax.grid(True, axis='x', linestyle='--', alpha=0.7)
     
@@ -767,16 +797,33 @@ def main():
     policy_names = []
     
     # Run each policy
-    for idx, (policy_path, policy_type) in enumerate(POLICIES, 1):
+    for idx, policy_entry in enumerate(POLICIES, 1):
+        gnn_space_type = "base"
+        label_override = None
+
+        if len(policy_entry) == 2:
+            policy_path, policy_type = policy_entry
+        elif len(policy_entry) == 3:
+            policy_path, policy_type, third = policy_entry
+            if str(third).lower() in {"base", "detour"}:
+                gnn_space_type = str(third)
+            else:
+                label_override = third
+        elif len(policy_entry) == 4:
+            policy_path, policy_type, gnn_space_type, label_override = policy_entry
+        else:
+            raise ValueError(f"POLICIES entry must have 2 to 4 elements, got {len(policy_entry)}")
         print(f"\n{'='*80}")
         print(f"[{idx}/{len(POLICIES)}] Running Policy: {policy_path if policy_path not in ['optimal', 'heuristic'] else policy_path.upper()}")
         print(f"{'='*80}")
         
-        env, active_type = run_scenario(policy_path, policy_type)
+        env, active_type = run_scenario(policy_path, policy_type, gnn_space_type)
         envs.append(env)
         
         # Generate readable policy name
-        if policy_path == "heuristic":
+        if label_override:
+            name = label_override
+        elif policy_path == "heuristic":
             name = "Heuristic"
         elif policy_path == "optimal":
             name = "Optimal"

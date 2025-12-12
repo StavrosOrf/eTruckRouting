@@ -851,6 +851,7 @@ class GNNStateSpace:
                                 
                                 # Check if truck can continue after this delivery
                                 can_continue_after_delivery = False
+                                can_finish_route = False
                                 progress_guard = False
                                 if is_energy_feasible:
                                     battery_after_delivery = current_battery - max_energy_to_delivery
@@ -861,6 +862,7 @@ class GNNStateSpace:
                                     
                                     if not has_more_deliveries:
                                         can_continue_after_delivery = True
+                                        can_finish_route = True
                                     else:
                                         # Check if can reach any charger after delivery
                                         for charger_id in charger_node_to_idx.keys():
@@ -870,12 +872,9 @@ class GNNStateSpace:
                                                 can_continue_after_delivery = True
                                                 break
 
-                                    # In flexible mode while leaving a charger, allow deliveries that either keep you able
-                                    # to continue afterward or pass a greedy completion check; avoid over-pruning must_leave
-                                    if at_charger and must_leave:
-                                        progress_guard = can_continue_after_delivery or (
-                                            has_more_deliveries
-                                            and self._can_complete_route_from(
+                                        # Greedy feasibility: allow chaining deliveries before charging if route still completable
+                                        if not can_continue_after_delivery:
+                                            can_finish_route = self._can_complete_route_from(
                                                 env,
                                                 delivery_node,
                                                 battery_after_delivery,
@@ -883,9 +882,13 @@ class GNNStateSpace:
                                                 active_truck.battery_capacity,
                                                 routing_safety_factor,
                                             )
-                                        )
+
+                                    # In flexible mode while leaving a charger, allow deliveries that either keep you able
+                                    # to continue afterward or pass a greedy completion check; avoid over-pruning must_leave
+                                    if at_charger and must_leave:
+                                        progress_guard = can_continue_after_delivery or can_finish_route
                                     else:
-                                        progress_guard = can_continue_after_delivery or must_leave
+                                        progress_guard = can_continue_after_delivery or can_finish_route or must_leave
 
                                 is_feasible = is_energy_feasible and not must_charge_now and progress_guard
                                 action_to_node_map.append((delivery_node, False))
@@ -1192,11 +1195,13 @@ class GNNStateSpace:
                             max_energy_to_delivery = energy_to_delivery * routing_safety_factor
                             is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
                             can_continue_after_delivery = False
+                            can_finish_route = False
                             if is_energy_feasible:
                                 battery_after_delivery = current_battery - max_energy_to_delivery
                                 other_remaining = [d for d in remaining_deliveries if d != nav_node_id]
                                 if not other_remaining:
                                     can_continue_after_delivery = True
+                                    can_finish_route = True
                                 else:
                                     for charger_id in charger_node_to_idx.keys():
                                         energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
@@ -1204,7 +1209,17 @@ class GNNStateSpace:
                                         if battery_after_delivery > max_energy_to_charger:
                                             can_continue_after_delivery = True
                                             break
-                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or must_leave)
+
+                                    if not can_continue_after_delivery:
+                                        can_finish_route = self._can_complete_route_from(
+                                            env,
+                                            nav_node_id,
+                                            battery_after_delivery,
+                                            other_remaining,
+                                            active_truck.battery_capacity,
+                                            routing_safety_factor,
+                                        )
+                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or can_finish_route or must_leave)
 
                 # Progress-aware pruning: keep top actions by score when multiple feasible
                 if active_truck.enable_flexible_delivery_order and any(feasible_action_mask):
@@ -1260,11 +1275,13 @@ class GNNStateSpace:
                             max_energy_to_delivery = energy_to_delivery * relaxed_safety
                             is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
                             can_continue_after_delivery = False
+                            can_finish_route = False
                             if is_energy_feasible:
                                 battery_after_delivery = current_battery - max_energy_to_delivery
                                 other_remaining = [d for d in remaining_deliveries if d != nav_node_id]
                                 if not other_remaining:
                                     can_continue_after_delivery = True
+                                    can_finish_route = True
                                 else:
                                     for charger_id in charger_node_to_idx.keys():
                                         energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
@@ -1272,7 +1289,17 @@ class GNNStateSpace:
                                         if battery_after_delivery > max_energy_to_charger:
                                             can_continue_after_delivery = True
                                             break
-                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or must_leave)
+
+                                    if not can_continue_after_delivery:
+                                        can_finish_route = self._can_complete_route_from(
+                                            env,
+                                            nav_node_id,
+                                            battery_after_delivery,
+                                            other_remaining,
+                                            active_truck.battery_capacity,
+                                            relaxed_safety,
+                                        )
+                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or can_finish_route or must_leave)
 
                 # Escape hatch: at charger with must_leave in flexible mode and no actions — allow any energy-feasible nav
                 if (

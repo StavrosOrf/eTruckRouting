@@ -1,46 +1,35 @@
 """
-Experiment runner for EVPR - runs various hyperparameter configurations in separate tmux panes.
-Automatically selects between sequential and parallel training based on num_parallel_envs setting.
+Minimal experiment runner that can launch PPO-GNN (parallel only) and SB3 jobs in tmux.
+Toggle what to run via run_algorithms. Uses common exp_name and group_name helpers.
 """
 
+import itertools
 import os
 import time
-import itertools
 import yaml
 
-# Configuration
-config = "EVRoutingEnv/config_files/config.yaml"
-config = "EVRoutingEnv/config_files/config_small.yaml"
-
 python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+# config_path = "EVRoutingEnv/config_files/config_small.yaml"
+config_path = "EVRoutingEnv/config_files/config.yaml"
 
-# Training parameterss
-counter = 0
-max_episodes = 100_000_000
-max_timesteps = 10_000_000
-eval_freq = 5000
+# Select which stacks to run: choose any of ["ppo-variable", "sb3"]
+run_algorithms = ["sb3"]
 
-# Parallel environment settings
-# Set to 1 for sequential training (original), >1 for parallel training
-num_parallel_envs = 1  # Number of parallel training environments
-num_eval_envs = 12     # Number of parallel evaluation environments
+# PPO-V (parallel) settings
+ppo_params = {
+    "learning_rate": 3e-4,
+    "num_gcn_layers": 3,
+    "minibatch_size": 256,
+    "max_episodes": 100_000_000,
+    "max_timesteps": 10_000_000,
+    "eval_freq": 5000,
+    "num_parallel_envs": 1,
+    "num_eval_envs": 12,
+    "project": "evpr-newtests",
+}
 
-# Environment settings
-num_trucks = 1
-num_stops = 5
-max_time = 200.0
-gnn_state_space = None  # will be set based on config flags (nonflex/detour/vrp)
-
-# Fixed hyperparameters for this sweep
-learning_rate = 3e-4
-# hidden_dim = 64
-num_gcn_layers = 3
-minibatch_size = 256
-
-# Define hyperparameter grids
-hyperparam_grids = {
+ppo_grid = {
     "steps_per_update": [256],
-    # "steps_per_update": [128, 512, 1024],
     "epochs": [5],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
@@ -48,130 +37,129 @@ hyperparam_grids = {
     "seed": [0],
 }
 
-# Generate all combinations
-all_combinations = list(
-    itertools.product(
-        hyperparam_grids["steps_per_update"],
-        hyperparam_grids["epochs"],
-        hyperparam_grids["entropy_coef"],
-        hyperparam_grids["gnn_hidden_dim"],
-        hyperparam_grids["mlp_hidden_dim"],
-        hyperparam_grids["seed"],
-    )
-)
+# SB3 settings
+sb3_grid = {
+    "algorithm": ["maskppo"],
+    "seed": [0],
+}
+sb3_params = {
+    "total_steps": 10_000_000,
+    "eval_freq": 1000,
+    "n_eval_episodes": 50,
+    "project": "evpr-newtests",
+    "save_dir": "./saved_models",
+    "device": "cuda",
+}
 
-# Load config file to extract uncertainty settings
-with open(config, 'r') as f:
-    config_data = yaml.safe_load(f)
 
-# Select state-space based on flexible delivery flag
-flexible_order = config_data.get('delivery', {}).get('enable_flexible_delivery_order', False)
-gnn_state_space = "vrp" if flexible_order else "detour"
+def load_env_meta(cfg_path: str):
+    with open(cfg_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    delivery_cfg = cfg["delivery"]
+    traffic_cfg = cfg["traffic"]
+    charging_cfg = cfg["charging"]
+    env_cfg = cfg["environment"]
 
-# Build uncertainty suffix for group name (short format)
-uncertainty_flags = []
-if config_data.get('traffic', {}).get('enable_traffic', False):
-    uncertainty_flags.append('T')  # Traffic
-    if config_data.get('traffic', {}).get('enable_energy_uncertainty', False):
-        uncertainty_flags.append('E')  # Energy uncertainty
-if config_data.get('delivery', {}).get('enable_stochastic_unloading', False):
-    uncertainty_flags.append('U')  # Unloading
-if config_data.get('charging', {}).get('use_realistic_curve', False):
-    uncertainty_flags.append('C')  # Charging curve (CCCV)
-if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False):
-    uncertainty_flags.append('F')  # Flexible delivery
+    flexible = delivery_cfg["enable_flexible_delivery_order"]
 
-uncertainty_suffix = ''.join(uncertainty_flags) if uncertainty_flags else 'Det'  # Deterministic if none
+    gnn_state = "vrp" if flexible else "detour"
+    flags = []
+    if traffic_cfg["enable_traffic"]:
+        flags.append("T")
+        if traffic_cfg["enable_energy_uncertainty"]:
+            flags.append("E")
+    if delivery_cfg["enable_stochastic_unloading"]:
+        flags.append("U")
+    if charging_cfg["use_realistic_curve"]:
+        flags.append("C")
+    if flexible:
+        flags.append("F")
 
-# Problem type for grouping (flexible VRP vs sequential/detour)
-problem_type = 'vrp' if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False) else gnn_state_space
+    suffix = "".join(flags) if flags else "Det"
+    max_time = env_cfg["max_time"]
 
-# Select training script based on parallel environment setting
-if num_parallel_envs > 1 or num_eval_envs > 1:
-    training_script = "scripts/training/train_PPO_Variable_parallel.py"
-    training_mode = "PARALLEL"
-    print(f"🚀 Using PARALLEL training with {num_parallel_envs} environments")
-    print(f"   Expected speedup: ~{num_parallel_envs}x for data collection")
-else:
-    training_script = "scripts/training/train_PPO_Variable.py"
-    training_mode = "SEQUENTIAL"
-    print(f"Using SEQUENTIAL training (original)")
+    return {
+        "gnn_state": gnn_state,
+        "uncertainty_suffix": suffix,
+        "num_trucks": env_cfg["num_trucks"],
+        "num_stops": env_cfg["num_stops"],
+        "max_time": max_time,
+        "problem_type": "vrp" if flexible else gnn_state,
+    }
 
-print(f"Total configurations to run: {len(all_combinations)}")
-print(f"Uncertainty flags: {uncertainty_suffix}")
-print(f"Training mode: {training_mode}\n")
 
-for config_idx, (
-    steps_per_update,
-    epochs,
-    entropy_coef,
-    gnn_hidden_dim,
-    mlp_hidden_dim,
-    seed,
-) in enumerate(all_combinations, 1):
-    # Print configuration being launched
-    print(
-        f"[{config_idx}/{len(all_combinations)}] Launching: ppo-variable | steps={steps_per_update} | epochs={epochs} | entropy={entropy_coef} | seed={seed}"
-    )
+def build_names(base_algo: str, meta: dict, extra: str) -> tuple[str, str]:
+    group = f"{meta['problem_type']}_L_{meta['num_trucks']}T{meta['num_stops']}S_{meta['uncertainty_suffix']}"
+    exp = f"{base_algo}_{meta['num_trucks']}T{meta['num_stops']}S_{extra}_{int(time.time()) % 10000}"
+    return exp, group
 
-    # Build experiment name
-    exp_name = f"Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps={steps_per_update}_epochs={epochs}_ent={entropy_coef}_seed={seed}"
-    exp_name += f"_gnnhd={gnn_hidden_dim}_mlphd={mlp_hidden_dim}"
-    #add random number as suffix to avoid overwriting
-    exp_name += f"_{int(time.time())%10000}"
-    
-    # Group name includes environment size and uncertainty types
-    group_name = f"{problem_type}_L_{num_trucks}T{num_stops}S_{uncertainty_suffix}"
 
-    # Build command with appropriate training script
-    command = (
-        f'tmux new-session -d \\; send-keys " {python_path} {training_script}'
-        f" --config {config}"
-        f" --seed {seed}"
-        f" --lr {learning_rate}"
-        f" --gnn-state-space {gnn_state_space}"
-        f" --gnn-hidden-dim {gnn_hidden_dim}"
-        f" --mlp-hidden-dim {mlp_hidden_dim}"
-        f" --actor-gcn-layers {num_gcn_layers}"
-        f" --critic-gcn-layers {num_gcn_layers}"
-        f" --max-episodes {max_episodes}"
-        f" --max-timesteps {max_timesteps}"
-        f" --eval-freq {eval_freq}"
-        f" --num-trucks {num_trucks}"
-        f" --num-stops {num_stops}"
-        f" --max-time {max_time}"
-        f" --wandb-project evpr-experiments"
-        f" --wandb-entity stavrosorf"        
-        f" --group-name {group_name}"
-        f" --ppo-steps-per-update {steps_per_update}"
-        f" --ppo-epochs {epochs}"
-        f" --ppo-minibatch-size {minibatch_size}"
-        f" --ppo-clip 0.2"
-        f" --ppo-entropy-coef {entropy_coef}"
-        f" --exp-name {exp_name}"
-    )
-    
-    # Add parallel-specific arguments if using parallel training
-    if num_parallel_envs > 1 or num_eval_envs > 1:
-        command += f" --num-parallel-envs {num_parallel_envs}"
-        command += f" --num-eval-envs {num_eval_envs}"
-    
-    command += f'" Enter'
+def tmux_send(session: str, command: str):
+    full = f'tmux new-session -d -s "{session}" \\; send-keys "{command}" Enter'
+    os.system(full)
+    print(full)
 
-    # Execute command
-    os.system(command)
-    print(command)
-    counter += 1
 
-    # Wait before starting next experiment to avoid race conditions
-    time.sleep(3)
+meta = load_env_meta(config_path)
+counter = 0
 
-print(f"\n✓ Launched {counter} experiments in separate tmux sessions")
-print(f"  Total: {len(all_combinations)} configurations")
-print(f"\nHyperparameter grid:")
-for param, values in hyperparam_grids.items():
-    print(f"  {param}: {values}")
-print("\nUseful commands:")
-print("  tmux ls                        - List all sessions")
-print("  tmux attach -t <session-id>    - Attach to a session")
-print("  pkill -f train.py              - Kill all training sessions")
+if "ppo-variable" in run_algorithms:
+    ppo_training_script = "scripts/training/train_PPO_Variable_parallel.py"
+    ppo_jobs = list(itertools.product(*ppo_grid.values()))
+    print(f"PPO-V jobs: {len(ppo_jobs)}")
+    for job in ppo_jobs:
+        steps_per_update, epochs, entropy_coef, gnn_hidden_dim, mlp_hidden_dim, seed = job
+        exp_name, group_name = build_names("ppov", meta, f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}_seed{seed}")
+        cmd = (
+            f"{python_path} {ppo_training_script}"
+            f" --config {config_path}"
+            f" --seed {seed}"
+            f" --lr {ppo_params['learning_rate']}"
+            f" --gnn-state-space {meta['gnn_state']}"
+            f" --gnn-hidden-dim {gnn_hidden_dim}"
+            f" --mlp-hidden-dim {mlp_hidden_dim}"
+            f" --actor-gcn-layers {ppo_params['num_gcn_layers']}"
+            f" --critic-gcn-layers {ppo_params['num_gcn_layers']}"
+            f" --max-episodes {ppo_params['max_episodes']}"
+            f" --max-timesteps {ppo_params['max_timesteps']}"
+            f" --eval-freq {ppo_params['eval_freq']}"
+            f" --num-trucks {meta['num_trucks']}"
+            f" --num-stops {meta['num_stops']}"
+            f" --max-time {meta['max_time']}"
+            f" --wandb-project {ppo_params['project']}"
+            f" --wandb-entity stavrosorf"
+            f" --group-name {group_name}"
+            f" --ppo-steps-per-update {steps_per_update}"
+            f" --ppo-epochs {epochs}"
+            f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
+            f" --ppo-clip 0.2"
+            f" --ppo-entropy-coef {entropy_coef}"
+            f" --exp-name {exp_name}"
+            f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
+            f" --num-eval-envs {ppo_params['num_eval_envs']}"
+        )
+        tmux_send(exp_name, cmd)
+        counter += 1
+
+if "sb3" in run_algorithms:
+    sb3_jobs = list(itertools.product(*sb3_grid.values()))
+    print(f"SB3 jobs: {len(sb3_jobs)}")
+    for job in sb3_jobs:
+        algorithm, seed = job
+        exp_name, _ = build_names(f"sb3-{algorithm}", meta, f"seed{seed}")
+        cmd = (
+            f"{python_path} scripts/training/train_sb3_event_driven.py"
+            f" --algo {algorithm}"
+            f" --seed {seed}"
+            f" --config {config_path}"
+            f" --steps {sb3_params['total_steps']}"
+            f" --eval-freq {sb3_params['eval_freq']}"
+            f" --n-eval-episodes {sb3_params['n_eval_episodes']}"
+            f" --project {sb3_params['project']}"
+            f" --save-dir {sb3_params['save_dir']}"
+            f" --device {sb3_params['device']}"
+        )
+        tmux_send(exp_name, cmd)
+        counter += 1
+
+print(f"\nLaunched {counter} tmux sessions")

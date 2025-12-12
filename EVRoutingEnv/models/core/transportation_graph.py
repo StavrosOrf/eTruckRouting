@@ -295,13 +295,17 @@ class TransportationGraph:
         sequence = [start_node]
         current_node = start_node
 
-        # Get candidate nodes (excluding charging nodes if requested)
+        # Get candidate nodes (excluding charging nodes if requested) and avoid sinks
+        graph_ref = self.graph
+        def _is_sink(node_id: int) -> bool:
+            return graph_ref.out_degree(node_id) == 0
+
         if exclude_charging_nodes:
             candidate_nodes = [
-                n for n in self.get_all_nodes() if n not in self.charging_nodes
+                n for n in self.get_all_nodes() if n not in self.charging_nodes and not _is_sink(n)
             ]
         else:
-            candidate_nodes = self.get_all_nodes()
+            candidate_nodes = [n for n in self.get_all_nodes() if not _is_sink(n)]
 
         attempts = 0
         max_attempts = 1000
@@ -334,7 +338,7 @@ class TransportationGraph:
                 if not valid_next_nodes:
                     # Try including charging nodes as last resort
                     for node in self.get_all_nodes():
-                        if node not in sequence:
+                        if node not in sequence and not _is_sink(node):
                             distance = self.get_path_energy(current_node, node)
                             if distance != float('inf'):
                                 valid_next_nodes.append(node)
@@ -358,7 +362,7 @@ class TransportationGraph:
             else:
                 remaining_nodes = [
                     n for n in self.get_all_nodes()
-                    if n not in sequence and self.get_path_energy(current_node, n) != float('inf')
+                    if n not in sequence and not _is_sink(n) and self.get_path_energy(current_node, n) != float('inf')
                 ]
             
             if not remaining_nodes:

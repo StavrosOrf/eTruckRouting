@@ -2,6 +2,7 @@
 
 import copy
 import os
+import re
 import sys
 import numpy as np
 import torch
@@ -17,9 +18,6 @@ from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.state.action_mask import get_action_mask
-
-# Import compute_action_mask from train module
-from scripts.training.train_PPO_Variable import compute_action_mask
 from algo.policy_utils import load_policy
 
 # Import SB3 algorithms
@@ -32,9 +30,9 @@ POLICIES = [
     # ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.01_seed=0_gnnhd=32_mlphd=256_6343/", "variable-ppo", "detour"),
     ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
-    ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
+    # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
     # SB3 policies
-    # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn", "base"),
@@ -44,11 +42,20 @@ POLICIES = [
     # ("heuristic", "heuristic", "base"),
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_small.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 5
+NUM_STOPS = 10
 NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================
+
+def _extract_sb3_config(policy_path):
+    """Return (num_trucks, num_stops) if encoded in path like '1trucks_10stops'."""
+    for part in policy_path.rstrip("/").split("/"):
+        match = re.search(r"(\d+)trucks_(\d+)stops", part)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
 
 
 def evaluate_policy(
@@ -111,7 +118,7 @@ def evaluate_policy(
                     action = policy.to_env_action(gnn_state, int(raw_action))
                 else:  # ppo
                     gnn_state = gnn_state_space.get_state_GNN(env)
-                    mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
+                    mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
                     raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
                     if isinstance(raw_action, tuple):
                         action = raw_action
@@ -212,8 +219,49 @@ def main():
     """Evaluate policies with hardcoded parameters."""
 
     config = load_config(CONFIG_FILE)
-    config["environment"]["num_trucks"] = NUM_TRUCKS
-    config["environment"]["num_stops"] = NUM_STOPS
+
+    # Detour GNN space requires sequential deliveries; disable flexible ordering if needed
+    if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
+        if config["delivery"].get("enable_flexible_delivery_order", False):
+            print(
+                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
+            )
+            config["delivery"]["enable_flexible_delivery_order"] = False
+
+    # Detect SB3-trained configuration from policy paths (e.g., "1trucks_10stops")
+    sb3_present = any(len(entry) >= 2 and entry[1].startswith("sb3-") for entry in POLICIES)
+    sb3_configs = []
+    for entry in POLICIES:
+        if len(entry) < 2:
+            continue
+        if entry[1].startswith("sb3-"):
+            detected = _extract_sb3_config(entry[0])
+            if detected:
+                sb3_configs.append(detected)
+    unique_sb3_configs = set(sb3_configs)
+
+    eval_num_trucks = NUM_TRUCKS
+    eval_num_stops = NUM_STOPS
+    if unique_sb3_configs:
+        if len(unique_sb3_configs) > 1:
+            raise ValueError(
+                f"SB3 policies must share the same training config, found: {sorted(unique_sb3_configs)}"
+            )
+        eval_num_trucks, eval_num_stops = next(iter(unique_sb3_configs))
+        print(
+            f"Detected SB3 training config from path: {eval_num_trucks} trucks, {eval_num_stops} stops"
+        )
+    elif sb3_present:
+        print(
+            "SB3 policy detected but training config not encoded in path; using default constants (may mismatch)."
+        )
+    else:
+        print(
+            f"Using default config constants: {eval_num_trucks} trucks, {eval_num_stops} stops"
+        )
+
+    config["environment"]["num_trucks"] = eval_num_trucks
+    config["environment"]["num_stops"] = eval_num_stops
 
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
     # Build the required GNN state spaces once, based on policy list
@@ -243,13 +291,13 @@ def main():
             # Load SB3 model
             algo_name = policy_type.replace("sb3-", "")
             if algo_name == "ppo":
-                policy = PPO.load(policy_path)
+                policy = PPO.load(policy_path, device="cpu")
             elif algo_name == "maskppo":
-                policy = MaskablePPO.load(policy_path)
+                policy = MaskablePPO.load(policy_path, device="cpu")
             elif algo_name == "dqn":
-                policy = DQN.load(policy_path)
+                policy = DQN.load(policy_path, device="cpu")
             elif algo_name == "qrdqn":
-                policy = QRDQN.load(policy_path)
+                policy = QRDQN.load(policy_path, device="cpu")
             else:
                 raise ValueError(f"Unknown SB3 algorithm: {algo_name}")
             resolved_type = policy_type
@@ -308,7 +356,7 @@ def main():
 
     print(f"\n{'='*90}")
     print(f"Evaluating {len(policies)} policies over {NUM_EVAL_SCENARIOS} scenarios")
-    print(f"Environment: {NUM_TRUCKS} trucks, {NUM_STOPS} stops\n")
+    print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops\n")
 
     results = {}
     for policy_name, policy_info in tqdm(policies.items(), desc="Policies", position=0):
@@ -395,7 +443,7 @@ def main():
     
     print(f"\n{'='*separator_width}")
     print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)")
-    print(f"Environment: {NUM_TRUCKS} trucks, {NUM_STOPS} stops")
+    print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops")
     print(f"{'='*separator_width}\n")
     
     # Print policy names (wrapped if needed)

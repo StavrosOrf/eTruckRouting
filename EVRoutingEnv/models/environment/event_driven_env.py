@@ -84,12 +84,17 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Load all parameters from config (no overrides, no defaults)
         self.num_trucks = env_config["num_trucks"]
-        self.num_stops = env_config["num_stops"]
+        # Delivery stops configuration
+        self.fixed_num_stops = env_config["num_stops"]
+        self.allow_variable_num_stops = env_config["allow_variable_num_stops"]
+        # num_stops will be (re)set in reset(); initialize with fixed for defaults
+        self.num_stops = self.fixed_num_stops
         self.min_hop_distance = env_config["min_hop_distance"]
         self.max_hop_distance = env_config["max_hop_distance"]
         self.max_time = env_config["max_time"]
         # self.max_episode_steps = env_config['max_episode_steps']
-        self.max_episode_steps = int(self.num_trucks * self.num_stops * 7.5)  # Safety cap
+        max_stops_for_bounds = self.fixed_num_stops
+        self.max_episode_steps = int(self.num_trucks * max_stops_for_bounds * 7.5)  # Safety cap
         self.verbose = verbose if verbose is not None else env_config["verbose"]
 
         # Visualization and output settings
@@ -228,9 +233,10 @@ class EventDrivenTruckEnv(gym.Env):
         # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, charge_1h, ...]
         charge_durations = self.charging_config["charge_durations"]
         
+        stops_for_action_space = self.fixed_num_stops
         if self.enable_flexible_delivery_order:
-            # Flexible mode: separate action for each delivery node
-            self.num_navigation_actions = self.num_charging_nodes + self.num_stops
+            # Flexible mode: separate action for each potential delivery node (size with max to keep action space stable)
+            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space
         else:
             # Sequential mode: single next delivery action
             self.num_navigation_actions = self.num_charging_nodes + 1
@@ -245,7 +251,7 @@ class EventDrivenTruckEnv(gym.Env):
         # Initialize state space
         self.state_space_manager = StateSpace(
             num_trucks=self.num_trucks,
-            num_stops=self.num_stops,
+            num_stops=stops_for_action_space,
             max_time=self.max_time,
             num_charging_nodes=self.num_charging_nodes,
         )
@@ -272,6 +278,13 @@ class EventDrivenTruckEnv(gym.Env):
     ) -> Tuple[np.ndarray, Dict]:
         """Reset the environment for a new episode."""
         super().reset(seed=seed)
+
+        # Sample per-episode number of stops if enabled
+        if self.allow_variable_num_stops:
+            # Always at least one stop; upper bound fixed_num_stops
+            self.num_stops = int(np.random.randint(1, self.fixed_num_stops + 1))
+        else:
+            self.num_stops = self.fixed_num_stops
 
         if seed is not None:
             np.random.seed(seed)

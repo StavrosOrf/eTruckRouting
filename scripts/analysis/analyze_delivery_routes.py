@@ -548,13 +548,14 @@ def create_visualizations(hop_distances, hop_times, total_distances, total_times
 
 def main():
     parser = argparse.ArgumentParser(description='Analyze delivery route generation')
-    parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config.yaml',
+    # parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config.yaml',
+    parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config_small.yaml',
                        help='Path to config file')
-    parser.add_argument('--num-samples', type=int, default=100,
+    parser.add_argument('--num-samples', type=int, default=1000,
                        help='Number of environment samples to generate')
-    parser.add_argument('--num-trucks', type=int, default=100,
+    parser.add_argument('--num-trucks', type=int, default=10,
                        help='Number of trucks per sample')
-    parser.add_argument('--num-stops', type=int, default=5,
+    parser.add_argument('--num-stops', type=int, default=15,
                        help='Number of stops per truck')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')

@@ -8,20 +8,20 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 15
+  num_trucks: 1
 
   # Number of delivery stops per truck episode
-  num_stops: 5
+  num_stops: 15
 
   # When enabled, each episode samples a random number of stops in [1, max_num_stops]
-  allow_variable_num_stops: false
+  allow_variable_num_stops: True
   # Sampling uses num_stops as the upper bound when enabled
 
   # Minimum energy consumption between consecutive delivery stops (kWh)
-  min_hop_distance: 100.0
+  min_hop_distance: 10.0
 
   # Maximum energy consumption between consecutive delivery stops (kWh)
-  max_hop_distance: 250.0
+  max_hop_distance: 50.0
 
   # Maximum simulation time in hours (for event-driven environments)
   max_time: 200

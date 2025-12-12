@@ -201,6 +201,8 @@ def main():
     config["environment"]["num_trucks"] = 30  # Start simple
     config["environment"]["num_stops"] = 5
     
+    config = load_config("EVRoutingEnv/config_files/config_small.yaml")
+    
     seed = 42
     
     env = EventDrivenTruckEnv(config=config, verbose=False)
@@ -218,7 +220,7 @@ def main():
         verbose=False,  # Set to True for debugging
     )
     
-    n_episodes = 1000
+    n_episodes = 100
     results = []
     for i in range(n_episodes):
         print(f"Episode {i}...", end=" ", flush=True)

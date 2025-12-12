@@ -74,16 +74,16 @@ delivery:
   # Enable flexible delivery order selection
   # When enabled, trucks can navigate to any remaining delivery (not just next in sequence)
   # When disabled, trucks must follow strict sequential delivery order
-  enable_flexible_delivery_order: false
+  enable_flexible_delivery_order: true
   
   # Enable stochastic unloading time at delivery locations
   # When enabled, unloading time varies based on time-of-day
   # When disabled, constant base_unloading_time is used
-  enable_stochastic_unloading: true
+  enable_stochastic_unloading: false
   
   # Base unloading time at delivery locations (hours)
   # Typical value: 0.5 hours = 30 minutes
-  base_unloading_time: 0.5
+  base_unloading_time: 0.2
   
   # Standard deviation of unloading time as fraction of base time
   # Example: 0.20 means std_dev = 20% of base_unloading_time during off-hours

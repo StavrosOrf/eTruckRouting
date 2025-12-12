@@ -17,6 +17,7 @@ sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
@@ -33,30 +34,27 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
-    # GNN-based policies
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),    
-    # ("saved_models/curriculum_staged_seed0/", "variable-ppo"),
-    # ("saved_models/curriculum_mixed_seed0/", "variable-ppo"),
-    ("saved_models/MoreActions_ppo-variable_steps=512_epochs=10_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/curriculum_staged_seed0_44739/", "variable-ppo"),
-    # ("saved_models/curriculum_uniform_seed0/", "variable-ppo"),
-    # SB3 policies
-    ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo"),
-    ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo"),
-    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn"),
-    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn"),
-    # Baselines
-    # ("optimal", "optimal"),  # Gurobi-based optimal MILP solver
-    ("optimal_simple", "optimal_simple"),  # Simplified conservative Gurobi-based solver
-    # ("heuristic", "heuristic"),
+    # Detour GNN-based policies
+    (
+        "saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/",
+        "variable-ppo",
+        "detour",
+    ),
+    (
+        "saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/",
+        "variable-ppo",
+        "detour",
+    ),
+    # Baseline
+    ("optimal_simple", "optimal_simple", "base"),
 ]
 
 # Grid parameters
-NUM_TRUCKS_GRID = [5, 10, 15]
-NUM_STOPS_GRID = [2, 3]
+NUM_TRUCKS_GRID = [1, 5]
+NUM_STOPS_GRID = [2, 3, 5, 10]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_EVAL_SCENARIOS = 15
+NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 
 # Parallel processing
@@ -83,6 +81,12 @@ def evaluate_policy_single_config(
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
     failures_per_episode = []
     truncated_flags = []
+    charging_sessions = []
+    waiting_times = []
+    routing_times = []
+    unloading_times = []
+    max_time_terminations = []
+    max_steps_terminations = []
 
     episode_iter = range(num_episodes)
     if show_progress and position is not None:
@@ -149,34 +153,56 @@ def evaluate_policy_single_config(
         successes.append(1.0 if info["all_complete"] else 0.0)
         steps.append(episode_steps)
         completion_times.append(env.global_clock)
-
-        # Failures: count trucks that failed during the episode
-        num_failures = 0
-        for t in info.get("trucks", []):
-            if t.get("failed", False):
-                num_failures += 1
-        failures_per_episode.append(num_failures)
+        max_time_reached = 1.0 if truncated and env.global_clock >= env.max_time else 0.0
+        max_steps_reached = 1.0 if truncated and episode_steps >= env.max_episode_steps else 0.0
+        max_time_terminations.append(max_time_reached)
+        max_steps_terminations.append(max_steps_reached)
 
         # Truncation: whether the episode ended due to truncation flag
         truncated_flags.append(1.0 if truncated else 0.0)
 
         # Extract metrics from truck info
         trucks_info = info["trucks"]
-        total_dist = sum(t["total_distance"] for t in trucks_info)
-        total_charge = sum(t["total_charging_time"] for t in trucks_info)
+        total_dist = 0.0
+        total_charge = 0.0
+        total_sessions = 0
+        total_waiting = 0.0
+        total_routing = 0.0
+        total_unloading = 0.0
+        num_failures = 0
         
         # Count deliveries completed: total sequence length - remaining deliveries - 1 (for start)
         num_deliveries = 0
         for t in trucks_info:
-            total_stops = len(t["delivery_sequence"])
-            remaining = t["deliveries_remaining"]
-            # Deliveries made = total stops - start node - remaining deliveries
+            total_dist += t.get("total_distance", 0.0)
+            total_charge += t.get("total_charging_time", 0.0)
+            total_sessions += t.get("num_charging_sessions", 0)
+            total_waiting += t.get("waiting_time", 0.0)
+            total_unloading += t.get("total_unloading_time", 0.0)
+
+            if t.get("failed", False):
+                num_failures += 1
+
+            total_stops = len(t.get("delivery_sequence", []))
+            remaining = t.get("deliveries_remaining", 0)
             if total_stops > 0:
                 num_deliveries += max(0, total_stops - 1 - remaining)
+
+            truck_total_time = t.get("total_time", 0.0)
+            truck_charging_time = t.get("total_charging_time", 0.0)
+            truck_unloading_time = t.get("total_unloading_time", 0.0)
+            truck_waiting_time = t.get("waiting_time", 0.0)
+            truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
+            total_routing += max(0.0, truck_routing_time)
         
         distances.append(total_dist)
         charging_times.append(total_charge)
         total_deliveries.append(num_deliveries)
+        charging_sessions.append(total_sessions)
+        waiting_times.append(total_waiting)
+        routing_times.append(total_routing)
+        unloading_times.append(total_unloading)
+        failures_per_episode.append(num_failures)
     
     return {
         "mean_reward": np.mean(rewards),
@@ -192,10 +218,22 @@ def evaluate_policy_single_config(
         "std_completion_time": np.std(completion_times),
         "mean_deliveries": np.mean(total_deliveries),
         "std_deliveries": np.std(total_deliveries),
+        "mean_charging_sessions": np.mean(charging_sessions),
+        "std_charging_sessions": np.std(charging_sessions),
+        "mean_waiting_time": np.mean(waiting_times),
+        "std_waiting_time": np.std(waiting_times),
+        "mean_routing_time": np.mean(routing_times),
+        "std_routing_time": np.std(routing_times),
+        "mean_unloading_time": np.mean(unloading_times),
+        "std_unloading_time": np.std(unloading_times),
         "mean_failures": np.mean(failures_per_episode),
         "std_failures": np.std(failures_per_episode),
         "mean_truncated": np.mean(truncated_flags),
         "std_truncated": np.std(truncated_flags),
+        "mean_max_time_terminations": np.mean(max_time_terminations),
+        "std_max_time_terminations": np.std(max_time_terminations),
+        "mean_max_steps_terminations": np.mean(max_steps_terminations),
+        "std_max_steps_terminations": np.std(max_steps_terminations),
     }
 
 
@@ -303,7 +341,8 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
 
 def evaluate_single_policy_all_configs(policy_spec, position=None):
     """Evaluate a single policy across all configurations (runs in separate process with GPU)."""
-    policy_path, policy_type = policy_spec
+    policy_path, policy_type = policy_spec[0], policy_spec[1]
+    gnn_space_type = policy_spec[2] if len(policy_spec) > 2 else "base"
 
     # Generate policy name (keep full name)
     if policy_path == "heuristic":
@@ -379,7 +418,8 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
         config_temp["environment"]["num_stops"] = NUM_STOPS_GRID[0]
 
         env_temp = EventDrivenTruckEnv(config=config_temp, verbose=False, enable_plotting=False)
-        gnn_state_space_temp = GNNStateSpace(
+        gnn_cls = GNNStateSpaceDetourBased if gnn_space_type == "detour" else GNNStateSpace
+        gnn_state_space_temp = gnn_cls(
             num_trucks=NUM_TRUCKS_GRID[0],
             num_stops=NUM_STOPS_GRID[0],
             max_time=config_temp["environment"]["max_time"],
@@ -398,7 +438,8 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
             config_copy["environment"]["num_stops"] = num_stops
 
             env = EventDrivenTruckEnv(config=config_copy, verbose=False, enable_plotting=False)
-            gnn_state_space = GNNStateSpace(
+            gnn_cls = GNNStateSpaceDetourBased if gnn_space_type == "detour" else GNNStateSpace
+            gnn_state_space = gnn_cls(
                 num_trucks=num_trucks,
                 num_stops=num_stops,
                 max_time=config_copy["environment"]["max_time"],
@@ -478,9 +519,10 @@ def main():
     print(f"GRID EVALUATION")
     print("="*120)
     print(f"\nPolicies: {len(POLICIES)}")
-    for policy_path, policy_type in POLICIES:
+    for policy_entry in POLICIES:
+        policy_path, policy_type = policy_entry[0], policy_entry[1]
         if policy_path == "heuristic":
-            print(f"  - Heuristic")
+            print("  - Heuristic")
         else:
             print(f"  - {os.path.basename(policy_path.rstrip('/'))} ({policy_type})")
     
@@ -568,7 +610,8 @@ def main():
     
     # Build SB3 config lookup: {policy_name: (num_trucks, num_stops)}
     sb3_config_lookup = {}
-    for policy_path, policy_type in POLICIES:
+    for policy_entry in POLICIES:
+        policy_path, policy_type = policy_entry[0], policy_entry[1]
         if policy_type.startswith("sb3-"):
             # Try to extract config from path (e.g. .../10trucks_3stops/...)
             base = os.path.basename(os.path.dirname(policy_path.rstrip('/')))
@@ -608,6 +651,34 @@ def main():
     print_metric_table(
         results, "mean_charging_time", "std_charging_time",
         "CHARGING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_charging_sessions", "std_charging_sessions",
+        "CHARGING SESSIONS", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_waiting_time", "std_waiting_time",
+        "WAITING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_routing_time", "std_routing_time",
+        "ROUTING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_unloading_time", "std_unloading_time",
+        "UNLOADING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_failures", "std_failures",
+        "FAILURES", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_max_time_terminations", "std_max_time_terminations",
+        "MAX TIME REACHED", format_cell_int, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_max_steps_terminations", "std_max_steps_terminations",
+        "MAX STEPS REACHED", format_cell_int, policy_mapping, sb3_config_lookup
     )
     
     # Save results to CSV
@@ -651,9 +722,10 @@ def main():
         print("GRID EVALUATION RESULTS")
         print("="*120)
         print(f"\nPolicies: {len(POLICIES)}")
-        for policy_path, policy_type in POLICIES:
+        for policy_entry in POLICIES:
+            policy_path, policy_type = policy_entry[0], policy_entry[1]
             if policy_path == "heuristic":
-                print(f"  - Heuristic")
+                print("  - Heuristic")
             else:
                 print(f"  - {os.path.basename(policy_path.rstrip('/'))} ({policy_type})")
         
@@ -672,6 +744,13 @@ def main():
         print_metric_table(results, "mean_completion_time", "std_completion_time", "COMPLETION TIME (hours)", format_cell, policy_mapping)
         print_metric_table(results, "mean_total_distance", "std_total_distance", "TOTAL DISTANCE (km)", format_cell_int, policy_mapping)
         print_metric_table(results, "mean_charging_time", "std_charging_time", "CHARGING TIME (hours)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_charging_sessions", "std_charging_sessions", "CHARGING SESSIONS", format_cell, policy_mapping)
+        print_metric_table(results, "mean_waiting_time", "std_waiting_time", "WAITING TIME (hours)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_routing_time", "std_routing_time", "ROUTING TIME (hours)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_unloading_time", "std_unloading_time", "UNLOADING TIME (hours)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_failures", "std_failures", "FAILURES", format_cell, policy_mapping)
+        print_metric_table(results, "mean_max_time_terminations", "std_max_time_terminations", "MAX TIME REACHED", format_cell_int, policy_mapping)
+        print_metric_table(results, "mean_max_steps_terminations", "std_max_steps_terminations", "MAX STEPS REACHED", format_cell_int, policy_mapping)
         
         # Restore stdout
         sys.stdout = old_stdout

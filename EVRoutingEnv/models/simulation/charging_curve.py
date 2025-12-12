@@ -254,14 +254,22 @@ class ChargingCurveModel:
         actual_charge_kwh = total_energy
         actual_charge_hours = time_elapsed
         final_soc = min(1.0, current_soc)  # Clamp final SOC to [0, 1]
-        
+
         # Additional safety: ensure charge doesn't exceed battery capacity
-        max_possible_charge = (1.0 - initial_soc) * battery_capacity
-        actual_charge_kwh = min(actual_charge_kwh, max_possible_charge)
+        headroom_kwh = max(0.0, (1.0 - initial_soc) * battery_capacity)
+        if actual_charge_kwh > headroom_kwh:
+            actual_charge_kwh = headroom_kwh
+            details_clamped = True
+        else:
+            details_clamped = False
         
-        # Calculate average power and taper factor
+        # Recompute final SOC and average power after any clamping
+        final_soc = min(1.0, initial_soc + (actual_charge_kwh / battery_capacity if battery_capacity > 0 else 0.0))
         average_power = actual_charge_kwh / (actual_charge_hours * efficiency) if actual_charge_hours > 0 else 0
         taper_factor = average_power / peak_power if peak_power > 0 else 1.0
+        
+        # Calculate average power and taper factor
+        # (average_power/taper_factor recomputed above to reflect any clamp)
         
         details = {
             "actual_charge_hours": actual_charge_hours,
@@ -272,7 +280,8 @@ class ChargingCurveModel:
             "power_curve": power_curve,
             "taper_start_soc": taper_start_soc,
             "peak_power": peak_power,
-            "taper_power_min": taper_power_min
+            "taper_power_min": taper_power_min,
+            "clamped_to_capacity": details_clamped
         }
         
         if self.verbose:

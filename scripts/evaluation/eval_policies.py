@@ -32,7 +32,8 @@ POLICIES = [
     # GNN-based policies: (path, policy_type, gnn_state_space)
     # ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.01_seed=0_gnnhd=32_mlphd=256_6343/", "variable-ppo", "detour"),
     ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
+    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
+    ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
     # SB3 policies
     # ("saved_models/10trucks_3stops/maskppo_seed0_20251204_202440/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
@@ -46,7 +47,7 @@ POLICIES = [
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 200
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 # =============================================
 

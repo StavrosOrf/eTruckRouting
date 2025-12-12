@@ -1070,6 +1070,7 @@ class EventDrivenTruckEnv(gym.Env):
         remaining_capacity = truck.battery_capacity - truck.current_battery
         if charge_amount > remaining_capacity:
             charge_amount = remaining_capacity
+            charging_details["clamped_to_capacity"] = True
         
         # Use actual charge time from curve model
         actual_charge_hours = charging_details["actual_charge_hours"]

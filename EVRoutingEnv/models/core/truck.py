@@ -207,6 +207,8 @@ class Truck:
         
         self.current_node = node
         self.current_battery -= discharge
+        # Clamp in case of negative discharge (regen/uncertainty) or precision drift
+        self.current_battery = min(self.battery_capacity, max(0.0, self.current_battery))
         self.total_distance_traveled += distance
         self.total_time_elapsed += travel_time
         self.must_leave_charger = False  # Reset flag when moving away

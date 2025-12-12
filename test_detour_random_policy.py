@@ -198,7 +198,7 @@ def run_episode(env, gnn, seed=None, max_steps=1000):
 
 def main():
     config = load_config("EVRoutingEnv/config_files/config.yaml")
-    config["environment"]["num_trucks"] = 5  # Start simple
+    config["environment"]["num_trucks"] = 30  # Start simple
     config["environment"]["num_stops"] = 5
     
     seed = 42
@@ -218,7 +218,7 @@ def main():
         verbose=False,  # Set to True for debugging
     )
     
-    n_episodes = 1000 
+    n_episodes = 1000
     results = []
     for i in range(n_episodes):
         print(f"Episode {i}...", end=" ", flush=True)

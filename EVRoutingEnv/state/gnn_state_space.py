@@ -310,8 +310,7 @@ class GNNStateSpace:
                 next_delivery = truck.get_next_delivery_target()
                 
                 if truck.enable_flexible_delivery_order:
-                    raise NotImplementedError("Flexible delivery order not implemented in GNN state yet")
-                    # Flexible mode: connect to all remaining deliveries
+                    # Flexible mode: connect to all remaining deliveries (top-charger-style openness)
                     remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
                     
                     for delivery_node in remaining_deliveries:
@@ -728,6 +727,11 @@ class GNNStateSpace:
                 # This allows risky routing when truck has limited options
                 routing_safety_factor = energy_safety_factor
                 min_routing_safety = 0.5  # Minimum safety factor for routing
+                if active_truck.enable_flexible_delivery_order:
+                    remaining_count = len(next_delivery) if isinstance(next_delivery, list) else (1 if next_delivery is not None else 0)
+                    if remaining_count <= 2:
+                        # Late-stage: allow a lower floor to avoid dead-ends near completion
+                        min_routing_safety = 0.35
                 
                 # Check if any routing action would be feasible with current safety factor
                 def check_routing_feasible(safety_factor):
@@ -763,8 +767,13 @@ class GNNStateSpace:
                     if routing_safety_factor < energy_safety_factor and self.verbose:
                         print(f"  [Routing] Reduced safety factor from {energy_safety_factor:.2f} to {routing_safety_factor:.2f} for routing actions")
 
+                navigation_entries = []  # (action_idx, node_id, is_charger)
+
                 # Actions 0 to N-1: Go to charger i (must match environment action order)
                 # Note: Include current location to match environment's action indexing
+                progress_scores = []  # (action_idx, score)
+                progress_raw = []  # track raw deltas for diagnostics
+
                 for charger_id in sorted(charger_node_to_idx.keys()):
                     if charger_id == current_location:
                         # Current location - routing here is always infeasible
@@ -772,16 +781,48 @@ class GNNStateSpace:
                         feasible_action_mask.append(False)
                         _append_action_metadata(charger_id, False)
                         action_charge_durations.append(0.0)
+                        navigation_entries.append((len(action_to_node_map) - 1, charger_id, True))
                     else:
                         energy = env.transport_graph.get_path_energy(current_location, charger_id)
                         max_energy_needed = energy * routing_safety_factor
                         is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
                         # Disable routing if truck must charge now
                         is_feasible = is_energy_feasible and not must_charge_now
+
+                        # Flexible mode: allow any charger only if it enables progress
+                        if is_feasible and active_truck.enable_flexible_delivery_order:
+                            # In flexible mode, allow routing to any reachable charger to recharge; avoid over-pruning
+                            # Only apply progress gating when already at a charger (handled elsewhere)
+                            pass
+
                         action_to_node_map.append((charger_id, False))
                         feasible_action_mask.append(is_feasible)
                         _append_action_metadata(charger_id, False)
                         action_charge_durations.append(0.0)
+                        navigation_entries.append((len(action_to_node_map) - 1, charger_id, True))
+
+                        # Simple progress score: how much this charger reduces min delivery energy
+                        if active_truck.enable_flexible_delivery_order:
+                            if isinstance(next_delivery, list) and next_delivery:
+                                min_from_here = min(
+                                    [env.transport_graph.get_path_energy(current_location, d) for d in next_delivery]
+                                )
+                                min_from_charger = min(
+                                    [env.transport_graph.get_path_energy(charger_id, d) for d in next_delivery]
+                                )
+                                energy_to_charger = energy
+                                detour = energy_to_charger + min_from_charger - min_from_here
+                                delta = min_from_here - min_from_charger  # positive is progress
+                                score = delta - max(detour, 0) * 0.25  # penalize detour if it grows distance
+                                progress_scores.append((len(action_to_node_map) - 1, score))
+                                progress_raw.append(score)
+                        else:
+                            if next_delivery is not None:
+                                energy_here = env.transport_graph.get_path_energy(current_location, next_delivery)
+                                energy_after = env.transport_graph.get_path_energy(charger_id, next_delivery)
+                                delta = energy_here - energy_after
+                                progress_scores.append((len(action_to_node_map) - 1, delta))
+                                progress_raw.append(delta)
 
                 # Delivery Actions: Handle both sequential and flexible modes
                 if active_truck.enable_flexible_delivery_order:
@@ -808,6 +849,7 @@ class GNNStateSpace:
                                 
                                 # Check if truck can continue after this delivery
                                 can_continue_after_delivery = False
+                                progress_guard = False
                                 if is_energy_feasible:
                                     battery_after_delivery = current_battery - max_energy_to_delivery
                                     
@@ -825,12 +867,37 @@ class GNNStateSpace:
                                             if battery_after_delivery > max_energy_to_charger:
                                                 can_continue_after_delivery = True
                                                 break
-                                
-                                is_feasible = is_energy_feasible and not must_charge_now and (can_continue_after_delivery or must_leave)
+
+                                    # In flexible mode while leaving a charger, allow deliveries that either keep you able
+                                    # to continue afterward or pass a greedy completion check; avoid over-pruning must_leave
+                                    if at_charger and must_leave:
+                                        progress_guard = can_continue_after_delivery or (
+                                            has_more_deliveries
+                                            and self._can_complete_route_from(
+                                                env,
+                                                delivery_node,
+                                                battery_after_delivery,
+                                                other_remaining,
+                                                active_truck.battery_capacity,
+                                                routing_safety_factor,
+                                            )
+                                        )
+                                    else:
+                                        progress_guard = can_continue_after_delivery or must_leave
+
+                                is_feasible = is_energy_feasible and not must_charge_now and progress_guard
                                 action_to_node_map.append((delivery_node, False))
                                 feasible_action_mask.append(is_feasible)
                                 _append_action_metadata(delivery_node, False)
                                 action_charge_durations.append(0.0)
+                                navigation_entries.append((len(action_to_node_map) - 1, delivery_node, False))
+
+                                if active_truck.enable_flexible_delivery_order and is_feasible:
+                                    # Delivery progress score: how many deliveries left and min charger reachability after
+                                    other_remaining = [d for d in remaining_deliveries if d != delivery_node]
+                                    score = len(remaining_deliveries) - len(other_remaining)
+                                    progress_scores.append((len(action_to_node_map) - 1, score))
+                                    progress_raw.append(score)
                                 
                                 if self.verbose:
                                     print(f'  Delivery action {i}: node {delivery_node}, energy {energy_to_delivery:.2f} kWh, feasible: {is_feasible}')
@@ -840,6 +907,7 @@ class GNNStateSpace:
                                 feasible_action_mask.append(False)
                                 _append_action_metadata(delivery_node, False)
                                 action_charge_durations.append(0.0)
+                                navigation_entries.append((len(action_to_node_map) - 1, delivery_node, False))
                                 
                                 if self.verbose:
                                     print(f'  Delivery action {i}: node {delivery_node} already delivered, infeasible')
@@ -849,6 +917,7 @@ class GNNStateSpace:
                             feasible_action_mask.append(False)
                             _append_action_metadata(-1, False)
                             action_charge_durations.append(0.0)
+                            navigation_entries.append((len(action_to_node_map) - 1, -1, False))
                             
                             if self.verbose:
                                 print(f'  Delivery action {i}: no delivery at this position, infeasible')
@@ -901,6 +970,7 @@ class GNNStateSpace:
                         feasible_action_mask.append(is_feasible)
                         _append_action_metadata(next_delivery, False)
                         action_charge_durations.append(0.0)
+                        navigation_entries.append((len(action_to_node_map) - 1, next_delivery, False))
                     else:
                         raise ValueError("No next delivery found for active truck")
 
@@ -1080,6 +1150,155 @@ class GNNStateSpace:
                         _append_action_metadata(-1, True)
                         action_charge_durations.append(float(charge_hours))
 
+                # If flexible delivery order and charging is impossible here, unlock navigation after charger
+                if (
+                    active_truck.enable_flexible_delivery_order
+                    and at_charger
+                    and not must_leave
+                    and not can_charge_here
+                ):
+                    # Re-enable navigation actions using same routing safety factor but without mandatory charge
+                    remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
+
+                    for nav_idx, nav_node_id, nav_is_charger in navigation_entries:
+                        if nav_is_charger:
+                            if nav_node_id == current_location:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_needed = energy * routing_safety_factor
+                            is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
+                            if is_energy_feasible:
+                                if active_truck.enable_flexible_delivery_order:
+                                    feasible_action_mask[nav_idx] = self._can_progress_via_charger(
+                                        env=env,
+                                        charger_id=nav_node_id,
+                                        deliveries_after=remaining_deliveries,
+                                        battery_after_travel=current_battery - max_energy_needed,
+                                        energy_safety_factor=routing_safety_factor,
+                                    )
+                                else:
+                                    feasible_action_mask[nav_idx] = True
+                            else:
+                                feasible_action_mask[nav_idx] = False
+                        else:
+                            # Delivery navigation entry
+                            if nav_node_id == -1 or nav_node_id not in remaining_deliveries:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy_to_delivery = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_to_delivery = energy_to_delivery * routing_safety_factor
+                            is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
+                            can_continue_after_delivery = False
+                            if is_energy_feasible:
+                                battery_after_delivery = current_battery - max_energy_to_delivery
+                                other_remaining = [d for d in remaining_deliveries if d != nav_node_id]
+                                if not other_remaining:
+                                    can_continue_after_delivery = True
+                                else:
+                                    for charger_id in charger_node_to_idx.keys():
+                                        energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
+                                        max_energy_to_charger = energy_to_charger * routing_safety_factor
+                                        if battery_after_delivery > max_energy_to_charger:
+                                            can_continue_after_delivery = True
+                                            break
+                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or must_leave)
+
+                # Progress-aware pruning: keep top actions by score when multiple feasible
+                if active_truck.enable_flexible_delivery_order and any(feasible_action_mask):
+                    scored = [(idx, score) for idx, score in progress_scores if feasible_action_mask[idx]]
+                    if scored:
+                        # Penalize negative progress hard
+                        for idx, score in scored:
+                            if score < 0:
+                                feasible_action_mask[idx] = False
+
+                        # Recompute with remaining feasible
+                        scored = [(idx, score) for idx, score in scored if feasible_action_mask[idx]]
+                        if scored:
+                            scores_only = [s for _, s in scored]
+                            rng = np.random.default_rng()
+                            rng.shuffle(scored)  # randomize tie handling
+                            # Keep top 60% by score (drop bottom 40%) for stronger bias
+                            cutoff = np.percentile(scores_only, 40)
+                            kept_any = False
+                            for idx, score in scored:
+                                if score >= cutoff:
+                                    kept_any = True
+                                else:
+                                    feasible_action_mask[idx] = False
+                            # Ensure at least one action remains
+                            if not kept_any:
+                                best_idx, _ = max(scored, key=lambda x: x[1])
+                                feasible_action_mask[best_idx] = True
+
+                # If still no feasible actions in flexible mode (not at charger), retry navigation with relaxed safety
+                if (
+                    active_truck.enable_flexible_delivery_order
+                    and not at_charger
+                    and not any(feasible_action_mask)
+                ):
+                    relaxed_safety = max(min_routing_safety, routing_safety_factor * 0.7)
+                    remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
+
+                    for nav_idx, nav_node_id, nav_is_charger in navigation_entries:
+                        if nav_is_charger:
+                            if nav_node_id == current_location:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_needed = energy * relaxed_safety
+                            is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
+                            feasible_action_mask[nav_idx] = is_energy_feasible
+                        else:
+                            if nav_node_id == -1 or nav_node_id not in remaining_deliveries:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy_to_delivery = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_to_delivery = energy_to_delivery * relaxed_safety
+                            is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
+                            can_continue_after_delivery = False
+                            if is_energy_feasible:
+                                battery_after_delivery = current_battery - max_energy_to_delivery
+                                other_remaining = [d for d in remaining_deliveries if d != nav_node_id]
+                                if not other_remaining:
+                                    can_continue_after_delivery = True
+                                else:
+                                    for charger_id in charger_node_to_idx.keys():
+                                        energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
+                                        max_energy_to_charger = energy_to_charger * relaxed_safety
+                                        if battery_after_delivery > max_energy_to_charger:
+                                            can_continue_after_delivery = True
+                                            break
+                            feasible_action_mask[nav_idx] = is_energy_feasible and (can_continue_after_delivery or must_leave)
+
+                # Escape hatch: at charger with must_leave in flexible mode and no actions — allow any energy-feasible nav
+                if (
+                    active_truck.enable_flexible_delivery_order
+                    and at_charger
+                    and must_leave
+                    and not any(feasible_action_mask)
+                ):
+                    relaxed_safety = max(min_routing_safety, routing_safety_factor * 0.7)
+                    remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
+
+                    for nav_idx, nav_node_id, nav_is_charger in navigation_entries:
+                        if nav_is_charger:
+                            if nav_node_id == current_location:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_needed = energy * relaxed_safety
+                            feasible_action_mask[nav_idx] = max_energy_needed < current_battery and not np.isinf(energy)
+                        else:
+                            if nav_node_id == -1 or nav_node_id not in remaining_deliveries:
+                                feasible_action_mask[nav_idx] = False
+                                continue
+                            energy_to_delivery = env.transport_graph.get_path_energy(current_location, nav_node_id)
+                            max_energy_to_delivery = energy_to_delivery * relaxed_safety
+                            is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
+                            feasible_action_mask[nav_idx] = is_energy_feasible
+
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
         data.feasible_action_mask = torch.tensor(feasible_action_mask, dtype=torch.bool, device=self.device)
@@ -1205,8 +1424,19 @@ class GNNStateSpace:
         diagnostics.append(f"  Next delivery: {next_delivery}")
         
         if next_delivery is not None:
-            energy_to_delivery = env.transport_graph.get_path_energy(active_truck.current_node, next_delivery)
-            diagnostics.append(f"  Energy to next delivery: {energy_to_delivery:.2f} kWh")
+            # Handle flexible order: next_delivery can be a list
+            if isinstance(next_delivery, list):
+                if next_delivery:
+                    energies = [env.transport_graph.get_path_energy(active_truck.current_node, d) for d in next_delivery]
+                    min_energy = min(energies) if energies else float('inf')
+                    diagnostics.append(
+                        f"  Energy to next deliveries: min {min_energy:.2f} kWh across {len(next_delivery)} options"
+                    )
+                else:
+                    diagnostics.append("  Energy to next deliveries: none (empty list)")
+            else:
+                energy_to_delivery = env.transport_graph.get_path_energy(active_truck.current_node, next_delivery)
+                diagnostics.append(f"  Energy to next delivery: {energy_to_delivery:.2f} kWh")
         
         # Get energy safety factor
         energy_safety_factor = 1.0
@@ -1236,6 +1466,123 @@ class GNNStateSpace:
             diagnostics.append(f"    Occupancy: {occupancy}/{capacity}, Queue: {queue_len}")
         
         return "\n".join(diagnostics)
+
+    def _can_progress_via_charger(
+        self,
+        env,
+        charger_id: int,
+        deliveries_after: list,
+        battery_after_travel: float,
+        energy_safety_factor: float,
+    ) -> bool:
+        """Check that routing to a charger keeps the truck viable in flexible mode.
+
+        A charger is allowed if, after arriving with ``battery_after_travel``:
+        - the truck can finish all remaining deliveries directly, or
+        - it can reach any charger (with safety), or
+        - it can reach some delivery and then a charger afterwards.
+        """
+
+        # No remaining deliveries: any reachable charger is fine
+        if not deliveries_after:
+            return True
+
+        # Case 1: full route feasible after reaching this charger (best case)
+        battery_cap = env.trucks[env.active_truck_id].battery_capacity
+        if self._can_complete_route_from(
+            env,
+            charger_id,
+            battery_after_travel,
+            deliveries_after,
+            battery_cap,
+            energy_safety_factor,
+        ):
+            return True
+
+        # Case 2: can leave charger to any other charger (avoid getting stuck)
+        for next_charger in env.charging_nodes:
+            if next_charger == charger_id:
+                continue
+            energy = env.transport_graph.get_path_energy(charger_id, next_charger)
+            if np.isinf(energy):
+                continue
+            if battery_after_travel > energy * energy_safety_factor:
+                return True
+
+        # Case 3: can reach some delivery and then a charger
+        for delivery_id in deliveries_after:
+            energy_to_delivery = env.transport_graph.get_path_energy(charger_id, delivery_id)
+            if np.isinf(energy_to_delivery):
+                continue
+            battery_after_delivery = battery_after_travel - energy_to_delivery * energy_safety_factor
+            if battery_after_delivery <= 0:
+                continue
+            for next_charger in env.charging_nodes:
+                energy_to_charger = env.transport_graph.get_path_energy(delivery_id, next_charger)
+                if np.isinf(energy_to_charger):
+                    continue
+                if battery_after_delivery > energy_to_charger * energy_safety_factor:
+                    return True
+
+        return False
+
+    def _can_complete_route_from(
+        self,
+        env,
+        start_location: int,
+        battery_at_start: float,
+        remaining_deliveries: list,
+        battery_capacity: float,
+        energy_safety_factor: float,
+    ) -> bool:
+        """Greedy feasibility check to see if remaining deliveries are completable.
+
+        Tries to reach each delivery; if not enough battery, attempts a detour
+        via any charger (with safety factor) and assumes full charge there.
+        """
+
+        if not remaining_deliveries:
+            return True
+
+        current_loc = start_location
+        current_battery = battery_at_start
+
+        for delivery in remaining_deliveries:
+            energy_to_delivery = env.transport_graph.get_path_energy(current_loc, delivery)
+            if np.isinf(energy_to_delivery):
+                return False
+
+            needed = energy_to_delivery * energy_safety_factor
+            if current_battery >= needed:
+                current_battery -= needed
+                current_loc = delivery
+                continue
+
+            # Need a charger; see if any reachable charger allows continuing
+            can_charge = False
+            for charger in env.charging_nodes:
+                energy_to_charger = env.transport_graph.get_path_energy(current_loc, charger)
+                if np.isinf(energy_to_charger):
+                    continue
+
+                if current_battery < energy_to_charger * energy_safety_factor:
+                    continue
+
+                energy_charger_to_delivery = env.transport_graph.get_path_energy(charger, delivery)
+                if np.isinf(energy_charger_to_delivery):
+                    continue
+
+                if battery_capacity >= energy_charger_to_delivery * energy_safety_factor:
+                    # Assume full charge then continue
+                    current_battery = battery_capacity - energy_charger_to_delivery * energy_safety_factor
+                    current_loc = delivery
+                    can_charge = True
+                    break
+
+            if not can_charge:
+                return False
+
+        return True
 
     def _get_truck_node_features(self, truck, env) -> list:
         """

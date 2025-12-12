@@ -8,10 +8,10 @@
 environment:
 
   # Multi-truck simulation
-  num_trucks: 15
+  num_trucks: 1
 
   # Number of delivery stops per truck episode
-  num_stops: 5
+  num_stops: 10
 
   # When enabled, each episode samples a random number of stops in [1, max_num_stops]
   allow_variable_num_stops: false

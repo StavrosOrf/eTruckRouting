@@ -1008,7 +1008,14 @@ class EventDrivenTruckEnv(gym.Env):
             # Navigate to next delivery instead
             next_delivery = truck.get_next_delivery_target()
             if next_delivery is not None:
-                return self._execute_navigation_action(truck, next_delivery)
+                # In flexible order, next_delivery can be a list; pick a concrete target
+                if isinstance(next_delivery, list):
+                    if not next_delivery:
+                        raise RuntimeError("No remaining deliveries to navigate to from fallback charge")
+                    target_node = next_delivery[0]
+                else:
+                    target_node = next_delivery
+                return self._execute_navigation_action(truck, target_node)
             raise RuntimeError("Truck attempted to charge while not at a charging station")
         
         # Validate charger_node matches current location
@@ -1025,7 +1032,13 @@ class EventDrivenTruckEnv(gym.Env):
             if self.verbose:
                 print(f"  Truck {truck.truck_id} battery full; rerouting instead of charging")
             if next_delivery is not None:
-                return self._execute_navigation_action(truck, next_delivery)
+                if isinstance(next_delivery, list):
+                    if not next_delivery:
+                        raise RuntimeError("No remaining deliveries to navigate to after full battery check")
+                    target_node = next_delivery[0]
+                else:
+                    target_node = next_delivery
+                return self._execute_navigation_action(truck, target_node)
             return 0.0
 
         # Check charger gating

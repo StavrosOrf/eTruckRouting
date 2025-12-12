@@ -1,9 +1,11 @@
 """
-GNN State Representation with Top-2 Detour-Based Charger Selection.
+GNN State Representation with Top-2 Detour-Based Charger Selection (sequential order only).
 
-This module provides a simplified GNN action space where only the TOP-2 charging stations
-by minimum detour are considered between the current position and the next delivery.
-The charger selection is purely based on detour minimization without global feasibility checks.
+This module provides a simplified GNN action space for **non-flexible** delivery ordering
+where only the TOP-2 charging stations by minimum detour are considered between the
+current position and the next delivery. The charger selection is purely based on detour
+minimization without global feasibility checks. Use ``GNNStateSpaceVRP`` for flexible
+delivery ordering.
 
 Key Differences from Other GNN State Spaces:
 - Only top-2 chargers by minimum detour are available for routing
@@ -94,17 +96,16 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
             return data
         
         active_truck = env.trucks[env.active_truck_id]
+        if getattr(env, "enable_flexible_delivery_order", False) or active_truck.enable_flexible_delivery_order:
+            raise ValueError(
+                "GNNStateSpaceDetourBased is only for sequential delivery order. "
+                "Use GNNStateSpaceVRP when flexible ordering is enabled."
+            )
         current_location = active_truck.current_node
         current_battery = active_truck.current_battery
         battery_capacity = active_truck.battery_capacity
         next_delivery = active_truck.get_next_delivery_target()
         remaining_deliveries = active_truck.get_remaining_deliveries()
-        
-        # Skip detour-based logic if flexible delivery mode
-        if active_truck.enable_flexible_delivery_order:
-            if self.verbose:
-                print(f"[Detour] Skipping detour logic for flexible delivery mode")
-            return data
         
         # Skip if no next delivery
         if next_delivery is None:

@@ -22,6 +22,7 @@ import numpy as np
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_state_space_VRP import GNNStateSpaceVRP
 from EVRoutingEnv.utils.utils import load_config
 
 
@@ -624,21 +625,30 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
     done = False
     truncated = False
     
-    # Initialize GNN state spaces
-    gnn_state_space = GNNStateSpace(
-        num_trucks=env.num_trucks,
-        num_stops=env.num_stops,
-        max_time=env.max_time,
-        num_charging_nodes=env.num_charging_nodes,
-    )
-    
-    gnn_single_charger = GNNStateSpaceDetourBased(
-        num_trucks=env.num_trucks,
-        num_stops=env.num_stops,
-        max_time=env.max_time,
-        num_charging_nodes=env.num_charging_nodes,
-        verbose=False,  # Set to True for debugging single-charger selection
-    )
+    # Initialize GNN state spaces based on delivery mode
+    if getattr(env, "enable_flexible_delivery_order", False):
+        gnn_state_space = GNNStateSpaceVRP(
+            num_trucks=env.num_trucks,
+            num_stops=env.num_stops,
+            max_time=env.max_time,
+            num_charging_nodes=env.num_charging_nodes,
+        )
+        gnn_single_charger = None  # Detour-based version is for sequential mode only
+    else:
+        gnn_state_space = GNNStateSpace(
+            num_trucks=env.num_trucks,
+            num_stops=env.num_stops,
+            max_time=env.max_time,
+            num_charging_nodes=env.num_charging_nodes,
+        )
+        
+        gnn_single_charger = GNNStateSpaceDetourBased(
+            num_trucks=env.num_trucks,
+            num_stops=env.num_stops,
+            max_time=env.max_time,
+            num_charging_nodes=env.num_charging_nodes,
+            verbose=False,  # Set to True for debugging single-charger selection
+        )
 
     while not (done or truncated):
         step += 1

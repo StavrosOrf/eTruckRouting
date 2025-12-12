@@ -1243,13 +1243,37 @@ class EventDrivenTruckEnv(gym.Env):
         return get_action_mask(self)
 
     def _action_to_string(self, action: int) -> str:
-        """Convert action to human-readable string."""
-        return action_to_string(
-            action=action,
-            num_charging_nodes=self.num_charging_nodes,
-            num_navigation_actions=self.num_navigation_actions,
-            charging_nodes=self.charging_nodes,
-        )
+        """Convert action to human-readable string (supports flexible order)."""
+        # Charging navigation actions
+        if action < self.num_charging_nodes:
+            node = self.charging_nodes[action]
+            return f"Go to charger @ node {node}"
+
+        # Delivery navigation actions
+        if action < self.num_navigation_actions:
+            if self.enable_flexible_delivery_order:
+                delivery_idx = action - self.num_charging_nodes
+                truck = None
+                if self.active_truck_id is not None and self.active_truck_id < len(self.trucks):
+                    truck = self.trucks[self.active_truck_id]
+
+                if truck is not None and delivery_idx + 1 < len(truck.delivery_sequence):
+                    node = truck.delivery_sequence[delivery_idx + 1]
+                    remaining = set(truck.get_remaining_deliveries())
+                    status = "pending" if node in remaining else "done"
+                    return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
+                return f"Go to delivery slot {delivery_idx} (empty)"
+            else:
+                return "Go to next delivery"
+
+        # Charging actions (use configured durations to avoid negative hours)
+        charge_idx = action - self.num_navigation_actions
+        charge_durations = self.charging_config.get("charge_durations", [])
+        if 0 <= charge_idx < len(charge_durations):
+            hours = charge_durations[charge_idx]
+        else:
+            hours = charge_idx + 1  # Fallback to sequential labeling
+        return f"Charge for {hours}h"
 
     def get_delivery_sequence_index(self, node_id: int) -> int:
         """

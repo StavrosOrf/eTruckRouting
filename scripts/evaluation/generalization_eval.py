@@ -16,8 +16,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
@@ -77,6 +76,10 @@ def evaluate_policy_single_config(
     Environment and policy are passed in (already initialized).
     """
     
+    # Ensure action masks use the provided GNN state space
+    env._default_gnn_state_space = gnn_state_space
+    env.use_detour_mask = getattr(gnn_state_space, "use_detour", False)
+
     # Evaluate
     rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
     failures_per_episode = []
@@ -418,13 +421,13 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
         config_temp["environment"]["num_stops"] = NUM_STOPS_GRID[0]
 
         env_temp = EventDrivenTruckEnv(config=config_temp, verbose=False, enable_plotting=False)
-        gnn_cls = GNNStateSpaceDetourBased if gnn_space_type == "detour" else GNNStateSpace
-        gnn_state_space_temp = gnn_cls(
-            num_trucks=NUM_TRUCKS_GRID[0],
-            num_stops=NUM_STOPS_GRID[0],
-            max_time=config_temp["environment"]["max_time"],
-            num_charging_nodes=env_temp.num_charging_nodes,
-            verbose=False,
+        mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
+        use_detour = gnn_space_type == "detour"
+        gnn_state_space_temp = create_default_gnn_space(
+            env_temp,
+            mode=mode,
+            use_detour=use_detour,
+            device="cpu",
         )
         policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space_temp, config_temp, device="cuda")
         env_temp.close()
@@ -438,13 +441,13 @@ def evaluate_single_policy_all_configs(policy_spec, position=None):
             config_copy["environment"]["num_stops"] = num_stops
 
             env = EventDrivenTruckEnv(config=config_copy, verbose=False, enable_plotting=False)
-            gnn_cls = GNNStateSpaceDetourBased if gnn_space_type == "detour" else GNNStateSpace
-            gnn_state_space = gnn_cls(
-                num_trucks=num_trucks,
-                num_stops=num_stops,
-                max_time=config_copy["environment"]["max_time"],
-                num_charging_nodes=env.num_charging_nodes,
-                verbose=False,
+            mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
+            use_detour = gnn_space_type == "detour"
+            gnn_state_space = create_default_gnn_space(
+                env,
+                mode=mode,
+                use_detour=use_detour,
+                device="cpu",
             )
 
             environments[(num_trucks, num_stops)] = {

@@ -10,6 +10,8 @@ import yaml
 
 # Configuration
 config = "EVRoutingEnv/config_files/config.yaml"
+config = "EVRoutingEnv/config_files/config_small.yaml"
+
 python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 
 # Training parameterss
@@ -27,7 +29,7 @@ num_eval_envs = 12     # Number of parallel evaluation environments
 num_trucks = 1
 num_stops = 5
 max_time = 200.0
-gnn_state_space = "detour"  # options: base, detour
+gnn_state_space = None  # will be set based on config flags (nonflex/detour/vrp)
 
 # Fixed hyperparameters for this sweep
 learning_rate = 3e-4
@@ -62,6 +64,10 @@ all_combinations = list(
 with open(config, 'r') as f:
     config_data = yaml.safe_load(f)
 
+# Select state-space based on flexible delivery flag
+flexible_order = config_data.get('delivery', {}).get('enable_flexible_delivery_order', False)
+gnn_state_space = "vrp" if flexible_order else "detour"
+
 # Build uncertainty suffix for group name (short format)
 uncertainty_flags = []
 if config_data.get('traffic', {}).get('enable_traffic', False):
@@ -76,6 +82,9 @@ if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False):
     uncertainty_flags.append('F')  # Flexible delivery
 
 uncertainty_suffix = ''.join(uncertainty_flags) if uncertainty_flags else 'Det'  # Deterministic if none
+
+# Problem type for grouping (flexible VRP vs sequential/detour)
+problem_type = 'vrp' if config_data.get('delivery', {}).get('enable_flexible_delivery_order', False) else gnn_state_space
 
 # Select training script based on parallel environment setting
 if num_parallel_envs > 1 or num_eval_envs > 1:
@@ -112,7 +121,7 @@ for config_idx, (
     exp_name += f"_{int(time.time())%10000}"
     
     # Group name includes environment size and uncertainty types
-    group_name = f"L_{num_trucks}T{num_stops}S_{uncertainty_suffix}"
+    group_name = f"{problem_type}_L_{num_trucks}T{num_stops}S_{uncertainty_suffix}"
 
     # Build command with appropriate training script
     command = (

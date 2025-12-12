@@ -2,8 +2,7 @@
 """Test detour-based GNN with random feasible actions."""
 import numpy as np
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 
 def run_episode(env, gnn, seed=None, max_steps=1000):
@@ -199,10 +198,12 @@ def run_episode(env, gnn, seed=None, max_steps=1000):
 
 def main():
     config = load_config("EVRoutingEnv/config_files/config.yaml")
-    config["environment"]["num_trucks"] = 1  # Start simple
-    config["environment"]["num_stops"] = 10
+    # config["environment"]["num_trucks"] = 1  # Start simple
+    # config["environment"]["num_stops"] = 10
     
     # config = load_config("EVRoutingEnv/config_files/config_small.yaml")
+    
+    n_episodes = 100
     
     seed = 42
     
@@ -215,21 +216,19 @@ def main():
     
     # Use flexible-order action space when enabled; otherwise keep detour-based top-2 charger variant
     flexible_order = config.get("delivery", {}).get("enable_flexible_delivery_order", False)
-    gnn_class = GNNStateSpace if flexible_order else GNNStateSpaceDetourBased
-
-    gnn = gnn_class(
-        num_trucks=len(env.trucks),
-        num_stops=env.num_stops,
-        max_time=env.max_time,
-        num_charging_nodes=env.num_charging_nodes,
-        verbose=False,  # Set to True for debugging
+    env.use_detour_mask = not flexible_order
+    gnn = create_default_gnn_space(
+        env,
+        mode="vrp" if flexible_order else "nonflex",
+        use_detour=not flexible_order,
     )
+    env._default_gnn_state_space = gnn
     if flexible_order:
         print("Using flexible-order GNN action space")
     else:
         print("Using detour-based GNN action space (top-2 chargers)")
     
-    n_episodes = 1000
+    
     results = []
     for i in range(n_episodes):
         print(f"Episode {i}...", end=" ", flush=True)

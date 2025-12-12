@@ -22,8 +22,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
 import yaml
@@ -80,16 +79,8 @@ def worker_process(remote, parent_remote, env_config, worker_id, state_space_typ
             run_id=f"parallel_worker_{worker_id}"
         )
         
-        # Create GNN state space in this process
-        gnn_state_space = create_gnn_state_space(
-            state_space_type=state_space_type,
-            num_trucks=env_config['environment']['num_trucks'],
-            num_stops=env_config['environment']['num_stops'],
-            max_time=env_config['environment']['max_time'],
-            num_charging_nodes=env.num_charging_nodes,
-            device="cpu",
-            verbose=False,
-        )
+        # Create and cache GNN state space in this process
+        gnn_state_space, _, _ = build_and_cache_state_space(env, state_space_type)
         
         current_obs = None
         current_info = None
@@ -285,7 +276,8 @@ def evaluate_policy_parallel(
     eval_episodes: int = 50,
     seed: int = 0,
     num_parallel_envs: int = 10,
-    verbose: bool = False
+    verbose: bool = False,
+    state_space_type: str = 'nonflex'
 ) -> dict:
     """Evaluate policy using parallel environments.
     
@@ -301,7 +293,7 @@ def evaluate_policy_parallel(
         Dictionary of evaluation metrics
     """
     # Create parallel environments for evaluation
-    parallel_envs = ParallelEnvs(config, num_parallel_envs, state_space_type=args.gnn_state_space, verbose=False)
+    parallel_envs = ParallelEnvs(config, num_parallel_envs, state_space_type=state_space_type, verbose=False)
     
     # Storage for metrics
     eval_rewards = []
@@ -463,8 +455,9 @@ def parse_args():
                           help='Maximum simulation time in hours (overrides config)')
     env_group.add_argument('--enable-traffic', action='store_true',
                           help='Enable traffic simulation')
-    env_group.add_argument('--gnn-state-space', type=str, default='base', choices=['base', 'detour'],
-                          help='Which GNN state space to use (base or detour-based)')
+    env_group.add_argument('--gnn-state-space', type=str, default='nonflex',
+                          choices=['nonflex', 'detour', 'vrp', 'base'],
+                          help='GNN action space: nonflex (sequential), detour (top-2 chargers), vrp (flexible order); base is kept as an alias for nonflex')
     
     # Parallel training parameters
     parallel_group = parser.add_argument_group('Parallel Training')
@@ -540,23 +533,18 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_gnn_state_space(state_space_type: str, num_trucks: int, num_stops: int,
-                           max_time: float, num_charging_nodes: int, device: str = "cpu",
-                           verbose: bool = False):
-    """Factory for selecting between base and detour-based state spaces."""
-    if state_space_type == 'detour':
-        cls = GNNStateSpaceDetourBased
-    else:
-        cls = GNNStateSpace
+def build_and_cache_state_space(env, state_space_type: str):
+    """Create and cache the default GNN state space on the environment."""
+    normalized = 'nonflex' if state_space_type == 'base' else state_space_type
+    mode = 'vrp' if normalized == 'vrp' else 'nonflex'
+    use_detour = normalized == 'detour'
 
-    return cls(
-        num_trucks=num_trucks,
-        num_stops=num_stops,
-        max_time=max_time,
-        num_charging_nodes=num_charging_nodes,
-        device=device,
-        verbose=verbose,
-    )
+    env.use_detour_mask = use_detour
+    env.enable_flexible_delivery_order = mode == 'vrp'
+
+    gnn_space = create_default_gnn_space(env, mode=mode, use_detour=use_detour)
+    env._default_gnn_state_space = gnn_space
+    return gnn_space, mode, use_detour
 
 
 def train(args):
@@ -574,6 +562,15 @@ def train(args):
         config['environment']['max_time'] = args.max_time
     if args.enable_traffic:
         config['traffic']['enable_traffic'] = True
+
+    # Normalize state-space selection
+    state_space_type = 'nonflex' if args.gnn_state_space == 'base' else args.gnn_state_space
+    mode = 'vrp' if state_space_type == 'vrp' else 'nonflex'
+    use_detour = state_space_type == 'detour'
+
+    # Keep env action space aligned with the chosen state space
+    config.setdefault('delivery', {})
+    config['delivery']['enable_flexible_delivery_order'] = mode == 'vrp'
 
     # Generate experiment name
     if args.exp_name is None:
@@ -602,7 +599,14 @@ def train(args):
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "ppo_model")
     
-    save_environment_config(save_dir, config)
+    config_to_save = copy.deepcopy(config)
+    config_to_save["gnn_state_space"] = {
+        "type": state_space_type,
+        "mode": mode,
+        "use_detour": use_detour,
+        "enable_flexible_delivery_order": mode == 'vrp'
+    }
+    save_environment_config(save_dir, config_to_save)
 
     # Create a temporary environment to get dimensions
     temp_env = EventDrivenTruckEnv(
@@ -612,15 +616,7 @@ def train(args):
         run_id="temp_env"
     )
     
-    temp_gnn_state_space = create_gnn_state_space(
-        state_space_type=args.gnn_state_space,
-        num_trucks=config['environment']['num_trucks'],
-        num_stops=config['environment']['num_stops'],
-        max_time=config['environment']['max_time'],
-        num_charging_nodes=temp_env.num_charging_nodes,
-        device="cpu",
-        verbose=False,
-    )
+    temp_gnn_state_space, _, _ = build_and_cache_state_space(temp_env, state_space_type)
     
     # Get state dimensions from temporary environment
     temp_env.reset(seed=args.seed)
@@ -694,7 +690,7 @@ def train(args):
     print(f"{'='*80}\n")
 
     # Create parallel training environments
-    parallel_envs = ParallelEnvs(config, args.num_parallel_envs, state_space_type=args.gnn_state_space, verbose=args.verbose)
+    parallel_envs = ParallelEnvs(config, args.num_parallel_envs, state_space_type=state_space_type, verbose=args.verbose)
 
     # Initialize training state
     best_eval_reward = None
@@ -814,7 +810,8 @@ def train(args):
                         eval_episodes=args.eval_episodes,
                         seed=args.seed + 100000,
                         num_parallel_envs=args.num_eval_envs,
-                        verbose=False
+                        verbose=False,
+                        state_space_type=state_space_type
                     )
                     
                     print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")

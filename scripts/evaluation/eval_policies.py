@@ -14,8 +14,7 @@ sys.path.insert(0, project_root)
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.state.action_mask import get_action_mask
 
@@ -71,6 +70,10 @@ def evaluate_policy(
     max_time_terminations = []
     max_steps_terminations = []
     
+    # Ensure action_mask uses the provided GNN state space
+    env._default_gnn_state_space = gnn_state_space
+    env.use_detour_mask = getattr(gnn_state_space, "use_detour", False)
+
     # Check if this is an SB3 policy
     is_sb3_policy = policy_type.startswith("sb3-")
 
@@ -217,20 +220,14 @@ def main():
     requested_spaces = set(entry[2] if len(entry) > 2 else "base" for entry in POLICIES)
     gnn_state_spaces = {}
     for space in requested_spaces:
-        if space == "detour":
-            gnn_state_spaces[space] = GNNStateSpaceDetourBased(
-                num_trucks=NUM_TRUCKS,
-                num_stops=NUM_STOPS,
-                max_time=config["environment"]["max_time"],
-                num_charging_nodes=env_init.num_charging_nodes,
-            )
-        else:
-            gnn_state_spaces[space] = GNNStateSpace(
-                num_trucks=NUM_TRUCKS,
-                num_stops=NUM_STOPS,
-                max_time=config["environment"]["max_time"],
-                num_charging_nodes=env_init.num_charging_nodes,
-            )
+        mode = "vrp" if space == "vrp" else "nonflex"
+        use_detour = space == "detour"
+        gnn_state_spaces[space] = create_default_gnn_space(
+            env_init,
+            mode=mode,
+            use_detour=use_detour,
+            device="cpu",
+        )
     env_init.close()
 
     # Load policies

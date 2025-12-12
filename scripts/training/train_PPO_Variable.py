@@ -18,8 +18,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.action_mask import get_action_mask
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
 import yaml
@@ -81,8 +81,9 @@ def parse_args():
                           help='Maximum simulation time in hours (overrides config)')
     env_group.add_argument('--enable-traffic', action='store_true',
                           help='Enable traffic simulation')
-    env_group.add_argument('--gnn-state-space', type=str, default='base', choices=['base', 'detour'],
-                          help='Which GNN state space to use (base or detour-based)')
+    env_group.add_argument('--gnn-state-space', type=str, default='nonflex',
+                          choices=['nonflex', 'detour', 'vrp', 'base'],
+                          help='GNN action space: nonflex (sequential), detour (top-2 chargers), vrp (flexible order); base is kept as an alias for nonflex')
     
     # Training parameters
     train_group = parser.add_argument_group('Training')
@@ -159,70 +160,22 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_gnn_state_space(state_space_type: str, num_trucks: int, num_stops: int,
-                           max_time: float, num_charging_nodes: int, device: str = "cpu",
-                           verbose: bool = False):
-    """Factory for selecting between base and detour-based state spaces."""
-    if state_space_type == 'detour':
-        cls = GNNStateSpaceDetourBased
-    else:
-        cls = GNNStateSpace
+def build_and_cache_state_space(env, state_space_type: str):
+    """Create and cache the default GNN state space on the environment."""
+    normalized = 'nonflex' if state_space_type == 'base' else state_space_type
+    mode = 'vrp' if normalized == 'vrp' else 'nonflex'
+    use_detour = normalized == 'detour'
 
-    return cls(
-        num_trucks=num_trucks,
-        num_stops=num_stops,
-        max_time=max_time,
-        num_charging_nodes=num_charging_nodes,
-        device=device,
-        verbose=verbose,
-    )
+    env.use_detour_mask = use_detour
+    env.enable_flexible_delivery_order = mode == 'vrp'
+
+    gnn_space = create_default_gnn_space(env, mode=mode, use_detour=use_detour)
+    env._default_gnn_state_space = gnn_space
+    return gnn_space, mode, use_detour
 
 
-def compute_action_mask(env):
-    """Return boolean mask (True=feasible) for the discrete env action space."""
-    num_actions = env.action_space.n
-    mask = np.zeros(num_actions, dtype=bool)
-
-    if env.active_truck_id is None:
-        return mask
-
-    truck = env.trucks[env.active_truck_id]
-    if truck.failed or truck.is_complete:
-        return mask
-
-    current_node = int(truck.current_node)
-    battery = float(truck.current_battery)
-
-    # Charger navigation actions (0 .. num_charging_nodes-1)
-    for idx, charger_node in enumerate(env.charging_nodes):
-        if idx >= env.num_charging_nodes:
-            break
-        charger_node = int(charger_node)
-        energy = env.transport_graph.get_path_energy(current_node, charger_node)
-        feasible = (not np.isinf(energy)) and (energy <= battery)
-        mask[idx] = feasible
-
-    # Next delivery action
-    next_delivery = truck.get_next_delivery_target()
-    delivery_idx = env.num_charging_nodes
-    if next_delivery is not None:
-        energy = env.transport_graph.get_path_energy(current_node, int(next_delivery))
-        mask[delivery_idx] = (not np.isinf(energy)) and (energy <= battery)
-    else:
-        mask[delivery_idx] = False
-
-    # Charging actions
-    can_charge_here = (current_node in env.charging_nodes) and (truck.get_battery_percentage() < 95.0)
-    charge_start = env.num_navigation_actions
-    for i in range(env.num_charge_actions):
-        mask[charge_start + i] = can_charge_here
-
-    if not mask.any():
-        mask[delivery_idx] = True
-    return mask
-
-
-def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_parallel_envs=5):
+def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_parallel_envs=5,
+                    mode: str = 'nonflex', use_detour: bool = False):
     """Evaluate the current policy using multiple parallel environments for faster evaluation.
     
     Args:
@@ -242,6 +195,9 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_
             enable_plotting=False,
             run_id=f"eval_parallel_{i}"
         )
+        eval_env.use_detour_mask = use_detour
+        eval_env._default_gnn_state_space = gnn_state_space
+        eval_env.enable_flexible_delivery_order = mode == 'vrp'
         parallel_envs.append(eval_env)
     
     # Metrics storage
@@ -266,6 +222,9 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_
     
     # Initialize all environments
     for i, penv in enumerate(parallel_envs):
+        penv.use_detour_mask = use_detour
+        penv._default_gnn_state_space = gnn_state_space
+        penv.enable_flexible_delivery_order = mode == 'vrp'
         obs, info = penv.reset(seed=seed + i)
         gnn_state = gnn_state_space.get_state_GNN(penv)
         env_states.append({
@@ -291,7 +250,7 @@ def evaluate_policy(env, policy, gnn_state_space, eval_episodes=10, seed=0, num_
                     raw_action = policy.select_action(gnn_state, expl_noise=0)
                     action = policy.to_env_action(gnn_state, int(raw_action))
                 else:
-                    action_mask = compute_action_mask(penv)
+                    action_mask = get_action_mask(penv)
                     raw_action = policy.select_action(gnn_state, expl_noise=0, action_mask=action_mask)
                     if isinstance(raw_action, tuple):
                         action = raw_action
@@ -403,6 +362,15 @@ def train(args):
     if args.enable_traffic:
         config['traffic']['enable_traffic'] = True
 
+    # Normalize state-space selection
+    state_space_type = 'nonflex' if args.gnn_state_space == 'base' else args.gnn_state_space
+    mode = 'vrp' if state_space_type == 'vrp' else 'nonflex'
+    use_detour = state_space_type == 'detour'
+
+    # Keep env action space aligned with the chosen state space
+    config.setdefault('delivery', {})
+    config['delivery']['enable_flexible_delivery_order'] = mode == 'vrp'
+
     if args.exp_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         args.exp_name = f"PPO_GNN_{timestamp}"
@@ -437,15 +405,10 @@ def train(args):
         run_id=f"{args.exp_name}_eval"
     )
 
-    gnn_state_space = create_gnn_state_space(
-        state_space_type=args.gnn_state_space,
-        num_trucks=config['environment']['num_trucks'],
-        num_stops=config['environment']['num_stops'],
-        max_time=config['environment']['max_time'],
-        num_charging_nodes=env.num_charging_nodes,
-        device="cpu",  # Always create states on CPU for buffer storage
-        verbose=verbose  # Disable verbose output during training
-    )
+    gnn_state_space, mode, use_detour = build_and_cache_state_space(env, state_space_type)
+    eval_env.use_detour_mask = use_detour
+    eval_env.enable_flexible_delivery_order = mode == 'vrp'
+    eval_env._default_gnn_state_space = gnn_state_space
 
     action_dim = env.action_space.n
 
@@ -453,8 +416,15 @@ def train(args):
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "ppo_model")
     
-    # Save the environment configuration used for training
-    save_environment_config(save_dir, config)
+    # Save the environment configuration used for training, including state-space selection
+    config_to_save = copy.deepcopy(config)
+    config_to_save["gnn_state_space"] = {
+        "type": state_space_type,
+        "mode": mode,
+        "use_detour": use_detour,
+        "enable_flexible_delivery_order": mode == 'vrp'
+    }
+    save_environment_config(save_dir, config_to_save)
     best_eval_reward = None
     best_model_path = None
 
@@ -593,7 +563,8 @@ def train(args):
 
         if (t + 1) % args.eval_freq == 0:
             eval_results = evaluate_policy(eval_env, policy, gnn_state_space,
-                                           args.eval_episodes, args.seed + 1000)
+                                           args.eval_episodes, args.seed + 1000,
+                                           mode=mode, use_detour=use_detour)
 
             print(f"\n{'='*80}")
             print(f"PPO Evaluation at timestep {total_timesteps}")

@@ -20,9 +20,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
-from EVRoutingEnv.state.gnn_state_space_VRP import GNNStateSpaceVRP
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 
 
@@ -69,8 +67,7 @@ def compute_navigation_stats(env: EventDrivenTruckEnv, src: int, dst: Optional[i
     return {"energy": energy, "time": travel_time}
 
 
-def describe_actions(env: EventDrivenTruckEnv, gnn_state_space: Optional[GNNStateSpace] = None, 
-                     gnn_single_charger: Optional[GNNStateSpaceDetourBased] = None) -> List[Dict]:
+def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_charger=None) -> List[Dict]:
     """Build metadata for every discrete action."""
     if env.active_truck_id is None:
         return []
@@ -626,29 +623,14 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
     truncated = False
     
     # Initialize GNN state spaces based on delivery mode
-    if getattr(env, "enable_flexible_delivery_order", False):
-        gnn_state_space = GNNStateSpaceVRP(
-            num_trucks=env.num_trucks,
-            num_stops=env.num_stops,
-            max_time=env.max_time,
-            num_charging_nodes=env.num_charging_nodes,
-        )
-        gnn_single_charger = None  # Detour-based version is for sequential mode only
-    else:
-        gnn_state_space = GNNStateSpace(
-            num_trucks=env.num_trucks,
-            num_stops=env.num_stops,
-            max_time=env.max_time,
-            num_charging_nodes=env.num_charging_nodes,
-        )
-        
-        gnn_single_charger = GNNStateSpaceDetourBased(
-            num_trucks=env.num_trucks,
-            num_stops=env.num_stops,
-            max_time=env.max_time,
-            num_charging_nodes=env.num_charging_nodes,
-            verbose=False,  # Set to True for debugging single-charger selection
-        )
+    flexible = getattr(env, "enable_flexible_delivery_order", False)
+    mode = "vrp" if flexible else "nonflex"
+
+    gnn_state_space = create_default_gnn_space(env, mode=mode, use_detour=False)
+    env._default_gnn_state_space = gnn_state_space
+    env.use_detour_mask = False
+
+    gnn_single_charger = None if flexible else create_default_gnn_space(env, mode="nonflex", use_detour=True)
 
     while not (done or truncated):
         step += 1
@@ -697,12 +679,17 @@ if __name__ == "__main__":
     env_config = config.setdefault("environment", {})
     env_config.setdefault("verbose", False)
 
+    # Respect flexible delivery flag to align masks/state space
+    flexible = config.get("delivery", {}).get("enable_flexible_delivery_order", False)
+    env_config["enable_flexible_delivery_order"] = flexible
+
     env = EventDrivenTruckEnv(
         config=config,
         verbose=args.env_verbose,
         enable_plotting=True,
         run_id="interactive_debugger",
     )
+    env.use_detour_mask = False
 
     try:
         interactive_loop(env, args.max_steps, args.auto_accept_heuristic, args.seed)

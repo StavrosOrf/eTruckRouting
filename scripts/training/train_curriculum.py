@@ -26,7 +26,7 @@ from EVRoutingEnv.models.environment.curriculum_env import (
     MixedCurriculumStrategy
 )
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.utils.utils import load_config
 
@@ -168,6 +168,10 @@ def evaluate_policy(policy, base_config, eval_configs, num_episodes_per_config, 
     results = {}
     all_rewards = []
     all_success = []
+
+    flexible = base_config.get('delivery', {}).get('enable_flexible_delivery_order', False)
+    mode = 'vrp' if flexible else 'nonflex'
+    use_detour = False
     
     for num_trucks, num_stops in eval_configs:
         config = copy.deepcopy(base_config)
@@ -176,15 +180,10 @@ def evaluate_policy(policy, base_config, eval_configs, num_episodes_per_config, 
         config['environment']['max_episode_steps'] = int(num_trucks * num_stops * 7.5)
         
         eval_env = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
-        
-        state_space = GNNStateSpace(
-            num_trucks=num_trucks,
-            num_stops=num_stops,
-            max_time=config['environment']['max_time'],
-            num_charging_nodes=eval_env.num_charging_nodes,
-            device="cpu",
-            verbose=False
-        )
+        eval_env.use_detour_mask = use_detour
+        eval_env.enable_flexible_delivery_order = mode == 'vrp'
+        state_space = create_default_gnn_space(eval_env, mode=mode, use_detour=use_detour)
+        eval_env._default_gnn_state_space = state_space
         
         episode_rewards = []
         episode_success = []
@@ -235,6 +234,9 @@ def train(args):
     # Load configurations
     base_config = load_config(args.config)
     curriculum_strategy, curriculum_config = load_curriculum_strategy(args.curriculum_config, args.seed)
+    flexible = base_config.get('delivery', {}).get('enable_flexible_delivery_order', False)
+    mode = 'vrp' if flexible else 'nonflex'
+    use_detour = False
     
     # Initialize wandb
     if not args.no_wandb:
@@ -253,6 +255,8 @@ def train(args):
         verbose=False,
         enable_plotting=False
     )
+    train_env.env.use_detour_mask = use_detour
+    train_env.env.enable_flexible_delivery_order = mode == 'vrp'
     
     # Initialize state spaces cache
     state_spaces = {}
@@ -262,14 +266,12 @@ def train(args):
     initial_trucks = info['curriculum']['num_trucks']
     initial_stops = info['curriculum']['num_stops']
     
-    initial_state_space = GNNStateSpace(
-        num_trucks=initial_trucks,
-        num_stops=initial_stops,
-        max_time=base_config['environment']['max_time'],
-        num_charging_nodes=train_env.num_charging_nodes,
-        device="cpu",
-        verbose=False
+    initial_state_space = create_default_gnn_space(
+        train_env.env,
+        mode=mode,
+        use_detour=use_detour,
     )
+    train_env.env._default_gnn_state_space = initial_state_space
     state_spaces[(initial_trucks, initial_stops)] = initial_state_space
     
     gnn_state = initial_state_space.get_state_GNN(train_env.env)
@@ -345,16 +347,16 @@ def train(args):
         size_key = (curr_trucks, curr_stops)
         
         if size_key not in state_spaces:
-            state_spaces[size_key] = GNNStateSpace(
-                num_trucks=curr_trucks,
-                num_stops=curr_stops,
-                max_time=base_config['environment']['max_time'],
-                num_charging_nodes=train_env.num_charging_nodes,
-                device="cpu",
-                verbose=False
+            state_spaces[size_key] = create_default_gnn_space(
+                train_env.env,
+                mode=mode,
+                use_detour=use_detour,
             )
         
         state_space = state_spaces[size_key]
+        train_env.env._default_gnn_state_space = state_space
+        train_env.env.use_detour_mask = use_detour
+        train_env.env.enable_flexible_delivery_order = mode == 'vrp'
         gnn_state = state_space.get_state_GNN(train_env.env)
         
         # Act

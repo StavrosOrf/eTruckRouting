@@ -36,6 +36,8 @@ import torch
 import numpy as np
 from typing import Optional, Dict, Tuple, Set
 
+from EVRoutingEnv.state.gnn_utils import feasible_mask_to_numpy
+
 from torch_geometric.data import Data, HeteroData
 
 
@@ -1882,6 +1884,22 @@ class GNNStateSpace:
                 else 0
             ),
             "max_time": env.max_time,
+        }
+
+    def get_action_graph(self, env) -> Dict:
+        """Convenience wrapper returning action graph metadata.
+
+        Returns:
+            Dict with keys:
+            - data: full HeteroData graph
+            - feasible_action_mask: numpy boolean mask aligned to env action space
+            - action_to_node_map: list of (node_id, is_charging_action)
+        """
+        data = self.get_state_GNN(env)
+        return {
+            "data": data,
+            "feasible_action_mask": feasible_mask_to_numpy(getattr(data, "feasible_action_mask", None)),
+            "action_to_node_map": getattr(data, "action_to_node_map", []),
         }
 
     @staticmethod

@@ -19,8 +19,9 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
-from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
+from EVRoutingEnv.state.gnn_state_space_nonflex import GNNStateSpaceNonFlex
+from EVRoutingEnv.state.gnn_state_space_vrp import GNNStateSpaceVRP
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
@@ -50,18 +51,13 @@ OUTPUT_DIR = "results/visualization"
 def _create_gnn_state_space(env_init, gnn_space_type: str, max_time: float):
     """Instantiate the requested GNN state space; defaults to base if unknown."""
     gnn_space_type = (gnn_space_type or "base").lower()
-    if gnn_space_type == "detour":
-        return GNNStateSpaceDetourBased(
-            num_trucks=NUM_TRUCKS,
-            num_stops=NUM_STOPS,
-            max_time=max_time,
-            num_charging_nodes=env_init.num_charging_nodes,
-        )
-    return GNNStateSpace(
-        num_trucks=NUM_TRUCKS,
-        num_stops=NUM_STOPS,
-        max_time=max_time,
-        num_charging_nodes=env_init.num_charging_nodes,
+    mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
+    use_detour = gnn_space_type == "detour"
+    return create_default_gnn_space(
+        env_init,
+        mode=mode,
+        use_detour=use_detour,
+        device="cpu",
     )
 
 
@@ -108,6 +104,8 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
 
     # Run Environment with plotting enabled for route visualization
     env = EventDrivenTruckEnv(config=copy.deepcopy(config), verbose=False, enable_plotting=True, run_id="visualization_temp")
+    env.use_detour_mask = gnn_space_type == "detour"
+    env._default_gnn_state_space = gnn_state_space
     
     print(f"Running scenario with seed {SEED}...")
     obs, info = env.reset(seed=SEED)

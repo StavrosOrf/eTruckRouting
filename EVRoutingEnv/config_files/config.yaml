@@ -120,7 +120,7 @@ rewards:
   # Leftover battery penalty (encourages efficient battery usage)
   # When enabled, trucks are penalized for remaining battery at completion
   # Penalty = leftover_battery_penalty_coef * (remaining_soc_percentage)
-  enable_leftover_battery_penalty: false
+  enable_leftover_battery_penalty: True
   leftover_battery_penalty_coef: 1.0  # Penalty per percentage point of remaining SOC
 
 # Graph/Network Settings

@@ -549,7 +549,7 @@ def create_visualizations(hop_distances, hop_times, total_distances, total_times
 def main():
     parser = argparse.ArgumentParser(description='Analyze delivery route generation')
     # parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config.yaml',
-    parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config_small.yaml',
+    parser.add_argument('--config', type=str, default='EVRoutingEnv/config_files/config_vrp.yaml',
                        help='Path to config file')
     parser.add_argument('--num-samples', type=int, default=1000,
                        help='Number of environment samples to generate')

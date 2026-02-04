@@ -13,6 +13,8 @@ import matplotlib.patches as mpatches
 import shutil
 import traceback
 import torch
+from stable_baselines3 import PPO, DQN
+from sb3_contrib import MaskablePPO, QRDQN
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -25,27 +27,40 @@ from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
-from scripts.training.train_PPO_Variable import compute_action_mask
+from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
 # ============ CONFIGURATION ============
 # Policies to compare
 POLICIES = [
-    ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
-    # ("optimal", "optimal"),
+    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
+    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
+    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
+    ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     ("optimal-simple", "optimal-simple"),
     # ("heuristic", "heuristic"),
 ]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 10
-NUM_STOPS = 5
+NUM_STOPS = 3
 MAX_TIME = 200.0
-SEED = 1005
+SEED = 1008
 OUTPUT_DIR = "results/visualization"
 # =======================================
+
+
+def _extract_sb3_config(policy_path):
+    """Return (num_trucks, num_stops) if encoded like '1trucks_10stops' in path."""
+    import re
+
+    for part in str(policy_path).rstrip("/").split("/"):
+        match = re.search(r"(\d+)trucks_(\d+)stops", part)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
 
 
 def _create_gnn_state_space(env_init, gnn_space_type: str, max_time: float):
@@ -67,8 +82,20 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
     
     # Setup
     config = load_config(CONFIG_FILE)
-    config["environment"]["num_trucks"] = NUM_TRUCKS
-    config["environment"]["num_stops"] = NUM_STOPS
+    num_trucks = NUM_TRUCKS
+    num_stops = NUM_STOPS
+
+    # Align environment size with SB3 training config if encoded in path
+    if str(policy_type).startswith("sb3-"):
+        detected = _extract_sb3_config(policy_path)
+        if detected:
+            num_trucks, num_stops = detected
+            print(f"Detected SB3 config: {num_trucks} trucks, {num_stops} stops")
+        else:
+            print("SB3 policy detected but config not encoded in path; using defaults.")
+
+    config["environment"]["num_trucks"] = num_trucks
+    config["environment"]["num_stops"] = num_stops
     config["environment"]["max_time"] = MAX_TIME
     
     # Initialize State Space
@@ -79,7 +106,24 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
     # Load Policy
     print(f"Loading policy: {policy_path} (type: {policy_type})...")
     
-    if policy_type == "optimal":
+    if str(policy_type).startswith("sb3-"):
+        algo = policy_type.replace("sb3-", "")
+        if algo == "ppo":
+            policy = PPO.load(policy_path, device="cpu")
+            active_policy_type = "sb3-ppo"
+        elif algo == "maskppo":
+            policy = MaskablePPO.load(policy_path, device="cpu")
+            active_policy_type = "sb3-maskppo"
+        elif algo == "dqn":
+            policy = DQN.load(policy_path, device="cpu")
+            active_policy_type = "sb3-dqn"
+        elif algo == "qrdqn":
+            policy = QRDQN.load(policy_path, device="cpu")
+            active_policy_type = "sb3-qrdqn"
+        else:
+            raise ValueError(f"Unknown SB3 algorithm: {algo}")
+        print(f"Loaded SB3 model ({algo.upper()})")
+    elif policy_type == "optimal":
         try:
             policy = OptimalGurobiPolicy(verbose=False)
             active_policy_type = "optimal"
@@ -122,7 +166,13 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
         episode_policy = policy
     
     while not (done or truncated):
-        if active_policy_type in ["optimal", "optimal-simple", "heuristic"]:
+        if active_policy_type.startswith("sb3-"):
+            if active_policy_type == "sb3-maskppo":
+                action_masks = get_action_mask(env)
+                action, _states = policy.predict(obs, action_masks=action_masks, deterministic=True)
+            else:
+                action, _states = policy.predict(obs, deterministic=True)
+        elif active_policy_type in ["optimal", "optimal-simple", "heuristic"]:
             action = episode_policy.get_action(env)
         else:
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -131,7 +181,7 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
                 raw_action = policy.select_action(gnn_state, deterministic=True)
                 action = policy.to_env_action(gnn_state, int(raw_action))
             else:
-                mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
+                mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
                 raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
                 if isinstance(raw_action, tuple):
                     action = raw_action
@@ -787,7 +837,7 @@ def main():
     print("="*80)
     print(f"VISUALIZING TRUCK SCHEDULES - Comparing {len(POLICIES)} Policies")
     print("="*80)
-    print(f"Configuration: {NUM_TRUCKS} trucks, {NUM_STOPS} stops, {MAX_TIME}h max time")
+    print(f"Configuration: {NUM_TRUCKS} trucks, {NUM_STOPS} stops, {MAX_TIME}h max time (defaults; SB3 entries auto-detect)")
     print(f"Seed: {SEED}")
     print()
     
@@ -827,6 +877,11 @@ def main():
             name = "Optimal"
         elif policy_path == "optimal-simple":
             name = "MP Robust"
+        elif str(policy_type).startswith("sb3-"):
+            dir_path = os.path.dirname(policy_path) if str(policy_path).endswith('.zip') else policy_path
+            base = os.path.basename(dir_path.rstrip('/'))
+            base = base[:40]
+            name = f"SB3-{base}"
         else:
             base = os.path.basename(policy_path.rstrip('/'))
             name = base[:20] if len(base) > 20 else base

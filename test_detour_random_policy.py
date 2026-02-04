@@ -201,7 +201,7 @@ def main():
     # config["environment"]["num_trucks"] = 1  # Start simple
     # config["environment"]["num_stops"] = 10
     
-    config = load_config("EVRoutingEnv/config_files/config_small.yaml")
+    config = load_config("EVRoutingEnv/config_files/config_vrp.yaml")
     
     n_episodes = 10000
     

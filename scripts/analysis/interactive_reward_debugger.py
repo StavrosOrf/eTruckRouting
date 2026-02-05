@@ -26,6 +26,7 @@ from EVRoutingEnv.utils.utils import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
+    # parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_vrp.yaml",
     parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")

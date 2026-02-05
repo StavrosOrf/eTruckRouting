@@ -26,12 +26,13 @@ from EVRoutingEnv.utils.utils import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
-    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
+    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_vrp.yaml",
+    # parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
     parser.add_argument("--num-trucks", type=int, default=1,
                         help="Override number of trucks from the config.")
-    parser.add_argument("--num-stops", type=int, default=5,
+    parser.add_argument("--num-stops", type=int, default=3,
                         help="Override number of delivery stops from the config.")
     parser.add_argument("--max-time", type=float, default=None,
                         help="Override maximum simulation time from the config.")
@@ -165,7 +166,28 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
             if truck.enable_flexible_delivery_order:
                 # Flexible mode: decode which delivery from action index
                 delivery_idx = action_idx - env.num_charging_nodes
-                if delivery_idx < len(truck.delivery_sequence) - 1:
+                num_delivery_slots = len(truck.delivery_sequence)  # includes depot at [0]
+                
+                # Check if this is the depot return action (last slot)
+                if delivery_idx == num_delivery_slots - 1:
+                    # Depot return action
+                    target_node = truck.delivery_sequence[0]  # Depot is at index 0
+                    nav_stats = compute_navigation_stats(env, current_node, target_node)
+                    feasible = bool(env_action_mask[action_idx])
+                    
+                    if not feasible:
+                        if not getattr(truck, 'all_deliveries_done', False):
+                            reason = "Not all deliveries completed yet"
+                        elif nav_stats["energy"] is None or np.isinf(nav_stats["energy"]):
+                            reason = "Unreachable path"
+                        elif nav_stats["energy"] >= truck.current_battery:
+                            reason = "Insufficient battery"
+                        else:
+                            reason = "Depot return not available"
+                    else:
+                        reason = None
+                    action_type = "route:depot"
+                elif delivery_idx < len(truck.delivery_sequence) - 1:
                     target_node = truck.delivery_sequence[delivery_idx + 1]
                     # Check if this delivery is still remaining
                     remaining_deliveries = truck.get_next_delivery_target()
@@ -210,13 +232,14 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
                                     reason = "Would be stranded after delivery"
                         else:
                             reason = None
+                    action_type = f"route:delivery[{delivery_idx}]"
                 else:
                     # No delivery at this position
                     target_node = None
                     nav_stats = {"energy": None, "time": None}
                     feasible = False
                     reason = "No delivery at this sequence position"
-                action_type = f"route:delivery[{delivery_idx}]"
+                    action_type = f"route:delivery[{delivery_idx}]"
             else:
                 # Sequential mode: single next delivery
                 target_node = truck.get_next_delivery_target()
@@ -267,12 +290,16 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
             charge_hours = charge_durations[charge_idx]
             can_charge_here = target_node in env.charging_nodes
             not_full = (truck.current_battery + 1e-5) < truck.battery_capacity
-            feasible = can_charge_here and not_full
+            
+            # Use action mask for accurate feasibility
+            feasible = bool(env_action_mask[action_idx])
+            
             reason = None
             if not can_charge_here:
                 reason = "Not at a charger"
             elif not not_full:
                 reason = "Battery already full"
+            
             action_type = f"charge({charge_hours}h)"
             arrival_time = None
             queue_length = None
@@ -307,6 +334,8 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
                     label = "No delivery"
             else:
                 label = "→Next delivery"
+        elif action_type.startswith("route:depot") or "depot" in action_type.lower():
+            label = f"→DEPOT {target_node} (return)"
         else:
             label = env._action_to_string(action_idx)
 
@@ -439,9 +468,14 @@ def print_state_statistics(env: EventDrivenTruckEnv) -> None:
         # Get delivery info based on mode
         if truck.enable_flexible_delivery_order:
             remaining = truck.get_remaining_deliveries()
-            next_del_info = f"remaining={len(remaining)}"
+            # Delivery nodes are delivery_sequence[1:] (excluding depot at index 0)
+            total_deliveries = len(truck.delivery_sequence) - 1
+            completed = total_deliveries - len(remaining)
+            all_done_flag = " | ALL_DONE→depot" if getattr(truck, 'all_deliveries_done', False) else ""
+            depot_node = truck.delivery_sequence[0]
+            next_del_info = f"depot={depot_node} | deliveries: {completed}/{total_deliveries}{all_done_flag}"
             if remaining:
-                next_del_info += f" {remaining}"
+                next_del_info += f" rem={remaining}"
         else:
             next_del = truck_state.get('next_delivery_target')
             next_del_info = f"next={next_del}"
@@ -516,8 +550,8 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
     BOLD = '\033[1m'
 
     # Two-line header with units on second line
-    header_line1 = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'GNN':<4} {'1Chr':<4} {'Description':<18} {'ΔEnergy':<7} {'→NextDel':<8} {'Total':<7} {'TravelTime':<11} {'BatteryAtArr':<12} {'Reason':<20} {'SimReward':<10}"
-    header_line2 = f"{'':4} {'':2} {'':5} {'':4} {'':4} {'':18} {'(kWh)':<7} {'(kWh)':<8} {'(kWh)':<7} {'(h)':<11} {'(kWh)':<12} {'':20} {'':<10}"
+    header_line1 = f"{'Idx':<4} {'H':<2} {'Feas':<5} {'GNN':<4} {'1Chr':<4} {'Description':<24} {'ΔEnergy':<7} {'→NextDel':<8} {'Total':<7} {'TravelTime':<11} {'BatteryAtArr':<12} {'Reason':<20} {'SimReward':<10}"
+    header_line2 = f"{'':4} {'':2} {'':5} {'':4} {'':4} {'':24} {'(kWh)':<7} {'(kWh)':<8} {'(kWh)':<7} {'(h)':<11} {'(kWh)':<12} {'':20} {'':<10}"
     print(header_line1)
     print(header_line2)
     print("-" * len(header_line1))
@@ -584,7 +618,7 @@ def print_actions_table(actions: List[Dict], heuristic_idx: Optional[int]) -> No
         
         print(
             f"{color}{action['index']:<4} {heur_mark:<2} {feasible_str:<5} {gnn_feas_str:<4} {gnn_single_feas_str:<4} "
-            f"{desc:<18} {energy_str:<7} {next_del_str:<8} {total_str:<7} {time_str:<11} {battery_str:<12} {reason_str:<20} {sim_summary:<10}{RESET}"
+            f"{desc:<24} {energy_str:<7} {next_del_str:<8} {total_str:<7} {time_str:<11} {battery_str:<12} {reason_str:<20} {sim_summary:<10}{RESET}"
         )
         
         # Show queue info for charger navigation actions (still useful to keep)

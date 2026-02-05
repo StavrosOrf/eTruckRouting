@@ -235,8 +235,9 @@ class EventDrivenTruckEnv(gym.Env):
         
         stops_for_action_space = self.fixed_num_stops
         if self.enable_flexible_delivery_order:
-            # Flexible mode: separate action for each potential delivery node (size with max to keep action space stable)
-            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space
+            # Flexible mode: separate action for each potential delivery node + depot return action
+            # (size with max to keep action space stable)
+            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space + 1  # +1 for depot
         else:
             # Sequential mode: single next delivery action
             self.num_navigation_actions = self.num_charging_nodes + 1
@@ -754,8 +755,14 @@ class EventDrivenTruckEnv(gym.Env):
                     if self.enable_flexible_delivery_order:
                         # Flexible mode: decode which delivery from action index
                         delivery_idx = action - self.num_charging_nodes
-                        # Map action index to delivery node in sequence (skip depot at index 0)
-                        if delivery_idx < len(truck.delivery_sequence) - 1:
+                        num_delivery_slots = len(truck.delivery_sequence)  # includes depot at [0]
+                        
+                        # Check if this is the depot return action (last slot)
+                        if delivery_idx == num_delivery_slots - 1:
+                            # Depot return
+                            target_node = truck.delivery_sequence[0]  # Depot at index 0
+                        elif delivery_idx < len(truck.delivery_sequence) - 1:
+                            # Regular delivery
                             target_node = truck.delivery_sequence[delivery_idx + 1]
                         else:
                             raise ValueError(f"Invalid delivery action index: {delivery_idx}")
@@ -867,9 +874,14 @@ class EventDrivenTruckEnv(gym.Env):
             # Flexible mode: check if target is any remaining delivery
             remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
             is_delivery_nav = target_node in remaining_deliveries
+            
+            # VRP: Check if this is depot return (all deliveries done, returning to depot)
+            is_depot_return = (truck.all_deliveries_done and 
+                             target_node == truck.delivery_sequence[0])
         else:
             # Sequential mode: check if target is next delivery
             is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+            is_depot_return = False  # No depot return in sequential mode
         
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
         if is_delivery_nav:
@@ -922,9 +934,6 @@ class EventDrivenTruckEnv(gym.Env):
         # Record routing start event
         truck.start_routing(destination=target_node, timestamp=departure_time)
         
-        if self.verbose:
-            print(f"  DEBUG: Scheduling arrival - Departure: {departure_time:.4f}h, Travel: {actual_travel_time:.4f}h, Arrival: {completion_time:.4f}h")
-        
         heapq.heappush(
             self.event_queue,
             Event(
@@ -954,6 +963,12 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Calculate reward (using actual travel time, not base time)
         time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
+
+        # Bonus for depot return (VRP flexible mode)
+        if is_depot_return:
+            delivery_bonus = self.reward_config["delivery_bonus"]
+            # No unloading time for depot return
+            return time_penalty + delivery_bonus
 
         # Bonus if this is a delivery
         if is_delivery_nav:
@@ -1025,21 +1040,37 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  Using current location {truck.current_node}")
             charger_node = truck.current_node
 
-        # If battery full, go to next delivery instead
+        # EARLY CHECK: If battery full, go to next delivery instead
         battery_deficit = truck.battery_capacity - truck.current_battery
         if battery_deficit <= 1e-3:
-            next_delivery = truck.get_next_delivery_target()
             if self.verbose:
-                print(f"  Truck {truck.truck_id} battery full; rerouting instead of charging")
+                print(f"  WARNING: Battery already full ({truck.current_battery:.1f}/{truck.battery_capacity:.1f} kWh)")
+                print(f"  Action should have been masked! Redirecting to next delivery.")
+            
+            next_delivery = truck.get_next_delivery_target()
             if next_delivery is not None:
                 if isinstance(next_delivery, list):
                     if not next_delivery:
-                        raise RuntimeError("No remaining deliveries to navigate to after full battery check")
+                        # VRP mode: No remaining deliveries (all done)
+                        # Check if we should return to depot
+                        if truck.enable_flexible_delivery_order and truck.all_deliveries_done:
+                            depot_node = truck.delivery_sequence[0]
+                            if self.verbose:
+                                print(f"  All deliveries complete, returning to depot {depot_node}")
+                            return self._execute_navigation_action(truck, depot_node)
+                        # Otherwise, battery is full and nothing to do - return small penalty
+                        if self.verbose:
+                            print(f"  No action available - battery full and no deliveries remaining")
+                        return -0.01
                     target_node = next_delivery[0]
                 else:
                     target_node = next_delivery
                 return self._execute_navigation_action(truck, target_node)
-            return 0.0
+            else:
+                # Sequential mode: No next delivery
+                if self.verbose:
+                    print(f"  No next delivery available - battery full and all deliveries done")
+                return -0.01
 
         # Check charger gating
         can_proceed, next_check_time = self.charging_station.check_charger_gating(
@@ -1249,7 +1280,7 @@ class EventDrivenTruckEnv(gym.Env):
             node = self.charging_nodes[action]
             return f"Go to charger @ node {node}"
 
-        # Delivery navigation actions
+        # Delivery navigation actions (including depot in flexible mode)
         if action < self.num_navigation_actions:
             if self.enable_flexible_delivery_order:
                 delivery_idx = action - self.num_charging_nodes
@@ -1257,11 +1288,18 @@ class EventDrivenTruckEnv(gym.Env):
                 if self.active_truck_id is not None and self.active_truck_id < len(self.trucks):
                     truck = self.trucks[self.active_truck_id]
 
-                if truck is not None and delivery_idx + 1 < len(truck.delivery_sequence):
-                    node = truck.delivery_sequence[delivery_idx + 1]
-                    remaining = set(truck.get_remaining_deliveries())
-                    status = "pending" if node in remaining else "done"
-                    return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
+                if truck is not None:
+                    # Check if this is the depot return action (last action slot)
+                    num_delivery_slots = len(truck.delivery_sequence)  # includes depot at [0] + deliveries [1:]
+                    if delivery_idx == num_delivery_slots - 1:
+                        # This is the depot return action
+                        depot_node = truck.delivery_sequence[0]
+                        return f"Return to depot @ node {depot_node}"
+                    elif delivery_idx + 1 < len(truck.delivery_sequence):
+                        node = truck.delivery_sequence[delivery_idx + 1]
+                        remaining = set(truck.get_remaining_deliveries())
+                        status = "pending" if node in remaining else "done"
+                        return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
                 return f"Go to delivery slot {delivery_idx} (empty)"
             else:
                 return "Go to next delivery"

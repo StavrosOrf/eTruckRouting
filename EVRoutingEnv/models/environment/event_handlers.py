@@ -153,6 +153,14 @@ class EventHandler:
             truck_states[truck.truck_id] = "failed"
             if self.verbose:
                 print(f"  Truck {truck.truck_id} FAILED: battery depleted")
+        # VRP: Check if truck arrived at depot with all deliveries done (flexible mode only)
+        elif truck.enable_flexible_delivery_order and truck.all_deliveries_done and destination == truck.delivery_sequence[0]:
+            # Truck has completed all deliveries and returned to depot
+            truck.is_complete = True
+            truck.mark_complete(timestamp=global_clock)
+            truck_states[truck.truck_id] = "complete"
+            if self.verbose:
+                print(f"  Truck {truck.truck_id} COMPLETED all deliveries and returned to depot")
         # Check if truck completed all deliveries
         elif truck.is_complete:
             truck.mark_complete(timestamp=global_clock)

@@ -36,18 +36,19 @@ POLICIES = [
     # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
+    # ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
     # ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
-    ("optimal-simple", "optimal-simple"),
+    # ("optimal-simple", "optimal-simple"),
     # ("heuristic", "heuristic"),
+    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1447/", "variable-ppo", "vrp"),
 ]
 
-CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 10
-NUM_STOPS = 3
+# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 1
+NUM_STOPS = 5
 MAX_TIME = 200.0
-SEED = 1008
+SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
 

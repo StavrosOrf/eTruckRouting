@@ -42,7 +42,12 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
         env._default_gnn_state_space = cached_space
 
     action_graph = cached_space.get_action_graph(env)
-    mask_np = action_graph.get("feasible_action_mask", feasible_mask)
+    
+    # Handle both dict and ActionGraph dataclass returns
+    if isinstance(action_graph, dict):
+        mask_np = action_graph.get("feasible_action_mask", feasible_mask)
+    else:
+        mask_np = action_graph.feasible_action_mask
 
     # Align length defensively in case action spaces diverge
     if len(mask_np) != env.action_space.n:

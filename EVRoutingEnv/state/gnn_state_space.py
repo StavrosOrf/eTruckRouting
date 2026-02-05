@@ -78,20 +78,22 @@ class GNNStateSpace:
         self.device = device
         self.verbose = verbose
 
-        # Node type constants (no depot)
+        # Node type constants (including depot for VRP)
         self.NODE_TYPE_TRUCK = 0
         self.NODE_TYPE_DELIVERY = 1
         self.NODE_TYPE_CHARGER = 2
-        self.node_type_order = ['truck', 'delivery', 'charger']
+        self.NODE_TYPE_DEPOT = 3
+        self.node_type_order = ['truck', 'delivery', 'charger', 'depot']
         self.node_type_to_code = {
             node_type: idx for idx, node_type in enumerate(self.node_type_order)
         }
         
         # Feature dimensions (calculated from feature extraction methods)
-        # Truck: 14 features (added must_leave_charger), Delivery: 3 features, Charger: 4 features, Edge: 2 features
+        # Truck: 14 features (added must_leave_charger), Delivery: 3 features, Charger: 4 features, Depot: 3 features (same as delivery), Edge: 2 features
         self._truck_feature_dim = 14
         self._delivery_feature_dim = 3
         self._charger_feature_dim = 4
+        self._depot_feature_dim = 3  # Same as delivery: node_type, node_id, sequence_index
         self._edge_feature_dim = 2
         # Action graph feature dimension: [action_type_norm, resulting_soc, charge_duration_norm]
         self.action_feature_dim = 3
@@ -181,6 +183,9 @@ class GNNStateSpace:
         for truck in env.trucks:
             if truck.failed or truck.is_complete:
                 continue
+            # Skip delivery nodes if truck has all deliveries done (will use depot instead)
+            if truck.enable_flexible_delivery_order and truck.all_deliveries_done:
+                continue
             remaining = truck.get_remaining_deliveries()
             all_delivery_nodes.update(truck.delivery_sequence[1:])  # Skip depot
         
@@ -200,9 +205,13 @@ class GNNStateSpace:
             data['delivery'].x = torch.tensor(delivery_features_array, dtype=torch.float32, device=self.device)
             self._delivery_feature_dim = delivery_features_array.shape[1]
         else:
-            # No delivery nodes - this should only happen if episode should have terminated
-            # Check if all trucks are complete or failed
+            # No delivery nodes - check if this is valid (all trucks terminal or waiting for depot return)
             all_terminal = all(truck.failed or truck.is_complete for truck in env.trucks)
+            all_awaiting_depot = all(
+                truck.failed or truck.is_complete or 
+                (truck.enable_flexible_delivery_order and truck.all_deliveries_done)
+                for truck in env.trucks
+            )
             
             # Detailed debugging for each truck
             truck_debug_info = []
@@ -214,6 +223,7 @@ class GNNStateSpace:
                     f"seq_idx={truck.current_sequence_index}/{len(truck.delivery_sequence)-1}, "
                     f"is_complete={truck.is_complete}, "
                     f"failed={truck.failed}, "
+                    f"all_deliveries_done={truck.all_deliveries_done}, "
                     f"state={env.truck_states.get(truck.truck_id)}, "
                     f"next_target={next_del}, "
                     f"remaining={len(remaining)}"
@@ -229,7 +239,7 @@ class GNNStateSpace:
                     f"  Truck states: {env.truck_states}\n"
                     f"  Truck details:\n    {debug_details}"
                 )
-            else:
+            elif not all_awaiting_depot:
                 raise ValueError(
                     f"No delivery nodes found but not all trucks are terminal.\n"
                     f"  Active truck: {env.active_truck_id}\n"
@@ -257,6 +267,36 @@ class GNNStateSpace:
             raise ValueError("No charger features found")
             # data['charger'].x = torch.zeros((0, self._charger_feature_dim), dtype=torch.float32, device=self.device)
 
+        # 4. Build depot nodes (for VRP - always in flexible mode)
+        depot_features_list = []
+        depot_node_to_idx = {}
+        
+        for truck in env.trucks:
+            # Skip failed or completed trucks
+            if truck.failed or truck.is_complete:
+                continue
+            
+            # Add depot node for all trucks in flexible mode
+            if truck.enable_flexible_delivery_order:
+                depot_node_id = truck.delivery_sequence[0]  # Depot is always first in sequence
+                
+                # Add depot node only once (multiple trucks might share same depot)
+                if depot_node_id not in depot_node_to_idx:
+                    idx = len(depot_features_list)
+                    depot_node_to_idx[depot_node_id] = idx
+                    
+                    features = self._get_depot_node_features(depot_node_id, env)
+                    depot_features_list.append(features)
+        
+        if depot_features_list:
+            # Convert to numpy array first to avoid warning
+            depot_features_array = np.array(depot_features_list, dtype=np.float32)
+            data['depot'].x = torch.tensor(depot_features_array, dtype=torch.float32, device=self.device)
+            self._depot_feature_dim = depot_features_array.shape[1]
+        else:
+            # No depot nodes needed (no trucks ready to return)
+            data['depot'].x = torch.zeros((0, self._depot_feature_dim), dtype=torch.float32, device=self.device)
+
         # Get max truck battery capacity for feasibility checks
         max_battery_capacity = max(truck.battery_capacity for truck in env.trucks)
         
@@ -277,6 +317,12 @@ class GNNStateSpace:
             ('charger', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
             ('delivery', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
             ('delivery', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+            ('truck', 'to', 'depot'): {'edge_index': [], 'edge_attr': []},
+            ('depot', 'to', 'truck'): {'edge_index': [], 'edge_attr': []},
+            ('depot', 'to', 'charger'): {'edge_index': [], 'edge_attr': []},
+            ('charger', 'to', 'depot'): {'edge_index': [], 'edge_attr': []},
+            ('depot', 'to', 'delivery'): {'edge_index': [], 'edge_attr': []},
+            ('delivery', 'to', 'depot'): {'edge_index': [], 'edge_attr': []},
         }
 
         # 4. Add truck edges based on state
@@ -399,7 +445,40 @@ class GNNStateSpace:
                                 # else:
                                 #     # Log this for debugging
                                 #     if not (np.isinf(energy) or np.isinf(time)):
-                                #         print(f"[GNN State] WARNING: Skipping reverse edge {next_delivery}->{current_location} (inf) while forward exists")                # Connect to all chargers (if feasible with current battery)
+                                #         print(f"[GNN State] WARNING: Skipping reverse edge {next_delivery}->{current_location} (inf) while forward exists")                
+                
+                # VRP: Connect to depot if all deliveries are done (flexible mode only)
+                if truck.enable_flexible_delivery_order and truck.all_deliveries_done:
+                    depot_node_id = truck.delivery_sequence[0]  # Depot is first in sequence
+                    
+                    if depot_node_id in depot_node_to_idx:
+                        depot_idx = depot_node_to_idx[depot_node_id]
+                        
+                        # Check if already at depot (0 energy/time)
+                        if depot_node_id == current_location:
+                            energy, time = 0.0, 0.0
+                            energy_inv, time_inv = 0.0, 0.0
+                        else:
+                            energy = env.transport_graph.get_path_energy(current_location, depot_node_id)
+                            energy_inv = env.transport_graph.get_path_energy(depot_node_id, current_location)
+                            time = env.transport_graph.get_time_distance(current_location, depot_node_id)
+                            time_inv = env.transport_graph.get_time_distance(depot_node_id, current_location)
+                        
+                        # Only add edge if energy is feasible
+                        max_energy_needed = energy * energy_safety_factor
+                        if max_energy_needed < current_battery and not np.isinf(energy):
+                            edge_dict[('truck', 'to', 'depot')]['edge_index'].append([truck_idx, depot_idx])
+                            edge_dict[('truck', 'to', 'depot')]['edge_attr'].append([energy/1000.0, time/self.max_time])
+                            
+                            if self.BIDIRECTIONAL_EDGES:
+                                if not (np.isnan(energy_inv) or np.isinf(energy_inv) or 
+                                       np.isnan(time_inv) or np.isinf(time_inv)):
+                                    energy_norm = energy_inv / 1000.0
+                                    time_norm = time_inv / self.max_time if self.max_time > 0 else 0.0
+                                    edge_dict[('depot', 'to', 'truck')]['edge_index'].append([depot_idx, truck_idx])
+                                    edge_dict[('depot', 'to', 'truck')]['edge_attr'].append([energy_norm, time_norm])
+                
+                # Connect to all chargers (if feasible with current battery)
                 # Apply charger filtering if enabled and in sequential delivery mode
                 chargers_to_connect = list(charger_node_to_idx.items())
                 
@@ -501,6 +580,16 @@ class GNNStateSpace:
                         if self.BIDIRECTIONAL_EDGES:
                             edge_dict[('charger', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
                             edge_dict[('charger', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
+                    
+                    # Check if destination is a depot node
+                    elif destination in depot_node_to_idx:
+                        dest_idx = depot_node_to_idx[destination]
+                        edge_dict[('truck', 'to', 'depot')]['edge_index'].append([truck_idx, dest_idx])
+                        edge_dict[('truck', 'to', 'depot')]['edge_attr'].append([0.0, time_remaining_norm])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            edge_dict[('depot', 'to', 'truck')]['edge_index'].append([dest_idx, truck_idx])
+                            edge_dict[('depot', 'to', 'truck')]['edge_attr'].append([0.0, time_remaining_norm])
 
         # 5. Add edges between chargers (always bidirectional if feasible)
         for i, charger1_id in enumerate(env.charging_nodes):
@@ -569,6 +658,41 @@ class GNNStateSpace:
                     time_norm = time_to_traverse / self.max_time
                     edge_dict[('delivery', 'to', 'charger')]['edge_index'].append([delivery_idx, charger_idx])
                     edge_dict[('delivery', 'to', 'charger')]['edge_attr'].append([energy_norm, time_norm])
+
+        # 6. Add edges between depot and other nodes (flexible VRP mode)
+        if depot_node_to_idx:
+            for depot_id, depot_idx in depot_node_to_idx.items():
+                # Connect depot to all chargers (bidirectional)
+                for charger_id, charger_idx in charger_node_to_idx.items():
+                    energy = env.transport_graph.get_path_energy(depot_id, charger_id)
+                    time = env.transport_graph.get_time_distance(depot_id, charger_id)
+                    
+                    if energy * energy_safety_factor <= max_battery_capacity and not np.isinf(energy):
+                        edge_dict[('depot', 'to', 'charger')]['edge_index'].append([depot_idx, charger_idx])
+                        edge_dict[('depot', 'to', 'charger')]['edge_attr'].append([energy/1000.0, time/self.max_time])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            energy_inv = env.transport_graph.get_path_energy(charger_id, depot_id)
+                            time_inv = env.transport_graph.get_time_distance(charger_id, depot_id)
+                            if energy_inv * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_inv):
+                                edge_dict[('charger', 'to', 'depot')]['edge_index'].append([charger_idx, depot_idx])
+                                edge_dict[('charger', 'to', 'depot')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
+                
+                # Connect depot to all delivery nodes (bidirectional)
+                for delivery_id, delivery_idx in delivery_node_to_idx.items():
+                    energy = env.transport_graph.get_path_energy(depot_id, delivery_id)
+                    time = env.transport_graph.get_time_distance(depot_id, delivery_id)
+                    
+                    if energy * energy_safety_factor <= max_battery_capacity and not np.isinf(energy):
+                        edge_dict[('depot', 'to', 'delivery')]['edge_index'].append([depot_idx, delivery_idx])
+                        edge_dict[('depot', 'to', 'delivery')]['edge_attr'].append([energy/1000.0, time/self.max_time])
+                        
+                        if self.BIDIRECTIONAL_EDGES:
+                            energy_inv = env.transport_graph.get_path_energy(delivery_id, depot_id)
+                            time_inv = env.transport_graph.get_time_distance(delivery_id, depot_id)
+                            if energy_inv * energy_safety_factor <= max_battery_capacity and not np.isinf(energy_inv):
+                                edge_dict[('delivery', 'to', 'depot')]['edge_index'].append([delivery_idx, depot_idx])
+                                edge_dict[('delivery', 'to', 'depot')]['edge_attr'].append([energy_inv/1000.0, time_inv/self.max_time])
 
         # 7. Add edges between delivery nodes (bidirectional if feasible)
         delivery_ids = sorted(delivery_node_to_idx.keys())
@@ -733,7 +857,7 @@ class GNNStateSpace:
                     remaining_count = len(next_delivery) if isinstance(next_delivery, list) else (1 if next_delivery is not None else 0)
                     if remaining_count <= 2:
                         # Late-stage: allow a lower floor to avoid dead-ends near completion
-                        min_routing_safety = 0.35
+                        min_routing_safety = 0.15
                 
                 # Check if any routing action would be feasible with current safety factor
                 def check_routing_feasible(safety_factor):
@@ -835,6 +959,7 @@ class GNNStateSpace:
                     if self.verbose:
                         print(f'[FlexibleMode] Remaining deliveries: {remaining_deliveries}')
                         print(f'[FlexibleMode] Delivery sequence: {active_truck.delivery_sequence}')
+                        print(f'[FlexibleMode] All deliveries done: {active_truck.all_deliveries_done}')
                     
                     # Create actions for each possible delivery slot (num_stops actions)
                     for i in range(env.num_stops):
@@ -842,8 +967,18 @@ class GNNStateSpace:
                         if i + 1 < len(active_truck.delivery_sequence):
                             delivery_node = active_truck.delivery_sequence[i + 1]
                             
+                            # If all deliveries done, mask all delivery actions
+                            if active_truck.all_deliveries_done:
+                                action_to_node_map.append((delivery_node, False))
+                                feasible_action_mask.append(False)  # Mask delivery actions when all done
+                                _append_action_metadata(delivery_node, False)
+                                action_charge_durations.append(0.0)
+                                navigation_entries.append((len(action_to_node_map) - 1, delivery_node, False))
+                                
+                                if self.verbose:
+                                    print(f'  Delivery action {i}: node {delivery_node} masked (all deliveries done)')
                             # Check if this delivery is still remaining (not yet delivered)
-                            if delivery_node in remaining_deliveries:
+                            elif delivery_node in remaining_deliveries:
                                 # Validate feasibility for this delivery
                                 energy_to_delivery = env.transport_graph.get_path_energy(current_location, delivery_node)
                                 max_energy_to_delivery = energy_to_delivery * routing_safety_factor
@@ -978,6 +1113,31 @@ class GNNStateSpace:
                         navigation_entries.append((len(action_to_node_map) - 1, next_delivery, False))
                     else:
                         raise ValueError("No next delivery found for active truck")
+                
+                # VRP: Add depot return action (flexible mode only)
+                # Always add the action to keep action space size consistent, but only feasible when all_deliveries_done
+                if active_truck.enable_flexible_delivery_order:
+                    depot_node_id = active_truck.delivery_sequence[0]  # Depot is first in sequence
+                    
+                    # Calculate energy to depot
+                    energy_to_depot = env.transport_graph.get_path_energy(current_location, depot_node_id)
+                    max_energy_to_depot = energy_to_depot * routing_safety_factor
+                    is_energy_feasible = max_energy_to_depot < current_battery and not np.isinf(energy_to_depot)
+                    
+                    # Depot return is only feasible after all deliveries are done
+                    is_feasible = (active_truck.all_deliveries_done and 
+                                 is_energy_feasible and 
+                                 not must_charge_now)
+                    
+                    action_to_node_map.append((depot_node_id, False))
+                    feasible_action_mask.append(is_feasible)
+                    _append_action_metadata(depot_node_id, False)
+                    action_charge_durations.append(0.0)
+                    navigation_entries.append((len(action_to_node_map) - 1, depot_node_id, False))
+                    
+                    if self.verbose:
+                        all_done_status = "all_done" if active_truck.all_deliveries_done else "deliveries_remaining"
+                        print(f'[VRP] Depot return action: node {depot_node_id}, energy {energy_to_depot:.2f} kWh, status: {all_done_status}, feasible: {is_feasible}')
 
                 # Last actions: Charge at current location (if at charger)
                 if current_location in charger_node_to_idx:
@@ -1374,7 +1534,7 @@ class GNNStateSpace:
         feasible_action_is_charging = [action_is_charging[i] for i in feasible_indices]
         feasible_action_durations = [action_charge_durations[i] for i in feasible_indices]
         
-        # Strict validation: Raise error if all actions are infeasible
+        # Strict validation: If all actions are infeasible, create a default action that will cause truck failure
         if not feasible_action_to_node_map:
             active_truck = env.trucks[env.active_truck_id]
             diagnostics = self._get_action_feasibility_diagnostics(env, active_truck, charger_node_to_idx)
@@ -1402,17 +1562,25 @@ class GNNStateSpace:
             if at_charger and not active_truck.must_leave_charger:
                 infeasibility_details.append(f"  ⚠ At charger but all charging durations insufficient to reach any destination")
             
-            raise ValueError(
-                f"Cannot generate GNN state: ALL ACTIONS ARE INFEASIBLE for truck {env.active_truck_id}.\n"
+            # Log the stranded state
+            print(
+                f"\n[STRANDED STATE] ALL ACTIONS ARE INFEASIBLE for truck {env.active_truck_id}.\n"
                 f"This indicates the truck is in an unrecoverable state (e.g., stranded with insufficient battery).\n\n"
                 f"{diagnostics}\n"
                 f"{''.join(infeasibility_details)}\n\n"
-                f"Full action details:\n"
-                f"  action_to_node_map: {action_to_node_map}\n"
-                f"  feasible_action_mask: {feasible_action_mask}\n"
-                f"  action_is_charging: {action_is_charging}\n"
-                f"  action_charge_durations: {action_charge_durations}"
+                f"Creating default action (index 0) that will cause truck failure in environment.\n"
             )
+            
+            # Instead of raising, mark the first action as feasible (it will fail in env)
+            # This allows the policy to take an action and the environment will handle the failure
+            feasible_action_mask[0] = True
+            feasible_indices = [0]
+            feasible_action_to_node_map = [action_to_node_map[0]]
+            feasible_action_is_charging = [action_is_charging[0]]
+            feasible_action_durations = [action_charge_durations[0]]
+            
+            # Update the tensor with the modified mask
+            data.feasible_action_mask = torch.tensor(feasible_action_mask, dtype=torch.bool, device=self.device)
         
         data.action_graph_features = self._build_action_graph_features(
             env,
@@ -1734,6 +1902,36 @@ class GNNStateSpace:
         
         return np.array(features, dtype=np.float32)
 
+    def _get_depot_node_features(self, node_id: int, env) -> np.ndarray:
+        """
+        Depot node features (3 features total, same structure as delivery nodes).
+
+        Features (all normalized):
+        [0]: node_type (normalized by number of node types)
+        [1]: node_id (normalized by number of nodes)
+        [2]: sequence_index (0 - depot is the starting point)
+
+        Args:
+            node_id: Depot node ID
+            env: EventDrivenTruckEnv instance
+
+        Returns:
+            Feature vector (3 features)
+        """
+        num_nodes = env.transport_graph.num_nodes
+        node_id_norm = node_id / num_nodes if num_nodes > 0 else 0.0
+        
+        # Depot has sequence index 0 (it's the start/end point)
+        delivery_sequence_index_norm = 0.0
+        
+        features = [
+            self.NODE_TYPE_DEPOT / len(self.node_type_order),
+            node_id_norm,
+            delivery_sequence_index_norm,
+        ]
+        
+        return np.array(features, dtype=np.float32)
+
     def _get_charger_node_features(self, node_id: int, env) -> np.ndarray:
         """
         Charger node features (4 features total, no padding).
@@ -1921,12 +2119,14 @@ class GNNStateSpace:
             - data: full HeteroData graph
             - feasible_action_mask: numpy boolean mask aligned to env action space
             - action_to_node_map: list of (node_id, is_charging_action)
+            - action_charge_durations: list of charge durations (0.0 for navigation actions)
         """
         data = self.get_state_GNN(env)
         return {
             "data": data,
             "feasible_action_mask": feasible_mask_to_numpy(getattr(data, "feasible_action_mask", None)),
             "action_to_node_map": getattr(data, "action_to_node_map", []),
+            "action_charge_durations": getattr(data, "action_charge_durations", torch.tensor([])).cpu().numpy().tolist() if hasattr(data, "action_charge_durations") else [],
         }
 
     @staticmethod

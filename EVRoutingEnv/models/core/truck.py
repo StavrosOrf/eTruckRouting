@@ -59,6 +59,7 @@ class Truck:
         self.is_complete = False
         self.failed = False  # True if ran out of battery
         self.battery_at_completion = None  # Store battery level when completing last delivery
+        self.all_deliveries_done = False  # True when all deliveries done, but not yet returned to depot (VRP mode)
         
         # Route tracking (for GNN state representation)
         self.route_destination = None  # Next destination when on route
@@ -111,11 +112,16 @@ class Truck:
         
         Returns:
             - If flexible delivery order is disabled: Single int (next node ID) or None
-            - If flexible delivery order is enabled: List of remaining delivery node IDs (may be empty)
+            - If flexible delivery order is enabled: List of remaining delivery node IDs
+              If all deliveries are done, returns depot as the target.
         """
         if self.enable_flexible_delivery_order:
             # Return all undelivered nodes (excluding depot at index 0)
             remaining = [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+            # VRP: If all deliveries done, return depot as next target
+            if len(remaining) == 0 and self.all_deliveries_done:
+                depot_node = self.delivery_sequence[0]
+                return [depot_node]
             return remaining
         else:
             # Sequential mode: return next in sequence
@@ -149,9 +155,11 @@ class Truck:
             # Check if all deliveries complete (excluding depot at index 0)
             all_delivery_nodes = set(self.delivery_sequence[1:])
             if self.delivered_nodes == all_delivery_nodes:
-                self.is_complete = True
+                # Mark all deliveries done but not complete until depot return
+                self.all_deliveries_done = True
                 # Store battery level at completion for penalty calculation
                 self.battery_at_completion = self.current_battery
+                # Note: is_complete will be set when truck returns to depot
         else:
             # Sequential mode: advance to next in sequence
             if self.current_sequence_index + 1 < len(self.delivery_sequence):

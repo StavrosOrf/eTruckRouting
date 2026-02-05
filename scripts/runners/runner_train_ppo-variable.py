@@ -102,6 +102,8 @@ def tmux_send(session: str, command: str):
 
 
 meta = load_env_meta(config_path)
+print(f"Environment meta: {meta}")
+
 counter = 0
 
 if "ppo-variable" in run_algorithms:
@@ -135,7 +137,7 @@ if "ppo-variable" in run_algorithms:
             f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
             f" --ppo-clip 0.2"
             f" --ppo-entropy-coef {entropy_coef}"
-            f" --exp-name PenalizeSoC_{exp_name}"
+            f" --exp-name true_eVRP{exp_name}"
             f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
             f" --num-eval-envs {ppo_params['num_eval_envs']}"
         )

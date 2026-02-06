@@ -26,13 +26,13 @@ from EVRoutingEnv.utils.utils import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
-    # parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_vrp.yaml",
-    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
+    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_vrp.yaml",
+    # parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
-    parser.add_argument("--seed", type=int, default=1, help="Environment RNG seed.")
+    parser.add_argument("--seed", type=int, default=1007, help="Environment RNG seed.")
     parser.add_argument("--num-trucks", type=int, default=1,
                         help="Override number of trucks from the config.")
-    parser.add_argument("--num-stops", type=int, default=5,
+    parser.add_argument("--num-stops", type=int, default=10,
                         help="Override number of delivery stops from the config.")
     parser.add_argument("--max-time", type=float, default=None,
                         help="Override maximum simulation time from the config.")
@@ -166,11 +166,13 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
             if truck.enable_flexible_delivery_order:
                 # Flexible mode: decode which delivery from action index
                 delivery_idx = action_idx - env.num_charging_nodes
+                depot_slot = len(truck.delivery_sequence) - 1
+                remaining_deliveries = truck.get_next_delivery_target()
+                remaining_list = remaining_deliveries if isinstance(remaining_deliveries, list) else []
                 if delivery_idx < len(truck.delivery_sequence) - 1:
                     target_node = truck.delivery_sequence[delivery_idx + 1]
                     # Check if this delivery is still remaining
-                    remaining_deliveries = truck.get_next_delivery_target()
-                    if isinstance(remaining_deliveries, list) and target_node not in remaining_deliveries:
+                    if target_node not in remaining_list:
                         # Already delivered
                         nav_stats = {"energy": None, "time": None}
                         feasible = False
@@ -211,6 +213,17 @@ def describe_actions(env: EventDrivenTruckEnv, gnn_state_space=None, gnn_single_
                                     reason = "Would be stranded after delivery"
                         else:
                             reason = None
+                elif delivery_idx == depot_slot:
+                    if truck.return_to_depot_pending:
+                        target_node = truck.delivery_sequence[0]
+                        nav_stats = compute_navigation_stats(env, current_node, target_node)
+                        feasible = bool(env_action_mask[action_idx])
+                        reason = None if feasible else "Return to depot infeasible"
+                    else:
+                        target_node = None
+                        nav_stats = {"energy": None, "time": None}
+                        feasible = False
+                        reason = "Return to depot not available"
                 else:
                     # No delivery at this position
                     target_node = None
@@ -624,7 +637,8 @@ def interactive_loop(env: EventDrivenTruckEnv, max_steps: int, auto_accept: bool
     truncated = False
     
     # Initialize GNN state spaces based on delivery mode
-    flexible = getattr(env, "enable_flexible_delivery_order", False)
+    # flexible =  getattr(env, "enable_flexible_delivery_order", False)
+    flexible = env.enable_flexible_delivery_order
     mode = "vrp" if flexible else "nonflex"
 
     gnn_state_space = create_default_gnn_space(env, mode=mode, use_detour=False)

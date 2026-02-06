@@ -59,6 +59,8 @@ class Truck:
         self.is_complete = False
         self.failed = False  # True if ran out of battery
         self.battery_at_completion = None  # Store battery level when completing last delivery
+        # VRP: require return to depot after last delivery in flexible mode
+        self.return_to_depot_pending = False #True if enable_flexible_delivery_order else False
         
         # Route tracking (for GNN state representation)
         self.route_destination = None  # Next destination when on route
@@ -116,6 +118,10 @@ class Truck:
         if self.enable_flexible_delivery_order:
             # Return all undelivered nodes (excluding depot at index 0)
             remaining = [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+            if self.return_to_depot_pending:
+                depot_node = self.delivery_sequence[0]
+                if depot_node != self.current_node and depot_node not in remaining:
+                    remaining.append(depot_node)
             return remaining
         else:
             # Sequential mode: return next in sequence
@@ -127,7 +133,12 @@ class Truck:
         """Get list of remaining delivery nodes."""
         if self.enable_flexible_delivery_order:
             # Return all undelivered nodes (excluding depot at index 0)
-            return [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+            remaining = [node for node in self.delivery_sequence[1:] if node not in self.delivered_nodes]
+            if self.return_to_depot_pending:
+                depot_node = self.delivery_sequence[0]
+                if depot_node != self.current_node and depot_node not in remaining:
+                    remaining.append(depot_node)
+            return remaining
         else:
             # Sequential mode: return remaining in sequence
             return self.delivery_sequence[self.current_sequence_index + 1:]
@@ -149,9 +160,8 @@ class Truck:
             # Check if all deliveries complete (excluding depot at index 0)
             all_delivery_nodes = set(self.delivery_sequence[1:])
             if self.delivered_nodes == all_delivery_nodes:
-                self.is_complete = True
-                # Store battery level at completion for penalty calculation
-                self.battery_at_completion = self.current_battery
+                # Mark return-to-depot leg as pending; completion happens on depot arrival
+                self.return_to_depot_pending = True
         else:
             # Sequential mode: advance to next in sequence
             if self.current_sequence_index + 1 < len(self.delivery_sequence):
@@ -251,6 +261,13 @@ class Truck:
                     details={"reason": "battery_depleted"}
                 )
                 self.current_state = "failed"
+        elif self.enable_flexible_delivery_order and self.return_to_depot_pending:
+            depot_node = self.delivery_sequence[0]
+            if node == depot_node:
+                self.is_complete = True
+                self.return_to_depot_pending = False
+                # Store battery level at completion for penalty calculation
+                self.battery_at_completion = self.current_battery
     
     def start_charging(self, current_time: float):
         """Mark truck as starting to charge."""

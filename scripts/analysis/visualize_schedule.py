@@ -27,6 +27,7 @@ from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
+from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
@@ -37,18 +38,21 @@ POLICIES = [
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
     # ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
-    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
+    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),    
+    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),    
     # ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
-    ("optimal-simple", "optimal-simple"),
+    # ("optimal-simple", "optimal-simple"),
+    ("optimal-vrp", "optimal-vrp"),
+    
     # ("heuristic", "heuristic"),
 ]
 
-CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1
 NUM_STOPS = 10
 MAX_TIME = 200.0
-SEED = 1008
+SEED = 1007
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -140,6 +144,14 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
             raise RuntimeError(
                 "Optimal Simple (Gurobi) policy requires gurobipy to be installed."
             ) from exc
+    elif policy_type in ("optimal-vrp", "optimal_vrp"):
+        try:
+            policy = OptimalVRPSingleTruckPolicy(verbose=False)
+            active_policy_type = "optimal-vrp"
+        except ImportError as exc:
+            raise RuntimeError(
+                "Optimal VRP (Gurobi) policy requires gurobipy to be installed."
+            ) from exc
     elif policy_type == "heuristic":
         from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
         policy = HeuristicPolicy()
@@ -163,6 +175,8 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
         episode_policy = OptimalGurobiPolicy(verbose=False)
     elif active_policy_type == "optimal-simple":
         episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+    elif active_policy_type == "optimal-vrp":
+        episode_policy = OptimalVRPSingleTruckPolicy(verbose=False)
     else:
         episode_policy = policy
     
@@ -173,7 +187,7 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
                 action, _states = policy.predict(obs, action_masks=action_masks, deterministic=True)
             else:
                 action, _states = policy.predict(obs, deterministic=True)
-        elif active_policy_type in ["optimal", "optimal-simple", "heuristic"]:
+        elif active_policy_type in ["optimal", "optimal-simple", "optimal-vrp", "heuristic"]:
             action = episode_policy.get_action(env)
         else:
             gnn_state = gnn_state_space.get_state_GNN(env)

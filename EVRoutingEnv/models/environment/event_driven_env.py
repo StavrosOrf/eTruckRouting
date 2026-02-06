@@ -230,13 +230,13 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Define action space - Discrete for single active truck
         # Sequential mode: [chargers (0 to num_charging_nodes-1), next_delivery (num_charging_nodes), charge_1h, ...]
-        # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, charge_1h, ...]
+        # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, depot_return, charge_1h, ...]
         charge_durations = self.charging_config["charge_durations"]
         
         stops_for_action_space = self.fixed_num_stops
         if self.enable_flexible_delivery_order:
             # Flexible mode: separate action for each potential delivery node (size with max to keep action space stable)
-            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space
+            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space + 1
         else:
             # Sequential mode: single next delivery action
             self.num_navigation_actions = self.num_charging_nodes + 1
@@ -757,6 +757,11 @@ class EventDrivenTruckEnv(gym.Env):
                         # Map action index to delivery node in sequence (skip depot at index 0)
                         if delivery_idx < len(truck.delivery_sequence) - 1:
                             target_node = truck.delivery_sequence[delivery_idx + 1]
+                        elif delivery_idx == len(truck.delivery_sequence) - 1:
+                            if truck.return_to_depot_pending:
+                                target_node = truck.delivery_sequence[0]
+                            else:
+                                target_node = self._select_closest_delivery(truck)
                         else:
                             raise ValueError(f"Invalid delivery action index: {delivery_idx}")
                     else:
@@ -806,6 +811,15 @@ class EventDrivenTruckEnv(gym.Env):
             target_node = int(target_node.item())
         else:
             target_node = int(target_node)
+
+        if self.enable_flexible_delivery_order:
+            depot_node = int(truck.delivery_sequence[0])
+            if truck.return_to_depot_pending:
+                # Force any delivery navigation to go to depot once return is required.
+                if target_node != depot_node and target_node not in self.charging_nodes:
+                    target_node = depot_node
+            elif target_node == depot_node:
+                target_node = self._select_closest_delivery(truck)
 
         current_node = int(truck.current_node)
 
@@ -960,7 +974,8 @@ class EventDrivenTruckEnv(gym.Env):
             delivery_bonus = self.reward_config["delivery_bonus"]
             # Include exact unloading time penalty together with delivery reward
             # Get the actual unloading time that will occur at this delivery
-            if self.delivery_simulator:
+            depot_node = int(truck.delivery_sequence[0])
+            if self.delivery_simulator and target_node != depot_node:
                 actual_unloading_time = self.delivery_simulator.apply_unloading_time(
                     delivery_node=target_node,
                     current_time=completion_time  # Use arrival time at delivery
@@ -973,7 +988,11 @@ class EventDrivenTruckEnv(gym.Env):
             # Apply leftover battery penalty if enabled
             leftover_battery_penalty = 0.0
             remaining_deliveries = truck.get_remaining_deliveries()
-            is_last_delivery = len(remaining_deliveries) == 1 and target_node in remaining_deliveries
+            is_last_delivery = (
+                target_node != depot_node
+                and len(remaining_deliveries) == 1
+                and target_node in remaining_deliveries
+            )
             
             if is_last_delivery and self.reward_config["enable_leftover_battery_penalty"]:
                 # Calculate expected battery at completion (after this delivery)
@@ -1144,6 +1163,28 @@ class EventDrivenTruckEnv(gym.Env):
         # Return time penalty
         return -actual_charge_hours
 
+    def _select_closest_delivery(self, truck: Truck) -> int:
+        """Pick the closest remaining delivery (by energy) for fallback routing."""
+        remaining = truck.get_remaining_deliveries()
+        if not remaining:
+            raise ValueError("No remaining deliveries available for fallback routing")
+
+        current_node = int(truck.current_node)
+        best_node = None
+        best_energy = float("inf")
+        for node_id in remaining:
+            if node_id == current_node:
+                return node_id
+            energy = self.transport_graph.get_path_energy(current_node, node_id)
+            if energy < best_energy:
+                best_energy = energy
+                best_node = node_id
+
+        if best_node is None or best_energy == float("inf"):
+            raise ValueError("No reachable remaining deliveries for fallback routing")
+
+        return best_node
+
     def _remove_pending_events(self, truck_id: int, event_type: EventType = None):
         """
         Remove pending events for a specific truck.
@@ -1257,11 +1298,17 @@ class EventDrivenTruckEnv(gym.Env):
                 if self.active_truck_id is not None and self.active_truck_id < len(self.trucks):
                     truck = self.trucks[self.active_truck_id]
 
-                if truck is not None and delivery_idx + 1 < len(truck.delivery_sequence):
-                    node = truck.delivery_sequence[delivery_idx + 1]
-                    remaining = set(truck.get_remaining_deliveries())
-                    status = "pending" if node in remaining else "done"
-                    return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
+                if truck is not None:
+                    if delivery_idx + 1 < len(truck.delivery_sequence):
+                        node = truck.delivery_sequence[delivery_idx + 1]
+                        remaining = set(truck.get_remaining_deliveries())
+                        status = "pending" if node in remaining else "done"
+                        return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
+                    if delivery_idx == len(truck.delivery_sequence) - 1:
+                        node = truck.delivery_sequence[0]
+                        remaining = set(truck.get_remaining_deliveries())
+                        status = "pending" if node in remaining else "done"
+                        return f"Return to depot @ node {node} ({status})"
                 return f"Go to delivery slot {delivery_idx} (empty)"
             else:
                 return "Go to next delivery"

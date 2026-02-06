@@ -14,6 +14,7 @@ sys.path.insert(0, project_root)
 
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
+from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
@@ -32,7 +33,8 @@ POLICIES = [
     ##("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
     # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
-    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
+    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
+    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
     # SB3 policies
     ##("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
@@ -41,13 +43,14 @@ POLICIES = [
     # Baselines
     # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
     ##("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
+    ("optimal-vrp", "optimal-vrp", "vrp"),
     # ("heuristic", "heuristic", "base"),
 ]
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 200 #
+NUM_STOPS = 20
+NUM_EVAL_SCENARIOS = 1 #
 SEED = 1000
 # =============================================
 
@@ -95,6 +98,8 @@ def evaluate_policy(
             episode_policy = OptimalGurobiPolicy(verbose=False)
         elif policy_type == "optimal-simple":
             episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+        elif policy_type in ("optimal-vrp", "optimal_vrp"):
+            episode_policy = OptimalVRPSingleTruckPolicy(verbose=False)
         else:
             episode_policy = policy
 
@@ -110,7 +115,7 @@ def evaluate_policy(
                     action, _states = policy.predict(obs, deterministic=True)
             else:
                 # Custom policies
-                if policy_type == "optimal" or policy_type == "optimal-simple":
+                if policy_type in ("optimal", "optimal-simple", "optimal-vrp", "optimal_vrp"):
                     action = episode_policy.get_action(env)
                 elif policy_type == "heuristic":
                     action = policy.get_action(env)
@@ -320,6 +325,14 @@ def main():
                     "Optimal Simple (Gurobi) policy requires gurobipy to be installed."
                 ) from exc
             resolved_type = "optimal-simple"
+        elif policy_type in ("optimal-vrp", "optimal_vrp"):
+            try:
+                policy = OptimalVRPSingleTruckPolicy(verbose=False)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Optimal VRP (Gurobi) policy requires gurobipy to be installed."
+                ) from exc
+            resolved_type = "optimal-vrp"
         else:
             # Load GNN-based policies using existing function
             policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_spaces[gnn_space_type], config)
@@ -331,6 +344,8 @@ def main():
             name = "Optimal (Gurobi)"
         elif policy_path == "optimal-simple":
             name = "MP Robust"
+        elif policy_path in ("optimal-vrp", "optimal_vrp"):
+            name = "Optimal VRP"
         elif policy_type.startswith("sb3-"):
             # For SB3 models, create readable name from directory path
             dir_path = os.path.dirname(policy_path) if policy_path.endswith('.zip') else policy_path

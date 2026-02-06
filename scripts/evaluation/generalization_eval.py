@@ -20,6 +20,7 @@ from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
+from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 
 # Import compute_action_mask from train module
 from scripts.training.train_PPO_Variable import compute_action_mask
@@ -46,6 +47,7 @@ POLICIES = [
     ),
     # Baseline
     ("optimal_simple", "optimal_simple", "base"),
+    # ("optimal-vrp", "optimal-vrp", "vrp"),
 ]
 
 # Grid parameters
@@ -106,6 +108,8 @@ def evaluate_policy_single_config(
             episode_policy = OptimalGurobiPolicy(verbose=False)
         elif resolved_type == "optimal_simple":
             episode_policy = OptimalGurobiSimplePolicy(verbose=False)
+        elif resolved_type in ("optimal-vrp", "optimal_vrp"):
+            episode_policy = OptimalVRPSingleTruckPolicy(verbose=False)
         else:
             episode_policy = policy
 
@@ -114,7 +118,7 @@ def evaluate_policy_single_config(
                 # SB3 policy: use raw observation
                 # (don't compute GNN state for SB3 models)
                 pass
-            elif resolved_type in ("optimal", "optimal_simple", "heuristic"):
+            elif resolved_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp", "heuristic"):
                 # Optimal and heuristic policies don't need GNN state
                 pass
             else:
@@ -132,7 +136,7 @@ def evaluate_policy_single_config(
                     action, _ = sb3_model.predict(obs, deterministic=True)
             else:
                 # Custom policies
-                if resolved_type in ("optimal", "optimal_simple"):
+                if resolved_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
                     action = episode_policy.get_action(env)
                 elif resolved_type == "heuristic":
                     action = episode_policy.get_action(env)

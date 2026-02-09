@@ -59,6 +59,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         device: str = "cpu",
         verbose: bool = False,
         route_delivery_after_charge_only: bool = True,
+        num_chargers_to_keep: int = 2,
     ):
         """Initialize detour-based GNN state space."""
         super().__init__(
@@ -72,7 +73,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         )
         # Override charger filtering flag
         self.FILTER_CHARGERS = True
-        self.NUM_CHARGERS_TO_KEEP = 2  # Keep top-2 chargers by minimum detour
+        self.NUM_CHARGERS_TO_KEEP = int(num_chargers_to_keep)
         # Optional routing restriction: after charging, try delivery first
         self.route_delivery_after_charge_only = route_delivery_after_charge_only
     

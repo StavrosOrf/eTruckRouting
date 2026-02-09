@@ -28,6 +28,7 @@ class GNNStateSpaceNonFlex(GNNStateSpace):
         verbose: bool = False,
         use_detour: bool = False,
         route_delivery_after_charge_only: bool = True,
+        detour_num_chargers_to_keep: int = 2,
     ):
         super().__init__(
             num_trucks=num_trucks,
@@ -40,6 +41,7 @@ class GNNStateSpaceNonFlex(GNNStateSpace):
         )
         self.use_detour = use_detour
         self.route_delivery_after_charge_only = route_delivery_after_charge_only
+        self.detour_num_chargers_to_keep = detour_num_chargers_to_keep
         self._detour_space: Optional[GNNStateSpaceDetourBased] = None
 
     def _ensure_detour_space(self):
@@ -53,6 +55,7 @@ class GNNStateSpaceNonFlex(GNNStateSpace):
                 device=self.device,
                 verbose=self.verbose,
                 route_delivery_after_charge_only=self.route_delivery_after_charge_only,
+                num_chargers_to_keep=self.detour_num_chargers_to_keep,
             )
 
     def get_state_GNN(self, env):

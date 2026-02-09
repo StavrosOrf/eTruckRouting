@@ -60,6 +60,7 @@ def create_default_gnn_space(
     use_detour: bool = False,
     device: Optional[str] = None,
     vrp_top_k_deliveries: int = 5,
+    detour_num_chargers_to_keep: int = 2,
 ):
     """Instantiate a GNN state-space object from an environment.
 
@@ -92,4 +93,5 @@ def create_default_gnn_space(
         num_charging_nodes=len(env.charging_nodes),
         device=device,
         use_detour=use_detour,
+        detour_num_chargers_to_keep=detour_num_chargers_to_keep,
     )

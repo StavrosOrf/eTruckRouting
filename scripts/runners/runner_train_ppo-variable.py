@@ -10,8 +10,8 @@ import yaml
 
 # python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 python_path = "~/EVRP/.venv/bin/python"
-config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
-# config_path = "EVRoutingEnv/config_files/config.yaml"
+# config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
+config_path = "EVRoutingEnv/config_files/config.yaml"
 
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
 
@@ -24,7 +24,7 @@ ppo_params = {
     "num_gcn_layers": 3,
     "minibatch_size": 256,
     "max_episodes": 100_000_000,
-    "max_timesteps": 10_000_000,
+    "max_timesteps": 1_000_000,
     "eval_freq": 5000,
     "num_parallel_envs": 1,
     "num_eval_envs": 12,
@@ -32,13 +32,17 @@ ppo_params = {
 }
 
 ppo_grid = {
+    "num_trucks": [1, 5, 10, 30],
+    # "num_trucks": [10],
+    "num_stops": [3],
     "steps_per_update": [256],
     "epochs": [5],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
     "vrp_top_k_deliveries": [5],
-    "seed": [0],
+    "detour_top_k_chargers": [2, 3, 5],
+    "seed": [0, 1, 2],
 }
 
 # SB3 settings
@@ -48,9 +52,10 @@ sb3_grid = {
     "seed": [0],
 }
 sb3_params = {
-    "total_steps": 10_000_000,
+    "total_steps": 1_000_000,
     "eval_freq": 1000,
     "n_eval_episodes": 50,
+    "detour_top_k_chargers": [2, 3, 5],
     "project": "evpr-newtests",
     "save_dir": "./saved_models",
     "device": "cuda",
@@ -93,9 +98,17 @@ def load_env_meta(cfg_path: str):
     }
 
 
-def build_names(base_algo: str, meta: dict, extra: str) -> tuple[str, str]:
-    group = f"{meta['problem_type']}_L_{meta['num_trucks']}T{meta['num_stops']}S_{meta['uncertainty_suffix']}"
-    exp = f"{base_algo}_{meta['num_trucks']}T{meta['num_stops']}S_{extra}_{int(time.time()) % 10000}"
+def build_names(
+    base_algo: str,
+    meta: dict,
+    extra: str,
+    *,
+    num_trucks: int,
+    num_stops: int,
+    mode_label: str,
+) -> tuple[str, str]:
+    group = f"{mode_label}_{num_trucks}T{num_stops}S_{meta['uncertainty_suffix']}"
+    exp = f"{base_algo}_{mode_label}_{num_trucks}T{num_stops}S_{extra}_{int(time.time()) % 10000}"
     return exp, group
 
 
@@ -115,15 +128,31 @@ if "ppo-variable" in run_algorithms:
     ppo_devices = ["cuda:0", "cuda:1", "cuda:2"]
     for ppo_idx, job in enumerate(ppo_jobs):
         (
+            num_trucks,
+            num_stops,
             steps_per_update,
             epochs,
             entropy_coef,
             gnn_hidden_dim,
             mlp_hidden_dim,
             vrp_top_k_deliveries,
+            detour_top_k_chargers,
             seed,
         ) = job
-        exp_name, group_name = build_names("ppov", meta, f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}_seed{seed}")
+        mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
+        extra = (
+            f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}"
+            f"_g{gnn_hidden_dim}_m{mlp_hidden_dim}"
+            f"_vk{vrp_top_k_deliveries}_ck{detour_top_k_chargers}_s{seed}"
+        )
+        exp_name, group_name = build_names(
+            "ppov",
+            meta,
+            extra,
+            num_trucks=num_trucks,
+            num_stops=num_stops,
+            mode_label=mode_label,
+        )
         ppo_device = ppo_devices[ppo_idx % len(ppo_devices)]
         cmd = (
             f"{python_path} {ppo_training_script}"
@@ -138,8 +167,8 @@ if "ppo-variable" in run_algorithms:
             f" --max-episodes {ppo_params['max_episodes']}"
             f" --max-timesteps {ppo_params['max_timesteps']}"
             f" --eval-freq {ppo_params['eval_freq']}"
-            f" --num-trucks {meta['num_trucks']}"
-            f" --num-stops {meta['num_stops']}"
+            f" --num-trucks {num_trucks}"
+            f" --num-stops {num_stops}"
             f" --max-time {meta['max_time']}"
             f" --wandb-project {ppo_params['project']}"
             f" --wandb-entity stavrosorf"
@@ -149,10 +178,11 @@ if "ppo-variable" in run_algorithms:
             f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
             f" --ppo-clip 0.2"
             f" --ppo-entropy-coef {entropy_coef}"
-            f" --exp-name Top5del_NewState{exp_name}"
+            f" --exp-name {exp_name}"
             f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
             f" --num-eval-envs {ppo_params['num_eval_envs']}"
             f" --vrp-top-k-deliveries {vrp_top_k_deliveries}"
+            f" --detour-top-k-chargers {detour_top_k_chargers}"
             f" --device {ppo_device}"
         )
         tmux_send(exp_name, cmd)
@@ -163,7 +193,15 @@ if "sb3" in run_algorithms:
     print(f"SB3 jobs: {len(sb3_jobs)}")
     for job in sb3_jobs:
         algorithm, seed = job
-        exp_name, _ = build_names(f"sb3-{algorithm}", meta, f"seed{seed}")
+        mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
+        exp_name, _ = build_names(
+            f"sb3-{algorithm}",
+            meta,
+            f"s{seed}",
+            num_trucks=meta["num_trucks"],
+            num_stops=meta["num_stops"],
+            mode_label=mode_label,
+        )
         cmd = (
             f"{python_path} scripts/training/train_sb3_event_driven.py"
             f" --algo {algorithm}"

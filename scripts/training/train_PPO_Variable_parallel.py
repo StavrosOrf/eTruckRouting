@@ -65,6 +65,7 @@ def worker_process(
     worker_id,
     state_space_type,
     vrp_top_k_deliveries,
+    detour_top_k_chargers,
     verbose=False,
 ):
     """Worker process that runs a single environment.
@@ -92,6 +93,7 @@ def worker_process(
             env,
             state_space_type,
             vrp_top_k_deliveries,
+            detour_top_k_chargers,
         )
         
         current_obs = None
@@ -160,6 +162,7 @@ class ParallelEnvs:
         num_envs: int,
         state_space_type: str = 'base',
         vrp_top_k_deliveries: int = 5,
+        detour_top_k_chargers: int = 2,
         verbose: bool = False,
     ):
         """Initialize parallel environments.
@@ -174,6 +177,7 @@ class ParallelEnvs:
         self.verbose = verbose
         self.state_space_type = state_space_type
         self.vrp_top_k_deliveries = vrp_top_k_deliveries
+        self.detour_top_k_chargers = detour_top_k_chargers
         
         # Create pipes for communication
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(num_envs)])
@@ -190,6 +194,7 @@ class ParallelEnvs:
                     i,
                     self.state_space_type,
                     self.vrp_top_k_deliveries,
+                    self.detour_top_k_chargers,
                     verbose,
                 ),
                 daemon=True
@@ -488,6 +493,8 @@ def parse_args():
                           help='GNN action space: nonflex (sequential), detour (top-2 chargers), vrp (flexible order); base is kept as an alias for nonflex')
     env_group.add_argument('--vrp-top-k-deliveries', type=int, default=5,
                           help='Top-K deliveries to expose in VRP action space')
+    env_group.add_argument('--detour-top-k-chargers', type=int, default=2,
+                          help='Top-K chargers to expose in detour action space')
     
     # Parallel training parameters
     parallel_group = parser.add_argument_group('Parallel Training')
@@ -565,7 +572,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def build_and_cache_state_space(env, state_space_type: str, vrp_top_k_deliveries: int):
+def build_and_cache_state_space(
+    env,
+    state_space_type: str,
+    vrp_top_k_deliveries: int,
+    detour_top_k_chargers: int,
+):
     """Create and cache the default GNN state space on the environment."""
     normalized = 'nonflex' if state_space_type == 'base' else state_space_type
     mode = 'vrp' if normalized == 'vrp' else 'nonflex'
@@ -579,6 +591,7 @@ def build_and_cache_state_space(env, state_space_type: str, vrp_top_k_deliveries
         mode=mode,
         use_detour=use_detour,
         vrp_top_k_deliveries=vrp_top_k_deliveries,
+        detour_num_chargers_to_keep=detour_top_k_chargers,
     )
     env._default_gnn_state_space = gnn_space
     return gnn_space, mode, use_detour
@@ -643,6 +656,7 @@ def train(args):
         "use_detour": use_detour,
         "enable_flexible_delivery_order": mode == 'vrp',
         "vrp_top_k_deliveries": args.vrp_top_k_deliveries,
+        "detour_top_k_chargers": args.detour_top_k_chargers,
     }
     save_environment_config(save_dir, config_to_save)
 
@@ -658,6 +672,7 @@ def train(args):
         temp_env,
         state_space_type,
         args.vrp_top_k_deliveries,
+        args.detour_top_k_chargers,
     )
     
     # Get state dimensions from temporary environment
@@ -739,6 +754,7 @@ def train(args):
         args.num_parallel_envs,
         state_space_type=state_space_type,
         vrp_top_k_deliveries=args.vrp_top_k_deliveries,
+        detour_top_k_chargers=args.detour_top_k_chargers,
         verbose=args.verbose,
     )
 

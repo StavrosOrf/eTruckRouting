@@ -25,7 +25,7 @@ class GNNStateSpaceVRP(GNNStateSpace):
         max_time: float,
         num_charging_nodes: int,
         max_nodes_in_graph: int = 500,
-        vrp_top_k_deliveries: int = 3,
+        vrp_top_k_deliveries: int = 5,
         device: str = "cpu",
         verbose: bool = False,
     ):

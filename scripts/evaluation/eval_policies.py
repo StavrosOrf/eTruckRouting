@@ -4,6 +4,7 @@ import copy
 import os
 import re
 import sys
+import time
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -34,9 +35,12 @@ POLICIES = [
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
     # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
     # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
-    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
+    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
+    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),    
     # SB3 policies
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"),
     ##("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
@@ -51,8 +55,9 @@ POLICIES = [
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 10
-NUM_EVAL_SCENARIOS = 2 #
+NUM_EVAL_SCENARIOS = 20 #
 SEED = 1000
+AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 # =============================================
 
 def _extract_sb3_config(policy_path):
@@ -80,6 +85,8 @@ def evaluate_policy(
     routing_times = []
     unloading_times = []
     failures = []
+    avg_completion_soc = []
+    exec_times = []
     max_time_terminations = []
     max_steps_terminations = []
     
@@ -91,6 +98,7 @@ def evaluate_policy(
     is_sb3_policy = policy_type.startswith("sb3-")
 
     for episode in tqdm(range(num_episodes), desc="Evaluating", leave=False):
+        start_time = time.perf_counter()
         obs, info = env.reset(seed=seed + episode)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
@@ -136,6 +144,8 @@ def evaluate_policy(
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
             episode_steps += 1
+
+        exec_times.append(time.perf_counter() - start_time)
 
         rewards.append(episode_reward)
         successes.append(1.0 if info["all_complete"] else 0.0)
@@ -183,6 +193,12 @@ def evaluate_policy(
             truck_waiting_time = t["waiting_time"]
             truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
             total_routing += max(0.0, truck_routing_time)
+
+        if trucks_info:
+            avg_soc = float(np.mean([t.get("battery_percentage", 0.0) for t in trucks_info]))
+        else:
+            avg_soc = 0.0
+        avg_completion_soc.append(avg_soc)
         
         distances.append(total_dist)
         charging_times.append(total_charge)
@@ -218,6 +234,10 @@ def evaluate_policy(
         "std_unloading_time": np.std(unloading_times),
         "mean_failures": np.mean(failures),
         "std_failures": np.std(failures),
+        "mean_completion_soc": np.mean(avg_completion_soc),
+        "std_completion_soc": np.std(avg_completion_soc),
+        "mean_exec_time": np.mean(exec_times),
+        "std_exec_time": np.std(exec_times),
         "max_time_terminations": np.sum(max_time_terminations),
         "max_steps_terminations": np.sum(max_steps_terminations),
     }
@@ -250,7 +270,7 @@ def main():
 
     eval_num_trucks = NUM_TRUCKS
     eval_num_stops = NUM_STOPS
-    if unique_sb3_configs:
+    if AUTO_DETECT_SB3_CONFIG and unique_sb3_configs:
         if len(unique_sb3_configs) > 1:
             raise ValueError(
                 f"SB3 policies must share the same training config, found: {sorted(unique_sb3_configs)}"
@@ -259,7 +279,7 @@ def main():
         print(
             f"Detected SB3 training config from path: {eval_num_trucks} trucks, {eval_num_stops} stops"
         )
-    elif sb3_present:
+    elif sb3_present and AUTO_DETECT_SB3_CONFIG:
         print(
             "SB3 policy detected but training config not encoded in path; using default constants (may mismatch)."
         )
@@ -534,6 +554,8 @@ def main():
     
     metrics.extend([
         ("Success Rate (%)", "success_rate", None, ".1f", 100),
+        ("Avg SoC at End (%)", "mean_completion_soc", "std_completion_soc", ".1f"),
+        ("Exec Time (s)", "mean_exec_time", "std_exec_time", ".2f"),
         ("Deliveries", "mean_deliveries", "std_deliveries", ".1f"),
         ("Steps", "mean_steps", "std_steps", ".1f"),
         ("Total Time (h)", "mean_completion_time", "std_completion_time", ".1f"),

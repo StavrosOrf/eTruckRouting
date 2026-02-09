@@ -61,6 +61,7 @@ class OptimalVRPSingleTruckPolicy:
             try:
                 plan = self._solve_truck(truck=truck, env=env)
             except Exception as exc:
+                print(f"[VRP Optimal] Error solving for truck {truck_id}: {exc}")
                 if self.verbose:
                     print(f"[VRP Optimal] Solver failed for truck {truck_id}: {exc}")
                 plan = self._create_emergency_plan(truck, env)

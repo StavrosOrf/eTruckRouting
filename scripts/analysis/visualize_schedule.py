@@ -39,9 +39,11 @@ POLICIES = [
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
     # ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
     # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),    
-    ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
+    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
+        ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),
     # SB3 policies
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"), 
+    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"), 
     # ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     # ("optimal-simple", "optimal-simple"),
     ("optimal-vrp", "optimal-vrp"),
@@ -54,7 +56,7 @@ CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1
 NUM_STOPS = 10
 MAX_TIME = 200.0
-SEED = 1005
+SEED = 100
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -870,7 +872,7 @@ def main():
             policy_path, policy_type = policy_entry
         elif len(policy_entry) == 3:
             policy_path, policy_type, third = policy_entry
-            if str(third).lower() in {"base", "detour"}:
+            if str(third).lower() in {"base", "detour", "vrp"}:
                 gnn_space_type = str(third)
             else:
                 label_override = third

@@ -8,7 +8,8 @@ import os
 import time
 import yaml
 
-python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+# python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
+python_path = "~/EVRP/.venv/bin/python"
 config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
 # config_path = "EVRoutingEnv/config_files/config.yaml"
 
@@ -36,6 +37,7 @@ ppo_grid = {
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
+    "vrp_top_k_deliveries": [5],
     "seed": [0],
 }
 
@@ -110,9 +112,19 @@ if "ppo-variable" in run_algorithms:
     ppo_training_script = "scripts/training/train_PPO_Variable_parallel.py"
     ppo_jobs = list(itertools.product(*ppo_grid.values()))
     print(f"PPO-V jobs: {len(ppo_jobs)}")
-    for job in ppo_jobs:
-        steps_per_update, epochs, entropy_coef, gnn_hidden_dim, mlp_hidden_dim, seed = job
+    ppo_devices = ["cuda:0", "cuda:1", "cuda:2"]
+    for ppo_idx, job in enumerate(ppo_jobs):
+        (
+            steps_per_update,
+            epochs,
+            entropy_coef,
+            gnn_hidden_dim,
+            mlp_hidden_dim,
+            vrp_top_k_deliveries,
+            seed,
+        ) = job
         exp_name, group_name = build_names("ppov", meta, f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}_seed{seed}")
+        ppo_device = ppo_devices[ppo_idx % len(ppo_devices)]
         cmd = (
             f"{python_path} {ppo_training_script}"
             f" --config {config_path}"
@@ -137,9 +149,11 @@ if "ppo-variable" in run_algorithms:
             f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
             f" --ppo-clip 0.2"
             f" --ppo-entropy-coef {entropy_coef}"
-            f" --exp-name Top3del_NewState{exp_name}"
+            f" --exp-name Top5del_NewState{exp_name}"
             f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
             f" --num-eval-envs {ppo_params['num_eval_envs']}"
+            f" --vrp-top-k-deliveries {vrp_top_k_deliveries}"
+            f" --device {ppo_device}"
         )
         tmux_send(exp_name, cmd)
         counter += 1

@@ -58,7 +58,15 @@ def save_network_config(save_dir, config_dict):
     print(f"Network configuration saved to: {config_file}")
 
 
-def worker_process(remote, parent_remote, env_config, worker_id, state_space_type, verbose=False):
+def worker_process(
+    remote,
+    parent_remote,
+    env_config,
+    worker_id,
+    state_space_type,
+    vrp_top_k_deliveries,
+    verbose=False,
+):
     """Worker process that runs a single environment.
     
     Args:
@@ -80,7 +88,11 @@ def worker_process(remote, parent_remote, env_config, worker_id, state_space_typ
         )
         
         # Create and cache GNN state space in this process
-        gnn_state_space, _, _ = build_and_cache_state_space(env, state_space_type)
+        gnn_state_space, _, _ = build_and_cache_state_space(
+            env,
+            state_space_type,
+            vrp_top_k_deliveries,
+        )
         
         current_obs = None
         current_info = None
@@ -142,7 +154,14 @@ def worker_process(remote, parent_remote, env_config, worker_id, state_space_typ
 class ParallelEnvs:
     """Manages multiple environments running in parallel processes."""
     
-    def __init__(self, env_config: dict, num_envs: int, state_space_type: str = 'base', verbose: bool = False):
+    def __init__(
+        self,
+        env_config: dict,
+        num_envs: int,
+        state_space_type: str = 'base',
+        vrp_top_k_deliveries: int = 5,
+        verbose: bool = False,
+    ):
         """Initialize parallel environments.
         
         Args:
@@ -154,6 +173,7 @@ class ParallelEnvs:
         self.env_config = env_config
         self.verbose = verbose
         self.state_space_type = state_space_type
+        self.vrp_top_k_deliveries = vrp_top_k_deliveries
         
         # Create pipes for communication
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(num_envs)])
@@ -163,7 +183,15 @@ class ParallelEnvs:
         for i, (work_remote, remote) in enumerate(zip(self.work_remotes, self.remotes)):
             p = Process(
                 target=worker_process,
-                args=(work_remote, remote, env_config, i, self.state_space_type, verbose),
+                args=(
+                    work_remote,
+                    remote,
+                    env_config,
+                    i,
+                    self.state_space_type,
+                    self.vrp_top_k_deliveries,
+                    verbose,
+                ),
                 daemon=True
             )
             p.start()
@@ -458,6 +486,8 @@ def parse_args():
     env_group.add_argument('--gnn-state-space', type=str, default='nonflex',
                           choices=['nonflex', 'detour', 'vrp', 'base'],
                           help='GNN action space: nonflex (sequential), detour (top-2 chargers), vrp (flexible order); base is kept as an alias for nonflex')
+    env_group.add_argument('--vrp-top-k-deliveries', type=int, default=5,
+                          help='Top-K deliveries to expose in VRP action space')
     
     # Parallel training parameters
     parallel_group = parser.add_argument_group('Parallel Training')
@@ -478,6 +508,8 @@ def parse_args():
                             help='Evaluation frequency (in timesteps)')
     train_group.add_argument('--eval-episodes', type=int, default=50,
                             help='Number of episodes for evaluation')
+    train_group.add_argument('--device', type=str, default=None,
+                            help='Torch device override (e.g., cuda:0, cuda:1, cpu)')
     
     # PPO hyperparameters
     ppo_group = parser.add_argument_group('PPO Algorithm')
@@ -533,7 +565,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def build_and_cache_state_space(env, state_space_type: str):
+def build_and_cache_state_space(env, state_space_type: str, vrp_top_k_deliveries: int):
     """Create and cache the default GNN state space on the environment."""
     normalized = 'nonflex' if state_space_type == 'base' else state_space_type
     mode = 'vrp' if normalized == 'vrp' else 'nonflex'
@@ -542,7 +574,12 @@ def build_and_cache_state_space(env, state_space_type: str):
     env.use_detour_mask = use_detour
     env.enable_flexible_delivery_order = mode == 'vrp'
 
-    gnn_space = create_default_gnn_space(env, mode=mode, use_detour=use_detour)
+    gnn_space = create_default_gnn_space(
+        env,
+        mode=mode,
+        use_detour=use_detour,
+        vrp_top_k_deliveries=vrp_top_k_deliveries,
+    )
     env._default_gnn_state_space = gnn_space
     return gnn_space, mode, use_detour
 
@@ -604,7 +641,8 @@ def train(args):
         "type": state_space_type,
         "mode": mode,
         "use_detour": use_detour,
-        "enable_flexible_delivery_order": mode == 'vrp'
+        "enable_flexible_delivery_order": mode == 'vrp',
+        "vrp_top_k_deliveries": args.vrp_top_k_deliveries,
     }
     save_environment_config(save_dir, config_to_save)
 
@@ -616,7 +654,11 @@ def train(args):
         run_id="temp_env"
     )
     
-    temp_gnn_state_space, _, _ = build_and_cache_state_space(temp_env, state_space_type)
+    temp_gnn_state_space, _, _ = build_and_cache_state_space(
+        temp_env,
+        state_space_type,
+        args.vrp_top_k_deliveries,
+    )
     
     # Get state dimensions from temporary environment
     temp_env.reset(seed=args.seed)
@@ -651,6 +693,7 @@ def train(args):
         ppo_epochs=args.ppo_epochs,
         minibatch_size=args.ppo_minibatch_size,
         charge_durations=config["charging"]["charge_durations"],
+        device=args.device,
     )
 
     policy = PPOVariableActionGNN(**policy_kwargs)
@@ -674,7 +717,8 @@ def train(args):
         "ppo_epochs": args.ppo_epochs,
         "minibatch_size": args.ppo_minibatch_size,
         "charge_durations": config["charging"]["charge_durations"],
-        "seed": args.seed
+        "seed": args.seed,
+        "device": args.device,
     }
     save_network_config(save_dir, ppo_config)
 
@@ -690,7 +734,13 @@ def train(args):
     print(f"{'='*80}\n")
 
     # Create parallel training environments
-    parallel_envs = ParallelEnvs(config, args.num_parallel_envs, state_space_type=state_space_type, verbose=args.verbose)
+    parallel_envs = ParallelEnvs(
+        config,
+        args.num_parallel_envs,
+        state_space_type=state_space_type,
+        vrp_top_k_deliveries=args.vrp_top_k_deliveries,
+        verbose=args.verbose,
+    )
 
     # Initialize training state
     best_eval_reward = None

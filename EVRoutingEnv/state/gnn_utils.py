@@ -53,7 +53,14 @@ def extract_action_graph(state_space, env) -> ActionGraph:
     )
 
 
-def create_default_gnn_space(env, *, mode: str = "nonflex", use_detour: bool = False, device: Optional[str] = None):
+def create_default_gnn_space(
+    env,
+    *,
+    mode: str = "nonflex",
+    use_detour: bool = False,
+    device: Optional[str] = None,
+    vrp_top_k_deliveries: int = 5,
+):
     """Instantiate a GNN state-space object from an environment.
 
     Args:
@@ -73,6 +80,7 @@ def create_default_gnn_space(env, *, mode: str = "nonflex", use_detour: bool = F
             max_time=env.max_time,
             num_charging_nodes=len(env.charging_nodes),
             device=device,
+            vrp_top_k_deliveries=vrp_top_k_deliveries,
         )
 
     from EVRoutingEnv.state.gnn_state_space_nonflex import GNNStateSpaceNonFlex

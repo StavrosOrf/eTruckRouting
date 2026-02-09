@@ -15,6 +15,7 @@ config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
 
 run_algorithms = ["ppo-variable"]
+# run_algorithms = ["sb3"]
 
 # PPO-V (parallel) settings
 ppo_params = {
@@ -40,7 +41,8 @@ ppo_grid = {
 
 # SB3 settings
 sb3_grid = {
-    "algorithm": ["maskppo","dqn", "qrdqn"],
+    # "algorithm": ["maskppo","dqn", "qrdqn"],
+    "algorithm": ["maskppo"],
     "seed": [0],
 }
 sb3_params = {
@@ -135,7 +137,7 @@ if "ppo-variable" in run_algorithms:
             f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
             f" --ppo-clip 0.2"
             f" --ppo-entropy-coef {entropy_coef}"
-            f" --exp-name {exp_name}"
+            f" --exp-name Top3del_NewState{exp_name}"
             f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
             f" --num-eval-envs {ppo_params['num_eval_envs']}"
         )

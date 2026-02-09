@@ -56,6 +56,7 @@ class GNNStateSpace:
         max_time: float,
         num_charging_nodes: int,
         max_nodes_in_graph: int = 500,
+        vrp_top_k_deliveries: int = 3,
         device: str = "cpu",
         verbose: bool = False,
     ):
@@ -75,6 +76,9 @@ class GNNStateSpace:
         self.max_time = max_time
         self.num_charging_nodes = num_charging_nodes
         self.max_nodes_in_graph = max_nodes_in_graph
+        if vrp_top_k_deliveries < 1:
+            raise ValueError("vrp_top_k_deliveries must be >= 1")
+        self.vrp_top_k_deliveries = vrp_top_k_deliveries
         self.device = device
         self.verbose = verbose
 
@@ -834,9 +838,20 @@ class GNNStateSpace:
                     # Flexible mode: Create action for each delivery in sequence (to match env action space)
                     # Actions are indexed by position in delivery_sequence (excluding depot)
                     remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
+                    if remaining_deliveries:
+                        remaining_deliveries_sorted = sorted(
+                            remaining_deliveries,
+                            key=lambda d: env.transport_graph.get_path_energy(current_location, d),
+                        )
+                        allowed_delivery_nodes = set(
+                            remaining_deliveries_sorted[: self.vrp_top_k_deliveries]
+                        )
+                    else:
+                        allowed_delivery_nodes = set()
 
                     if self.verbose:
                         print(f'[FlexibleMode] Remaining deliveries: {remaining_deliveries}')
+                        print(f'[FlexibleMode] Closest deliveries: {sorted(allowed_delivery_nodes)}')
                         print(f'[FlexibleMode] Delivery sequence: {active_truck.delivery_sequence}')
 
                     # Create actions for each possible delivery slot (num_stops actions) + depot return
@@ -863,6 +878,7 @@ class GNNStateSpace:
 
                         # Check if this delivery is still remaining (not yet delivered)
                         if delivery_node in remaining_deliveries:
+                            is_closest_delivery = delivery_node in allowed_delivery_nodes
                             # Validate feasibility for this delivery
                             energy_to_delivery = env.transport_graph.get_path_energy(current_location, delivery_node)
                             max_energy_to_delivery = energy_to_delivery * routing_safety_factor
@@ -909,7 +925,12 @@ class GNNStateSpace:
                                 else:
                                     progress_guard = can_continue_after_delivery or can_finish_route or must_leave
 
-                            is_feasible = is_energy_feasible and not must_charge_now and progress_guard
+                            is_feasible = (
+                                is_energy_feasible
+                                and not must_charge_now
+                                and progress_guard
+                                and is_closest_delivery
+                            )
                             action_to_node_map.append((delivery_node, False))
                             feasible_action_mask.append(is_feasible)
                             _append_action_metadata(delivery_node, False)
@@ -926,7 +947,8 @@ class GNNStateSpace:
                             if self.verbose:
                                 print(
                                     f'  Delivery action {i}: node {delivery_node}, '
-                                    f'energy {energy_to_delivery:.2f} kWh, feasible: {is_feasible}'
+                                    f'energy {energy_to_delivery:.2f} kWh, feasible: {is_feasible}, '
+                                    f'closest={is_closest_delivery}'
                                 )
                         else:
                             # Delivery already completed (or depot not pending) - action is infeasible
@@ -1200,7 +1222,11 @@ class GNNStateSpace:
                                 feasible_action_mask[nav_idx] = False
                         else:
                             # Delivery navigation entry
-                            if nav_node_id == -1 or nav_node_id not in remaining_deliveries:
+                            if (
+                                nav_node_id == -1
+                                or nav_node_id not in remaining_deliveries
+                                or nav_node_id not in allowed_delivery_nodes
+                            ):
                                 feasible_action_mask[nav_idx] = False
                                 continue
                             energy_to_delivery = env.transport_graph.get_path_energy(current_location, nav_node_id)
@@ -1270,7 +1296,11 @@ class GNNStateSpace:
                             is_energy_feasible = max_energy_needed < current_battery and not np.isinf(energy)
                             feasible_action_mask[nav_idx] = is_energy_feasible
                         else:
-                            if nav_node_id == -1 or nav_node_id not in remaining_deliveries:
+                            if (
+                                nav_node_id == -1
+                                or nav_node_id not in remaining_deliveries
+                                or nav_node_id not in allowed_delivery_nodes
+                            ):
                                 feasible_action_mask[nav_idx] = False
                                 continue
                             energy_to_delivery = env.transport_graph.get_path_energy(current_location, nav_node_id)
@@ -1671,13 +1701,20 @@ class GNNStateSpace:
         # Normalize deliveries by total number of deliveries for this truck
         total_deliveries = len(truck.delivery_sequence) - 1  # Exclude depot
         deliveries_remaining = len(truck.get_remaining_deliveries())
-        deliveries_done = truck.current_sequence_index
+        is_flexible = bool(
+            getattr(truck, "enable_flexible_delivery_order", False)
+            or getattr(env, "enable_flexible_delivery_order", False)
+        )
+        if is_flexible:
+            deliveries_done = min(len(truck.delivered_nodes), total_deliveries)
+        else:
+            deliveries_done = truck.current_sequence_index
         deliveries_done_norm = deliveries_done / total_deliveries if total_deliveries > 0 else 0.0
         deliveries_remaining_norm = deliveries_remaining / total_deliveries if total_deliveries > 0 else 0.0
         
         # Calculate time to destination if truck is on route (normalized)
         time_to_destination = 0.0
-        if truck.route_arrival_time is not None and truck.route_destination is not None:
+        if not is_flexible and truck.route_arrival_time is not None and truck.route_destination is not None:
             time_to_destination = max(0.0, truck.route_arrival_time - env.global_clock) / self.max_time
 
         # Determine truck state (one-hot encoding)

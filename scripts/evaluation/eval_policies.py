@@ -36,6 +36,7 @@ POLICIES = [
     # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
     ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
     # SB3 policies
+    ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"),
     ##("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
@@ -49,8 +50,8 @@ POLICIES = [
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 20
-NUM_EVAL_SCENARIOS = 1 #
+NUM_STOPS = 10
+NUM_EVAL_SCENARIOS = 2 #
 SEED = 1000
 # =============================================
 
@@ -432,6 +433,45 @@ def main():
                 policy_rewards = np.array(results[name]["episode_rewards"])
                 wins = np.sum(policy_rewards > baseline_rewards)
                 results[name]["win_rate_vs_baseline"] = (wins / len(policy_rewards)) * 100
+
+    # Pairwise per-episode win counts across all policies
+    if len(results) > 1:
+        print(f"\n{'='*90}")
+        print("Pairwise Episode Win Counts (A > B)")
+        print(f"{'='*90}")
+
+        sorted_names = sorted(results.keys())
+        rewards_by_name = {
+            name: np.array(results[name]["episode_rewards"]) for name in sorted_names
+        }
+        episode_counts = [len(rewards_by_name[name]) for name in sorted_names]
+        min_episodes = min(episode_counts)
+        if len(set(episode_counts)) > 1:
+            print(
+                f"Warning: mismatched episode counts {episode_counts}; using first {min_episodes} episodes."
+            )
+
+        # Header
+        col_width = 16
+        print("A \\ B".ljust(col_width), end="")
+        for name in sorted_names:
+            print(f" {name[:col_width-1]:<{col_width-1}}", end="")
+        print()
+        print("-" * (col_width + col_width * len(sorted_names)))
+
+        # Matrix
+        for name_a in sorted_names:
+            print(f"{name_a[:col_width-1]:<{col_width}}", end="")
+            rewards_a = rewards_by_name[name_a][:min_episodes]
+            for name_b in sorted_names:
+                rewards_b = rewards_by_name[name_b][:min_episodes]
+                wins = int(np.sum(rewards_a > rewards_b))
+                ties = int(np.sum(rewards_a == rewards_b))
+                losses = int(np.sum(rewards_a < rewards_b))
+                cell = f"{wins}W/{ties}T/{losses}L"
+                print(f" {cell:<{col_width-1}}", end="")
+            print()
+        print(f"{'='*90}\n")
 
     # Print results in vertical format with policies side-by-side
     def wrap_name(name, width=20):

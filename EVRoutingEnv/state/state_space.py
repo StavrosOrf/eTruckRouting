@@ -260,8 +260,12 @@ class StateSpace:
         
         # [8-9] Deliveries
         total_deliveries = len(truck.delivery_sequence) - 1  # Exclude depot
-        deliveries_done = truck.current_sequence_index
         deliveries_remaining = len(truck.get_remaining_deliveries())
+        is_flexible = bool(getattr(truck, "enable_flexible_delivery_order", False))
+        if is_flexible:
+            deliveries_done = min(len(truck.delivered_nodes), total_deliveries)
+        else:
+            deliveries_done = truck.current_sequence_index
         features[8] = deliveries_done / total_deliveries if total_deliveries > 0 else 0.0
         features[9] = deliveries_remaining / total_deliveries if total_deliveries > 0 else 0.0
         
@@ -272,7 +276,7 @@ class StateSpace:
         features[11] = truck.total_distance_traveled / 1000.0
         
         # [12] Time to destination
-        if truck.route_arrival_time is not None and truck.route_destination is not None:
+        if not is_flexible and truck.route_arrival_time is not None and truck.route_destination is not None:
             features[12] = max(0.0, truck.route_arrival_time - global_clock) / self.max_time
         
         return features

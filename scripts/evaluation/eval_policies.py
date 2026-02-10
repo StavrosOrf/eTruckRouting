@@ -34,11 +34,18 @@ POLICIES = [
     ##("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
     # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
     # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
-    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),
-    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
-    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),    
-    # SB3 policies
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    
+    #Trained models on Electric Truck Routing 
+    ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),      
+    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
+    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    
+    
+    
+    # eVRP 1T10S
+    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
     # ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"),
     ##("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
@@ -46,15 +53,15 @@ POLICIES = [
     # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
     # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn", "base"),
     # Baselines
-    # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
-    ##("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
-    ("optimal-vrp", "optimal-vrp", "vrp"),
-    # ("heuristic", "heuristic", "base"),
+    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
+    #("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
+    # ("optimal-vrp", "optimal-vrp", "vrp"),
+    ("heuristic", "heuristic", "base"),
 ]
-# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 10
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 30  # Must match the configuration used during training
+NUM_STOPS = 3
 NUM_EVAL_SCENARIOS = 20 #
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
@@ -292,19 +299,42 @@ def main():
     config["environment"]["num_stops"] = eval_num_stops
 
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
-    # Build the required GNN state spaces once, based on policy list
-    requested_spaces = set(entry[2] if len(entry) > 2 else "base" for entry in POLICIES)
-    gnn_state_spaces = {}
-    for space in requested_spaces:
+    gnn_state_space_cache = {}
+
+    def _load_saved_gnn_state_config(policy_path: str) -> dict:
+        if not isinstance(policy_path, str):
+            return {}
+        if policy_path in ("heuristic", "optimal", "optimal-simple", "optimal-vrp", "optimal_vrp"):
+            return {}
+        base_path = os.path.dirname(policy_path) if policy_path.endswith(".zip") else policy_path
+        if not os.path.isdir(base_path):
+            return {}
+        config_path = os.path.join(base_path, "config.yaml")
+        if not os.path.exists(config_path):
+            return {}
+        try:
+            return load_config(config_path).get("gnn_state_space", {})
+        except Exception:
+            return {}
+
+    def _get_gnn_state_space(space: str, policy_path: str):
         mode = "vrp" if space == "vrp" else "nonflex"
         use_detour = space == "detour"
-        gnn_state_spaces[space] = create_default_gnn_space(
-            env_init,
-            mode=mode,
-            use_detour=use_detour,
-            device="cpu",
-        )
-    env_init.close()
+        gnn_cfg = _load_saved_gnn_state_config(policy_path)
+        vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
+        detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
+        # print(f"  GNN state space config for {policy_path}: mode={mode}, use_detour={use_detour}, vrp_top_k={vrp_top_k}, detour_top_k={detour_top_k}")
+        cache_key = (space, vrp_top_k, detour_top_k)
+        if cache_key not in gnn_state_space_cache:
+            gnn_state_space_cache[cache_key] = create_default_gnn_space(
+                env_init,
+                mode=mode,
+                use_detour=use_detour,
+                device="cpu",
+                vrp_top_k_deliveries=vrp_top_k,
+                detour_num_chargers_to_keep=detour_top_k,
+            )
+        return gnn_state_space_cache[cache_key]
 
     # Load policies
     policies = {}
@@ -313,6 +343,7 @@ def main():
         policy_path, policy_type = policy_entry[0], policy_entry[1]
         gnn_space_type = policy_entry[2] if len(policy_entry) > 2 else "base"
         print(f"Loading: {policy_path} ({policy_type})...")
+        policy_gnn_space = _get_gnn_state_space(gnn_space_type, policy_path)
         
         # Handle SB3 policies differently
         if policy_type.startswith("sb3-"):
@@ -356,7 +387,7 @@ def main():
             resolved_type = "optimal-vrp"
         else:
             # Load GNN-based policies using existing function
-            policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_spaces[gnn_space_type], config)
+            policy, resolved_type = load_policy(policy_path, policy_type, policy_gnn_space, config)
         
         # Generate unique name for each policy
         if policy_path == "heuristic":
@@ -385,7 +416,7 @@ def main():
                 policy_counter[base_name] = 1
                 name = base_name
         
-        policies[name] = {"policy": policy, "type": resolved_type, "gnn_space_type": gnn_space_type}
+        policies[name] = {"policy": policy, "type": resolved_type, "gnn_state_space": policy_gnn_space}
 
     # Evaluate all policies
     eval_env = EventDrivenTruckEnv(
@@ -401,7 +432,7 @@ def main():
         results[policy_name] = evaluate_policy(
             eval_env,
             policy_info["policy"],
-            gnn_state_spaces[policy_info["gnn_space_type"]],
+            policy_info["gnn_state_space"],
             policy_info["type"],
             NUM_EVAL_SCENARIOS,
             SEED,
@@ -409,6 +440,7 @@ def main():
         )
 
     eval_env.close()
+    env_init.close()
 
     # Calculate reward gap vs optimal-simple baseline if it exists
     baseline_name = None
@@ -489,6 +521,38 @@ def main():
                 ties = int(np.sum(rewards_a == rewards_b))
                 losses = int(np.sum(rewards_a < rewards_b))
                 cell = f"{wins}W/{ties}T/{losses}L"
+                print(f" {cell:<{col_width-1}}", end="")
+            print()
+        print(f"{'='*90}\n")
+
+        # Pairwise average reward differences for wins and losses
+        print(f"\n{'='*90}")
+        print("Pairwise Avg Reward Diff (when A wins / A loses)")
+        print(f"{'='*90}")
+
+        def _avg_or_none(values):
+            return float(np.mean(values)) if len(values) > 0 else None
+
+        # Header
+        print("A \\ B".ljust(col_width), end="")
+        for name in sorted_names:
+            print(f" {name[:col_width-1]:<{col_width-1}}", end="")
+        print()
+        print("-" * (col_width + col_width * len(sorted_names)))
+
+        for name_a in sorted_names:
+            print(f"{name_a[:col_width-1]:<{col_width}}", end="")
+            rewards_a = rewards_by_name[name_a][:min_episodes]
+            for name_b in sorted_names:
+                rewards_b = rewards_by_name[name_b][:min_episodes]
+                diffs = rewards_a - rewards_b
+                win_diffs = diffs[diffs > 0]
+                lose_diffs = diffs[diffs < 0]
+                avg_win = _avg_or_none(win_diffs)
+                avg_lose = _avg_or_none(lose_diffs)
+                win_str = f"+{avg_win:.0f}" if avg_win is not None else "--"
+                lose_str = f"{avg_lose:.0f}" if avg_lose is not None else "--"
+                cell = f"{win_str}/{lose_str}"
                 print(f" {cell:<{col_width-1}}", end="")
             print()
         print(f"{'='*90}\n")

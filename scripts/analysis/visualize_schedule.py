@@ -40,23 +40,29 @@ POLICIES = [
     # ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
     # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),    
     # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
-        ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),
-    # SB3 policies
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"), 
-    # ("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
-    # ("optimal-simple", "optimal-simple"),
-    ("optimal-vrp", "optimal-vrp"),
+    
+    
+    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),      
+    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
+    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),  
+    
+    #VRP models
+    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),    
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    
+      ("optimal-simple", "optimal-simple"),
+    # ("optimal-vrp", "optimal-vrp"),
     
     # ("heuristic", "heuristic"),
 ]
 
-# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 1
-NUM_STOPS = 10
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 10
+NUM_STOPS = 3
 MAX_TIME = 200.0
-SEED = 100
+SEED = 1000
 OUTPUT_DIR = "results/visualization"
 # =======================================
 
@@ -72,16 +78,38 @@ def _extract_sb3_config(policy_path):
     return None
 
 
-def _create_gnn_state_space(env_init, gnn_space_type: str, max_time: float):
+def _load_saved_gnn_state_config(policy_path: str) -> dict:
+    if not isinstance(policy_path, str):
+        return {}
+    if policy_path in ("heuristic", "optimal", "optimal-simple", "optimal-vrp", "optimal_vrp"):
+        return {}
+    base_path = os.path.dirname(policy_path) if policy_path.endswith(".zip") else policy_path
+    if not os.path.isdir(base_path):
+        return {}
+    config_path = os.path.join(base_path, "config.yaml")
+    if not os.path.exists(config_path):
+        return {}
+    try:
+        return load_config(config_path).get("gnn_state_space", {})
+    except Exception:
+        return {}
+
+
+def _create_gnn_state_space(env_init, gnn_space_type: str, policy_path: str):
     """Instantiate the requested GNN state space; defaults to base if unknown."""
     gnn_space_type = (gnn_space_type or "base").lower()
     mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
     use_detour = gnn_space_type == "detour"
+    gnn_cfg = _load_saved_gnn_state_config(policy_path)
+    vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
+    detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
     return create_default_gnn_space(
         env_init,
         mode=mode,
         use_detour=use_detour,
         device="cpu",
+        vrp_top_k_deliveries=vrp_top_k,
+        detour_num_chargers_to_keep=detour_top_k,
     )
 
 
@@ -109,7 +137,7 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
     
     # Initialize State Space
     env_init = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
-    gnn_state_space = _create_gnn_state_space(env_init, gnn_space_type, config["environment"]["max_time"])
+    gnn_state_space = _create_gnn_state_space(env_init, gnn_space_type, policy_path)
     env_init.close()
 
     # Load Policy

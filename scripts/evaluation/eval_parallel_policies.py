@@ -1,5 +1,6 @@
 """Evaluate and compare different policies on multiple scenarios (parallel)."""
 
+import atexit
 import copy
 import os
 import re
@@ -62,9 +63,9 @@ POLICIES = [
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 # CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 1  # Must match the configuration used during training
+NUM_TRUCKS = 10  # Must match the configuration used during training
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 300
+NUM_EVAL_SCENARIOS = 100
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 
@@ -78,6 +79,15 @@ _WORKER_CACHE = {
     "gnn_state_space": {},
     "policies": {},
 }
+
+
+def _cleanup_children():
+    for child in mp.active_children():
+        try:
+            child.terminate()
+            child.join(timeout=2)
+        except Exception:
+            pass
 
 
 def _extract_sb3_config(policy_path):
@@ -532,6 +542,8 @@ def _aggregate_episode_results(episode_results):
 def main():
     """Evaluate policies with hardcoded parameters in parallel."""
 
+    atexit.register(_cleanup_children)
+
     config = load_config(CONFIG_FILE)
 
     if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
@@ -656,13 +668,17 @@ def main():
     }
 
     mp_context = mp.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context) as executor:
+    executor = ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context)
+    try:
         futures = [executor.submit(_run_episode_task, task) for task in tasks]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Evaluating", leave=False):
             result = future.result()
             policy_name = result["policy_name"]
             episode_idx = result["episode_idx"]
             episode_results_by_policy[policy_name][episode_idx] = result
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+        _cleanup_children()
 
     results = {}
     for policy_name, episode_results in episode_results_by_policy.items():

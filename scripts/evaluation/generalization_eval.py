@@ -1,5 +1,6 @@
 """Grid evaluation: Compare policies across different environment configurations."""
 
+import atexit
 import copy
 import os
 import re
@@ -51,10 +52,10 @@ POLICIES = [
 
 # Grid parameters
 NUM_TRUCKS_GRID = [1, 5]
-NUM_STOPS_GRID = [2, 3, 5, 10]
+NUM_STOPS_GRID = [2, 3, 5, 10, 20]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-NUM_EVAL_SCENARIOS = 10
+NUM_EVAL_SCENARIOS = 5
 SEED = 1000
 
 # Parallel processing
@@ -68,6 +69,15 @@ _WORKER_CACHE = {
     "gnn_state_space": {},
     "policies": {},
 }
+
+
+def _cleanup_children():
+    for child in mp.active_children():
+        try:
+            child.terminate()
+            child.join(timeout=2)
+        except Exception:
+            pass
 
 
 def _extract_sb3_config(policy_path):
@@ -498,6 +508,8 @@ def _build_policy_name(policy_path, policy_type, policy_counter):
 def main():
     """Run grid evaluation across multiple policies and configurations."""
 
+    atexit.register(_cleanup_children)
+
     print("="*120)
     print(f"GRID EVALUATION")
     print("="*120)
@@ -589,23 +601,30 @@ def main():
         key: [None for _ in range(NUM_EVAL_SCENARIOS)] for key in expected_counts.keys()
     }
 
-    if USE_PARALLEL:
-        mp_context = mp.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context) as executor:
-            futures = [executor.submit(_run_episode_task, task) for task in tasks]
-            for future in tqdm(as_completed(futures), total=len(futures), desc="Evaluating", leave=False):
-                result = future.result()
+    try:
+        if USE_PARALLEL:
+            mp_context = mp.get_context("spawn")
+            executor = ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context)
+            try:
+                futures = [executor.submit(_run_episode_task, task) for task in tasks]
+                for future in tqdm(as_completed(futures), total=len(futures), desc="Evaluating", leave=False):
+                    result = future.result()
+                    policy_name = result["policy_name"]
+                    config_key = (result["num_trucks"], result["num_stops"])
+                    episode_idx = result["episode_idx"]
+                    episode_results[(policy_name, config_key)][episode_idx] = result
+            finally:
+                executor.shutdown(wait=True, cancel_futures=True)
+                _cleanup_children()
+        else:
+            for task in tqdm(tasks, desc="Evaluating", leave=False):
+                result = _run_episode_task(task)
                 policy_name = result["policy_name"]
                 config_key = (result["num_trucks"], result["num_stops"])
                 episode_idx = result["episode_idx"]
                 episode_results[(policy_name, config_key)][episode_idx] = result
-    else:
-        for task in tqdm(tasks, desc="Evaluating", leave=False):
-            result = _run_episode_task(task)
-            policy_name = result["policy_name"]
-            config_key = (result["num_trucks"], result["num_stops"])
-            episode_idx = result["episode_idx"]
-            episode_results[(policy_name, config_key)][episode_idx] = result
+    finally:
+        _cleanup_children()
 
     for (policy_name, config_key), episodes in episode_results.items():
         if any(result is None for result in episodes):

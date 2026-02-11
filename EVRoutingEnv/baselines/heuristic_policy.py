@@ -16,6 +16,8 @@ import numpy as np
 from typing import Optional, Tuple, List
 import heapq
 
+from EVRoutingEnv.state.action_mask import get_action_mask
+
 
 class HeuristicPolicy:
     """Greedy heuristic policy for truck routing decisions.
@@ -110,14 +112,11 @@ class HeuristicPolicy:
                 print(explanation)
             return action
         except ValueError as e:
-            # Infeasible routing detected - fall back to random action
-            # print(f"\n⚠️  ALERT: Heuristic policy encountered infeasible routing!")
-            # print(f"    Error: {e}")
-            # print(f"    Falling back to RANDOM action selection\n")
-            action = env.action_space.sample()
+            # Infeasible routing detected - fall back to a safe, feasible action
+            action = self._safe_fallback_action(env)
             truck_id = env.active_truck_id
             if truck_id is not None:
-                self.log_decision(truck_id, action, f"RANDOM (infeasible routing): {e}")
+                self.log_decision(truck_id, action, f"SAFE_FALLBACK (infeasible routing): {e}")
             return action
 
     def _navigate_to_delivery(self, delivery_node: int, env) -> int:
@@ -184,6 +183,9 @@ class HeuristicPolicy:
                     # No charger reachable after delivery; skip
                     continue
                 required_from_charger = (e_chg_to_deliv + e_deliv_to_next) * (1.0 + self.buffer_frac)
+                if required_from_charger > battery_capacity + 1e-6:
+                    # Even a full battery cannot cover the segment after this charger
+                    continue
                 # Battery upon arrival at charger:
                 battery_on_arrival = max(0.0, current_battery - energy_to_charger)
                 # Charging rate at this charger
@@ -224,6 +226,27 @@ class HeuristicPolicy:
             if h + 1e-9 >= needed_hours:
                 return idx
         return len(durations) - 1
+
+    def _safe_fallback_action(self, env) -> int:
+        """Pick a deterministic feasible action when routing is infeasible."""
+        try:
+            mask = get_action_mask(env)
+        except Exception:
+            return env.action_space.sample()
+
+        if mask is None or not np.any(mask):
+            return env.action_space.sample()
+
+        # Prefer delivery if feasible; otherwise prefer shortest charge; else first feasible
+        delivery_idx = env.num_charging_nodes
+        if 0 <= delivery_idx < len(mask) and mask[delivery_idx]:
+            return delivery_idx
+
+        charge_start = env.num_navigation_actions
+        if 0 <= charge_start < len(mask) and np.any(mask[charge_start:]):
+            return int(charge_start + np.argmax(mask[charge_start:]))
+
+        return int(np.argmax(mask))
 
     def get_action_with_explanations(self, env) -> Tuple[int, str]:
         """Return (action, explanation) and log it."""
@@ -304,17 +327,24 @@ class HeuristicPolicy:
         can_reach_delivery = energy_to_delivery <= current_battery
         remaining = truck.get_remaining_deliveries()
         is_final = len(remaining) == 1
-        nearest_after, energy_deliv_to_chg = graph.get_nearest_charging_node(next_delivery)
-        if nearest_after is None or energy_deliv_to_chg == float('inf'):
-            # Hard error: No charger reachable from delivery
-            raise ValueError(
-                f"Infeasible routing: no charger reachable from delivery {next_delivery}."
-            )
+        energy_deliv_to_chg = 0.0
+        if not is_final:
+            nearest_after, energy_deliv_to_chg = graph.get_nearest_charging_node(next_delivery)
+            if nearest_after is None or energy_deliv_to_chg == float('inf'):
+                # Hard error: No charger reachable from delivery
+                raise ValueError(
+                    f"Infeasible routing: no charger reachable from delivery {next_delivery}."
+                )
 
         # Feasibility check with full battery (starting at current node with full charge)
         full_required = energy_to_delivery + energy_deliv_to_chg
         
         if full_required > battery_capacity + 1e-6:
+            if is_final:
+                raise ValueError(
+                    "Infeasible routing: energy required (current→delivery) exceeds battery capacity. "
+                    f"required={full_required:.2f} kWh, capacity={battery_capacity:.2f} kWh, current_node={current_node}, delivery={next_delivery}"
+                )
             raise ValueError(
                 "Infeasible routing: energy required (current→delivery→nearest charger) exceeds battery capacity. "
                 f"required={full_required:.2f} kWh, capacity={battery_capacity:.2f} kWh, current_node={current_node}, delivery={next_delivery}"
@@ -323,10 +353,14 @@ class HeuristicPolicy:
         battery_after_delivery = current_battery - energy_to_delivery
         can_reach_charger_after_delivery = battery_after_delivery >= energy_deliv_to_chg
 
-        # Only proceed if we can reach delivery AND a charger after delivery (no exception for final)
-        if can_reach_delivery and can_reach_charger_after_delivery:
-            expl.append("  - Requirement satisfied (delivery + post-delivery charger): proceed to delivery")
-            return self._navigate_to_delivery(next_delivery, env), "\n".join(expl)
+        if is_final:
+            if can_reach_delivery:
+                expl.append("  - Final delivery reachable: proceed to delivery")
+                return self._navigate_to_delivery(next_delivery, env), "\n".join(expl)
+        else:
+            if can_reach_delivery and can_reach_charger_after_delivery:
+                expl.append("  - Requirement satisfied (delivery + post-delivery charger): proceed to delivery")
+                return self._navigate_to_delivery(next_delivery, env), "\n".join(expl)
 
         # Need to charge first (or move to charger)
         # Need to charge: decide target energy (buffered single-step requirement)
@@ -334,6 +368,11 @@ class HeuristicPolicy:
         buffered_total = required_total * (1.0 + self.buffer_frac) if required_total != float('inf') else float('inf')
         # Enforce feasibility vs capacity using unbuffered requirement (physical guarantee)
         if required_total > battery_capacity + 1e-6:
+            if is_final:
+                raise ValueError(
+                    "Infeasible routing: even from full battery, requirement (current→delivery) exceeds capacity. "
+                    f"required={required_total:.2f} kWh, capacity={battery_capacity:.2f} kWh, node={current_node}, delivery={next_delivery}"
+                )
             raise ValueError(
                 "Infeasible routing: even from full battery, requirement (current→delivery→nearest charger) exceeds capacity. "
                 f"required={required_total:.2f} kWh, capacity={battery_capacity:.2f} kWh, node={current_node}, delivery={next_delivery}"
@@ -348,7 +387,8 @@ class HeuristicPolicy:
                 f"Charge {env.charging_config['charge_durations'][dur_idx]}h"
             )
             return action, "\n".join(expl)
-        action = self._navigate_to_best_charger(current_node, env, must_be_reachable=True, target_node=next_delivery)
+        target_for_charger = None if is_final else next_delivery
+        action = self._navigate_to_best_charger(current_node, env, must_be_reachable=True, target_node=target_for_charger)
         expl.append("  - Navigate to charger (insufficient energy for delivery + next charger)")
         return action, "\n".join(expl)
 

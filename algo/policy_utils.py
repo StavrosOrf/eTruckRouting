@@ -10,6 +10,10 @@ from typing import Dict, Optional, Tuple
 
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
 from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+from EVRoutingEnv.baselines.classic_vrp_heuristics import (
+    ClarkeWrightEVPolicy,
+    NearestNeighbor2OptEVPolicy,
+)
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 
 # Importing only for type checking / documentation purposes.
@@ -43,6 +47,15 @@ def _normalize_policy_type(label: Optional[str]) -> Optional[str]:
         "gurobi": "optimal",
         "milp": "optimal",
         "deterministic": "optimal",
+        "savings": "savings",
+        "clarke-wright": "savings",
+        "clarkewright": "savings",
+        "cw": "savings",
+        "nearest": "nn-2opt",
+        "nn": "nn-2opt",
+        "nn2opt": "nn-2opt",
+        "nn-2opt": "nn-2opt",
+        "nearest-neighbor": "nn-2opt",
     }
     return mapping.get(cleaned, cleaned)
 
@@ -84,6 +97,12 @@ def load_policy(
 
     if normalized_requested == "heuristic":
         return HeuristicPolicy(), "heuristic"
+
+    if normalized_requested == "savings":
+        return ClarkeWrightEVPolicy(), "savings"
+
+    if normalized_requested == "nn-2opt":
+        return NearestNeighbor2OptEVPolicy(), "nn-2opt"
     
     if normalized_requested == "optimal":
         # Return a placeholder object for optimal policy

@@ -28,41 +28,34 @@ from sb3_contrib import MaskablePPO, QRDQN
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
-    # GNN-based policies: (path, policy_type, gnn_state_space)
-    # ("saved_models/Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.01_seed=0_gnnhd=32_mlphd=256_6343/", "variable-ppo", "detour"),
-    ##("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    ##("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
-    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9303/", "variable-ppo", "detour"),
-    # ("saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/", "variable-ppo", "detour"),
-    
     #Trained models on Electric Truck Routing 
-    ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),      
-    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),      
-    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
-    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),       
+    # ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),     
     
-        
-    # eVRP 1T10S
-    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
-    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
-    # ("saved_models/1trucks_10stops/maskppo_seed0_20260206_163221/best_model.zip", "sb3-maskppo", "base"),
-    ##("saved_models/1trucks_10stops/maskppo_seed0_20251212_070042/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/10trucks_3stops/ppo_seed0_20251204_202437/best_model.zip", "sb3-ppo", "base"),
-    # ("saved_models/10trucks_3stops/dqn_seed0_20251204_202435/best_model.zip", "sb3-dqn", "base"),
-    # ("saved_models/10trucks_3stops/qrdqn_seed0_20251204_202442/best_model.zip", "sb3-qrdqn", "base"),
-    # Baselines
-    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
+    # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
     #("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
-    # ("optimal-vrp", "optimal-vrp", "vrp"),
-    ("heuristic", "heuristic", "base"),
+    
+    # ("heuristic", "heuristic", "base"),    
+        
+    # eVRP Single TRUCK
+    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+        
+    ("savings", "savings", "base"),
+    ("nn-2opt", "nn-2opt", "base"),
+    ("optimal-vrp", "optimal-vrp", "vrp"),
+    
+    # Baselines
+
+
 ]
-CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 5  # Must match the configuration used during training
-NUM_STOPS = 3
+# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 1  # Must match the configuration used during training
+NUM_STOPS = 10
 NUM_EVAL_SCENARIOS = 5 #
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
@@ -134,7 +127,7 @@ def evaluate_policy(
                 # Custom policies
                 if policy_type in ("optimal", "optimal-simple", "optimal-vrp", "optimal_vrp"):
                     action = episode_policy.get_action(env)
-                elif policy_type == "heuristic":
+                elif policy_type in ("heuristic", "savings", "nn-2opt"):
                     action = policy.get_action(env)
                 elif policy_type == "ppo-variable" or policy_type == "variable-ppo":
                     gnn_state = gnn_state_space.get_state_GNN(env)

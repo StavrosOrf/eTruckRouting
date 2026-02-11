@@ -128,7 +128,7 @@ class OptimalGurobiSimplePolicy:
         model = gp.Model("simple_optimal_truck")
         model.Params.OutputFlag = 0
         model.Params.TimeLimit = 120.0  # 2 minute timeout
-        model.Params.MIPGap = 0.01  # Accept 1% gap from optimal
+        model.Params.MIPGap = 0.001  # Accept 0.1% gap from optimal
         model.Params.MIPFocus = 1  # Focus on finding feasible solutions
 
         num_segments = len(segments)

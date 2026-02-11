@@ -1068,24 +1068,25 @@ class EventDrivenTruckEnv(gym.Env):
         )
 
         if not can_proceed:
-            raise RuntimeError("Truck cannot start charging when port should be available")
-            # Should not happen if action selection is correct
-            # if self.verbose:
-            #     print(f"  ERROR: Cannot charge - no free port")
-            # self.truck_states[truck.truck_id] = "waiting_to_charge"
-            # if truck.truck_id not in self.waiting_start_times:
-            #     self.waiting_start_times[truck.truck_id] = self.global_clock
-            # if next_check_time is not None:
-            #     heapq.heappush(
-            #         self.event_queue,
-            #         Event(
-            #             time=next_check_time,
-            #             event_type=EventType.TRUCK_READY,
-            #             truck_id=truck.truck_id,
-            #             data={"reason": "recheck_charge_attempt"},
-            #         ),
-            #     )
-            # return -0.01
+            print(f"  !!!WARNING: Charger gating - no free port at node {charger_node}!!!!!!!\n\n")
+            # Port not available: move to waiting state and let wake_waiting_trucks handle it.
+            if self.verbose:
+                print(f"  WARNING: Cannot charge - no free port at node {charger_node}")
+            self.truck_states[truck.truck_id] = "waiting_to_charge"
+            if truck.truck_id not in self.waiting_start_times:
+                self.waiting_start_times[truck.truck_id] = self.global_clock
+                truck.start_waiting(timestamp=self.global_clock, reason="charger_queue")
+            if next_check_time is not None:
+                heapq.heappush(
+                    self.event_queue,
+                    Event(
+                        time=next_check_time,
+                        event_type=EventType.TRUCK_READY,
+                        truck_id=truck.truck_id,
+                        data={"reason": "recheck_charge_attempt"},
+                    ),
+                )
+            return -0.01
 
         # Get charger configuration
         charger_type = self.charging_station.charger_type[charger_node]

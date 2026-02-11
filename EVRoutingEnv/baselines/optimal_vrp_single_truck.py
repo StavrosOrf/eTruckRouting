@@ -42,6 +42,7 @@ class OptimalVRPSingleTruckPolicy:
         self._plans: Dict[int, List[PlanStep]] = {}
         self._cursors: Dict[int, int] = {}
         self.energy_safety_factor = 1.1
+        self.episode_infeasible = False
 
     def get_action(self, env) -> int:
         if env.active_truck_id is None:
@@ -64,7 +65,28 @@ class OptimalVRPSingleTruckPolicy:
                 print(f"[VRP Optimal] Error solving for truck {truck_id}: {exc}")
                 if self.verbose:
                     print(f"[VRP Optimal] Solver failed for truck {truck_id}: {exc}")
-                plan = self._create_emergency_plan(truck, env)
+                if self._should_skip_retry(exc):
+                    self.episode_infeasible = True
+                    plan = self._create_emergency_plan(truck, env)
+                else:
+                    try:
+                        base_factor = self._compute_energy_safety_factor(env)
+                        relaxed_factor = min(1.0, base_factor)
+                        plan = self._solve_truck(
+                            truck=truck,
+                            env=env,
+                            energy_safety_factor=relaxed_factor,
+                            min_battery_buffer=0.0,
+                        )
+                        if self.verbose:
+                            print(
+                                f"[VRP Optimal] Retry with relaxed factor {relaxed_factor:.2f} succeeded"
+                            )
+                    except Exception as retry_exc:
+                        if self.verbose:
+                            print(f"[VRP Optimal] Retry failed: {retry_exc}. Using fallback plan.")
+                        self.episode_infeasible = True
+                        plan = self._create_emergency_plan(truck, env)
             self._plans[truck_id] = plan
             self._cursors[truck_id] = 0
 
@@ -76,7 +98,13 @@ class OptimalVRPSingleTruckPolicy:
         self._cursors[truck_id] = step_idx + 1
         return self._to_env_action(step, env, truck)
 
-    def _solve_truck(self, truck, env) -> List[PlanStep]:
+    def _solve_truck(
+        self,
+        truck,
+        env,
+        energy_safety_factor: Optional[float] = None,
+        min_battery_buffer: Optional[float] = None,
+    ) -> List[PlanStep]:
         start_node = int(truck.current_node)
         depot_node = int(truck.delivery_sequence[0])
         remaining = [int(n) for n in truck.get_remaining_deliveries() if int(n) != depot_node]
@@ -94,7 +122,11 @@ class OptimalVRPSingleTruckPolicy:
 
         battery_cap = float(truck.battery_capacity)
         init_battery = float(truck.current_battery)
-        min_battery_buffer = 0.05 * battery_cap
+        if energy_safety_factor is None:
+            energy_safety_factor = self._compute_energy_safety_factor(env)
+        self.energy_safety_factor = energy_safety_factor
+        if min_battery_buffer is None:
+            min_battery_buffer = 0.05 * battery_cap
 
         max_charge_hours = 24.0
         graph = env.transport_graph
@@ -187,9 +219,9 @@ class OptimalVRPSingleTruckPolicy:
 
         model = gp.Model("vrp_single_truck")
         model.Params.OutputFlag = 0
-        model.Params.TimeLimit = 180.0
+        model.Params.TimeLimit = 300.0
         model.Params.MIPGap = 0.01
-        model.Params.MIPFocus = 1
+        model.Params.MIPFocus = 2
 
         x = model.addVars(arcs, vtype=GRB.BINARY, name="x")
         direct = model.addVars(arcs, vtype=GRB.BINARY, name="direct")
@@ -210,9 +242,19 @@ class OptimalVRPSingleTruckPolicy:
         model.addConstr(gp.quicksum(x[i, start_idx] for i, j in arcs if j == start_idx) == 0)
         model.addConstr(gp.quicksum(x[end_idx, j] for i, j in arcs if i == end_idx) == 0)
 
-        model.addConstr(battery[start_idx] == init_battery)
+        if start_node in env.charging_nodes:
+            start_charge_time = model.addVar(lb=0.0, ub=max_charge_hours, name="start_charge_time")
+            start_rate, start_eff = self._charger_profile(env, start_node)
+            model.addConstr(
+                battery[start_idx] == init_battery + start_rate * start_eff * start_charge_time
+            )
+        else:
+            start_charge_time = None
+            model.addConstr(battery[start_idx] == init_battery)
 
         objective_terms = []
+        if start_charge_time is not None:
+            objective_terms.append(start_charge_time)
 
         for i, j in arcs:
             seg = arc_data[(i, j)]
@@ -275,12 +317,15 @@ class OptimalVRPSingleTruckPolicy:
 
         if model.Status == GRB.INFEASIBLE:
             raise RuntimeError("VRP model infeasible")
+        if model.SolCount == 0:
+            raise RuntimeError(f"VRP solver returned no solution (status {model.Status})")
         if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
-            if model.SolCount == 0:
-                raise RuntimeError(f"VRP solver failed with status {model.Status}")
+            raise RuntimeError(f"VRP solver failed with status {model.Status}")
 
         # Extract route
         plan: List[PlanStep] = []
+        if start_charge_time is not None and start_charge_time.X > 1e-6:
+            plan.append(PlanStep(kind="charge", duration=float(start_charge_time.X)))
         current = start_idx
         visited = set([start_idx])
         while current != end_idx:
@@ -313,6 +358,16 @@ class OptimalVRPSingleTruckPolicy:
             current = next_idx
 
         return plan
+
+    def _should_skip_retry(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "infeasible" in message or "no solution" in message
+
+    def _compute_energy_safety_factor(self, env) -> float:
+        traffic_config = getattr(env, "traffic_config", {})
+        if traffic_config.get("enable_energy_uncertainty", False):
+            return float(traffic_config.get("max_energy_multiplier", 1.2))
+        return 1.0
 
     def _plan_single_leg(self, start: int, target: int, truck, env) -> List[PlanStep]:
         graph = env.transport_graph

@@ -51,10 +51,7 @@ POLICIES = [
     ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
     ("optimal-vrp", "optimal-vrp", "vrp"),
-    
     # Baselines
-
-
 ]
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
@@ -112,6 +109,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
     exec_times = []
     max_time_terminations = []
     max_steps_terminations = []
+    vrp_feasible_flags = []
 
     env._default_gnn_state_space = gnn_state_space
     env.use_detour_mask = getattr(gnn_state_space, "use_detour", False)
@@ -131,6 +129,9 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
             episode_policy = OptimalVRPSingleTruckPolicy(verbose=False)
         else:
             episode_policy = policy
+
+        if policy_type in ("optimal-vrp", "optimal_vrp"):
+            episode_policy.episode_infeasible = False
 
         while not (done or truncated):
             if is_sb3_policy:
@@ -219,6 +220,8 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         routing_times.append(total_routing)
         unloading_times.append(total_unloading)
         failures.append(num_failed)
+        if policy_type in ("optimal-vrp", "optimal_vrp"):
+            vrp_feasible_flags.append(not episode_policy.episode_infeasible)
 
     return {
         "mean_reward": np.mean(rewards),
@@ -251,6 +254,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         "std_exec_time": np.std(exec_times),
         "max_time_terminations": np.sum(max_time_terminations),
         "max_steps_terminations": np.sum(max_steps_terminations),
+        "vrp_feasible_flags": vrp_feasible_flags,
     }
 
 
@@ -365,6 +369,9 @@ def _run_episode_task(task):
         else:
             episode_policy = policy
 
+        if resolved_type in ("optimal-vrp", "optimal_vrp"):
+            episode_policy.episode_infeasible = False
+
         while not (done or truncated):
             if resolved_type.startswith("sb3-"):
                 if resolved_type == "sb3-maskppo":
@@ -440,6 +447,10 @@ def _run_episode_task(task):
         else:
             avg_soc = 0.0
 
+        vrp_feasible = True
+        if resolved_type in ("optimal-vrp", "optimal_vrp"):
+            vrp_feasible = not episode_policy.episode_infeasible
+
         return {
             "policy_name": policy_name,
             "episode_idx": episode_idx,
@@ -459,12 +470,47 @@ def _run_episode_task(task):
             "exec_time": exec_time,
             "max_time_termination": max_time_reached,
             "max_steps_termination": max_steps_reached,
+            "vrp_feasible": vrp_feasible,
         }
     finally:
         env.close()
 
 
 def _aggregate_episode_results(episode_results):
+    if not episode_results:
+        return {
+            "mean_reward": float("nan"),
+            "std_reward": float("nan"),
+            "episode_rewards": [],
+            "success_rate": float("nan"),
+            "mean_total_distance": float("nan"),
+            "std_total_distance": float("nan"),
+            "mean_charging_time": float("nan"),
+            "std_charging_time": float("nan"),
+            "mean_steps": float("nan"),
+            "std_steps": float("nan"),
+            "mean_completion_time": float("nan"),
+            "std_completion_time": float("nan"),
+            "mean_deliveries": float("nan"),
+            "std_deliveries": float("nan"),
+            "mean_charging_sessions": float("nan"),
+            "std_charging_sessions": float("nan"),
+            "mean_waiting_time": float("nan"),
+            "std_waiting_time": float("nan"),
+            "mean_routing_time": float("nan"),
+            "std_routing_time": float("nan"),
+            "mean_unloading_time": float("nan"),
+            "std_unloading_time": float("nan"),
+            "mean_failures": float("nan"),
+            "std_failures": float("nan"),
+            "mean_completion_soc": float("nan"),
+            "std_completion_soc": float("nan"),
+            "mean_exec_time": float("nan"),
+            "std_exec_time": float("nan"),
+            "max_time_terminations": 0,
+            "max_steps_terminations": 0,
+        }
+
     rewards = []
     successes = []
     distances = []
@@ -532,6 +578,16 @@ def _aggregate_episode_results(episode_results):
         "max_time_terminations": np.sum(max_time_terminations),
         "max_steps_terminations": np.sum(max_steps_terminations),
     }
+
+
+def _filter_episode_results(episode_results, excluded_indices):
+    if not excluded_indices:
+        return episode_results
+    return [
+        result
+        for result in episode_results
+        if result.get("episode_idx") not in excluded_indices
+    ]
 
 
 def main():
@@ -675,12 +731,41 @@ def main():
         executor.shutdown(wait=True, cancel_futures=True)
         _cleanup_children()
 
+    excluded_indices = set()
+    vrp_policy_names = [
+        name
+        for name, info in policies.items()
+        if info["type"] in ("optimal-vrp", "optimal_vrp")
+    ]
+    if vrp_policy_names:
+        vrp_name = vrp_policy_names[0]
+        for result in episode_results_by_policy.get(vrp_name, []):
+            if result is None:
+                continue
+            if not result.get("vrp_feasible", True):
+                excluded_indices.add(result.get("episode_idx"))
+        if excluded_indices:
+            sorted_indices = sorted(excluded_indices)
+            print(f"Excluded seed indices: {sorted_indices}")
+            excluded_path = os.path.join(project_root, "results", "vrp_excluded_seeds.txt")
+            os.makedirs(os.path.dirname(excluded_path), exist_ok=True)
+            with open(excluded_path, "w", encoding="utf-8") as handle:
+                handle.write("# Excluded VRP infeasible seeds\n")
+                handle.write(f"seed_base={SEED}\n")
+                handle.write("episode_idx,seed\n")
+                for idx in sorted_indices:
+                    handle.write(f"{idx},{SEED + idx}\n")
+            print(
+                f"\nExcluded {len(excluded_indices)} seeds where VRP Optimal was infeasible from comparisons."
+            )
+
     results = {}
     for policy_name, episode_results in episode_results_by_policy.items():
         if any(result is None for result in episode_results):
             missing = [i for i, r in enumerate(episode_results) if r is None]
             raise RuntimeError(f"Missing episode results for {policy_name}: {missing}")
-        results[policy_name] = _aggregate_episode_results(episode_results)
+        filtered_results = _filter_episode_results(episode_results, excluded_indices)
+        results[policy_name] = _aggregate_episode_results(filtered_results)
 
     baseline_name = None
     for name in results.keys():
@@ -813,7 +898,8 @@ def main():
     separator_width = metric_col_width + 1 + (col_width + 1) * len(sorted_names) + 1
 
     print(f"\n{'='*separator_width}")
-    print(f"RESULTS (averaged over {NUM_EVAL_SCENARIOS} scenarios)")
+    effective_scenarios = NUM_EVAL_SCENARIOS - len(excluded_indices)
+    print(f"RESULTS (averaged over {effective_scenarios} scenarios)")
     print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops")
     print(f"{'='*separator_width}\n")
 

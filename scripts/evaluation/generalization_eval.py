@@ -48,17 +48,17 @@ POLICIES = [
     ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
     ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
         
-    ("savings", "savings", "base"),
-    ("nn-2opt", "nn-2opt", "base"),
-    ("optimal-vrp", "optimal-vrp", "vrp"),
+    # ("savings", "savings", "base"),
+    # ("nn-2opt", "nn-2opt", "base"),
+    # ("optimal-vrp", "optimal-vrp", "vrp"),
     
     # Baselines
 
 
 ]
 # Grid parameters
-NUM_TRUCKS_GRID = [1, 5]
-NUM_STOPS_GRID = [2, 3, 5, 10, 20]
+NUM_TRUCKS_GRID = [1]
+NUM_STOPS_GRID = [5, 10, 20, 30, 50]
 
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"

@@ -10,8 +10,8 @@ import yaml
 
 # python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 python_path = "~/EVRP/.venv/bin/python"
-# config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
-config_path = "EVRoutingEnv/config_files/config.yaml"
+config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
+# config_path = "EVRoutingEnv/config_files/config.yaml"
 
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
 
@@ -20,29 +20,13 @@ run_algorithms = ["ppo-variable"]
 
 # PPO-V (parallel) settings
 ppo_params = {
-    "learning_rate": 3e-4,
     "num_gcn_layers": 3,
-    "minibatch_size": 256,
     "max_episodes": 100_000_000,
     "max_timesteps": 1_000_000,
     "eval_freq": 5000,
     "num_parallel_envs": 1,
     "num_eval_envs": 12,
     "project": "evpr-newtests",
-}
-
-ppo_grid = {
-    "num_trucks": [1, 5, 10, 30],
-    # "num_trucks": [10],
-    "num_stops": [3],
-    "steps_per_update": [256],
-    "epochs": [5],
-    "entropy_coef": [0.1],
-    "gnn_hidden_dim": [32],
-    "mlp_hidden_dim": [256],
-    "vrp_top_k_deliveries": [5],
-    "detour_top_k_chargers": [2, 3, 5],
-    "seed": [0, 1, 2],
 }
 
 # SB3 settings
@@ -121,6 +105,65 @@ def tmux_send(session: str, command: str):
 meta = load_env_meta(config_path)
 counter = 0
 
+# Tune one stage at a time to keep the sweep focused.
+tuning_stage = "ppo_dynamics"
+
+ppo_grids = {
+    "ppo_dynamics": {
+        "learning_rate": [1e-4, 3e-4],
+        "steps_per_update": [256, 512],
+        "epochs": [10],
+        "minibatch_size": [256],
+        "entropy_coef": [0.01, 0.05],
+        "ppo_clip": [0.2],
+        "gamma": [0.99],
+        "gae_lambda": [0.95],
+        "ppo_value_coef": [0.01, 0.1],
+        "ppo_max_grad_norm": [0.5],
+        "gnn_hidden_dim": [32],
+        "mlp_hidden_dim": [256],
+        "vrp_top_k_deliveries": [5],
+        "detour_top_k_chargers": [2, 5],
+        "seed": [0, 1, 2],
+    },
+    "action_space": {
+        "learning_rate": [3e-4],
+        "steps_per_update": [512],
+        "epochs": [10],
+        "minibatch_size": [256],
+        "entropy_coef": [0.01],
+        "ppo_clip": [0.2],
+        "gamma": [0.99],
+        "gae_lambda": [0.95],
+        "ppo_value_coef": [0.01],
+        "ppo_max_grad_norm": [0.5],
+        "gnn_hidden_dim": [32],
+        "mlp_hidden_dim": [256],
+        "vrp_top_k_deliveries": [3, 5, 8, 12],
+        "detour_top_k_chargers": [2, 3, 5],
+        "seed": [0, 1, 2],
+    },
+    "capacity": {
+        "learning_rate": [3e-4],
+        "steps_per_update": [512],
+        "epochs": [10],
+        "minibatch_size": [256],
+        "entropy_coef": [0.01],
+        "ppo_clip": [0.2],
+        "gamma": [0.99],
+        "gae_lambda": [0.95],
+        "ppo_value_coef": [0.01],
+        "ppo_max_grad_norm": [0.5],
+        "gnn_hidden_dim": [32, 64, 96],
+        "mlp_hidden_dim": [256, 384],
+        "vrp_top_k_deliveries": [5],
+        "detour_top_k_chargers": [3],
+        "seed": [0, 1, 2],
+    },
+}
+
+ppo_grid = ppo_grids[tuning_stage]
+
 if "ppo-variable" in run_algorithms:
     ppo_training_script = "scripts/training/train_PPO_Variable_parallel.py"
     ppo_jobs = list(itertools.product(*ppo_grid.values()))
@@ -128,20 +171,29 @@ if "ppo-variable" in run_algorithms:
     ppo_devices = ["cuda:0", "cuda:1", "cuda:2"]
     for ppo_idx, job in enumerate(ppo_jobs):
         (
-            num_trucks,
-            num_stops,
+            learning_rate,
             steps_per_update,
             epochs,
+            minibatch_size,
             entropy_coef,
+            ppo_clip,
+            gamma,
+            gae_lambda,
+            ppo_value_coef,
+            ppo_max_grad_norm,
             gnn_hidden_dim,
             mlp_hidden_dim,
             vrp_top_k_deliveries,
             detour_top_k_chargers,
             seed,
         ) = job
+        num_trucks = meta["num_trucks"]
+        num_stops = meta["num_stops"]
         mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
         extra = (
-            f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}"
+            f"lr{learning_rate}_spu{steps_per_update}_ep{epochs}_mb{minibatch_size}"
+            f"_ent{entropy_coef}_clip{ppo_clip}"
+            f"_gm{gamma}_gl{gae_lambda}_vc{ppo_value_coef}"
             f"_g{gnn_hidden_dim}_m{mlp_hidden_dim}"
             f"_vk{vrp_top_k_deliveries}_ck{detour_top_k_chargers}_s{seed}"
         )
@@ -158,7 +210,7 @@ if "ppo-variable" in run_algorithms:
             f"{python_path} {ppo_training_script}"
             f" --config {config_path}"
             f" --seed {seed}"
-            f" --lr {ppo_params['learning_rate']}"
+            f" --lr {learning_rate}"
             f" --gnn-state-space {meta['gnn_state']}"
             f" --gnn-hidden-dim {gnn_hidden_dim}"
             f" --mlp-hidden-dim {mlp_hidden_dim}"
@@ -175,9 +227,13 @@ if "ppo-variable" in run_algorithms:
             f" --group-name {group_name}"
             f" --ppo-steps-per-update {steps_per_update}"
             f" --ppo-epochs {epochs}"
-            f" --ppo-minibatch-size {ppo_params['minibatch_size']}"
-            f" --ppo-clip 0.2"
+            f" --ppo-minibatch-size {minibatch_size}"
+            f" --ppo-clip {ppo_clip}"
             f" --ppo-entropy-coef {entropy_coef}"
+            f" --gamma {gamma}"
+            f" --gae-lambda {gae_lambda}"
+            f" --ppo-value-coef {ppo_value_coef}"
+            f" --ppo-max-grad-norm {ppo_max_grad_norm}"
             f" --exp-name {exp_name}"
             f" --num-parallel-envs {ppo_params['num_parallel_envs']}"
             f" --num-eval-envs {ppo_params['num_eval_envs']}"

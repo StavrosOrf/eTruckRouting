@@ -2,7 +2,9 @@
 
 import copy
 import os
+import re
 import sys
+import time
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -21,30 +23,27 @@ from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
-
-# Import compute_action_mask from train module
-from scripts.training.train_PPO_Variable import compute_action_mask
 from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
 # SB3 imports
 from stable_baselines3 import PPO, DQN
 from sb3_contrib import MaskablePPO, QRDQN
-from sb3_contrib.common.maskable.utils import get_action_masks
-
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
     # Detour GNN-based policies
-    (
-        "saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/",
-        "variable-ppo",
-        "detour",
-    ),
-    (
-        "saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/",
-        "variable-ppo",
-        "detour",
-    ),
+    # (
+    #     "saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/",
+    #     "variable-ppo",
+    #     "detour",
+    # ),
+    # (
+    #     "saved_models/Top1Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9652/",
+    #     "variable-ppo",
+    #     "detour",
+    # ),
+    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),
+    ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),
     # Baseline
     ("optimal_simple", "optimal_simple", "base"),
     # ("optimal-vrp", "optimal-vrp", "vrp"),
@@ -59,51 +58,134 @@ NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 
 # Parallel processing
-USE_PARALLEL = True  # Run policies in parallel (each on GPU), configs sequential
-NUM_PARALLEL_POLICIES = 4  # Number of policies to evaluate in parallel (adjust based on GPU memory)
+USE_PARALLEL = True  # Run per-episode tasks in parallel
+NUM_WORKERS = 10
+GPU_DEVICES = (0, 1, 2)
+GPU_POLICY_TYPES = ("variable-ppo", "ppo-variable")
 # =============================================
 
+_WORKER_CACHE = {
+    "gnn_state_space": {},
+    "policies": {},
+}
 
-def evaluate_policy_single_config(
-    env, gnn_state_space, policy, resolved_type,
-    num_episodes, seed,
-    sb3_model=None,
-    sb3_type=None,
-    show_progress=False,
-    desc="Eval",
-    position=None
-):
-    """
-    Evaluate a single policy on a single configuration.
-    Environment and policy are passed in (already initialized).
-    """
-    
-    # Ensure action masks use the provided GNN state space
-    env._default_gnn_state_space = gnn_state_space
-    env.use_detour_mask = getattr(gnn_state_space, "use_detour", False)
 
-    # Evaluate
-    rewards, successes, distances, charging_times, steps, completion_times, total_deliveries = [], [], [], [], [], [], []
-    failures_per_episode = []
-    truncated_flags = []
-    charging_sessions = []
-    waiting_times = []
-    routing_times = []
-    unloading_times = []
-    max_time_terminations = []
-    max_steps_terminations = []
+def _extract_sb3_config(policy_path):
+    """Return (num_trucks, num_stops) if encoded in path like '1trucks_10stops'."""
+    for part in policy_path.rstrip("/").split("/"):
+        match = re.search(r"(\d+)trucks_(\d+)stops", part)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
 
-    episode_iter = range(num_episodes)
-    if show_progress and position is not None:
-        # Position the episode progress bar right below the config progress bar
-        episode_iter = tqdm(episode_iter, desc=desc, leave=False, position=position + len(POLICIES))
-    
-    for episode in episode_iter:
-        obs, info = env.reset(seed=seed + episode)
+
+def _load_saved_gnn_state_config(policy_path):
+    if not isinstance(policy_path, str):
+        return {}
+    if policy_path in ("heuristic", "optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
+        return {}
+    base_path = os.path.dirname(policy_path) if policy_path.endswith(".zip") else policy_path
+    if not os.path.isdir(base_path):
+        return {}
+    config_path = os.path.join(base_path, "config.yaml")
+    if not os.path.exists(config_path):
+        return {}
+    try:
+        return load_config(config_path).get("gnn_state_space", {})
+    except Exception:
+        return {}
+
+
+def _get_gnn_state_space(space, policy_path, env_init):
+    mode = "vrp" if space == "vrp" else "nonflex"
+    use_detour = space == "detour"
+    gnn_cfg = _load_saved_gnn_state_config(policy_path)
+    vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
+    detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
+    cache_key = (space, vrp_top_k, detour_top_k)
+    if cache_key not in _WORKER_CACHE["gnn_state_space"]:
+        _WORKER_CACHE["gnn_state_space"][cache_key] = create_default_gnn_space(
+            env_init,
+            mode=mode,
+            use_detour=use_detour,
+            device="cpu",
+            vrp_top_k_deliveries=vrp_top_k,
+            detour_num_chargers_to_keep=detour_top_k,
+        )
+    return _WORKER_CACHE["gnn_state_space"][cache_key]
+
+
+def _should_use_gpu(policy_type):
+    if policy_type.startswith("sb3-"):
+        return True
+    return policy_type in GPU_POLICY_TYPES
+
+
+def _load_policy_cached(policy_path, policy_type, gnn_state_space, config, device):
+    if policy_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
+        return None, policy_type
+    cache_key = (policy_path, policy_type, device)
+    if cache_key in _WORKER_CACHE["policies"]:
+        return _WORKER_CACHE["policies"][cache_key]
+
+    if policy_type.startswith("sb3-"):
+        algo_name = policy_type.replace("sb3-", "")
+        if algo_name == "ppo":
+            policy = PPO.load(policy_path, device=device)
+        elif algo_name == "maskppo":
+            policy = MaskablePPO.load(policy_path, device=device)
+        elif algo_name == "dqn":
+            policy = DQN.load(policy_path, device=device)
+        elif algo_name == "qrdqn":
+            policy = QRDQN.load(policy_path, device=device)
+        else:
+            raise ValueError(f"Unknown SB3 algorithm: {algo_name}")
+        resolved_type = policy_type
+    else:
+        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space, config, device=device)
+
+    _WORKER_CACHE["policies"][cache_key] = (policy, resolved_type)
+    return policy, resolved_type
+
+
+def _run_episode_task(task):
+    (
+        policy_name,
+        policy_path,
+        policy_type,
+        gnn_space_type,
+        num_trucks,
+        num_stops,
+        episode_idx,
+        seed,
+        config,
+        device,
+    ) = task
+
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.set_device(int(device.split(":")[-1]))
+    else:
+        device = "cpu"
+
+    local_config = copy.deepcopy(config)
+    local_config["environment"]["num_trucks"] = num_trucks
+    local_config["environment"]["num_stops"] = num_stops
+
+    env = EventDrivenTruckEnv(config=local_config, verbose=False, enable_plotting=False)
+    try:
+        gnn_state_space = _get_gnn_state_space(gnn_space_type, policy_path, env)
+        env._default_gnn_state_space = gnn_state_space
+        env.use_detour_mask = getattr(gnn_state_space, "use_detour", False)
+
+        policy, resolved_type = _load_policy_cached(
+            policy_path, policy_type, gnn_state_space, local_config, device
+        )
+
+        start_time = time.perf_counter()
+        obs, info = env.reset(seed=seed + episode_idx)
         episode_reward, episode_steps = 0.0, 0
         done = truncated = False
-        
-        # Recreate optimal planner per episode to avoid stale plans across seeds
+
         if resolved_type == "optimal":
             episode_policy = OptimalGurobiPolicy(verbose=False)
         elif resolved_type == "optimal_simple":
@@ -114,38 +196,29 @@ def evaluate_policy_single_config(
             episode_policy = policy
 
         while not (done or truncated):
-            if sb3_model is not None:
-                # SB3 policy: use raw observation
-                # (don't compute GNN state for SB3 models)
-                pass
-            elif resolved_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp", "heuristic"):
-                # Optimal and heuristic policies don't need GNN state
-                pass
-            else:
-                # Custom policies: compute GNN state
-                gnn_state = gnn_state_space.get_state_GNN(env)
-
-            if sb3_model is not None:
-                # SB3 policy
-                if sb3_type == "maskppo":
-                    # MaskablePPO: use action masks from environment
+            if resolved_type.startswith("sb3-"):
+                if resolved_type == "sb3-maskppo":
                     action_masks = get_action_mask(env)
-                    action, _ = sb3_model.predict(obs, action_masks=action_masks, deterministic=True)
+                    action, _states = episode_policy.predict(
+                        obs, action_masks=action_masks, deterministic=True
+                    )
                 else:
-                    # PPO, DQN, QRDQN
-                    action, _ = sb3_model.predict(obs, deterministic=True)
+                    action, _states = episode_policy.predict(obs, deterministic=True)
             else:
-                # Custom policies
                 if resolved_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
                     action = episode_policy.get_action(env)
                 elif resolved_type == "heuristic":
                     action = episode_policy.get_action(env)
-                elif resolved_type == "ppo-variable" or resolved_type == "variable-ppo":
-                    raw_action = policy.select_action(gnn_state, deterministic=True)
-                    action = policy.to_env_action(gnn_state, int(raw_action))
-                else:  # ppo
-                    mask = torch.tensor(compute_action_mask(env), dtype=torch.bool)
-                    raw_action = policy.select_action(gnn_state, deterministic=True, action_mask=mask)
+                elif resolved_type in ("ppo-variable", "variable-ppo"):
+                    gnn_state = gnn_state_space.get_state_GNN(env)
+                    raw_action = episode_policy.select_action(gnn_state, deterministic=True)
+                    action = episode_policy.to_env_action(gnn_state, int(raw_action))
+                else:
+                    gnn_state = gnn_state_space.get_state_GNN(env)
+                    mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
+                    raw_action = episode_policy.select_action(
+                        gnn_state, deterministic=True, action_mask=mask
+                    )
                     if isinstance(raw_action, tuple):
                         action = raw_action
                     else:
@@ -155,20 +228,11 @@ def evaluate_policy_single_config(
             episode_reward += reward
             episode_steps += 1
 
-        # Episode-level metrics
-        rewards.append(episode_reward)
-        successes.append(1.0 if info["all_complete"] else 0.0)
-        steps.append(episode_steps)
-        completion_times.append(env.global_clock)
+        exec_time = time.perf_counter() - start_time
+
         max_time_reached = 1.0 if truncated and env.global_clock >= env.max_time else 0.0
         max_steps_reached = 1.0 if truncated and episode_steps >= env.max_episode_steps else 0.0
-        max_time_terminations.append(max_time_reached)
-        max_steps_terminations.append(max_steps_reached)
 
-        # Truncation: whether the episode ended due to truncation flag
-        truncated_flags.append(1.0 if truncated else 0.0)
-
-        # Extract metrics from truck info
         trucks_info = info["trucks"]
         total_dist = 0.0
         total_charge = 0.0
@@ -176,10 +240,9 @@ def evaluate_policy_single_config(
         total_waiting = 0.0
         total_routing = 0.0
         total_unloading = 0.0
-        num_failures = 0
-        
-        # Count deliveries completed: total sequence length - remaining deliveries - 1 (for start)
+        num_failed = 0
         num_deliveries = 0
+
         for t in trucks_info:
             total_dist += t.get("total_distance", 0.0)
             total_charge += t.get("total_charging_time", 0.0)
@@ -188,7 +251,7 @@ def evaluate_policy_single_config(
             total_unloading += t.get("total_unloading_time", 0.0)
 
             if t.get("failed", False):
-                num_failures += 1
+                num_failed += 1
 
             total_stops = len(t.get("delivery_sequence", []))
             remaining = t.get("deliveries_remaining", 0)
@@ -201,19 +264,81 @@ def evaluate_policy_single_config(
             truck_waiting_time = t.get("waiting_time", 0.0)
             truck_routing_time = truck_total_time - truck_charging_time - truck_unloading_time - truck_waiting_time
             total_routing += max(0.0, truck_routing_time)
-        
-        distances.append(total_dist)
-        charging_times.append(total_charge)
-        total_deliveries.append(num_deliveries)
-        charging_sessions.append(total_sessions)
-        waiting_times.append(total_waiting)
-        routing_times.append(total_routing)
-        unloading_times.append(total_unloading)
-        failures_per_episode.append(num_failures)
-    
+
+        if trucks_info:
+            avg_soc = float(np.mean([t.get("battery_percentage", 0.0) for t in trucks_info]))
+        else:
+            avg_soc = 0.0
+
+        return {
+            "policy_name": policy_name,
+            "num_trucks": num_trucks,
+            "num_stops": num_stops,
+            "episode_idx": episode_idx,
+            "reward": episode_reward,
+            "success": 1.0 if info["all_complete"] else 0.0,
+            "distance": total_dist,
+            "charging_time": total_charge,
+            "steps": episode_steps,
+            "completion_time": env.global_clock,
+            "deliveries": num_deliveries,
+            "charging_sessions": total_sessions,
+            "waiting_time": total_waiting,
+            "routing_time": total_routing,
+            "unloading_time": total_unloading,
+            "failures": num_failed,
+            "avg_completion_soc": avg_soc,
+            "exec_time": exec_time,
+            "max_time_termination": max_time_reached,
+            "max_steps_termination": max_steps_reached,
+            "truncated": 1.0 if truncated else 0.0,
+        }
+    finally:
+        env.close()
+
+
+def _aggregate_episode_results(episode_results):
+    rewards = []
+    successes = []
+    distances = []
+    charging_times = []
+    steps = []
+    completion_times = []
+    total_deliveries = []
+    num_charging_sessions = []
+    waiting_times = []
+    routing_times = []
+    unloading_times = []
+    failures = []
+    avg_completion_soc = []
+    exec_times = []
+    truncated_flags = []
+    max_time_terminations = []
+    max_steps_terminations = []
+
+    for result in episode_results:
+        rewards.append(result["reward"])
+        successes.append(result["success"])
+        distances.append(result["distance"])
+        charging_times.append(result["charging_time"])
+        steps.append(result["steps"])
+        completion_times.append(result["completion_time"])
+        total_deliveries.append(result["deliveries"])
+        num_charging_sessions.append(result["charging_sessions"])
+        waiting_times.append(result["waiting_time"])
+        routing_times.append(result["routing_time"])
+        unloading_times.append(result["unloading_time"])
+        failures.append(result["failures"])
+        avg_completion_soc.append(result["avg_completion_soc"])
+        exec_times.append(result["exec_time"])
+        truncated_flags.append(result["truncated"])
+        max_time_terminations.append(result["max_time_termination"])
+        max_steps_terminations.append(result["max_steps_termination"])
+
     return {
         "mean_reward": np.mean(rewards),
         "std_reward": np.std(rewards),
+        "episode_rewards": rewards,
         "success_rate": np.mean(successes),
         "mean_total_distance": np.mean(distances),
         "std_total_distance": np.std(distances),
@@ -225,22 +350,24 @@ def evaluate_policy_single_config(
         "std_completion_time": np.std(completion_times),
         "mean_deliveries": np.mean(total_deliveries),
         "std_deliveries": np.std(total_deliveries),
-        "mean_charging_sessions": np.mean(charging_sessions),
-        "std_charging_sessions": np.std(charging_sessions),
+        "mean_charging_sessions": np.mean(num_charging_sessions),
+        "std_charging_sessions": np.std(num_charging_sessions),
         "mean_waiting_time": np.mean(waiting_times),
         "std_waiting_time": np.std(waiting_times),
         "mean_routing_time": np.mean(routing_times),
         "std_routing_time": np.std(routing_times),
         "mean_unloading_time": np.mean(unloading_times),
         "std_unloading_time": np.std(unloading_times),
-        "mean_failures": np.mean(failures_per_episode),
-        "std_failures": np.std(failures_per_episode),
+        "mean_failures": np.mean(failures),
+        "std_failures": np.std(failures),
+        "mean_completion_soc": np.mean(avg_completion_soc),
+        "std_completion_soc": np.std(avg_completion_soc),
+        "mean_exec_time": np.mean(exec_times),
+        "std_exec_time": np.std(exec_times),
         "mean_truncated": np.mean(truncated_flags),
         "std_truncated": np.std(truncated_flags),
-        "mean_max_time_terminations": np.mean(max_time_terminations),
-        "std_max_time_terminations": np.std(max_time_terminations),
-        "mean_max_steps_terminations": np.mean(max_steps_terminations),
-        "std_max_steps_terminations": np.std(max_steps_terminations),
+        "max_time_terminations": np.sum(max_time_terminations),
+        "max_steps_terminations": np.sum(max_steps_terminations),
     }
 
 
@@ -346,182 +473,31 @@ def print_metric_table(results_dict, metric_mean, metric_std, title, formatter=f
     print()
 
 
-def evaluate_single_policy_all_configs(policy_spec, position=None):
-    """Evaluate a single policy across all configurations (runs in separate process with GPU)."""
-    policy_path, policy_type = policy_spec[0], policy_spec[1]
-    gnn_space_type = policy_spec[2] if len(policy_spec) > 2 else "base"
-
-    # Generate policy name (keep full name)
+def _build_policy_name(policy_path, policy_type, policy_counter):
     if policy_path == "heuristic":
-        policy_name = "Heuristic"
-    elif policy_path == "optimal":
-        policy_name = "Optimal (Gurobi)"
-    elif policy_path == "optimal_simple":
-        policy_name = "Optimal (Simple)"
-    else:
-        base_name = os.path.basename(policy_path.rstrip('/'))
-        # For SB3 policies, extract algorithm name from folder (e.g., "ppo_seed0_20251204_202437" -> "PPO")
-        if policy_type.startswith("sb3-"):
-            # Get the algorithm folder name
-            algo_folder = os.path.basename(os.path.dirname(policy_path.rstrip('/')))
-            algo_name = algo_folder.split('_')[0].upper()  # Extract "ppo", "dqn", etc. and uppercase
-            policy_name = algo_name
-        else:
-            policy_name = base_name
-
-    # Load config
-    config = load_config(CONFIG_FILE)
-
-    # Detect SB3 policy type and trained config
-    sb3_model = None
-    sb3_type = None
-    sb3_trained_config = None
+        return "Heuristic"
+    if policy_path == "optimal":
+        return "Optimal (Gurobi)"
+    if policy_path in ("optimal_simple", "optimal-simple"):
+        return "Optimal (Simple)"
+    if policy_path in ("optimal-vrp", "optimal_vrp"):
+        return "Optimal VRP"
     if policy_type.startswith("sb3-"):
-        # Extract config from path (e.g. .../10trucks_3stops/algorithm_name/...)
-        path_parts = policy_path.rstrip('/').split('/')
-        import re
-        for part in path_parts:
-            m = re.search(r"(\d+)trucks_(\d+)stops", part)
-            if m:
-                sb3_trained_config = (int(m.group(1)), int(m.group(2)))
-                break
-        
-        # Map type to SB3 class
-        sb3_type = policy_type.replace("sb3-", "")
-        if sb3_type == "ppo":
-            sb3_model = PPO.load(policy_path, device="cpu")
-        elif sb3_type == "maskppo":
-            sb3_model = MaskablePPO.load(policy_path, device="cpu")
-        elif sb3_type == "dqn":
-            sb3_model = DQN.load(policy_path, device="cpu")
-        elif sb3_type == "qrdqn":
-            sb3_model = QRDQN.load(policy_path, device="cpu")
-        else:
-            raise ValueError(f"Unknown SB3 type: {sb3_type}")
-        resolved_type = None
-        policy = None
-    elif policy_type == "optimal":
-        # Optimal (Gurobi) policy
-        try:
-            policy = OptimalGurobiPolicy(verbose=False)
-        except ImportError as exc:
-            raise RuntimeError(
-                "Optimal (Gurobi) policy requires gurobipy to be installed."
-            ) from exc
-        resolved_type = "optimal"
-    elif policy_type == "optimal_simple":
-        # Simplified optimal (Gurobi) policy
-        try:
-            policy = OptimalGurobiSimplePolicy(verbose=False)
-        except ImportError as exc:
-            raise RuntimeError(
-                "Optimal Simple policy requires gurobipy to be installed."
-            ) from exc
-        resolved_type = "optimal_simple"
-    else:
-        # Custom policies
-        config_temp = copy.deepcopy(config)
-        config_temp["environment"]["num_trucks"] = NUM_TRUCKS_GRID[0]
-        config_temp["environment"]["num_stops"] = NUM_STOPS_GRID[0]
+        dir_path = os.path.dirname(policy_path) if policy_path.endswith(".zip") else policy_path
+        base_name = os.path.basename(dir_path.rstrip("/"))
+        return f"SB3-{base_name}"
 
-        env_temp = EventDrivenTruckEnv(config=config_temp, verbose=False, enable_plotting=False)
-        mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
-        use_detour = gnn_space_type == "detour"
-        gnn_state_space_temp = create_default_gnn_space(
-            env_temp,
-            mode=mode,
-            use_detour=use_detour,
-            device="cpu",
-        )
-        policy, resolved_type = load_policy(policy_path, policy_type, gnn_state_space_temp, config_temp, device="cuda")
-        env_temp.close()
-
-    # Create environments for each configuration
-    environments = {}
-    for num_trucks in NUM_TRUCKS_GRID:
-        for num_stops in NUM_STOPS_GRID:
-            config_copy = copy.deepcopy(config)
-            config_copy["environment"]["num_trucks"] = num_trucks
-            config_copy["environment"]["num_stops"] = num_stops
-
-            env = EventDrivenTruckEnv(config=config_copy, verbose=False, enable_plotting=False)
-            mode = "vrp" if gnn_space_type == "vrp" else "nonflex"
-            use_detour = gnn_space_type == "detour"
-            gnn_state_space = create_default_gnn_space(
-                env,
-                mode=mode,
-                use_detour=use_detour,
-                device="cpu",
-            )
-
-            environments[(num_trucks, num_stops)] = {
-                "env": env,
-                "gnn_state_space": gnn_state_space
-            }
-
-    # Evaluate across all configurations
-    policy_results = {}
-    
-    # Count total configs for this policy
-    total_configs = len(NUM_TRUCKS_GRID) * len(NUM_STOPS_GRID)
-    if sb3_model is not None and sb3_trained_config is not None:
-        total_configs = 1  # SB3 only evaluates on trained config
-    
-    # Create progress bar for this policy
-    pbar_desc = f"{policy_name[:20]:<20}"
-    with tqdm(total=total_configs, desc=pbar_desc, position=position, leave=True, 
-              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]') as pbar:
-        config_idx = 0
-        for num_trucks in NUM_TRUCKS_GRID:
-            for num_stops in NUM_STOPS_GRID:
-                config_key = (num_trucks, num_stops)
-                
-                # Skip SB3 policies if not their trained config
-                if sb3_model is not None and sb3_trained_config is not None:
-                    if config_key != sb3_trained_config:
-                        continue
-                
-                # Update progress bar with current configuration
-                config_idx += 1
-                pbar.set_description(f"{policy_name[:15]:<15} T={num_trucks:2d},S={num_stops:2d}")
-                
-                env_info = environments[config_key]
-
-                result = evaluate_policy_single_config(
-                    env=env_info["env"],
-                    gnn_state_space=env_info["gnn_state_space"],
-                    policy=policy,
-                    resolved_type=resolved_type,
-                    num_episodes=NUM_EVAL_SCENARIOS,
-                    seed=SEED,
-                    sb3_model=sb3_model,
-                    sb3_type=sb3_type,
-                    show_progress=True,  # Enable nested progress bar
-                    desc=f"  └─ Episodes T={num_trucks:2d},S={num_stops:2d}",
-                    position=position
-                )
-
-                result["num_trucks"] = num_trucks
-                result["num_stops"] = num_stops
-                policy_results[config_key] = result
-                
-                # Update with completion info
-                pbar.set_postfix(ordered_dict={
-                    'success': f"{result['success_rate']*100:.0f}%",
-                    'reward': f"{result['mean_reward']:.0f}"
-                })
-                pbar.update(1)
-
-    # Cleanup
-    for env_info in environments.values():
-        env_info["env"].close()
-
-    return policy_name, policy_results
+    base_name = os.path.basename(policy_path.rstrip("/"))
+    if base_name in policy_counter:
+        policy_counter[base_name] += 1
+        return f"{base_name}_v{policy_counter[base_name]}"
+    policy_counter[base_name] = 1
+    return base_name
 
 
 def main():
     """Run grid evaluation across multiple policies and configurations."""
-    
+
     print("="*120)
     print(f"GRID EVALUATION")
     print("="*120)
@@ -539,61 +515,112 @@ def main():
     print(f"\nTotal evaluations: {len(POLICIES) * len(NUM_TRUCKS_GRID) * len(NUM_STOPS_GRID)} (each with {NUM_EVAL_SCENARIOS} episodes)")
     
     if USE_PARALLEL:
-        print(f"Parallel mode: {NUM_PARALLEL_POLICIES} policies in parallel (each on GPU)")
+        print(f"Parallel mode: {NUM_WORKERS} workers (per-episode tasks)")
     else:
         print("Sequential mode (single GPU)")
     print()
     
+    config = load_config(CONFIG_FILE)
+
+    if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
+        if config["delivery"].get("enable_flexible_delivery_order", False):
+            print(
+                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
+            )
+            config["delivery"]["enable_flexible_delivery_order"] = False
+
+    # Build policy entries with names
+    policies = {}
+    policy_counter = {}
+    for policy_entry in POLICIES:
+        policy_path, policy_type = policy_entry[0], policy_entry[1]
+        gnn_space_type = policy_entry[2] if len(policy_entry) > 2 else "base"
+        name = _build_policy_name(policy_path, policy_type, policy_counter)
+        policies[name] = {
+            "path": policy_path,
+            "type": policy_type,
+            "gnn_space": gnn_space_type,
+        }
+
     # Run evaluations
     results = {}
     completed_policies = 0
-    
+
     print(f"\n{'='*120}")
     print("STARTING EVALUATIONS")
     print(f"{'='*120}\n")
-    
+
+    tasks = []
+    expected_counts = {}
+    gpu_counter = 0
+    for policy_name, policy_info in policies.items():
+        sb3_trained_config = None
+        if policy_info["type"].startswith("sb3-"):
+            sb3_trained_config = _extract_sb3_config(policy_info["path"])
+        for num_trucks in NUM_TRUCKS_GRID:
+            for num_stops in NUM_STOPS_GRID:
+                config_key = (num_trucks, num_stops)
+                if sb3_trained_config is not None and config_key != sb3_trained_config:
+                    continue
+                expected_counts[(policy_name, config_key)] = NUM_EVAL_SCENARIOS
+                for episode_idx in range(NUM_EVAL_SCENARIOS):
+                    if _should_use_gpu(policy_info["type"]):
+                        gpu_id = GPU_DEVICES[gpu_counter % len(GPU_DEVICES)]
+                        device = f"cuda:{gpu_id}"
+                        gpu_counter += 1
+                    else:
+                        device = "cpu"
+                    tasks.append(
+                        (
+                            policy_name,
+                            policy_info["path"],
+                            policy_info["type"],
+                            policy_info["gnn_space"],
+                            num_trucks,
+                            num_stops,
+                            episode_idx,
+                            SEED,
+                            config,
+                            device,
+                        )
+                    )
+
+    episode_results = {
+        key: [None for _ in range(NUM_EVAL_SCENARIOS)] for key in expected_counts.keys()
+    }
+
     if USE_PARALLEL:
-        # Parallel execution: each policy runs in its own process with GPU
-        mp.set_start_method('spawn', force=True)
-        
-        # Submit all jobs with position parameter
-        with ProcessPoolExecutor(max_workers=NUM_PARALLEL_POLICIES) as executor:
-            futures = {}
-            for idx, policy_spec in enumerate(POLICIES):
-                future = executor.submit(evaluate_single_policy_all_configs, policy_spec, idx)
-                futures[future] = policy_spec
-            
-            # Wait for completion
-            for future in as_completed(futures):
-                try:
-                    policy_name, policy_results = future.result()
-                    results[policy_name] = policy_results
-                    completed_policies += 1
-                    
-                    # Calculate aggregate success rate for this policy
-                    success_rates = [r['success_rate'] for r in policy_results.values()]
-                    avg_success = np.mean(success_rates) * 100 if success_rates else 0
-                    
-                    print(f"\n✓ [{completed_policies}/{len(POLICIES)}] {policy_name} completed | "
-                          f"Avg success: {avg_success:.1f}% across {len(policy_results)} configs")
-                except Exception as e:
-                    policy_spec = futures[future]
-                    print(f"\n✗ Error evaluating {policy_spec[0]}: {e}")
-                    import traceback
-                    traceback.print_exc()
+        mp_context = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context) as executor:
+            futures = [executor.submit(_run_episode_task, task) for task in tasks]
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Evaluating", leave=False):
+                result = future.result()
+                policy_name = result["policy_name"]
+                config_key = (result["num_trucks"], result["num_stops"])
+                episode_idx = result["episode_idx"]
+                episode_results[(policy_name, config_key)][episode_idx] = result
     else:
-        # Sequential execution
-        for idx, policy_spec in enumerate(POLICIES):
-            policy_name, policy_results = evaluate_single_policy_all_configs(policy_spec, position=idx)
-            results[policy_name] = policy_results
-            completed_policies += 1
-            
-            # Calculate aggregate success rate for this policy
-            success_rates = [r['success_rate'] for r in policy_results.values()]
-            avg_success = np.mean(success_rates) * 100 if success_rates else 0
-            
-            print(f"\n✓ [{completed_policies}/{len(POLICIES)}] {policy_name} completed | "
-                  f"Avg success: {avg_success:.1f}% across {len(policy_results)} configs")
+        for task in tqdm(tasks, desc="Evaluating", leave=False):
+            result = _run_episode_task(task)
+            policy_name = result["policy_name"]
+            config_key = (result["num_trucks"], result["num_stops"])
+            episode_idx = result["episode_idx"]
+            episode_results[(policy_name, config_key)][episode_idx] = result
+
+    for (policy_name, config_key), episodes in episode_results.items():
+        if any(result is None for result in episodes):
+            missing = [i for i, r in enumerate(episodes) if r is None]
+            raise RuntimeError(f"Missing episode results for {policy_name} {config_key}: {missing}")
+        results.setdefault(policy_name, {})[config_key] = _aggregate_episode_results(episodes)
+
+    for policy_name, policy_results in results.items():
+        completed_policies += 1
+        success_rates = [r["success_rate"] for r in policy_results.values()]
+        avg_success = np.mean(success_rates) * 100 if success_rates else 0
+        print(
+            f"\n✓ [{completed_policies}/{len(policies)}] {policy_name} completed | "
+            f"Avg success: {avg_success:.1f}% across {len(policy_results)} configs"
+        )
     
     print(f"\n{'='*120}")
     print(f"ALL EVALUATIONS COMPLETED! ({completed_policies}/{len(POLICIES)} policies)")
@@ -617,18 +644,11 @@ def main():
     
     # Build SB3 config lookup: {policy_name: (num_trucks, num_stops)}
     sb3_config_lookup = {}
-    for policy_entry in POLICIES:
-        policy_path, policy_type = policy_entry[0], policy_entry[1]
-        if policy_type.startswith("sb3-"):
-            # Try to extract config from path (e.g. .../10trucks_3stops/...)
-            base = os.path.basename(os.path.dirname(policy_path.rstrip('/')))
-            import re
-            m = re.search(r"(\d+)trucks_(\d+)stops", base)
-            if m:
-                num_trucks = int(m.group(1))
-                num_stops = int(m.group(2))
-                policy_name = os.path.basename(policy_path.rstrip('/'))
-                sb3_config_lookup[policy_name] = (num_trucks, num_stops)
+    for policy_name, policy_info in policies.items():
+        if policy_info["type"].startswith("sb3-"):
+            detected = _extract_sb3_config(policy_info["path"])
+            if detected:
+                sb3_config_lookup[policy_name] = detected
 
     # Print tables for each metric (passing the same mapping)
     print_metric_table(
@@ -676,15 +696,23 @@ def main():
         "UNLOADING TIME (hours)", format_cell, policy_mapping, sb3_config_lookup
     )
     print_metric_table(
+        results, "mean_completion_soc", "std_completion_soc",
+        "AVG COMPLETION SOC (%)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
+        results, "mean_exec_time", "std_exec_time",
+        "EXEC TIME (s)", format_cell, policy_mapping, sb3_config_lookup
+    )
+    print_metric_table(
         results, "mean_failures", "std_failures",
         "FAILURES", format_cell, policy_mapping, sb3_config_lookup
     )
     print_metric_table(
-        results, "mean_max_time_terminations", "std_max_time_terminations",
+        results, "max_time_terminations", None,
         "MAX TIME REACHED", format_cell_int, policy_mapping, sb3_config_lookup
     )
     print_metric_table(
-        results, "mean_max_steps_terminations", "std_max_steps_terminations",
+        results, "max_steps_terminations", None,
         "MAX STEPS REACHED", format_cell_int, policy_mapping, sb3_config_lookup
     )
     
@@ -697,11 +725,12 @@ def main():
     rows = []
     for policy_name, policy_results in results.items():
         for (num_trucks, num_stops), metrics in policy_results.items():
+            metrics_filtered = {k: v for k, v in metrics.items() if k != "episode_rewards"}
             row = {
                 "policy": policy_name,
                 "num_trucks": num_trucks,
                 "num_stops": num_stops,
-                **metrics
+                **metrics_filtered
             }
             rows.append(row)
     
@@ -755,9 +784,11 @@ def main():
         print_metric_table(results, "mean_waiting_time", "std_waiting_time", "WAITING TIME (hours)", format_cell, policy_mapping)
         print_metric_table(results, "mean_routing_time", "std_routing_time", "ROUTING TIME (hours)", format_cell, policy_mapping)
         print_metric_table(results, "mean_unloading_time", "std_unloading_time", "UNLOADING TIME (hours)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_completion_soc", "std_completion_soc", "AVG COMPLETION SOC (%)", format_cell, policy_mapping)
+        print_metric_table(results, "mean_exec_time", "std_exec_time", "EXEC TIME (s)", format_cell, policy_mapping)
         print_metric_table(results, "mean_failures", "std_failures", "FAILURES", format_cell, policy_mapping)
-        print_metric_table(results, "mean_max_time_terminations", "std_max_time_terminations", "MAX TIME REACHED", format_cell_int, policy_mapping)
-        print_metric_table(results, "mean_max_steps_terminations", "std_max_steps_terminations", "MAX STEPS REACHED", format_cell_int, policy_mapping)
+        print_metric_table(results, "max_time_terminations", None, "MAX TIME REACHED", format_cell_int, policy_mapping)
+        print_metric_table(results, "max_steps_terminations", None, "MAX STEPS REACHED", format_cell_int, policy_mapping)
         
         # Restore stdout
         sys.stdout = old_stdout

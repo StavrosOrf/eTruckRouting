@@ -99,11 +99,11 @@ def load_policy(
 
     saved_algo = _normalize_policy_type(net_config.get("algo"))
     resolved_algo = saved_algo or normalized_requested or "ppo"
-    if normalized_requested and resolved_algo != normalized_requested:
-        print(
-            f"[policy_utils] Requested '{normalized_requested}' but checkpoint is '{resolved_algo}'. "
-            "Using checkpoint definition."
-        )
+    # if normalized_requested and resolved_algo != normalized_requested:
+    #     print(
+    #         f"[policy_utils] Requested '{normalized_requested}' but checkpoint is '{resolved_algo}'. "
+    #         "Using checkpoint definition."
+    #     )
 
     env_temp = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
     try:
@@ -149,7 +149,7 @@ def load_policy(
         if os.path.exists(actor_path):
             model_path = candidate
             policy.load(model_path)
-            print(f"Loaded model from {actor_path}")
+            # print(f"Loaded model from {actor_path}")
             break
     
     if model_path is None:

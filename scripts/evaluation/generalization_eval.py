@@ -27,7 +27,6 @@ from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruc
 from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 
-# SB3 imports
 from stable_baselines3 import PPO, DQN
 from sb3_contrib import MaskablePPO, QRDQN
 # ============ HARDCODED PARAMETERS ============
@@ -46,28 +45,28 @@ POLICIES = [
         
     # eVRP Single TRUCK
     ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
     ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
         
-    # ("savings", "savings", "base"),
-    # ("nn-2opt", "nn-2opt", "base"),
+    ("savings", "savings", "base"),
+    ("nn-2opt", "nn-2opt", "base"),
     # ("optimal-vrp", "optimal-vrp", "vrp"),
-    
-    # Baselines
-
-
 ]
+
+
 # Grid parameters
 NUM_TRUCKS_GRID = [1]
-NUM_STOPS_GRID = [5, 10, 20, 30, 50]
+NUM_STOPS_GRID = [5, 10, 20, 30, 50,70,100]
 
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_EVAL_SCENARIOS = 5
+NUM_EVAL_SCENARIOS = 30
 SEED = 1000
 
 # Parallel processing
 USE_PARALLEL = True  # Run per-episode tasks in parallel
-NUM_WORKERS = 10
+NUM_WORKERS = 24
 GPU_DEVICES = (0, 1, 2)
 GPU_POLICY_TYPES = ("variable-ppo", "ppo-variable")
 # =============================================
@@ -391,8 +390,8 @@ def _aggregate_episode_results(episode_results):
         "std_exec_time": np.std(exec_times),
         "mean_truncated": np.mean(truncated_flags),
         "std_truncated": np.std(truncated_flags),
-        "max_time_terminations": np.sum(max_time_terminations),
-        "max_steps_terminations": np.sum(max_steps_terminations),
+        "max_time_terminations": np.mean(max_time_terminations),
+        "max_steps_terminations": np.mean(max_steps_terminations),
     }
 
 

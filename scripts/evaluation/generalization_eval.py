@@ -57,16 +57,17 @@ POLICIES = [
 
 # Grid parameters
 NUM_TRUCKS_GRID = [1]
-NUM_STOPS_GRID = [5, 10, 20, 30, 50,70,100]
+# NUM_STOPS_GRID = [5, 10, 20, 30, 50, 70, 100]
+NUM_STOPS_GRID = [5, 10, 20]
 
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_EVAL_SCENARIOS = 30
+NUM_EVAL_SCENARIOS = 2
 SEED = 1000
 
 # Parallel processing
 USE_PARALLEL = True  # Run per-episode tasks in parallel
-NUM_WORKERS = 24
+NUM_WORKERS = 10
 GPU_DEVICES = (0, 1, 2)
 GPU_POLICY_TYPES = ("variable-ppo", "ppo-variable")
 # =============================================
@@ -194,6 +195,11 @@ def _run_episode_task(task):
     local_config = copy.deepcopy(config)
     local_config["environment"]["num_trucks"] = num_trucks
     local_config["environment"]["num_stops"] = num_stops
+    if "vrp" in str(local_config.get("_config_name", "")).lower():        
+        if num_stops >= 100:
+            local_config["environment"]["max_time"] = 400
+        elif num_stops >= 70:
+            local_config["environment"]["max_time"] = 300
 
     env = EventDrivenTruckEnv(config=local_config, verbose=False, enable_plotting=False)
     try:
@@ -547,6 +553,7 @@ def main():
     print()
     
     config = load_config(CONFIG_FILE)
+    config["_config_name"] = CONFIG_FILE
 
     if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
         if config["delivery"].get("enable_flexible_delivery_order", False):

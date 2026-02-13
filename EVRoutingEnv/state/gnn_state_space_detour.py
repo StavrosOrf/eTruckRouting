@@ -60,6 +60,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         verbose: bool = False,
         route_delivery_after_charge_only: bool = True,
         num_chargers_to_keep: int = 2,
+        hop_limit: int = 2,
     ):
         """Initialize detour-based GNN state space."""
         super().__init__(
@@ -76,6 +77,8 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         self.NUM_CHARGERS_TO_KEEP = int(num_chargers_to_keep)
         # Optional routing restriction: after charging, try delivery first
         self.route_delivery_after_charge_only = route_delivery_after_charge_only
+        # Detour loop guard: max charger hops after charge without delivery
+        self.hop_limit = int(hop_limit)
     
     def get_state_GNN(self, env) -> HeteroData:
         """
@@ -134,6 +137,12 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         at_charger = current_location in env.charging_nodes
         must_leave = active_truck.must_leave_charger
         must_charge_now = at_charger and not must_leave
+
+        # Detour loop guard: limit charger hops after a charge when no delivery happens
+        just_charged = bool(getattr(active_truck, 'detour_last_action_was_charge', False))
+        hops_since_delivery = int(getattr(active_truck, 'detour_charger_hops_since_delivery', 0))
+        hop_limit_reached = just_charged and hops_since_delivery >= self.hop_limit
+        force_delivery_only = hop_limit_reached and not must_charge_now
 
         # Pre-compute whether routing directly to next delivery is feasible (used for route_delivery_first)
         delivery_feasible = False
@@ -287,6 +296,9 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                     new_feasible_mask[action_idx] = False
                     if self.verbose:
                         print(f"[Detour] Blocked routing to current location (charger {node_id})")
+                elif force_delivery_only:
+                    # Loop guard: block charger routing after charge when hop limit reached
+                    new_feasible_mask[action_idx] = False
                 elif must_charge_now and not allow_escape_routing:
                     # Must charge now - cannot route away
                     new_feasible_mask[action_idx] = False
@@ -325,6 +337,9 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                     new_feasible_mask[action_idx] = False
                     if self.verbose:
                         print(f"[Detour] Blocked routing to current location (delivery {node_id})")
+                elif force_delivery_only and node_id == next_delivery and not must_charge_now:
+                    # Loop guard: force next delivery even if it risks failure
+                    new_feasible_mask[action_idx] = True
                 elif must_charge_now and not allow_escape_routing:
                     # Must charge now - cannot route away
                     new_feasible_mask[action_idx] = False

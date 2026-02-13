@@ -28,6 +28,7 @@ from wandb.integration.sb3 import WandbCallback
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.action_mask import get_action_mask
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 
 
 class MaskableEvalCallback(EvalCallback):
@@ -166,26 +167,56 @@ def mask_fn(env) -> np.ndarray:
     return get_action_mask(base_env)
 
 
-def make_env(config_path: str, seed: int, enable_plotting: bool = False):
+def make_env(config, seed: int, enable_plotting: bool = False, 
+             use_detour: bool = False, vrp_top_k: int = 5,
+             detour_top_k: int = 2, detour_hop_limit: int = 2):
     """Create and return environment wrapped with Monitor."""
 
     def _init():
         env = EventDrivenTruckEnv(
-            config=config_path, verbose=False, enable_plotting=enable_plotting
+            config=config, verbose=False, enable_plotting=enable_plotting
         )
+        # Set up GNN state space for consistent action masking
+        mode = "vrp" if getattr(env, "enable_flexible_delivery_order", False) else "nonflex"
+        gnn_space = create_default_gnn_space(
+            env, 
+            mode=mode, 
+            use_detour=use_detour,
+            device="cpu",
+            vrp_top_k_deliveries=vrp_top_k,
+            detour_num_chargers_to_keep=detour_top_k,
+            detour_hop_limit=detour_hop_limit,
+        )
+        env._default_gnn_state_space = gnn_space
+        env.use_detour_mask = use_detour
         env = Monitor(env)
         return env
 
     return _init
 
 
-def make_masked_env(config_path: str, seed: int, enable_plotting: bool = False):
+def make_masked_env(config, seed: int, enable_plotting: bool = False,
+                    use_detour: bool = False, vrp_top_k: int = 5,
+                    detour_top_k: int = 2, detour_hop_limit: int = 2):
     """Create and return environment wrapped for MaskablePPO with Monitor and ActionMasker."""
 
     def _init():
         env = EventDrivenTruckEnv(
-            config=config_path, verbose=False, enable_plotting=enable_plotting
+            config=config, verbose=False, enable_plotting=enable_plotting
         )
+        # Set up GNN state space for consistent action masking
+        mode = "vrp" if getattr(env, "enable_flexible_delivery_order", False) else "nonflex"
+        gnn_space = create_default_gnn_space(
+            env, 
+            mode=mode, 
+            use_detour=use_detour,
+            device="cpu",
+            vrp_top_k_deliveries=vrp_top_k,
+            detour_num_chargers_to_keep=detour_top_k,
+            detour_hop_limit=detour_hop_limit,
+        )
+        env._default_gnn_state_space = gnn_space
+        env.use_detour_mask = use_detour
         env = Monitor(env)
         env = ActionMasker(env, mask_fn)
         return env
@@ -204,6 +235,12 @@ def train_sb3_agent(
     save_dir: str = "./saved_models",
     use_wandb: bool = True,
     project_name: str = "evrp-sb3",
+    num_trucks: int | None = None,
+    num_stops: int | None = None,
+    use_detour: bool = False,
+    vrp_top_k_deliveries: int = 5,
+    detour_top_k_chargers: int = 2,
+    detour_hop_limit: int = 2,
     **kwargs,
 ):
     """
@@ -233,6 +270,10 @@ def train_sb3_agent(
     from EVRoutingEnv.utils.utils import load_config
 
     config = load_config(config_path)
+    if num_trucks is not None:
+        config["environment"]["num_trucks"] = num_trucks
+    if num_stops is not None:
+        config["environment"]["num_stops"] = num_stops
 
     print(f"\n{'='*60}")
     print(f"Training Configuration")
@@ -242,6 +283,11 @@ def train_sb3_agent(
     print(f"Device: {device}")
     print(f"Total steps: {total_steps:,}")
     print(f"Config: {config_path}")
+    print(f"Use Detour: {use_detour}")
+    if use_detour:
+        print(f"Detour Top-K Chargers: {detour_top_k_chargers}")
+        print(f"Detour Hop Limit: {detour_hop_limit}")
+    print(f"VRP Top-K Deliveries: {vrp_top_k_deliveries}")
     print(f"{'='*60}\n")
 
     # Initialize wandb with group name based on environment config
@@ -264,6 +310,10 @@ def train_sb3_agent(
                 "config_path": config_path,
                 "num_trucks": num_trucks,
                 "num_stops": num_stops,
+                "use_detour": use_detour,
+                "vrp_top_k_deliveries": vrp_top_k_deliveries,
+                "detour_top_k_chargers": detour_top_k_chargers,
+                "detour_hop_limit": detour_hop_limit,
             },
             sync_tensorboard=True,
             save_code=True,
@@ -273,8 +323,12 @@ def train_sb3_agent(
     use_masked = algo == "maskppo"
     env_fn = make_masked_env if use_masked else make_env
 
-    train_env = DummyVecEnv([env_fn(config_path, seed)])
-    eval_env = DummyVecEnv([env_fn(config_path, seed + 100)])
+    train_env = DummyVecEnv([env_fn(config, seed, False, use_detour, 
+                                     vrp_top_k_deliveries, detour_top_k_chargers, 
+                                     detour_hop_limit)])
+    eval_env = DummyVecEnv([env_fn(config, seed + 100, False, use_detour,
+                                    vrp_top_k_deliveries, detour_top_k_chargers,
+                                    detour_hop_limit)])
 
     save_path = f"./saved_models/{group_name}/{run_name}/"
     os.makedirs(f"./saved_models/{group_name}", exist_ok=True)
@@ -379,6 +433,20 @@ def train_sb3_agent(
     
     model.save(f"{save_path}/last_model.zip")    
     model_path = f"{save_path}/last_model.zip"
+    
+    # Save GNN state space configuration for consistent evaluation
+    import yaml
+    gnn_config = {
+        "gnn_state_space": {
+            "vrp_top_k_deliveries": vrp_top_k_deliveries,
+            "detour_top_k_chargers": detour_top_k_chargers,
+            "detour_hop_limit": detour_hop_limit,
+        }
+    }
+    config_save_path = f"{save_path}/config.yaml"
+    with open(config_save_path, "w") as f:
+        yaml.dump(gnn_config, f, default_flow_style=False)
+    print(f"Saved GNN state space config to: {config_save_path}")
 
     # Close wandb
     if use_wandb:
@@ -451,6 +519,41 @@ def main():
         default="evpr-sb3",
         help="Wandb project name",
     )
+    parser.add_argument(
+        "--num-trucks",
+        type=int,
+        default=None,
+        help="Override num_trucks in the environment config",
+    )
+    parser.add_argument(
+        "--num-stops",
+        type=int,
+        default=None,
+        help="Override num_stops in the environment config",
+    )
+    parser.add_argument(
+        "--use-detour",
+        action="store_true",
+        help="Enable detour-based action masking for sequential delivery",
+    )
+    parser.add_argument(
+        "--vrp-top-k",
+        type=int,
+        default=5,
+        help="Number of top-k deliveries to keep in VRP mode action space",
+    )
+    parser.add_argument(
+        "--detour-top-k",
+        type=int,
+        default=2,
+        help="Number of top-k chargers to keep in detour mode",
+    )
+    parser.add_argument(
+        "--detour-hop-limit",
+        type=int,
+        default=2,
+        help="Maximum charger hops after charging before forcing delivery in detour mode",
+    )
 
     args = parser.parse_args()
 
@@ -466,6 +569,12 @@ def main():
         save_dir=args.save_dir,
         use_wandb=not args.no_wandb,
         project_name=args.project,
+        num_trucks=args.num_trucks,
+        num_stops=args.num_stops,
+        use_detour=args.use_detour,
+        vrp_top_k_deliveries=args.vrp_top_k,
+        detour_top_k_chargers=args.detour_top_k,
+        detour_hop_limit=args.detour_hop_limit,
     )
 
     print(f"\n{'='*60}")

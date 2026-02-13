@@ -61,6 +61,7 @@ def create_default_gnn_space(
     device: Optional[str] = None,
     vrp_top_k_deliveries: int = 5,
     detour_num_chargers_to_keep: int = 2,
+    detour_hop_limit: int = 2,
 ):
     """Instantiate a GNN state-space object from an environment.
 
@@ -69,6 +70,7 @@ def create_default_gnn_space(
         mode: "nonflex" or "vrp".
         use_detour: Toggle detour-based charger restriction for non-flex runs.
         device: Optional torch device string.
+        detour_hop_limit: Max charger hops after charge without delivery (detour mode only).
     """
     device = device or getattr(env, "device", "cpu")
 
@@ -94,4 +96,5 @@ def create_default_gnn_space(
         device=device,
         use_detour=use_detour,
         detour_num_chargers_to_keep=detour_num_chargers_to_keep,
+        detour_hop_limit=detour_hop_limit,
     )

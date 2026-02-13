@@ -10,13 +10,13 @@ import yaml
 
 # python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 python_path = "~/EVRP/.venv/bin/python"
-config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
-# config_path = "EVRoutingEnv/config_files/config.yaml"
+# config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
+config_path = "EVRoutingEnv/config_files/config.yaml"
 
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
 
+# run_algorithms = ["ppo-variable", "sb3"]
 run_algorithms = ["ppo-variable"]
-# run_algorithms = ["sb3"]
 
 # PPO-V (parallel) settings
 ppo_params = {
@@ -32,31 +32,32 @@ ppo_params = {
 }
 
 ppo_grid = {
-    # "num_trucks": [1, 5, 10, 30],
-    "num_trucks": [1],
-    
-    "num_stops": [10],
+    "num_trucks": [10, 30, 50, 100],
+    # "num_trucks": [1],
+    "num_stops": [3],
     "steps_per_update": [256],
     "epochs": [5],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
     "vrp_top_k_deliveries": [5],
-    "detour_top_k_chargers": [2, 3, 5],
-    "seed": [0, 1, 2],
+    "detour_top_k_chargers": [2, 5],
+    "detour_hop_limit": [1, 2, 3],
+    "seed": [0],
 }
 
 # SB3 settings
 sb3_grid = {
     # "algorithm": ["maskppo","dqn", "qrdqn"],
-    "algorithm": ["maskppo"],
-    "seed": [0],
+    "algorithm": ["maskppo", "ppo"],
+    "num_trucks": ppo_grid["num_trucks"],
+    "seed": [1],
 }
 sb3_params = {
     "total_steps": 1_000_000,
-    "eval_freq": 1000,
+    "eval_freq": 5000,
     "n_eval_episodes": 50,
-    "detour_top_k_chargers": [2, 3, 5],
+    "detour_top_k_chargers": [5],
     "project": "evpr-newtests",
     "save_dir": "./saved_models",
     "device": "cuda",
@@ -138,13 +139,14 @@ if "ppo-variable" in run_algorithms:
             mlp_hidden_dim,
             vrp_top_k_deliveries,
             detour_top_k_chargers,
+            detour_hop_limit,
             seed,
         ) = job
         mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
         extra = (
             f"spu{steps_per_update}_ep{epochs}_ent{entropy_coef}"
             f"_g{gnn_hidden_dim}_m{mlp_hidden_dim}"
-            f"_vk{vrp_top_k_deliveries}_ck{detour_top_k_chargers}_s{seed}"
+            f"_vk{vrp_top_k_deliveries}_ck{detour_top_k_chargers}_hl{detour_hop_limit}_s{seed}"
         )
         exp_name, group_name = build_names(
             "ppov",
@@ -184,6 +186,7 @@ if "ppo-variable" in run_algorithms:
             f" --num-eval-envs {ppo_params['num_eval_envs']}"
             f" --vrp-top-k-deliveries {vrp_top_k_deliveries}"
             f" --detour-top-k-chargers {detour_top_k_chargers}"
+            f" --detour-hop-limit {detour_hop_limit}"
             f" --device {ppo_device}"
         )
         tmux_send(exp_name, cmd)
@@ -193,13 +196,13 @@ if "sb3" in run_algorithms:
     sb3_jobs = list(itertools.product(*sb3_grid.values()))
     print(f"SB3 jobs: {len(sb3_jobs)}")
     for job in sb3_jobs:
-        algorithm, seed = job
+        algorithm, num_trucks, seed = job
         mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
         exp_name, _ = build_names(
             f"sb3-{algorithm}",
             meta,
             f"s{seed}",
-            num_trucks=meta["num_trucks"],
+            num_trucks=num_trucks,
             num_stops=meta["num_stops"],
             mode_label=mode_label,
         )
@@ -213,6 +216,7 @@ if "sb3" in run_algorithms:
             f" --n-eval-episodes {sb3_params['n_eval_episodes']}"
             f" --project {sb3_params['project']}"
             f" --save-dir {sb3_params['save_dir']}"
+            f" --num-trucks {num_trucks}"
             f" --device {sb3_params['device']}"
         )
         tmux_send(exp_name, cmd)

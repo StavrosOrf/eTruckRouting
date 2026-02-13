@@ -66,6 +66,7 @@ def worker_process(
     state_space_type,
     vrp_top_k_deliveries,
     detour_top_k_chargers,
+    detour_hop_limit,
     verbose=False,
 ):
     """Worker process that runs a single environment.
@@ -94,6 +95,7 @@ def worker_process(
             state_space_type,
             vrp_top_k_deliveries,
             detour_top_k_chargers,
+            detour_hop_limit,
         )
         
         current_obs = None
@@ -163,6 +165,7 @@ class ParallelEnvs:
         state_space_type: str = 'base',
         vrp_top_k_deliveries: int = 5,
         detour_top_k_chargers: int = 2,
+        detour_hop_limit: int = 2,
         verbose: bool = False,
     ):
         """Initialize parallel environments.
@@ -178,6 +181,7 @@ class ParallelEnvs:
         self.state_space_type = state_space_type
         self.vrp_top_k_deliveries = vrp_top_k_deliveries
         self.detour_top_k_chargers = detour_top_k_chargers
+        self.detour_hop_limit = detour_hop_limit
         
         # Create pipes for communication
         self.remotes, self.work_remotes = zip(*[Pipe() for _ in range(num_envs)])
@@ -195,6 +199,7 @@ class ParallelEnvs:
                     self.state_space_type,
                     self.vrp_top_k_deliveries,
                     self.detour_top_k_chargers,
+                    self.detour_hop_limit,
                     verbose,
                 ),
                 daemon=True
@@ -310,7 +315,10 @@ def evaluate_policy_parallel(
     seed: int = 0,
     num_parallel_envs: int = 10,
     verbose: bool = False,
-    state_space_type: str = 'nonflex'
+    state_space_type: str = 'nonflex',
+    vrp_top_k_deliveries: int = 5,
+    detour_top_k_chargers: int = 2,
+    detour_hop_limit: int = 2,
 ) -> dict:
     """Evaluate policy using parallel environments.
     
@@ -326,7 +334,15 @@ def evaluate_policy_parallel(
         Dictionary of evaluation metrics
     """
     # Create parallel environments for evaluation
-    parallel_envs = ParallelEnvs(config, num_parallel_envs, state_space_type=state_space_type, verbose=False)
+    parallel_envs = ParallelEnvs(
+        config,
+        num_parallel_envs,
+        state_space_type=state_space_type,
+        vrp_top_k_deliveries=vrp_top_k_deliveries,
+        detour_top_k_chargers=detour_top_k_chargers,
+        detour_hop_limit=detour_hop_limit,
+        verbose=False,
+    )
     
     # Storage for metrics
     eval_rewards = []
@@ -495,6 +511,8 @@ def parse_args():
                           help='Top-K deliveries to expose in VRP action space')
     env_group.add_argument('--detour-top-k-chargers', type=int, default=2,
                           help='Top-K chargers to expose in detour action space')
+    env_group.add_argument('--detour-hop-limit', type=int, default=2,
+                          help='Max charger hops after charge without delivery (detour mode)')
     
     # Parallel training parameters
     parallel_group = parser.add_argument_group('Parallel Training')
@@ -577,6 +595,7 @@ def build_and_cache_state_space(
     state_space_type: str,
     vrp_top_k_deliveries: int,
     detour_top_k_chargers: int,
+    detour_hop_limit: int,
 ):
     """Create and cache the default GNN state space on the environment."""
     normalized = 'nonflex' if state_space_type == 'base' else state_space_type
@@ -592,6 +611,7 @@ def build_and_cache_state_space(
         use_detour=use_detour,
         vrp_top_k_deliveries=vrp_top_k_deliveries,
         detour_num_chargers_to_keep=detour_top_k_chargers,
+        detour_hop_limit=detour_hop_limit,
     )
     env._default_gnn_state_space = gnn_space
     return gnn_space, mode, use_detour
@@ -673,6 +693,7 @@ def train(args):
         state_space_type,
         args.vrp_top_k_deliveries,
         args.detour_top_k_chargers,
+        args.detour_hop_limit,
     )
     
     # Get state dimensions from temporary environment
@@ -755,6 +776,7 @@ def train(args):
         state_space_type=state_space_type,
         vrp_top_k_deliveries=args.vrp_top_k_deliveries,
         detour_top_k_chargers=args.detour_top_k_chargers,
+        detour_hop_limit=args.detour_hop_limit,
         verbose=args.verbose,
     )
 
@@ -877,7 +899,10 @@ def train(args):
                         seed=args.seed + 100000,
                         num_parallel_envs=args.num_eval_envs,
                         verbose=False,
-                        state_space_type=state_space_type
+                        state_space_type=state_space_type,
+                        vrp_top_k_deliveries=args.vrp_top_k_deliveries,
+                        detour_top_k_chargers=args.detour_top_k_chargers,
+                        detour_hop_limit=args.detour_hop_limit,
                     )
                     
                     print(f"Mean Reward: {eval_results['mean_reward']:.2f} ± {eval_results['std_reward']:.2f}")

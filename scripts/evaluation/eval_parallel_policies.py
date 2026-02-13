@@ -32,38 +32,66 @@ from sb3_contrib import MaskablePPO, QRDQN
 
 # ============ HARDCODED PARAMETERS ============
 POLICIES = [
-    #Trained models on Electric Truck Routing 
-    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),       
-    # ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),     
+    #Trained models on Electric Truck Routing     
+    
+    #1T3S
+    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),   
+    # ("saved_models/1trucks_3stops/maskppo_seed1_20260212_223935/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),   
+         
+    # #5T3S
+    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"), 
+    # ("saved_models/5trucks_3stops/maskppo_seed1_20260212_223937/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/5trucks_3stops/ppo_seed1_20260212_223937/best_model.zip", "sb3-ppo", "base"),
+    
+    # # #10T3S
+    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
+    ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    
+    # #30T3S
+    ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"),  
+    # ("saved_models/30trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/30trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),
+    
+    # #50T3S
+    ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), 
+    # ("saved_models/50trucks_3stops/maskppo_seed0_20260212_223719/best_model.zip", "sb3-maskppo", "base"), #more training needed !!!!
+    # ("saved_models/50trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    
+    #100T3S
+    ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), #more training needed !!!!
+    # ("saved_models/100trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),  #more training needed !!!!
+    # ("saved_models/100trucks_3stops/ppo_seed1_20260212_223936/best_model.zip", "sb3-ppo", "base"),
+             
+    
+    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
+    ("heuristic", "heuristic", "base"),    
+    ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
     
     
-    # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
-    #("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
-    
-    # ("heuristic", "heuristic", "base"),    
         
     # eVRP Single TRUCK
-    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
     # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
         
-    ("savings", "savings", "base"),
-    ("nn-2opt", "nn-2opt", "base"),
-    ("optimal-vrp", "optimal-vrp", "vrp"),
+    # ("savings", "savings", "base"),
+    # ("nn-2opt", "nn-2opt", "base"),
+    # ("optimal-vrp", "optimal-vrp", "vrp"),
 
 ]
-# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 10
-NUM_EVAL_SCENARIOS = 100
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 10  # Must match the configuration used during training
+NUM_STOPS = 3
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 
-NUM_WORKERS = 16
+NUM_WORKERS = 24 
 GPU_DEVICES = (0, 1, 2)
 # Use GPU only for these policy types
 GPU_POLICY_TYPES = ("variable-ppo", "ppo-variable")
@@ -106,6 +134,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
     waiting_times = []
     routing_times = []
     unloading_times = []
+    total_truck_times = []
     failures = []
     avg_completion_soc = []
     exec_times = []
@@ -149,7 +178,10 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
                     action = policy.get_action(env)
                 elif policy_type in ("ppo-variable", "variable-ppo"):
                     gnn_state = gnn_state_space.get_state_GNN(env)
-                    raw_action = policy.select_action(gnn_state, deterministic=True)
+                    mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
+                    raw_action = policy.select_action(
+                        gnn_state, deterministic=True, action_mask=mask
+                    )
                     action = policy.to_env_action(gnn_state, int(raw_action))
                 else:
                     gnn_state = gnn_state_space.get_state_GNN(env)
@@ -183,6 +215,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         total_waiting = 0.0
         total_routing = 0.0
         total_unloading = 0.0
+        total_truck_time = 0.0
         num_failed = 0
         num_deliveries = 0
 
@@ -192,6 +225,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
             total_sessions += t["num_charging_sessions"]
             total_waiting += t["waiting_time"]
             total_unloading += t["total_unloading_time"]
+            total_truck_time += t["total_time"]
 
             if t["failed"]:
                 num_failed += 1
@@ -221,6 +255,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         waiting_times.append(total_waiting)
         routing_times.append(total_routing)
         unloading_times.append(total_unloading)
+        total_truck_times.append(total_truck_time)
         failures.append(num_failed)
         if policy_type in ("optimal-vrp", "optimal_vrp"):
             vrp_feasible_flags.append(not episode_policy.episode_infeasible)
@@ -248,6 +283,8 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         "std_routing_time": np.std(routing_times),
         "mean_unloading_time": np.mean(unloading_times),
         "std_unloading_time": np.std(unloading_times),
+        "mean_total_truck_time": np.mean(total_truck_times),
+        "std_total_truck_time": np.std(total_truck_times),
         "mean_failures": np.mean(failures),
         "std_failures": np.std(failures),
         "mean_completion_soc": np.mean(avg_completion_soc),
@@ -283,7 +320,8 @@ def _get_gnn_state_space(space: str, policy_path: str, env_init: EventDrivenTruc
     gnn_cfg = _load_saved_gnn_state_config(policy_path)
     vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
     detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
-    cache_key = (space, vrp_top_k, detour_top_k)
+    detour_hop_limit = int(gnn_cfg.get("detour_hop_limit", 2))
+    cache_key = (space, vrp_top_k, detour_top_k, detour_hop_limit)
     if cache_key not in _WORKER_CACHE["gnn_state_space"]:
         _WORKER_CACHE["gnn_state_space"][cache_key] = create_default_gnn_space(
             env_init,
@@ -292,6 +330,7 @@ def _get_gnn_state_space(space: str, policy_path: str, env_init: EventDrivenTruc
             device="cpu",
             vrp_top_k_deliveries=vrp_top_k,
             detour_num_chargers_to_keep=detour_top_k,
+            detour_hop_limit=detour_hop_limit,
         )
     return _WORKER_CACHE["gnn_state_space"][cache_key]
 
@@ -390,7 +429,10 @@ def _run_episode_task(task):
                     action = episode_policy.get_action(env)
                 elif resolved_type in ("ppo-variable", "variable-ppo"):
                     gnn_state = gnn_state_space.get_state_GNN(env)
-                    raw_action = episode_policy.select_action(gnn_state, deterministic=True)
+                    mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
+                    raw_action = episode_policy.select_action(
+                        gnn_state, deterministic=True, action_mask=mask
+                    )
                     action = episode_policy.to_env_action(gnn_state, int(raw_action))
                 else:
                     gnn_state = gnn_state_space.get_state_GNN(env)
@@ -419,6 +461,7 @@ def _run_episode_task(task):
         total_waiting = 0.0
         total_routing = 0.0
         total_unloading = 0.0
+        total_truck_time = 0.0
         num_failed = 0
         num_deliveries = 0
 
@@ -428,6 +471,7 @@ def _run_episode_task(task):
             total_sessions += t["num_charging_sessions"]
             total_waiting += t["waiting_time"]
             total_unloading += t["total_unloading_time"]
+            total_truck_time += t["total_time"]
 
             if t["failed"]:
                 num_failed += 1
@@ -467,6 +511,7 @@ def _run_episode_task(task):
             "waiting_time": total_waiting,
             "routing_time": total_routing,
             "unloading_time": total_unloading,
+            "total_truck_time": total_truck_time,
             "failures": num_failed,
             "avg_completion_soc": avg_soc,
             "exec_time": exec_time,
@@ -503,6 +548,8 @@ def _aggregate_episode_results(episode_results):
             "std_routing_time": float("nan"),
             "mean_unloading_time": float("nan"),
             "std_unloading_time": float("nan"),
+            "mean_total_truck_time": float("nan"),
+            "std_total_truck_time": float("nan"),
             "mean_failures": float("nan"),
             "std_failures": float("nan"),
             "mean_completion_soc": float("nan"),
@@ -524,6 +571,7 @@ def _aggregate_episode_results(episode_results):
     waiting_times = []
     routing_times = []
     unloading_times = []
+    total_truck_times = []
     failures = []
     avg_completion_soc = []
     exec_times = []
@@ -542,6 +590,7 @@ def _aggregate_episode_results(episode_results):
         waiting_times.append(result["waiting_time"])
         routing_times.append(result["routing_time"])
         unloading_times.append(result["unloading_time"])
+        total_truck_times.append(result["total_truck_time"])
         failures.append(result["failures"])
         avg_completion_soc.append(result["avg_completion_soc"])
         exec_times.append(result["exec_time"])
@@ -571,6 +620,8 @@ def _aggregate_episode_results(episode_results):
         "std_routing_time": np.std(routing_times),
         "mean_unloading_time": np.mean(unloading_times),
         "std_unloading_time": np.std(unloading_times),
+        "mean_total_truck_time": np.mean(total_truck_times),
+        "std_total_truck_time": np.std(total_truck_times),
         "mean_failures": np.mean(failures),
         "std_failures": np.std(failures),
         "mean_completion_soc": np.mean(avg_completion_soc),
@@ -917,7 +968,7 @@ def main():
             else:
                 print(f" {' '*col_width}", end="")
             if j < len(name_lines) - 1:
-                print("|", end="")
+                print(" |", end="")
         if i < max_name_lines - 1:
             print()
             print(" " * metric_col_width + "|", end="")
@@ -945,6 +996,7 @@ def main():
             ("Waiting Time (h)", "mean_waiting_time", "std_waiting_time", ".1f"),
             ("Routing Time (h)", "mean_routing_time", "std_routing_time", ".1f"),
             ("Unloading Time (h)", "mean_unloading_time", "std_unloading_time", ".1f"),
+            ("Total Truck Time (h)", "mean_total_truck_time", "std_total_truck_time", ".1f"),
             ("Failures", "mean_failures", "std_failures", ".1f"),
             ("Max Time Reached", "max_time_terminations", None, ".0f"),
             ("Max Steps Reached", "max_steps_terminations", None, ".0f"),

@@ -34,23 +34,17 @@ from algo.policy_utils import load_policy
 # ============ CONFIGURATION ============
 # Policies to compare
 POLICIES = [
-    # ("saved_models/NewFeasibleSpace_FixedGraph_ppo-variable_steps=1024_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256/", "variable-ppo"),
-    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    # ("saved_models/OneChargePerDelivery_Base_r=500_updatedDelivery_steps=512_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_9306/", "variable-ppo", "detour"),
-    # ("saved_models/Top5Charger_Fallback_OneChargePerDelivery_Base_r=500_updatedDelivery_steps=256_epochs=5_ent=0.1_seed=0_gnnhd=32_mlphd=256_7597/", "variable-ppo", "detour"),
-    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_2427/", "variable-ppo", "vrp"),    
-    # ("saved_models/ppov_1T10S_spu256_ep5_ent0.1_seed0_1121/", "variable-ppo", "vrp"),
-    
-    
-    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),      
-    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
+    # # #10T3S
     ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),  
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
+    # ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
     
     #VRP models
     # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),    
     # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
+      ("optimal", "optimal"),
       ("optimal-simple", "optimal-simple"),
     # ("optimal-vrp", "optimal-vrp"),
     
@@ -103,6 +97,7 @@ def _create_gnn_state_space(env_init, gnn_space_type: str, policy_path: str):
     gnn_cfg = _load_saved_gnn_state_config(policy_path)
     vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
     detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
+    detour_hop_limit = int(gnn_cfg.get("detour_hop_limit", 2))
     return create_default_gnn_space(
         env_init,
         mode=mode,
@@ -110,6 +105,7 @@ def _create_gnn_state_space(env_init, gnn_space_type: str, policy_path: str):
         device="cpu",
         vrp_top_k_deliveries=vrp_top_k,
         detour_num_chargers_to_keep=detour_top_k,
+        detour_hop_limit=detour_hop_limit,
     )
 
 
@@ -225,7 +221,10 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
             gnn_state = gnn_state_space.get_state_GNN(env)
             
             if active_policy_type == "ppo-variable" or active_policy_type == "variable-ppo":
-                raw_action = policy.select_action(gnn_state, deterministic=True)
+                mask = torch.tensor(get_action_mask(env), dtype=torch.bool)
+                raw_action = policy.select_action(
+                    gnn_state, deterministic=True, action_mask=mask
+                )
                 action = policy.to_env_action(gnn_state, int(raw_action))
             else:
                 mask = torch.tensor(get_action_mask(env), dtype=torch.bool)

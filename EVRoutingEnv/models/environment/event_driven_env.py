@@ -884,6 +884,18 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             # Sequential mode: check if target is next delivery
             is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+
+        # Track detour loop state (charge -> charger without delivery)
+        just_charged = getattr(truck, "detour_last_action_was_charge", False)
+        if is_delivery_nav:
+            truck.detour_charger_hops_since_delivery = 0
+            truck.detour_last_action_was_charge = False
+        elif is_charger_nav:
+            if just_charged:
+                truck.detour_charger_hops_since_delivery += 1
+            truck.detour_last_action_was_charge = False
+        else:
+            truck.detour_last_action_was_charge = False
         
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
         if is_delivery_nav:

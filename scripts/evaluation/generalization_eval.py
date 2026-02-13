@@ -127,7 +127,8 @@ def _get_gnn_state_space(space, policy_path, env_init):
     gnn_cfg = _load_saved_gnn_state_config(policy_path)
     vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
     detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
-    cache_key = (space, vrp_top_k, detour_top_k)
+    detour_hop_limit = int(gnn_cfg.get("detour_hop_limit", 2))
+    cache_key = (space, vrp_top_k, detour_top_k, detour_hop_limit)
     if cache_key not in _WORKER_CACHE["gnn_state_space"]:
         _WORKER_CACHE["gnn_state_space"][cache_key] = create_default_gnn_space(
             env_init,
@@ -136,6 +137,7 @@ def _get_gnn_state_space(space, policy_path, env_init):
             device="cpu",
             vrp_top_k_deliveries=vrp_top_k,
             detour_num_chargers_to_keep=detour_top_k,
+            detour_hop_limit=detour_hop_limit,
         )
     return _WORKER_CACHE["gnn_state_space"][cache_key]
 

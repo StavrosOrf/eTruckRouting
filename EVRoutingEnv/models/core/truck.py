@@ -68,6 +68,10 @@ class Truck:
         
         # Charging policy: truck must leave after charging
         self.must_leave_charger = False  # True if truck just finished charging and must leave
+
+        # Detour loop guard tracking (sequential mode)
+        self.detour_last_action_was_charge = False
+        self.detour_charger_hops_since_delivery = 0
         
         # Event monitoring system
         self.event_history: List[Dict] = []  # Log of all truck events with timestamps
@@ -156,6 +160,10 @@ class Truck:
             if delivered_node is not None:
                 self.delivered_nodes.add(delivered_node)
                 self.current_node = delivered_node
+
+                # Reset detour loop counters on delivery progress
+                self.detour_last_action_was_charge = False
+                self.detour_charger_hops_since_delivery = 0
             
             # Check if all deliveries complete (excluding depot at index 0)
             all_delivery_nodes = set(self.delivery_sequence[1:])
@@ -167,6 +175,10 @@ class Truck:
             if self.current_sequence_index + 1 < len(self.delivery_sequence):
                 self.current_sequence_index += 1
                 self.current_node = self.delivery_sequence[self.current_sequence_index]
+
+                # Reset detour loop counters on delivery progress
+                self.detour_last_action_was_charge = False
+                self.detour_charger_hops_since_delivery = 0
                 
                 # Check if all deliveries complete
                 if self.current_sequence_index == len(self.delivery_sequence) - 1:
@@ -274,6 +286,9 @@ class Truck:
         self.is_charging = True
         self.charge_start_time = current_time
         self.must_leave_charger = False  # Reset flag when starting new charge session
+
+        # Track that the last decision was a charge
+        self.detour_last_action_was_charge = True
         
         self._record_event(
             event_type="CHARGING_START",
@@ -515,6 +530,8 @@ class Truck:
             "total_unloading_time": self.total_unloading_time,
             "waiting_time": self.waiting_time,
             "num_charging_sessions": self.num_charging_sessions,
+            "detour_last_action_was_charge": self.detour_last_action_was_charge,
+            "detour_charger_hops_since_delivery": self.detour_charger_hops_since_delivery,
             "total_distance_to_travel": sum(
                 self.delivery_sequence[i+1] - self.delivery_sequence[i] 
                 for i in range(len(self.delivery_sequence) - 1)

@@ -35,39 +35,46 @@ POLICIES = [
     # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),       
     # ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"),    
     # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),     
-    
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"), 
+        
+    # ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"), 
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"), 
+    # ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),         
+    # ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl3_s0_3485/", "variable-ppo", "detour"),
+    ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
     
     # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
-    #("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
+    ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
     
     # ("heuristic", "heuristic", "base"),    
         
     # eVRP Single TRUCK
-    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
         
-    ("savings", "savings", "base"),
-    ("nn-2opt", "nn-2opt", "base"),
+    # ("savings", "savings", "base"),
+    # ("nn-2opt", "nn-2opt", "base"),
     # ("optimal-vrp", "optimal-vrp", "vrp"),
 ]
 
 
 # Grid parameters
-NUM_TRUCKS_GRID = [1]
+NUM_TRUCKS_GRID = [1, 25, 50, 75, 100, 125, 150, 175, 200]
+# NUM_TRUCKS_GRID = [10, 200]
 # NUM_STOPS_GRID = [5, 10, 20, 30, 50, 70, 100]
-NUM_STOPS_GRID = [5, 10, 20]
+NUM_STOPS_GRID = [1, 2, 3, 4, 5, 6, 7, 8]
+# NUM_STOPS_GRID = [1,3]
 
-# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_EVAL_SCENARIOS = 2
+CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_EVAL_SCENARIOS = 100
 SEED = 1000
 
 # Parallel processing
 USE_PARALLEL = True  # Run per-episode tasks in parallel
-NUM_WORKERS = 10
+NUM_WORKERS = 24
 GPU_DEVICES = (0, 1, 2)
 GPU_POLICY_TYPES = ("variable-ppo", "ppo-variable")
 # =============================================
@@ -149,8 +156,11 @@ def _should_use_gpu(policy_type):
 
 
 def _load_policy_cached(policy_path, policy_type, gnn_state_space, config, device):
-    if policy_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
-        return None, policy_type
+    # Handle optimization-based methods (no neural network loading needed)
+    if policy_type in ("optimal", "optimal_simple", "optimal-simple", "optimal-vrp", "optimal_vrp"):
+        # Normalize the type for later use
+        normalized_type = policy_type.replace("-", "_")
+        return None, normalized_type
     cache_key = (policy_path, policy_type, device)
     if cache_key in _WORKER_CACHE["policies"]:
         return _WORKER_CACHE["policies"][cache_key]
@@ -222,7 +232,7 @@ def _run_episode_task(task):
             episode_policy = OptimalGurobiPolicy(verbose=False)
         elif resolved_type == "optimal_simple":
             episode_policy = OptimalGurobiSimplePolicy(verbose=False)
-        elif resolved_type in ("optimal-vrp", "optimal_vrp"):
+        elif resolved_type in ("optimal_vrp",):
             episode_policy = OptimalVRPSingleTruckPolicy(verbose=False)
         else:
             episode_policy = policy
@@ -237,7 +247,7 @@ def _run_episode_task(task):
                 else:
                     action, _states = episode_policy.predict(obs, deterministic=True)
             else:
-                if resolved_type in ("optimal", "optimal_simple", "optimal-vrp", "optimal_vrp"):
+                if resolved_type in ("optimal", "optimal_simple", "optimal_vrp"):
                     action = episode_policy.get_action(env)
                 elif resolved_type in ("heuristic", "savings", "nn-2opt"):
                     action = episode_policy.get_action(env)

@@ -35,38 +35,42 @@ POLICIES = [
     #Trained models on Electric Truck Routing     
     
     #1T3S
-    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),   
-    # ("saved_models/1trucks_3stops/maskppo_seed1_20260212_223935/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/1trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),   
+    ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),   
+    ("saved_models/1trucks_3stops/maskppo_seed1_20260212_223935/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),   
          
     # #5T3S
     ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"), 
-    # ("saved_models/5trucks_3stops/maskppo_seed1_20260212_223937/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/5trucks_3stops/ppo_seed1_20260212_223937/best_model.zip", "sb3-ppo", "base"),
+    ("saved_models/5trucks_3stops/maskppo_seed1_20260212_223937/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/5trucks_3stops/ppo_seed1_20260212_223937/best_model.zip", "sb3-ppo", "base"),
     
-    # # #10T3S
+    # # # #10T3S
     ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
+    #("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
+    ### ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
     ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
     ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
     
-    # #30T3S
-    ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"),  
-    # ("saved_models/30trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/30trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),
+    # # #30T3S
+    ## ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"),  
+    ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
+    ("saved_models/30trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/30trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),
     
     # #50T3S
-    ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), 
-    # ("saved_models/50trucks_3stops/maskppo_seed0_20260212_223719/best_model.zip", "sb3-maskppo", "base"), #more training needed !!!!
-    # ("saved_models/50trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    ####("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), 
+    ###("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
+    ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl3_s0_3485/", "variable-ppo", "detour"), 
+    ("saved_models/50trucks_3stops/maskppo_seed0_20260212_223719/best_model.zip", "sb3-maskppo", "base"), #more training needed !!!!
+    ("saved_models/50trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
     
     #100T3S
-    ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), #more training needed !!!!
-    # ("saved_models/100trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),  #more training needed !!!!
-    # ("saved_models/100trucks_3stops/ppo_seed1_20260212_223936/best_model.zip", "sb3-ppo", "base"),
+    ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
+    ("saved_models/100trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),  #more training needed !!!!
+    ("saved_models/100trucks_3stops/ppo_seed1_20260212_223936/best_model.zip", "sb3-ppo", "base"),
              
     
-    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver
+    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver, usually better opt-based solution
     ("heuristic", "heuristic", "base"),    
     ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
     
@@ -85,9 +89,9 @@ POLICIES = [
 ]
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 # CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 10  # Must match the configuration used during training
+NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 50
+NUM_EVAL_SCENARIOS = 200
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 
@@ -103,6 +107,7 @@ _WORKER_CACHE = {
 }
 
 
+
 def _cleanup_children():
     for child in mp.active_children():
         try:
@@ -115,6 +120,20 @@ def _cleanup_children():
 def _extract_sb3_config(policy_path):
     """Return (num_trucks, num_stops) if encoded in path like '1trucks_10stops'."""
     for part in policy_path.rstrip("/").split("/"):
+        match = re.search(r"(\d+)trucks_(\d+)stops", part)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def parse_policy_size(policy_path):
+    """Return (num_trucks, num_stops) if encoded in path like '1T3S' or '1trucks_3stops'."""
+    if not isinstance(policy_path, str):
+        return None
+    for part in policy_path.rstrip("/").split("/"):
+        match = re.search(r"(\d+)T(\d+)S", part)
+        if match:
+            return int(match.group(1)), int(match.group(2))
         match = re.search(r"(\d+)trucks_(\d+)stops", part)
         if match:
             return int(match.group(1)), int(match.group(2))
@@ -321,7 +340,14 @@ def _get_gnn_state_space(space: str, policy_path: str, env_init: EventDrivenTruc
     vrp_top_k = int(gnn_cfg.get("vrp_top_k_deliveries", 5))
     detour_top_k = int(gnn_cfg.get("detour_top_k_chargers", 2))
     detour_hop_limit = int(gnn_cfg.get("detour_hop_limit", 2))
-    cache_key = (space, vrp_top_k, detour_top_k, detour_hop_limit)
+    cache_key = (
+        space,
+        vrp_top_k,
+        detour_top_k,
+        detour_hop_limit,
+        env_init.num_trucks,
+        env_init.num_stops,
+    )
     if cache_key not in _WORKER_CACHE["gnn_state_space"]:
         _WORKER_CACHE["gnn_state_space"][cache_key] = create_default_gnn_space(
             env_init,
@@ -643,58 +669,11 @@ def _filter_episode_results(episode_results, excluded_indices):
     ]
 
 
-def main():
-    """Evaluate policies with hardcoded parameters in parallel."""
-
-    atexit.register(_cleanup_children)
-
-    config = load_config(CONFIG_FILE)
-
-    if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
-        if config["delivery"].get("enable_flexible_delivery_order", False):
-            print(
-                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
-            )
-            config["delivery"]["enable_flexible_delivery_order"] = False
-
-    sb3_present = any(len(entry) >= 2 and entry[1].startswith("sb3-") for entry in POLICIES)
-    sb3_configs = []
-    for entry in POLICIES:
-        if len(entry) < 2:
-            continue
-        if entry[1].startswith("sb3-"):
-            detected = _extract_sb3_config(entry[0])
-            if detected:
-                sb3_configs.append(detected)
-    unique_sb3_configs = set(sb3_configs)
-
-    eval_num_trucks = NUM_TRUCKS
-    eval_num_stops = NUM_STOPS
-    if AUTO_DETECT_SB3_CONFIG and unique_sb3_configs:
-        if len(unique_sb3_configs) > 1:
-            raise ValueError(
-                f"SB3 policies must share the same training config, found: {sorted(unique_sb3_configs)}"
-            )
-        eval_num_trucks, eval_num_stops = next(iter(unique_sb3_configs))
-        print(
-            f"Detected SB3 training config from path: {eval_num_trucks} trucks, {eval_num_stops} stops"
-        )
-    elif sb3_present and AUTO_DETECT_SB3_CONFIG:
-        print(
-            "SB3 policy detected but training config not encoded in path; using default constants (may mismatch)."
-        )
-    else:
-        print(
-            f"Using default config constants: {eval_num_trucks} trucks, {eval_num_stops} stops"
-        )
-
-    config["environment"]["num_trucks"] = eval_num_trucks
-    config["environment"]["num_stops"] = eval_num_stops
-
-    policies = {}
+def build_policies(policy_entries):
     policy_counter = {}
+    policies = {}
     policy_full_names = {}
-    for policy_entry in POLICIES:
+    for policy_entry in policy_entries:
         policy_path, policy_type = policy_entry[0], policy_entry[1]
         gnn_space_type = policy_entry[2] if len(policy_entry) > 2 else "base"
         print(f"Loading: {policy_path} ({policy_type})...")
@@ -735,21 +714,81 @@ def main():
         }
         policy_full_names[name] = full_name
 
+    return policies, policy_full_names
+
+
+def run_parallel_eval(
+    policy_entries,
+    config,
+    num_trucks,
+    num_stops,
+    num_eval_scenarios,
+    seed,
+    num_workers,
+    gpu_devices,
+    auto_detect_sb3_config=False,
+    print_summary=True,
+):
+    atexit.register(_cleanup_children)
+
+    local_config = copy.deepcopy(config)
+
+    if any((len(entry) > 2 and entry[2] == "detour") for entry in policy_entries):
+        if local_config["delivery"].get("enable_flexible_delivery_order", False):
+            print(
+                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
+            )
+            local_config["delivery"]["enable_flexible_delivery_order"] = False
+
+    sb3_present = any(len(entry) >= 2 and entry[1].startswith("sb3-") for entry in policy_entries)
+    sb3_configs = []
+    for entry in policy_entries:
+        if len(entry) < 2:
+            continue
+        if entry[1].startswith("sb3-"):
+            detected = _extract_sb3_config(entry[0])
+            if detected:
+                sb3_configs.append(detected)
+    unique_sb3_configs = set(sb3_configs)
+
+    eval_num_trucks = num_trucks
+    eval_num_stops = num_stops
+    if auto_detect_sb3_config and unique_sb3_configs:
+        if len(unique_sb3_configs) > 1:
+            raise ValueError(
+                f"SB3 policies must share the same training config, found: {sorted(unique_sb3_configs)}"
+            )
+        eval_num_trucks, eval_num_stops = next(iter(unique_sb3_configs))
+        print(
+            f"Detected SB3 training config from path: {eval_num_trucks} trucks, {eval_num_stops} stops"
+        )
+    elif sb3_present and auto_detect_sb3_config:
+        print(
+            "SB3 policy detected but training config not encoded in path; using default constants (may mismatch)."
+        )
+    else:
+        print(f"Using default config constants: {eval_num_trucks} trucks, {eval_num_stops} stops")
+
+    local_config["environment"]["num_trucks"] = eval_num_trucks
+    local_config["environment"]["num_stops"] = eval_num_stops
+
+    policies, policy_full_names = build_policies(policy_entries)
+
     if policy_full_names:
         print("\nLegend (full policy names):")
         for short_name in sorted(policy_full_names.keys()):
             print(f"  {short_name} -> {policy_full_names[short_name]}")
 
     print(f"\n{'='*90}")
-    print(f"Evaluating {len(policies)} policies over {NUM_EVAL_SCENARIOS} scenarios")
+    print(f"Evaluating {len(policies)} policies over {num_eval_scenarios} scenarios")
     print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops\n")
 
     tasks = []
     gpu_counter = 0
     for policy_name, policy_info in policies.items():
-        for episode_idx in range(NUM_EVAL_SCENARIOS):
+        for episode_idx in range(num_eval_scenarios):
             if _should_use_gpu(policy_info["type"]):
-                gpu_id = GPU_DEVICES[gpu_counter % len(GPU_DEVICES)]
+                gpu_id = gpu_devices[gpu_counter % len(gpu_devices)]
                 device = f"cuda:{gpu_id}"
                 gpu_counter += 1
             else:
@@ -761,18 +800,18 @@ def main():
                     policy_info["type"],
                     policy_info["gnn_space"],
                     episode_idx,
-                    SEED,
-                    config,
+                    seed,
+                    local_config,
                     device,
                 )
             )
 
     episode_results_by_policy = {
-        name: [None for _ in range(NUM_EVAL_SCENARIOS)] for name in policies.keys()
+        name: [None for _ in range(num_eval_scenarios)] for name in policies.keys()
     }
 
     mp_context = mp.get_context("spawn")
-    executor = ProcessPoolExecutor(max_workers=NUM_WORKERS, mp_context=mp_context)
+    executor = ProcessPoolExecutor(max_workers=num_workers, mp_context=mp_context)
     try:
         futures = [executor.submit(_run_episode_task, task) for task in tasks]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Evaluating", leave=False):
@@ -804,10 +843,10 @@ def main():
             os.makedirs(os.path.dirname(excluded_path), exist_ok=True)
             with open(excluded_path, "w", encoding="utf-8") as handle:
                 handle.write("# Excluded VRP infeasible seeds\n")
-                handle.write(f"seed_base={SEED}\n")
+                handle.write(f"seed_base={seed}\n")
                 handle.write("episode_idx,seed\n")
                 for idx in sorted_indices:
-                    handle.write(f"{idx},{SEED + idx}\n")
+                    handle.write(f"{idx},{seed + idx}\n")
             print(
                 f"\nExcluded {len(excluded_indices)} seeds where VRP Optimal was infeasible from comparisons."
             )
@@ -820,212 +859,240 @@ def main():
         filtered_results = _filter_episode_results(episode_results, excluded_indices)
         results[policy_name] = _aggregate_episode_results(filtered_results)
 
-    baseline_name = None
-    for name in results.keys():
-        if "MP Robust" in name or "optimal-simple" in name.lower():
-            baseline_name = name
-            break
-
-    if baseline_name:
-        baseline_rewards = np.array(results[baseline_name]["episode_rewards"])
-        baseline_mean = results[baseline_name]["mean_reward"]
-        print(f"\n{'='*90}")
-        print(f"Episode-by-Episode Win Rate Analysis (vs {baseline_name})")
-        print(f"{'='*90}")
-        print(f"Baseline Mean Reward: {baseline_mean:.0f}\n")
-
-        for name in sorted(results.keys()):
-            if name == baseline_name:
-                continue
-            policy_rewards = np.array(results[name]["episode_rewards"])
-            policy_mean = results[name]["mean_reward"]
-
-            wins = np.sum(policy_rewards > baseline_rewards)
-            ties = np.sum(policy_rewards == baseline_rewards)
-            losses = np.sum(policy_rewards < baseline_rewards)
-            win_rate = (wins / len(policy_rewards)) * 100
-
-            mean_diff = policy_mean - baseline_mean
-            diff_str = f"+{mean_diff:.0f}" if mean_diff >= 0 else f"{mean_diff:.0f}"
-
-            print(
-                f"  {name:40s}: Win Rate: {win_rate:5.1f}% ({wins}W/{ties}T/{losses}L)  Δ Reward: {diff_str}"
-            )
-        print(f"{'='*90}\n")
-
+    if print_summary:
+        baseline_name = None
         for name in results.keys():
-            if name == baseline_name:
-                results[name]["win_rate_vs_baseline"] = 50.0
-            else:
-                policy_rewards = np.array(results[name]["episode_rewards"])
-                wins = np.sum(policy_rewards > baseline_rewards)
-                results[name]["win_rate_vs_baseline"] = (wins / len(policy_rewards)) * 100
+            if "MP Robust" in name or "optimal-simple" in name.lower():
+                baseline_name = name
+                break
 
-    if len(results) > 1:
-        print(f"\n{'='*90}")
-        print("Pairwise Episode Win Counts (A > B)")
-        print(f"{'='*90}")
+        if baseline_name:
+            baseline_rewards = np.array(results[baseline_name]["episode_rewards"])
+            baseline_mean = results[baseline_name]["mean_reward"]
+            print(f"\n{'='*90}")
+            print(f"Episode-by-Episode Win Rate Analysis (vs {baseline_name})")
+            print(f"{'='*90}")
+            print(f"Baseline Mean Reward: {baseline_mean:.0f}\n")
+
+            for name in sorted(results.keys()):
+                if name == baseline_name:
+                    continue
+                policy_rewards = np.array(results[name]["episode_rewards"])
+                policy_mean = results[name]["mean_reward"]
+
+                wins = np.sum(policy_rewards > baseline_rewards)
+                ties = np.sum(policy_rewards == baseline_rewards)
+                losses = np.sum(policy_rewards < baseline_rewards)
+                win_rate = (wins / len(policy_rewards)) * 100
+
+                mean_diff = policy_mean - baseline_mean
+                diff_str = f"+{mean_diff:.0f}" if mean_diff >= 0 else f"{mean_diff:.0f}"
+
+                print(
+                    f"  {name:40s}: Win Rate: {win_rate:5.1f}% ({wins}W/{ties}T/{losses}L)  Δ Reward: {diff_str}"
+                )
+            print(f"{'='*90}\n")
+
+            for name in results.keys():
+                if name == baseline_name:
+                    results[name]["win_rate_vs_baseline"] = 50.0
+                else:
+                    policy_rewards = np.array(results[name]["episode_rewards"])
+                    wins = np.sum(policy_rewards > baseline_rewards)
+                    results[name]["win_rate_vs_baseline"] = (wins / len(policy_rewards)) * 100
+
+        if len(results) > 1:
+            print(f"\n{'='*90}")
+            print("Pairwise Episode Win Counts (A > B)")
+            print(f"{'='*90}")
+
+            sorted_names = sorted(results.keys())
+            rewards_by_name = {
+                name: np.array(results[name]["episode_rewards"]) for name in sorted_names
+            }
+            episode_counts = [len(rewards_by_name[name]) for name in sorted_names]
+            min_episodes = min(episode_counts)
+            if len(set(episode_counts)) > 1:
+                print(
+                    f"Warning: mismatched episode counts {episode_counts}; using first {min_episodes} episodes."
+                )
+
+            col_width = 16
+            print("A \\ B".ljust(col_width), end="")
+            for name in sorted_names:
+                print(f" {name[:col_width-1]:<{col_width-1}}", end="")
+            print()
+            print("-" * (col_width + col_width * len(sorted_names)))
+
+            for name_a in sorted_names:
+                print(f"{name_a[:col_width-1]:<{col_width}}", end="")
+                rewards_a = rewards_by_name[name_a][:min_episodes]
+                for name_b in sorted_names:
+                    rewards_b = rewards_by_name[name_b][:min_episodes]
+                    wins = int(np.sum(rewards_a > rewards_b))
+                    ties = int(np.sum(rewards_a == rewards_b))
+                    losses = int(np.sum(rewards_a < rewards_b))
+                    cell = f"{wins}W/{ties}T/{losses}L"
+                    print(f" {cell:<{col_width-1}}", end="")
+                print()
+            print(f"{'='*90}\n")
+
+            print(f"\n{'='*90}")
+            print("Pairwise Avg Reward Diff (when A wins / A loses)")
+            print(f"{'='*90}")
+
+            def _avg_or_none(values):
+                return float(np.mean(values)) if len(values) > 0 else None
+
+            print("A \\ B".ljust(col_width), end="")
+            for name in sorted_names:
+                print(f" {name[:col_width-1]:<{col_width-1}}", end="")
+            print()
+            print("-" * (col_width + col_width * len(sorted_names)))
+
+            for name_a in sorted_names:
+                print(f"{name_a[:col_width-1]:<{col_width}}", end="")
+                rewards_a = rewards_by_name[name_a][:min_episodes]
+                for name_b in sorted_names:
+                    rewards_b = rewards_by_name[name_b][:min_episodes]
+                    diffs = rewards_a - rewards_b
+                    win_diffs = diffs[diffs > 0]
+                    lose_diffs = diffs[diffs < 0]
+                    avg_win = _avg_or_none(win_diffs)
+                    avg_lose = _avg_or_none(lose_diffs)
+                    win_str = f"+{avg_win:.0f}" if avg_win is not None else "--"
+                    lose_str = f"{avg_lose:.0f}" if avg_lose is not None else "--"
+                    cell = f"{win_str}/{lose_str}"
+                    print(f" {cell:<{col_width-1}}", end="")
+                print()
+            print(f"{'='*90}\n")
+
+        def wrap_name(name, width=20):
+            """Wrap long policy names into multiple lines."""
+            if len(name) <= width:
+                return [name.ljust(width)]
+            words = name.replace("_", " ").replace("-", " ").split()
+            lines = []
+            current_line = ""
+            for word in words:
+                if len(current_line) + len(word) + 1 <= width:
+                    current_line += (" " if current_line else "") + word
+                else:
+                    if current_line:
+                        lines.append(current_line.ljust(width))
+                    current_line = word
+            if current_line:
+                lines.append(current_line.ljust(width))
+            return lines if lines else [name[:width].ljust(width)]
 
         sorted_names = sorted(results.keys())
-        rewards_by_name = {
-            name: np.array(results[name]["episode_rewards"]) for name in sorted_names
-        }
-        episode_counts = [len(rewards_by_name[name]) for name in sorted_names]
-        min_episodes = min(episode_counts)
-        if len(set(episode_counts)) > 1:
-            print(
-                f"Warning: mismatched episode counts {episode_counts}; using first {min_episodes} episodes."
-            )
+        col_width = 22
+        metric_col_width = 25 + 1
+        separator_width = metric_col_width + 1 + (col_width + 1) * len(sorted_names) + 1
 
-        col_width = 16
-        print("A \\ B".ljust(col_width), end="")
-        for name in sorted_names:
-            print(f" {name[:col_width-1]:<{col_width-1}}", end="")
-        print()
-        print("-" * (col_width + col_width * len(sorted_names)))
+        print(f"\n{'='*separator_width}")
+        effective_scenarios = num_eval_scenarios - len(excluded_indices)
+        print(f"RESULTS (averaged over {effective_scenarios} scenarios)")
+        print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops")
+        print(f"{'='*separator_width}\n")
 
-        for name_a in sorted_names:
-            print(f"{name_a[:col_width-1]:<{col_width}}", end="")
-            rewards_a = rewards_by_name[name_a][:min_episodes]
-            for name_b in sorted_names:
-                rewards_b = rewards_by_name[name_b][:min_episodes]
-                wins = int(np.sum(rewards_a > rewards_b))
-                ties = int(np.sum(rewards_a == rewards_b))
-                losses = int(np.sum(rewards_a < rewards_b))
-                cell = f"{wins}W/{ties}T/{losses}L"
-                print(f" {cell:<{col_width-1}}", end="")
-            print()
-        print(f"{'='*90}\n")
+        name_lines = [wrap_name(name, col_width) for name in sorted_names]
+        max_name_lines = max(len(lines) for lines in name_lines)
 
-        print(f"\n{'='*90}")
-        print("Pairwise Avg Reward Diff (when A wins / A loses)")
-        print(f"{'='*90}")
-
-        def _avg_or_none(values):
-            return float(np.mean(values)) if len(values) > 0 else None
-
-        print("A \\ B".ljust(col_width), end="")
-        for name in sorted_names:
-            print(f" {name[:col_width-1]:<{col_width-1}}", end="")
-        print()
-        print("-" * (col_width + col_width * len(sorted_names)))
-
-        for name_a in sorted_names:
-            print(f"{name_a[:col_width-1]:<{col_width}}", end="")
-            rewards_a = rewards_by_name[name_a][:min_episodes]
-            for name_b in sorted_names:
-                rewards_b = rewards_by_name[name_b][:min_episodes]
-                diffs = rewards_a - rewards_b
-                win_diffs = diffs[diffs > 0]
-                lose_diffs = diffs[diffs < 0]
-                avg_win = _avg_or_none(win_diffs)
-                avg_lose = _avg_or_none(lose_diffs)
-                win_str = f"+{avg_win:.0f}" if avg_win is not None else "--"
-                lose_str = f"{avg_lose:.0f}" if avg_lose is not None else "--"
-                cell = f"{win_str}/{lose_str}"
-                print(f" {cell:<{col_width-1}}", end="")
-            print()
-        print(f"{'='*90}\n")
-
-    def wrap_name(name, width=20):
-        """Wrap long policy names into multiple lines."""
-        if len(name) <= width:
-            return [name.ljust(width)]
-        words = name.replace("_", " ").replace("-", " ").split()
-        lines = []
-        current_line = ""
-        for word in words:
-            if len(current_line) + len(word) + 1 <= width:
-                current_line += (" " if current_line else "") + word
-            else:
-                if current_line:
-                    lines.append(current_line.ljust(width))
-                current_line = word
-        if current_line:
-            lines.append(current_line.ljust(width))
-        return lines if lines else [name[:width].ljust(width)]
-
-    sorted_names = sorted(results.keys())
-    col_width = 22
-    metric_col_width = 25 + 1
-    separator_width = metric_col_width + 1 + (col_width + 1) * len(sorted_names) + 1
-
-    print(f"\n{'='*separator_width}")
-    effective_scenarios = NUM_EVAL_SCENARIOS - len(excluded_indices)
-    print(f"RESULTS (averaged over {effective_scenarios} scenarios)")
-    print(f"Environment: {eval_num_trucks} trucks, {eval_num_stops} stops")
-    print(f"{'='*separator_width}\n")
-
-    name_lines = [wrap_name(name, col_width) for name in sorted_names]
-    max_name_lines = max(len(lines) for lines in name_lines)
-
-    print("Metric".ljust(metric_col_width), end="")
-    print("|", end="")
-    for i in range(max_name_lines):
-        for j, lines in enumerate(name_lines):
-            if i < len(lines):
-                print(f" {lines[i]}", end="")
-            else:
-                print(f" {' '*col_width}", end="")
-            if j < len(name_lines) - 1:
-                print(" |", end="")
-        if i < max_name_lines - 1:
-            print()
-            print(" " * metric_col_width + "|", end="")
-    print(" |")
-    print("-" * separator_width)
-
-    metrics = [
-        ("Reward", "mean_reward", "std_reward", ".0f"),
-    ]
-
-    if baseline_name:
-        metrics.append(("Win Rate vs Baseline (%)", "win_rate_vs_baseline", None, ".1f"))
-
-    metrics.extend(
-        [
-            ("Success Rate (%)", "success_rate", None, ".1f", 100),
-            ("Avg SoC at End (%)", "mean_completion_soc", "std_completion_soc", ".1f"),
-            ("Exec Time (s)", "mean_exec_time", "std_exec_time", ".2f"),
-            ("Deliveries", "mean_deliveries", "std_deliveries", ".1f"),
-            ("Steps", "mean_steps", "std_steps", ".1f"),
-            ("Total Time (h)", "mean_completion_time", "std_completion_time", ".1f"),
-            ("Distance (km)", "mean_total_distance", "std_total_distance", ".0f"),
-            ("Charging Time (h)", "mean_charging_time", "std_charging_time", ".1f"),
-            ("Charging Sessions", "mean_charging_sessions", "std_charging_sessions", ".1f"),
-            ("Waiting Time (h)", "mean_waiting_time", "std_waiting_time", ".1f"),
-            ("Routing Time (h)", "mean_routing_time", "std_routing_time", ".1f"),
-            ("Unloading Time (h)", "mean_unloading_time", "std_unloading_time", ".1f"),
-            ("Total Truck Time (h)", "mean_total_truck_time", "std_total_truck_time", ".1f"),
-            ("Failures", "mean_failures", "std_failures", ".1f"),
-            ("Max Time Reached", "max_time_terminations", None, ".0f"),
-            ("Max Steps Reached", "max_steps_terminations", None, ".0f"),
-        ]
-    )
-
-    for metric_info in metrics:
-        label = metric_info[0]
-        mean_key = metric_info[1]
-        std_key = metric_info[2] if len(metric_info) > 2 else None
-        fmt = metric_info[3] if len(metric_info) > 3 else ".1f"
-        multiplier = metric_info[4] if len(metric_info) > 4 else 1
-
-        print(f"{label:<{metric_col_width}}", end="")
+        print("Metric".ljust(metric_col_width), end="")
         print("|", end="")
-        for idx, name in enumerate(sorted_names):
-            r = results[name]
-            mean_val = r[mean_key] * multiplier
-            if std_key and std_key in r:
-                std_val = r[std_key] * multiplier
-                value_str = f"{mean_val:{fmt}} ±{std_val:{fmt}}"
-            else:
-                value_str = f"{mean_val:{fmt}}"
-            print(f" {value_str:>{col_width}}", end="")
-            if idx < len(sorted_names) - 1:
-                print(" |", end="")
+        for i in range(max_name_lines):
+            for j, lines in enumerate(name_lines):
+                if i < len(lines):
+                    print(f" {lines[i]}", end="")
+                else:
+                    print(f" {' '*col_width}", end="")
+                if j < len(name_lines) - 1:
+                    print(" |", end="")
+            if i < max_name_lines - 1:
+                print()
+                print(" " * metric_col_width + "|", end="")
         print(" |")
+        print("-" * separator_width)
 
-    print(f"{'='*separator_width}\n")
+        metrics = [
+            ("Reward", "mean_reward", "std_reward", ".0f"),
+        ]
+
+        if baseline_name:
+            metrics.append(("Win Rate vs Baseline (%)", "win_rate_vs_baseline", None, ".1f"))
+
+        metrics.extend(
+            [
+                ("Success Rate (%)", "success_rate", None, ".1f", 100),
+                ("Avg SoC at End (%)", "mean_completion_soc", "std_completion_soc", ".1f"),
+                ("Exec Time (s)", "mean_exec_time", "std_exec_time", ".2f"),
+                ("Deliveries", "mean_deliveries", "std_deliveries", ".1f"),
+                ("Steps", "mean_steps", "std_steps", ".1f"),
+                ("Total Time (h)", "mean_completion_time", "std_completion_time", ".1f"),
+                ("Distance (km)", "mean_total_distance", "std_total_distance", ".0f"),
+                ("Charging Time (h)", "mean_charging_time", "std_charging_time", ".1f"),
+                ("Charging Sessions", "mean_charging_sessions", "std_charging_sessions", ".1f"),
+                ("Waiting Time (h)", "mean_waiting_time", "std_waiting_time", ".1f"),
+                ("Routing Time (h)", "mean_routing_time", "std_routing_time", ".1f"),
+                ("Unloading Time (h)", "mean_unloading_time", "std_unloading_time", ".1f"),
+                ("Total Truck Time (h)", "mean_total_truck_time", "std_total_truck_time", ".1f"),
+                ("Failures", "mean_failures", "std_failures", ".1f"),
+                ("Max Time Reached", "max_time_terminations", None, ".0f"),
+                ("Max Steps Reached", "max_steps_terminations", None, ".0f"),
+            ]
+        )
+
+        for metric_info in metrics:
+            label = metric_info[0]
+            mean_key = metric_info[1]
+            std_key = metric_info[2] if len(metric_info) > 2 else None
+            fmt = metric_info[3] if len(metric_info) > 3 else ".1f"
+            multiplier = metric_info[4] if len(metric_info) > 4 else 1
+
+            print(f"{label:<{metric_col_width}}", end="")
+            print("|", end="")
+            for idx, name in enumerate(sorted_names):
+                r = results[name]
+                mean_val = r[mean_key] * multiplier
+                if std_key and std_key in r:
+                    std_val = r[std_key] * multiplier
+                    value_str = f"{mean_val:{fmt}} ±{std_val:{fmt}}"
+                else:
+                    value_str = f"{mean_val:{fmt}}"
+                print(f" {value_str:>{col_width}}", end="")
+                if idx < len(sorted_names) - 1:
+                    print(" |", end="")
+            print(" |")
+
+        print(f"{'='*separator_width}\n")
+
+    return {
+        "episode_results_by_policy": episode_results_by_policy,
+        "policy_full_names": policy_full_names,
+        "policies": policies,
+        "excluded_indices": excluded_indices,
+        "results": results,
+        "num_trucks": eval_num_trucks,
+        "num_stops": eval_num_stops,
+    }
+
+
+def main():
+    """Evaluate policies with hardcoded parameters in parallel."""
+    config = load_config(CONFIG_FILE)
+    run_parallel_eval(
+        POLICIES,
+        config,
+        NUM_TRUCKS,
+        NUM_STOPS,
+        NUM_EVAL_SCENARIOS,
+        SEED,
+        NUM_WORKERS,
+        GPU_DEVICES,
+        auto_detect_sb3_config=AUTO_DETECT_SB3_CONFIG,
+        print_summary=True,
+    )
 
 
 if __name__ == "__main__":

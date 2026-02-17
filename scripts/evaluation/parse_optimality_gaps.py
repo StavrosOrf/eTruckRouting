@@ -320,10 +320,10 @@ def write_latex(
                 return r"\multicolumn{1}{c}{---}"
             norm_mean, norm_std = norm
             if norm_std is None or norm_std == 0.0:
-                norm_str = f"{norm_mean:.3f}"
+                norm_str = f"${norm_mean:.3f}$"
             else:
-                norm_str = f"{norm_mean:.3f} $\\pm$ {norm_std:.3f}"
-            succ_str = f"{succ * 100:.1f}" if succ is not None else "---"
+                norm_str = f"${norm_mean:.3f}$ $\\pm$ ${norm_std:.3f}$"
+            succ_str = f"${succ * 100:.1f}$" if succ is not None else "---"
             return rf"{norm_str} ({succ_str}\%)"
 
         lines.append(

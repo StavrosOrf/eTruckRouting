@@ -11,6 +11,31 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.lines import Line2D
+from matplotlib.legend_handler import HandlerBase
+
+
+class _ParallelLineHandler(HandlerBase):
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
+        x1 = xdescent
+        x2 = xdescent + width
+        center = ydescent + height * 0.5
+        offsets = (-height * 0.2, 0.0, height * 0.2)
+        artists = []
+        for line, dy in zip(orig_handle, offsets):
+            y = center + dy
+            artists.append(
+                Line2D(
+                    [x1, x2],
+                    [y, y],
+                    color=line.get_color(),
+                    linewidth=line.get_linewidth(),
+                    alpha=line.get_alpha(),
+                    linestyle=line.get_linestyle(),
+                    transform=trans,
+                )
+            )
+        return artists
 import numpy as np
 
 plt.rcParams["mathtext.fontset"] = "stix"
@@ -257,11 +282,11 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize transport graph with routes.")
     parser.add_argument("--config", default="EVRoutingEnv/config_files/config.yaml")
     parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument("--num-trucks", type=int, default=1)
+    parser.add_argument("--num-trucks", type=int, default=10)
     parser.add_argument("--num-stops", type=int, default=3)
     parser.add_argument("--output", default="results/visualization/transport_graph.png")
     parser.add_argument("--max-road-segments", type=int, default=100000)
-    parser.add_argument("--max-link-energy", type=float, default=300)
+    parser.add_argument("--max-link-energy", type=float, default=350)
     parser.add_argument("--max-links-per-charger", type=int, default=3000)
     args = parser.parse_args()
 
@@ -349,10 +374,27 @@ def main():
         _configure_axes(ax, all_coords)
 
         x = 20
-        ax.legend(loc="upper right", frameon=True,
-                  framealpha=0.9,
-                  markerscale=2.5,
-                  fontsize=x+3,)
+        handles, labels = ax.get_legend_handles_labels()
+        if edge_color_info:
+            cmap = plt.cm.viridis
+            edge_lines = (
+                Line2D([0], [0], color=cmap(0.2), linewidth=1.5, alpha=0.6),
+                Line2D([0], [0], color=cmap(0.5), linewidth=1.5, alpha=0.6),
+                Line2D([0], [0], color=cmap(0.8), linewidth=1.5, alpha=0.6),
+            )
+            handles.append(edge_lines)
+            labels.append("Transportation Links")
+
+        ax.legend(
+            handles=handles,
+            labels=labels,
+            loc="upper right",
+            frameon=True,
+            framealpha=0.9,
+            markerscale=2.5,
+            fontsize=x + 3,
+            handler_map={tuple: _ParallelLineHandler()},
+        )
         
         #change fontsie of ticks
         ax.tick_params(axis='both', which='major', labelsize=x)

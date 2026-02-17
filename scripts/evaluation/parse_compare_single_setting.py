@@ -116,21 +116,21 @@ def format_mean_std(m: float, s: float, decimals: int = 2) -> str:
 def collect_metrics(rows: List[Row]) -> Dict[str, Tuple[float, float]]:
     """Compute mean ± std for each metric."""
     metrics = {
-        "Reward": ([r.reward for r in rows], 2),
+        "Reward (-)": ([r.reward for r in rows], 0),
         "Success Rate (%)": ([r.success * 100 for r in rows], 1),
-        "Distance": ([r.distance for r in rows], 2),
-        "Charging Time": ([r.charging_time for r in rows], 2),
-        "Steps": ([r.steps for r in rows], 1),
-        "Completion Time": ([r.completion_time for r in rows], 2),
-        "Deliveries": ([r.deliveries for r in rows], 1),
-        "Charging Sessions": ([r.charging_sessions for r in rows], 1),
-        "Waiting Time": ([r.waiting_time for r in rows], 2),
-        "Routing Time": ([r.routing_time for r in rows], 2),
-        "Unloading Time": ([r.unloading_time for r in rows], 2),
-        "Total Truck Time": ([r.total_truck_time for r in rows], 2),
-        "Failures": ([r.failures for r in rows], 1),
-        "Avg Completion SoC (%)": ([r.avg_completion_soc for r in rows], 2),
-        "Exec Time (s)": ([r.exec_time for r in rows], 3),
+        "Avg. Truck SoC at Finish (%)": ([r.avg_completion_soc for r in rows], 1),
+        # "Distance": ([r.distance for r in rows], 1),        
+        # "Steps": ([r.steps for r in rows], 1),
+        # "Completion Time": ([r.completion_time for r in rows], 2),
+        "Total Deliveries (-)": ([r.deliveries for r in rows], 1),        
+        "Total Charging Sessions (-)": ([r.charging_sessions for r in rows], 1),
+        "Total Charging Time (H)": ([r.charging_time for r in rows], 1),
+        "Total Waiting Time (H)": ([r.waiting_time for r in rows], 1),
+        "Total Routing Time (H)": ([r.routing_time for r in rows], 1),
+        "Unloading Time": ([r.unloading_time for r in rows], 1),
+        "Total Time (H)": ([r.total_truck_time for r in rows], 1),
+        # "Failures": ([r.failures for r in rows], 1),        
+        "Exec. Time (s)": ([r.exec_time for r in rows], 1),
     }
     
     result = {}
@@ -220,7 +220,7 @@ def write_latex(
         for policy in policies:
             m, s, decimals = policy_metrics[policy][metric_name]
             fmt = f"{{:.{decimals}f}}"
-            row_parts.append(f"{fmt.format(m)} $\\pm$ {fmt.format(s)}")
+            row_parts.append(f"${fmt.format(m)}$ $\\pm$ ${fmt.format(s)}$")
         lines.append(" & ".join(row_parts) + r" \\")
     
     lines.extend([

@@ -11,7 +11,8 @@ from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 
-DEFAULT_CSV = "results/grid_eval/grid_eval_20260216_165036/grid_evaluation_results.csv"
+# DEFAULT_CSV = "results/grid_eval/grid_eval_20260216_165036/grid_evaluation_results.csv"
+DEFAULT_CSV = "results/grid_eval/grid_eval_20260219_131337/grid_evaluation_results.csv"
 DEFAULT_METRIC = "mean_reward"
 DEFAULT_PPO_SUBSTRING = "ppov_seq"
 DEFAULT_OPTIMAL_LABEL = "Optimal (Simple)"

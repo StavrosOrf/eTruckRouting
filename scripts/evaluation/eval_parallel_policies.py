@@ -35,63 +35,63 @@ POLICIES = [
     #Trained models on Electric Truck Routing     
     
     #1T3S
-    ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),   
-    ("saved_models/1trucks_3stops/maskppo_seed1_20260212_223935/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/1trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),   
+    # ("saved_models/ppov_seq_1T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),   
+    # ("saved_models/1trucks_3stops/maskppo_seed1_20260212_223935/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),   
          
-    # #5T3S
-    ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"), 
-    ("saved_models/5trucks_3stops/maskppo_seed1_20260212_223937/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/5trucks_3stops/ppo_seed1_20260212_223937/best_model.zip", "sb3-ppo", "base"),
+    # # #5T3S
+    # ("saved_models/ppov_seq_5T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s1_8197/", "variable-ppo", "detour"), 
+    # ("saved_models/5trucks_3stops/maskppo_seed1_20260212_223937/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/5trucks_3stops/ppo_seed1_20260212_223937/best_model.zip", "sb3-ppo", "base"),
     
-    # # # #10T3S
-    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
-    #("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
-    ### ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
-    ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    # # # # #10T3S
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # #("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
+    # ### ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
+    # ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
     
-    # # #30T3S
-    ## ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"),  
-    ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
-    ("saved_models/30trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/30trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),
+    # # # #30T3S
+    # ## ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"),  
+    # ("saved_models/ppov_seq_30T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"),  
+    # ("saved_models/30trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/30trucks_3stops/ppo_seed0_20260212_223719/best_model.zip", "sb3-ppo", "base"),
     
-    # #50T3S
-    ####("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), 
-    ###("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
-    ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl3_s0_3485/", "variable-ppo", "detour"), 
-    ("saved_models/50trucks_3stops/maskppo_seed0_20260212_223719/best_model.zip", "sb3-maskppo", "base"), #more training needed !!!!
-    ("saved_models/50trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    # # #50T3S
+    # ####("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck3_s0_2236/", "variable-ppo", "detour"), 
+    # ###("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
+    # ("saved_models/ppov_seq_50T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl3_s0_3485/", "variable-ppo", "detour"), 
+    # ("saved_models/50trucks_3stops/maskppo_seed0_20260212_223719/best_model.zip", "sb3-maskppo", "base"), #more training needed !!!!
+    # ("saved_models/50trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
     
-    #100T3S
-    ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
-    ("saved_models/100trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),  #more training needed !!!!
-    ("saved_models/100trucks_3stops/ppo_seed1_20260212_223936/best_model.zip", "sb3-ppo", "base"),
+    # #100T3S
+    # ("saved_models/ppov_seq_100T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_hl2_s0_3485/", "variable-ppo", "detour"), 
+    # ("saved_models/100trucks_3stops/maskppo_seed1_20260212_223936/best_model.zip", "sb3-maskppo", "base"),  #more training needed !!!!
+    # ("saved_models/100trucks_3stops/ppo_seed1_20260212_223936/best_model.zip", "sb3-ppo", "base"),
              
     
-    ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver, usually better opt-based solution
-    ("heuristic", "heuristic", "base"),    
-    ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
+    # ("optimal", "optimal", "base"),  # Gurobi-based optimal MILP solver, usually better opt-based solution
+    # ("heuristic", "heuristic", "base"),    
+    # ("optimal-simple", "optimal-simple", "base"),  # MP Robust - Gurobi solver with 20% energy safety margin
     
     
         
     # eVRP Single TRUCK
-    # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
-    # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    # ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
+    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
         
-    # ("savings", "savings", "base"),
-    # ("nn-2opt", "nn-2opt", "base"),
-    # ("optimal-vrp", "optimal-vrp", "vrp"),
+    ("savings", "savings", "base"),
+    ("nn-2opt", "nn-2opt", "base"),
+    ("optimal-vrp", "optimal-vrp", "vrp"),
 
 ]
-CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 3
-NUM_EVAL_SCENARIOS = 200
+NUM_STOPS = 5
+NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 

@@ -10,13 +10,15 @@ import yaml
 
 # python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 python_path = "~/EVRP/.venv/bin/python"
-# config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
-config_path = "EVRoutingEnv/config_files/config.yaml"
+config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
+# config_path = "EVRoutingEnv/config_files/config.yaml"
 
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
 
 # run_algorithms = ["ppo-variable", "sb3"]
 run_algorithms = ["ppo-variable"]
+run_algorithms = ["sb3"]
+
 
 # PPO-V (parallel) settings
 ppo_params = {
@@ -32,17 +34,17 @@ ppo_params = {
 }
 
 ppo_grid = {
-    "num_trucks": [10, 30, 50, 100],
-    # "num_trucks": [1],
-    "num_stops": [3],
+    # "num_trucks": [10, 30, 50, 100],
+    "num_trucks": [1],
+    "num_stops": [10, 20, 30],
     "steps_per_update": [256],
     "epochs": [5],
     "entropy_coef": [0.1],
     "gnn_hidden_dim": [32],
     "mlp_hidden_dim": [256],
-    "vrp_top_k_deliveries": [5],
+    "vrp_top_k_deliveries": [2, 3, 5],
     "detour_top_k_chargers": [2, 5],
-    "detour_hop_limit": [1, 2, 3],
+    "detour_hop_limit": [2],
     "seed": [0],
 }
 
@@ -51,7 +53,8 @@ sb3_grid = {
     # "algorithm": ["maskppo","dqn", "qrdqn"],
     "algorithm": ["maskppo", "ppo"],
     "num_trucks": ppo_grid["num_trucks"],
-    "seed": [1],
+    "num_stops": ppo_grid["num_stops"],
+    "seed": [0,1],
 }
 sb3_params = {
     "total_steps": 1_000_000,
@@ -196,14 +199,14 @@ if "sb3" in run_algorithms:
     sb3_jobs = list(itertools.product(*sb3_grid.values()))
     print(f"SB3 jobs: {len(sb3_jobs)}")
     for job in sb3_jobs:
-        algorithm, num_trucks, seed = job
+        algorithm, num_trucks, num_stops, seed = job
         mode_label = "vrp" if meta["gnn_state"] == "vrp" else "seq"
         exp_name, _ = build_names(
             f"sb3-{algorithm}",
             meta,
             f"s{seed}",
             num_trucks=num_trucks,
-            num_stops=meta["num_stops"],
+            num_stops=num_stops,
             mode_label=mode_label,
         )
         cmd = (
@@ -217,6 +220,7 @@ if "sb3" in run_algorithms:
             f" --project {sb3_params['project']}"
             f" --save-dir {sb3_params['save_dir']}"
             f" --num-trucks {num_trucks}"
+            f" --num-stops {num_stops}"
             f" --device {sb3_params['device']}"
         )
         tmux_send(exp_name, cmd)

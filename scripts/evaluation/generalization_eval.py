@@ -62,14 +62,14 @@ POLICIES = [
 
 # Grid parameters
 NUM_TRUCKS_GRID = [1, 25, 50, 75, 100, 125, 150, 175, 200]
-NUM_TRUCKS_GRID = [10, 1]
+# NUM_TRUCKS_GRID = [10, 1]
 # NUM_STOPS_GRID = [5, 10, 20, 30, 50, 70, 100]
 NUM_STOPS_GRID = [1, 2, 3, 4, 5, 6, 7, 8]
-NUM_STOPS_GRID = [1,3]
+# NUM_STOPS_GRID = [1,3]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 # CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_EVAL_SCENARIOS = 3
+NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 
 # Parallel processing

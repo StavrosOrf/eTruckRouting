@@ -86,11 +86,11 @@ POLICIES = [
     
     # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
-    ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    # ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
     
-    # ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
         
     ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
@@ -100,8 +100,8 @@ POLICIES = [
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 20
-NUM_EVAL_SCENARIOS = 100
+NUM_STOPS = 30
+NUM_EVAL_SCENARIOS = 10
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 

@@ -7,9 +7,13 @@ extract accurate timelines without postprocessing event queues.
 import os
 import sys
 import copy
+import json
+import pickle
+import hashlib
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 import shutil
 import traceback
 import torch
@@ -35,30 +39,89 @@ from algo.policy_utils import load_policy
 # Policies to compare
 POLICIES = [
     # # #10T3S
-    ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
+    # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_s0_8197/", "variable-ppo", "detour"),    
     # ("saved_models/ppov_seq_10T3S_spu256_ep5_ent0.1_g32_m256_vk5_ck2_s0_8197/", "variable-ppo", "detour"),  
     # ("saved_models/10trucks_3stops/maskppo_seed0_20260212_223718/best_model.zip", "sb3-maskppo", "base"),
     # ("saved_models/10trucks_3stops/ppo_seed1_20260212_223935/best_model.zip", "sb3-ppo", "base"),
+    #   ("optimal", "optimal"),
+    #   ("optimal-simple", "optimal-simple"),
     
     #VRP models
     # ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),    
     # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
-      ("optimal", "optimal"),
-      ("optimal-simple", "optimal-simple"),
-    # ("optimal-vrp", "optimal-vrp"),
+
+    # ("saved_models/ppov_vrp_1T20S_spu256_ep5_ent0.1_g32_m256_vk2_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    
+    ("saved_models/ppov_vrp_1T30S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"), 
+    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),
+    ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    ("savings", "savings", "base"),
+    ("nn-2opt", "nn-2opt", "base"),
+    ("optimal-vrp", "optimal-vrp"),
     
     # ("heuristic", "heuristic"),
 ]
 
-CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_TRUCKS = 10
-NUM_STOPS = 3
+# CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+NUM_TRUCKS = 1
+NUM_STOPS = 30
 MAX_TIME = 200.0
-SEED = 1000
+SEED = 1000111112 #10001
 OUTPUT_DIR = "results/visualization"
+CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
+CACHE_ENABLED = False
+CACHE_VERSION = "v1"
 # =======================================
+
+
+def _safe_file_stamp(path: str):
+    """Return lightweight file/dir stamp for cache invalidation."""
+    if not isinstance(path, str):
+        return None
+    if os.path.isfile(path):
+        stat = os.stat(path)
+        return {"type": "file", "path": path, "mtime": stat.st_mtime, "size": stat.st_size}
+    if os.path.isdir(path):
+        stat = os.stat(path)
+        return {"type": "dir", "path": path, "mtime": stat.st_mtime}
+    return {"type": "virtual", "path": path}
+
+
+def _build_scenario_cache_key(policy_path, policy_type, gnn_space_type):
+    """Build deterministic cache key for one scenario run."""
+    config_stamp = _safe_file_stamp(CONFIG_FILE)
+    policy_stamp = _safe_file_stamp(policy_path)
+    payload = {
+        "cache_version": CACHE_VERSION,
+        "seed": SEED,
+        "max_time": MAX_TIME,
+        "default_num_trucks": NUM_TRUCKS,
+        "default_num_stops": NUM_STOPS,
+        "config_file": CONFIG_FILE,
+        "config_stamp": config_stamp,
+        "policy_path": str(policy_path),
+        "policy_type": str(policy_type),
+        "gnn_space_type": str(gnn_space_type),
+        "policy_stamp": policy_stamp,
+    }
+    serialized = json.dumps(payload, sort_keys=True, default=str)
+    key = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:20]
+    return key, payload
+
+
+def _load_cached_scenario(cache_path):
+    with open(cache_path, "rb") as f:
+        return pickle.load(f)
+
+
+def _save_cached_scenario(cache_path, payload):
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _extract_sb3_config(policy_path):
@@ -215,7 +278,7 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
                 action, _states = policy.predict(obs, action_masks=action_masks, deterministic=True)
             else:
                 action, _states = policy.predict(obs, deterministic=True)
-        elif active_policy_type in ["optimal", "optimal-simple", "optimal-vrp", "heuristic"]:
+        elif active_policy_type in ["optimal", "optimal-simple", "optimal-vrp", "heuristic", "savings", "nn-2opt"] or hasattr(episode_policy, "get_action"):
             action = episode_policy.get_action(env)
         else:
             gnn_state = gnn_state_space.get_state_GNN(env)
@@ -649,128 +712,361 @@ def generate_schedule_log(envs, policy_names, output_dir):
     return log_path
 
 
+def _add_cartodb_basemap(ax, all_coords):
+    """Add a CartoDB Positron basemap focused on provided coordinates."""
+    try:
+        import contextily as ctx
+    except ImportError:
+        return
+
+    if not all_coords:
+        return
+
+    lats = [lat for lat, _lon in all_coords]
+    lons = [lon for _lat, lon in all_coords]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    lat_pad = max((max_lat - min_lat) * 0.06, 0.01)
+    lon_pad = max((max_lon - min_lon) * 0.06, 0.01)
+
+    ax.set_xlim(min_lon - lon_pad, max_lon + lon_pad)
+    ax.set_ylim(min_lat - lat_pad, max_lat + lat_pad)
+
+    provider = ctx.providers.OpenStreetMap.Mapnik
+    try:
+        provider = ctx.providers.CartoDB.Positron
+    except AttributeError:
+        provider = ctx.providers.OpenStreetMap.Mapnik
+
+    ctx.add_basemap(
+        ax,
+        crs="EPSG:4326",
+        source=provider,
+        zoom=7,
+        alpha=1,
+    )
+
+
+def _collect_energy_edge_segments(transport_graph, node_coords, candidate_nodes):
+    """Collect energy-colored edge segments between candidate nodes."""
+    nodes = [n for n in candidate_nodes if n in node_coords]
+    if len(nodes) < 2:
+        return []
+
+    edge_segments = []
+    for i, src in enumerate(nodes):
+        for dst in nodes[i + 1:]:
+            energy = transport_graph.get_path_energy(src, dst)
+            if np.isfinite(energy):
+                edge_segments.append(
+                    (
+                        node_coords[src][1],
+                        node_coords[src][0],
+                        node_coords[dst][1],
+                        node_coords[dst][0],
+                        energy,
+                    )
+                )
+    return edge_segments
+
+
 def plot_route_maps(envs, policy_names, output_dir):
-    """Generate geographic route maps for each policy showing truck routes, chargers, and deliveries."""
-    
+    """Generate one combined route-map figure with policy subplots."""
+
+    panels = []
     for env, policy_name in zip(envs, policy_names):
         try:
-            # Check if environment has plotter
             if not hasattr(env, 'plotter') or env.plotter is None:
                 print(f"  ⚠ Skipping {policy_name}: No plotter available")
                 continue
-            
+
             plotter = env.plotter
-            
-            # Check if we have coordinate data
             if not plotter.node_coords and not plotter.charger_coords:
                 print(f"  ⚠ Skipping {policy_name}: No coordinate data available")
                 continue
-            
-            # Create figure
-            fig, ax = plt.subplots(figsize=(20, 16))
-            
-            # Get coordinate mappings
+
             node_coords = plotter._create_node_id_to_osm_map(env.transport_graph)
             charger_coords = plotter._create_charger_id_to_osm_map(env.transport_graph)
-            
             if not node_coords:
                 print(f"  ⚠ Skipping {policy_name}: No node coordinates found")
                 continue
-            
-            # Add OSM background
-            plotter._add_osm_background(ax, node_coords)
-            
-            # Draw road network
-            if plotter.road_segments:
-                for segment in plotter.road_segments:
-                    ax.plot(
-                        [segment["start_lon"], segment["end_lon"]],
-                        [segment["start_lat"], segment["end_lat"]],
-                        c="#cccccc",
-                        linewidth=0.4,
-                        alpha=0.3,
-                        zorder=2,
-                    )
-            
-            # Get truck colors
-            num_trucks = len(env.trucks)
-            truck_colors = plt.cm.tab10(range(num_trucks))
-            
-            # Plot each truck's route from event history
-            for truck_id in range(num_trucks):
-                truck = env.trucks[truck_id]
-                truck_color = truck_colors[truck_id]
-                
-                # Extract route from event history
-                route_coords = []
+
+            per_truck_routes = []
+            visited_delivery_nodes = set()
+            visited_charger_nodes = set()
+            depot_nodes = set()
+
+            for truck in env.trucks:
                 route_nodes = []
-                
-                # Start with depot
-                depot_node = truck.delivery_sequence[0]
-                if int(depot_node) in node_coords:
-                    depot_lat, depot_lon = node_coords[int(depot_node)]
-                    route_coords.append((depot_lat, depot_lon))
-                    route_nodes.append(depot_node)
-                    
-                    # Mark depot
-                    ax.scatter(depot_lon, depot_lat, c=[truck_color], s=250, marker="^",
-                             alpha=0.9, edgecolors="black", linewidths=2.5, zorder=9)
-                    ax.text(depot_lon, depot_lat, "D", ha="center", va="center",
-                           fontsize=8, fontweight="bold", color="white", zorder=10)
-                
-                # Extract destinations from routing events
+                depot_node = int(truck.delivery_sequence[0])
+                depot_nodes.add(depot_node)
+                route_nodes.append(depot_node)
+
                 for event in truck.event_history:
-                    if event['event_type'] == 'ROUTING_END':
-                        node = event['location']
-                        if int(node) in node_coords:
-                            lat, lon = node_coords[int(node)]
-                            route_coords.append((lat, lon))
-                            route_nodes.append(node)
-                        elif int(node) in charger_coords:
-                            lat, lon = charger_coords[int(node)]
-                            route_coords.append((lat, lon))
-                            route_nodes.append(node)
-                
-                # Draw route line
-                if len(route_coords) > 1:
-                    lats = [coord[0] for coord in route_coords]
-                    lons = [coord[1] for coord in route_coords]
-                    ax.plot(lons, lats, c=truck_color, linewidth=2.5, alpha=0.7, zorder=5)
-                    
-                    # Mark waypoints (excluding depot)
-                    for i, (lat, lon, node) in enumerate(zip(lats[1:], lons[1:], route_nodes[1:]), 1):
-                        is_charger = int(node) in env.charging_nodes
-                        marker = "s" if is_charger else "o"
-                        size = 160 if is_charger else 120
-                        edge_color = "darkred" if is_charger else "black"
-                        
-                        ax.scatter(lon, lat, c=[truck_color], s=size, marker=marker,
-                                 alpha=0.85, edgecolors=edge_color, linewidths=2, zorder=7)
-                        ax.text(lon, lat, str(i), ha="center", va="center",
-                               fontsize=7, fontweight="bold", color="white", zorder=8)
-            
-            # Draw all charging stations overlay
-            if charger_coords:
-                charger_lats = [coord[0] for coord in charger_coords.values()]
-                charger_lons = [coord[1] for coord in charger_coords.values()]
-                ax.scatter(charger_lons, charger_lats, c="red", s=200, marker="^",
-                         alpha=0.4, edgecolors="darkred", linewidths=1.5, zorder=6,
-                         label="Charging Stations")
-            
-            ax.set_xlabel("Longitude", fontsize=11)
-            ax.set_ylabel("Latitude", fontsize=11)
-            ax.set_title(f"Truck Routes - {policy_name} (Seed {SEED})", fontsize=13, pad=10)
-            ax.legend(loc='upper left', fontsize=9)
-            ax.grid(True, alpha=0.2)
-            
-            plt.tight_layout()
-            save_path = os.path.join(output_dir, f"route_map_{policy_name.replace(' ', '_')}.png")
-            plt.savefig(save_path, dpi=200, bbox_inches='tight')
-            plt.close()
-            print(f"  ✓ Route map saved: {save_path}")
-        
+                    if event["event_type"] == "ROUTING_END":
+                        route_nodes.append(int(event["location"]))
+
+                dedup_route_nodes = []
+                for node in route_nodes:
+                    if not dedup_route_nodes or dedup_route_nodes[-1] != node:
+                        dedup_route_nodes.append(node)
+
+                per_truck_routes.append((truck.truck_id, dedup_route_nodes))
+
+                for node in dedup_route_nodes:
+                    if node in env.charging_nodes:
+                        visited_charger_nodes.add(node)
+                    else:
+                        visited_delivery_nodes.add(node)
+
+            if not per_truck_routes:
+                print(f"  ⚠ Skipping {policy_name}: No visited route nodes found")
+                continue
+
+            visited_delivery_coords = [
+                node_coords[node]
+                for node in visited_delivery_nodes
+                if node in node_coords
+            ]
+
+            visited_charger_coords = []
+            for node in visited_charger_nodes:
+                if node in charger_coords:
+                    visited_charger_coords.append(charger_coords[node])
+                elif node in node_coords:
+                    visited_charger_coords.append(node_coords[node])
+
+            area_coords = visited_delivery_coords + visited_charger_coords
+            if not area_coords:
+                print(f"  ⚠ Skipping {policy_name}: No coordinates found for visited nodes")
+                continue
+
+            displayed_nodes = set(visited_delivery_nodes) | set(visited_charger_nodes)
+            edge_segments = _collect_energy_edge_segments(
+                env.transport_graph,
+                node_coords,
+                displayed_nodes,
+            )
+
+            panels.append(
+                {
+                    "env": env,
+                    "policy_name": policy_name,
+                    "node_coords": node_coords,
+                    "charger_coords": charger_coords,
+                    "per_truck_routes": per_truck_routes,
+                    "visited_delivery_coords": visited_delivery_coords,
+                    "visited_charger_coords": visited_charger_coords,
+                    "depot_nodes": depot_nodes,
+                    "area_coords": area_coords,
+                    "edge_segments": edge_segments,
+                }
+            )
+
         except Exception as e:
-            print(f"  ✗ Error generating route map for {policy_name}: {e}")
+            print(f"  ✗ Error preparing route map for {policy_name}: {e}")
+
+    if not panels:
+        print("  ⚠ No route maps generated: no valid policy panels")
+        return
+
+    n_panels = len(panels)
+    n_cols = 2
+    n_rows = int(np.ceil(n_panels / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(14 * n_cols, 9 * n_rows), dpi=300)
+    axes = np.array(axes).reshape(-1)
+
+    all_energies = []
+    for panel in panels:
+        all_energies.extend([seg[4] for seg in panel["edge_segments"]])
+
+    if all_energies:
+        vmin = min(all_energies)
+        vmax = max(all_energies)
+        if vmin == vmax:
+            vmin -= 1.0
+            vmax += 1.0
+        edge_norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+        edge_cmap = plt.cm.viridis
+    else:
+        edge_norm = None
+        edge_cmap = None
+        vmax = 0
+
+    for panel_idx, panel in enumerate(panels):
+        ax = axes[panel_idx]
+        ax.set_facecolor("#f7f5f2")
+
+        _add_cartodb_basemap(ax, panel["area_coords"])
+
+        if edge_norm is not None:
+            for x1, y1, x2, y2, energy in panel["edge_segments"]:
+                ax.plot(
+                    [x1, x2],
+                    [y1, y2],
+                    color=edge_cmap(edge_norm(energy)),
+                    linewidth=0.9,
+                    alpha=0.22,
+                    zorder=2,
+                )
+
+        num_trucks = len(panel["env"].trucks)
+        truck_colors = plt.cm.tab10(range(num_trucks))
+
+        for truck_id, route_nodes in panel["per_truck_routes"]:
+            truck_color = truck_colors[truck_id % len(truck_colors)]
+
+            route_coords = []
+            for node in route_nodes:
+                if node in panel["node_coords"]:
+                    route_coords.append((node, panel["node_coords"][node]))
+                elif node in panel["charger_coords"]:
+                    route_coords.append((node, panel["charger_coords"][node]))
+
+            if len(route_coords) > 1:
+                lats = [coord[1][0] for coord in route_coords]
+                lons = [coord[1][1] for coord in route_coords]
+                ax.plot(lons, lats, c=truck_color, linewidth=4.0, alpha=0.78, zorder=5)
+
+                for i in range(len(route_coords) - 1):
+                    start_lat, start_lon = route_coords[i][1]
+                    end_lat, end_lon = route_coords[i + 1][1]
+
+                    dx = end_lon - start_lon
+                    dy = end_lat - start_lat
+                    seg_len = (dx * dx + dy * dy) ** 0.5
+                    if seg_len < 1e-9:
+                        continue
+
+                    mid_lon = (start_lon + end_lon) * 0.5
+                    mid_lat = (start_lat + end_lat) * 0.5
+                    arrow_scale = 0.18
+                    vec_lon = dx * arrow_scale
+                    vec_lat = dy * arrow_scale
+
+                    ax.annotate(
+                        "",
+                        xy=(mid_lon + vec_lon * 0.5, mid_lat + vec_lat * 0.5),
+                        xytext=(mid_lon - vec_lon * 0.5, mid_lat - vec_lat * 0.5),
+                        arrowprops=dict(
+                            arrowstyle="-|>",
+                            color=truck_color,
+                            lw=1.3,
+                            alpha=0.95,
+                            mutation_scale=11,
+                            shrinkA=0,
+                            shrinkB=0,
+                        ),
+                        zorder=6,
+                    )
+
+        if panel["visited_delivery_coords"]:
+            delivery_lats = [lat for lat, _lon in panel["visited_delivery_coords"]]
+            delivery_lons = [lon for _lat, lon in panel["visited_delivery_coords"]]
+            ax.scatter(
+                delivery_lons,
+                delivery_lats,
+                s=58,
+                c="#d95f02",
+                alpha=0.9,
+                linewidths=0.4,
+                edgecolors="#4a2a00",
+                zorder=6,
+            )
+
+        if panel["visited_charger_coords"]:
+            charger_lats = [lat for lat, _lon in panel["visited_charger_coords"]]
+            charger_lons = [lon for _lat, lon in panel["visited_charger_coords"]]
+            ax.scatter(
+                charger_lons,
+                charger_lats,
+                s=75,
+                c="#419B0C",
+                marker="s",
+                alpha=0.9,
+                linewidths=0.5,
+                edgecolors="#0b3d2e",
+                zorder=7,
+            )
+
+        for depot_node in panel["depot_nodes"]:
+            if depot_node in panel["node_coords"]:
+                depot_lat, depot_lon = panel["node_coords"][depot_node]
+                ax.scatter(
+                    depot_lon,
+                    depot_lat,
+                    c="black",
+                    s=95,
+                    marker="^",
+                    alpha=0.95,
+                    edgecolors="white",
+                    linewidths=0.8,
+                    zorder=8,
+                )
+
+        all_interest_coords = panel["visited_delivery_coords"] + panel["visited_charger_coords"]
+        if all_interest_coords:
+            lats = [lat for lat, _ in all_interest_coords]
+            lons = [lon for _, lon in all_interest_coords]
+            min_lat, max_lat = min(lats), max(lats)
+            min_lon, max_lon = min(lons), max(lons)
+            lat_pad = max((max_lat - min_lat) * 0.06, 0.01)
+            lon_pad = max((max_lon - min_lon) * 0.06, 0.01)
+            ax.set_xlim(min_lon - lon_pad, max_lon + lon_pad)
+            ax.set_ylim(min_lat - lat_pad, max_lat + lat_pad)
+
+        ax.set_xlabel("Longitude", fontsize=11)
+        ax.set_ylabel("Latitude", fontsize=11)
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, color="#c7c7c7", alpha=0.7)
+
+        panel_letter = chr(ord('a') + panel_idx)
+        ax.text(
+            0.5,
+            -0.14,
+            f"{panel_letter}. {panel['policy_name']}",
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+        )
+
+    for ax in axes[n_panels:]:
+        ax.set_visible(False)
+
+    if edge_norm is not None:
+        sm = plt.cm.ScalarMappable(norm=edge_norm, cmap=edge_cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes[:n_panels], orientation="horizontal", fraction=0.03, pad=0.08, location="top")
+        tick_interval = 50
+        max_tick = int(np.ceil(vmax / tick_interval) * tick_interval)
+        ticks = np.arange(0, max_tick + tick_interval, tick_interval)
+        cbar.set_ticks(ticks)
+        cbar.ax.tick_params(pad=6)
+        cbar.set_label("Average Energy Needed (kWh)")
+
+    common_handles = [
+        plt.Line2D([0], [0], marker='o', color='none', markerfacecolor="#d95f02", markeredgecolor="#4a2a00", markersize=8, label="Visited Delivery Nodes"),
+        plt.Line2D([0], [0], marker='s', color='none', markerfacecolor="#419B0C", markeredgecolor="#0b3d2e", markersize=8, label="Visited Charging Stations"),
+        plt.Line2D([0], [0], marker='^', color='none', markerfacecolor="black", markeredgecolor="white", markersize=8, label="Depot"),
+        plt.Line2D([0], [0], color="#444444", linewidth=4.0, label="Truck Path"),
+    ]
+    fig.legend(
+        handles=common_handles,
+        loc="lower center",
+        ncol=4,
+        frameon=True,
+        framealpha=0.9,
+        bbox_to_anchor=(0.5, 0.01),
+    )
+
+    fig.suptitle(f"Route Map Comparison (Seed {SEED})", fontsize=16, y=0.98)
+    fig.tight_layout(rect=[0.02, 0.06, 0.98, 0.94])
+    save_path = os.path.join(output_dir, "route_maps_comparison.png")
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  ✓ Combined route map figure saved: {save_path}")
 
 
 def plot_charging_queue_dynamics(envs, policy_names, output_dir):
@@ -885,10 +1181,17 @@ def main():
     print("="*80)
     print(f"Configuration: {NUM_TRUCKS} trucks, {NUM_STOPS} stops, {MAX_TIME}h max time (defaults; SB3 entries auto-detect)")
     print(f"Seed: {SEED}")
+    if CACHE_ENABLED:
+        print(f"Cache: enabled ({CACHE_DIR})")
+    else:
+        print("Cache: disabled")
     print()
     
     envs = []
     policy_names = []
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    if CACHE_ENABLED:
+        os.makedirs(CACHE_DIR, exist_ok=True)
     
     # Run each policy
     for idx, policy_entry in enumerate(POLICIES, 1):
@@ -910,8 +1213,40 @@ def main():
         print(f"\n{'='*80}")
         print(f"[{idx}/{len(POLICIES)}] Running Policy: {policy_path if policy_path not in ['optimal', 'heuristic'] else policy_path.upper()}")
         print(f"{'='*80}")
-        
-        env, active_type = run_scenario(policy_path, policy_type, gnn_space_type)
+
+        cache_key, cache_meta = _build_scenario_cache_key(policy_path, policy_type, gnn_space_type)
+        cache_path = os.path.join(CACHE_DIR, f"scenario_{cache_key}.pkl")
+
+        env = None
+        active_type = None
+        loaded_from_cache = False
+
+        if CACHE_ENABLED and os.path.exists(cache_path):
+            try:
+                cached = _load_cached_scenario(cache_path)
+                env = cached["env"]
+                active_type = cached.get("active_policy_type")
+                loaded_from_cache = True
+                print(f"Loaded cached scenario: {os.path.basename(cache_path)}")
+            except Exception as cache_exc:
+                print(f"Cache load failed, rerunning scenario ({cache_exc})")
+
+        if not loaded_from_cache:
+            env, active_type = run_scenario(policy_path, policy_type, gnn_space_type)
+            if CACHE_ENABLED:
+                try:
+                    _save_cached_scenario(
+                        cache_path,
+                        {
+                            "env": env,
+                            "active_policy_type": active_type,
+                            "cache_meta": cache_meta,
+                        },
+                    )
+                    print(f"Saved scenario cache: {os.path.basename(cache_path)}")
+                except Exception as cache_exc:
+                    print(f"Warning: Could not save scenario cache ({cache_exc})")
+
         envs.append(env)
         
         # Generate readable policy name
@@ -956,6 +1291,12 @@ def main():
     print("VISUALIZATION COMPLETE")
     print(f"{'='*80}")
     print(f"Results saved to: {OUTPUT_DIR}/")
+
+    for env in envs:
+        try:
+            env.close()
+        except Exception:
+            pass
     print()
 
 

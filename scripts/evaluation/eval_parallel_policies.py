@@ -76,11 +76,21 @@ POLICIES = [
     
     
         
-    # eVRP Single TRUCK
-    ("saved_models/Top5del_NewStateppov_1T10S_spu256_ep5_ent0.1_seed0_505/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.01_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_lr0.0003_spu512_ep10_mb256_ent0.05_clip0.2_gm0.99_gl0.95_vc0.01_g32_m256_vk5_ck2_s0_6901/", "variable-ppo", "vrp"),        
-    ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    # eVRP Single TRUCK    
+    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+        
+    ("saved_models/ppov_vrp_1T20S_spu256_ep5_ent0.1_g32_m256_vk2_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    
+    ("saved_models/ppov_vrp_1T30S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    
+    # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
+    
+    ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    
+    # ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
         
     ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
@@ -90,8 +100,8 @@ POLICIES = [
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 5
-NUM_EVAL_SCENARIOS = 10
+NUM_STOPS = 20
+NUM_EVAL_SCENARIOS = 100
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 

@@ -62,14 +62,14 @@ POLICIES = [
 
 # Grid parameters
 NUM_TRUCKS_GRID = [1, 25, 50, 75, 100, 125, 150, 175, 200]
-# NUM_TRUCKS_GRID = [10, 200]
+NUM_TRUCKS_GRID = [10, 1]
 # NUM_STOPS_GRID = [5, 10, 20, 30, 50, 70, 100]
 NUM_STOPS_GRID = [1, 2, 3, 4, 5, 6, 7, 8]
-# NUM_STOPS_GRID = [1,3]
+NUM_STOPS_GRID = [1,3]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 # CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
-NUM_EVAL_SCENARIOS = 100
+NUM_EVAL_SCENARIOS = 3
 SEED = 1000
 
 # Parallel processing
@@ -317,6 +317,7 @@ def _run_episode_task(task):
             "num_trucks": num_trucks,
             "num_stops": num_stops,
             "episode_idx": episode_idx,
+            "seed": seed + episode_idx,
             "reward": episode_reward,
             "success": 1.0 if info["all_complete"] else 0.0,
             "distance": total_dist,
@@ -357,6 +358,7 @@ def _aggregate_episode_results(episode_results):
     truncated_flags = []
     max_time_terminations = []
     max_steps_terminations = []
+    seeds = []
 
     for result in episode_results:
         rewards.append(result["reward"])
@@ -376,6 +378,7 @@ def _aggregate_episode_results(episode_results):
         truncated_flags.append(result["truncated"])
         max_time_terminations.append(result["max_time_termination"])
         max_steps_terminations.append(result["max_steps_termination"])
+        seeds.append(result["seed"])
 
     return {
         "mean_reward": np.mean(rewards),
@@ -410,6 +413,9 @@ def _aggregate_episode_results(episode_results):
         "std_truncated": np.std(truncated_flags),
         "max_time_terminations": np.mean(max_time_terminations),
         "max_steps_terminations": np.mean(max_steps_terminations),
+        "seed_base": int(np.min(seeds)) if len(seeds) > 0 else None,
+        "seed_max": int(np.max(seeds)) if len(seeds) > 0 else None,
+        "episode_seeds": seeds,
     }
 
 
@@ -773,11 +779,13 @@ def main():
     print("SAVING RESULTS")
     print("="*120)
     
-    # Flatten results for DataFrame
+    # Flatten aggregated results for DataFrame
     rows = []
     for policy_name, policy_results in results.items():
         for (num_trucks, num_stops), metrics in policy_results.items():
             metrics_filtered = {k: v for k, v in metrics.items() if k != "episode_rewards"}
+            if "episode_seeds" in metrics_filtered:
+                metrics_filtered["episode_seeds"] = ",".join(map(str, metrics_filtered["episode_seeds"]))
             row = {
                 "policy": policy_name,
                 "num_trucks": num_trucks,
@@ -795,6 +803,42 @@ def main():
     output_file = os.path.join(output_dir, "grid_evaluation_results.csv")
     df.to_csv(output_file, index=False)
     print(f"\n✓ Results saved to: {output_file}")
+
+    # Save per-episode results with explicit seed for reproducibility
+    episode_rows = []
+    for (_policy_name, _config_key), episodes in episode_results.items():
+        for ep in episodes:
+            episode_rows.append({
+                "policy": ep["policy_name"],
+                "num_trucks": ep["num_trucks"],
+                "num_stops": ep["num_stops"],
+                "episode_idx": ep["episode_idx"],
+                "seed": ep["seed"],
+                "reward": ep["reward"],
+                "success": ep["success"],
+                "distance": ep["distance"],
+                "charging_time": ep["charging_time"],
+                "steps": ep["steps"],
+                "completion_time": ep["completion_time"],
+                "deliveries": ep["deliveries"],
+                "charging_sessions": ep["charging_sessions"],
+                "waiting_time": ep["waiting_time"],
+                "routing_time": ep["routing_time"],
+                "unloading_time": ep["unloading_time"],
+                "failures": ep["failures"],
+                "avg_completion_soc": ep["avg_completion_soc"],
+                "exec_time": ep["exec_time"],
+                "max_time_termination": ep["max_time_termination"],
+                "max_steps_termination": ep["max_steps_termination"],
+                "truncated": ep["truncated"],
+            })
+
+    episode_df = pd.DataFrame(episode_rows)
+    if not episode_df.empty:
+        episode_df = episode_df.sort_values(["policy", "num_trucks", "num_stops", "episode_idx"])
+    episode_output_file = os.path.join(output_dir, "grid_evaluation_episode_results.csv")
+    episode_df.to_csv(episode_output_file, index=False)
+    print(f"✓ Per-episode results (with seeds) saved to: {episode_output_file}")
     
     # Also save formatted tables to text file
     import sys

@@ -18,10 +18,37 @@ from pathlib import Path
 
 
 # Default parameters
-DEFAULT_CSV = "results/grid_eval/grid_eval_20260219_131337/grid_evaluation_results.csv"
+DEFAULT_CSV = "results/grid_eval/grid_eval_20260222_032447/grid_evaluation_episode_results.csv"
 DEFAULT_METRIC = "mean_reward"
 DEFAULT_PPO_SUBSTRING = "ppov_seq"
 DEFAULT_OPTIMAL_LABEL = "Optimal (Simple)"
+
+
+def resolve_metric_column(df, requested_metric):
+    """Resolve metric column across aggregated and episode CSV schemas."""
+    if requested_metric in df.columns:
+        return requested_metric
+
+    if requested_metric.startswith('mean_'):
+        episode_metric = requested_metric.replace('mean_', '', 1)
+        if episode_metric in df.columns:
+            print(
+                f"ℹ Requested metric '{requested_metric}' not found; "
+                f"using episode metric '{episode_metric}' instead."
+            )
+            return episode_metric
+
+    raise ValueError(
+        f"Metric '{requested_metric}' not found in CSV columns. "
+        f"Available columns include: {list(df.columns)}"
+    )
+
+
+def get_back_to_front_order(x_values, y_values, azim_deg):
+    """Return indices sorted from back to front for a given azimuth."""
+    azim_rad = np.deg2rad(azim_deg)
+    frontness = x_values * np.cos(azim_rad) + y_values * np.sin(azim_rad)
+    return np.argsort(frontness)
 
 
 def load_and_prepare_data(csv_path, metric_col, ppo_substring, optimal_label):
@@ -39,6 +66,7 @@ def load_and_prepare_data(csv_path, metric_col, ppo_substring, optimal_label):
     """
     # Read CSV
     df = pd.read_csv(csv_path)
+    metric_col = resolve_metric_column(df, metric_col)
     
     # Filter for relevant policies
     ppo_mask = df['policy'].str.contains(ppo_substring, case=False, na=False)
@@ -52,9 +80,11 @@ def load_and_prepare_data(csv_path, metric_col, ppo_substring, optimal_label):
     num_trucks = sorted(df_filtered['num_trucks'].unique())
     num_stops = sorted(df_filtered['num_stops'].unique(), reverse=True)
     
-    # Separate PPO and Optimal data
-    df_ppo = df_filtered[ppo_mask].copy()
-    df_optimal = df_filtered[optimal_mask].copy()
+    # Separate PPO and Optimal data (recompute masks on filtered df)
+    filtered_ppo_mask = df_filtered['policy'].str.contains(ppo_substring, case=False, na=False)
+    filtered_optimal_mask = df_filtered['policy'] == optimal_label
+    df_ppo = df_filtered[filtered_ppo_mask].copy()
+    df_optimal = df_filtered[filtered_optimal_mask].copy()
     
     return df_filtered, df_ppo, df_optimal, num_trucks, num_stops, metric_col
 
@@ -75,6 +105,7 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
     # Prepare data for 3D plot
     fig = plt.figure(figsize=(14, 10))
     ax = fig.add_subplot(111, projection='3d')
+    ax.computed_zorder = False
     
     # Create meshgrid for x (num_trucks) and y (num_stops)
     x_pos = np.arange(len(num_trucks))
@@ -87,17 +118,11 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
     # Bars are drawn from this baseline to avoid columns extending to z=0
     z_base = 0.99
     
-    # Deviation column name (std of the metric)
-    std_col = metric_col.replace('mean', 'std')
-    
     # Get colormap
     cmap = cm.get_cmap('viridis')
     
-    # Collect data for each combination
-    all_z_values = []
-    
-    for i, trucks in enumerate(num_trucks):
-        for j, stops in enumerate(num_stops):
+    for trucks in num_trucks:
+        for stops in num_stops:
             # Find matching rows
             ppo_mask = (df_ppo['num_trucks'] == trucks) & (df_ppo['num_stops'] == stops)
             optimal_mask = (df_optimal['num_trucks'] == trucks) & (df_optimal['num_stops'] == stops)
@@ -106,26 +131,34 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
             optimal_subset = df_optimal[optimal_mask]
             
             if len(ppo_subset) > 0 and len(optimal_subset) > 0:
-                # Get mean values
-                ppo_reward = ppo_subset[metric_col].mean()
-                optimal_reward = optimal_subset[metric_col].mean()
-                
-                # Calculate ratio (PPO / Optimal)
-                if optimal_reward != 0:
-                    ratio = ppo_reward / optimal_reward
-                    # Error propagation: err(A/B) ≈ (A/B) * sqrt((errA/A)^2 + (errB/B)^2)
-                    ppo_std = ppo_subset[std_col].mean()
-                    optimal_std = optimal_subset[std_col].mean()
-                    
-                    ppo_rel_err = ppo_std / ppo_reward if ppo_reward != 0 else 0
-                    optimal_rel_err = optimal_std / optimal_reward if optimal_reward != 0 else 0
-                    ratio_err = ratio * np.sqrt(ppo_rel_err**2 + optimal_rel_err**2)
-                else:
-                    ratio = 0
-                    ratio_err = 0
-                
+                ratio = np.nan
+
+                # Preferred path: average seed-wise PPO/Optimal ratio
+                if ('seed' in ppo_subset.columns) and ('seed' in optimal_subset.columns):
+                    ppo_by_seed = (
+                        ppo_subset[['seed', metric_col]]
+                        .dropna(subset=[metric_col])
+                        .groupby('seed', as_index=False)[metric_col]
+                        .mean()
+                    )
+                    optimal_by_seed = (
+                        optimal_subset[['seed', metric_col]]
+                        .dropna(subset=[metric_col])
+                        .groupby('seed', as_index=False)[metric_col]
+                        .mean()
+                        .rename(columns={metric_col: 'optimal_metric'})
+                    )
+
+                    merged = ppo_by_seed.merge(optimal_by_seed, on='seed', how='inner')
+                    if not merged.empty:
+                        numer = merged[metric_col].to_numpy(dtype=float)
+                        denom = merged['optimal_metric'].to_numpy(dtype=float)
+                        valid_mask = np.isfinite(numer) & np.isfinite(denom) & (denom != 0)
+                        if np.any(valid_mask):
+                            seed_ratios = numer[valid_mask] / denom[valid_mask]
+                            ratio = float(np.mean(seed_ratios))
+
                 z_data.append(ratio)
-                all_z_values.append(ratio)
             else:
                 z_data.append(np.nan)
     
@@ -141,8 +174,14 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
 
     norm = Normalize(vmin=z_base, vmax=z_max)
     
-    # Plot bars with colors based on values
-    for x, y, z in zip(x_data, y_data, z_data):
+    # Plot bars with explicit back-to-front ordering
+    ratio_azim = 120
+    draw_order = get_back_to_front_order(x_data, y_data, ratio_azim)
+    zorder_base = 10
+    for draw_rank, idx in enumerate(draw_order):
+        x = x_data[idx]
+        y = y_data[idx]
+        z = z_data[idx]
         if not np.isfinite(z):
             continue
 
@@ -156,9 +195,11 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
         ax.bar3d(
             x, y, z_base, 0.8, 0.8, dz,
             color=color,
-            alpha=0.8,
+            alpha=1,
             edgecolor='black',
-            linewidth=0.5
+            linewidth=1,
+            zsort='average',
+            zorder=zorder_base + draw_rank
         )
     
     # Customize axes
@@ -177,6 +218,14 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
     ax.set_ylim(-1, len(num_stops))
     ax.set_zlim(z_base, z_max)
     
+    fx = 18
+    ax.tick_params(axis='x', labelsize=fx)
+    ax.tick_params(axis='y', labelsize=fx)
+    ax.tick_params(axis='z', labelsize=fx)
+    ax.xaxis.label.set_size(fx)
+    ax.yaxis.label.set_size(fx)
+    ax.zaxis.label.set_size(fx)
+
     # Add axis panes for better visibility
     ax.xaxis.pane.fill = True
     ax.yaxis.pane.fill = True
@@ -184,9 +233,9 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
     ax.xaxis.pane.set_facecolor('white')
     ax.yaxis.pane.set_facecolor('white')
     ax.zaxis.pane.set_facecolor('white')
-    ax.xaxis.pane.set_alpha(0.95)
-    ax.yaxis.pane.set_alpha(0.95)
-    ax.zaxis.pane.set_alpha(0.95)
+    ax.xaxis.pane.set_alpha(1)
+    ax.yaxis.pane.set_alpha(1)
+    ax.zaxis.pane.set_alpha(1)
     
     # Grid
     ax.grid(True, alpha=0.3)
@@ -206,10 +255,11 @@ def create_3d_bar_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col, op
     cbar_ticks = np.round(np.arange(z_base, z_max + 1e-9, 0.01), 2)
     cbar.set_ticks(cbar_ticks)
     cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-    cbar.set_label('PPO / Optimal Ratio', fontsize=11, fontweight='bold')
+    cbar.ax.tick_params(labelsize=fx)
+    cbar.set_label('PPO / Optimal Ratio', fontsize=fx, fontweight='bold')
     
     # Adjust viewing angle for better visualization (more elevated, rotated)
-    ax.view_init(elev=20, azim=120)
+    ax.view_init(elev=25, azim=ratio_azim)
     
     plt.tight_layout()
     
@@ -237,6 +287,7 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
     """
     fig2 = plt.figure(figsize=(14, 10))
     ax2 = fig2.add_subplot(111, projection='3d')
+    ax2.computed_zorder = False
 
     x_pos = np.arange(len(num_trucks))
     y_pos = np.arange(len(num_stops))
@@ -262,7 +313,7 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
                 z_data.append(np.nan)
                 continue
 
-            # Seed-wise/scenario-wise comparison when possible
+            # Strict seed-wise comparison
             if ('seed' in ppo_subset.columns) and ('seed' in optimal_subset.columns):
                 ppo_by_seed = (
                     ppo_subset[['seed', metric_col]]
@@ -289,25 +340,18 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
                 z_data.append(win_ratio)
                 continue
 
-            # Fallback: compare each PPO seed/scenario against mean Optimal
-            optimal_value = optimal_subset[metric_col].mean()
-            if not np.isfinite(optimal_value):
-                z_data.append(np.nan)
-                continue
-
-            ppo_values = ppo_subset[metric_col].to_numpy(dtype=float)
-            valid_ppo_values = ppo_values[np.isfinite(ppo_values)]
-            if valid_ppo_values.size == 0:
-                z_data.append(np.nan)
-                continue
-
-            wins = np.sum(valid_ppo_values > optimal_value)
-            win_ratio = (wins / valid_ppo_values.size) * 100.0
-            z_data.append(win_ratio)
+            # No seed info -> cannot compute strict per-seed win ratio
+            z_data.append(np.nan)
 
     z_data = np.array(z_data, dtype=float)
 
-    for x, y, z in zip(x_data, y_data, z_data):
+    win_azim = 120
+    draw_order = get_back_to_front_order(x_data, y_data, win_azim)
+    zorder_base = 10
+    for draw_rank, idx in enumerate(draw_order):
+        x = x_data[idx]
+        y = y_data[idx]
+        z = z_data[idx]
         if not np.isfinite(z):
             continue
 
@@ -315,14 +359,16 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
         ax2.bar3d(
             x, y, z_base, 0.8, 0.8, z,
             color=color,
-            alpha=0.8,
+            alpha=1,
             edgecolor='black',
-            linewidth=0.5
+            linewidth=1,
+            zsort='average',
+            zorder=zorder_base + draw_rank
         )
 
     ax2.set_xlabel('Number of Trucks', fontsize=12, fontweight='bold', labelpad=15)
     ax2.set_ylabel('Number of Stops', fontsize=12, fontweight='bold', labelpad=15)
-    ax2.set_zlabel('Win Ratio vs Optimal (%)', fontsize=12, fontweight='bold', labelpad=15)
+    ax2.set_zlabel('Win Ratio', fontsize=12, fontweight='bold', labelpad=15)
 
     ax2.set_xticks(x_pos)
     ax2.set_xticklabels(num_trucks)
@@ -334,15 +380,23 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
     ax2.set_zlim(z_base, z_max)
     ax2.set_zticks(np.arange(0, 101, 10))
 
+    fx = 18
+    ax2.tick_params(axis='x', labelsize=fx)
+    ax2.tick_params(axis='y', labelsize=fx)
+    ax2.tick_params(axis='z', labelsize=fx)
+    ax2.xaxis.label.set_size(fx)
+    ax2.yaxis.label.set_size(fx)
+    ax2.zaxis.label.set_size(fx)
+
     ax2.xaxis.pane.fill = True
     ax2.yaxis.pane.fill = True
     ax2.zaxis.pane.fill = True
     ax2.xaxis.pane.set_facecolor('white')
     ax2.yaxis.pane.set_facecolor('white')
     ax2.zaxis.pane.set_facecolor('white')
-    ax2.xaxis.pane.set_alpha(0.95)
-    ax2.yaxis.pane.set_alpha(0.95)
-    ax2.zaxis.pane.set_alpha(0.95)
+    ax2.xaxis.pane.set_alpha(1)
+    ax2.yaxis.pane.set_alpha(1)
+    ax2.zaxis.pane.set_alpha(1)
 
     ax2.grid(True, alpha=0.3)
 
@@ -352,9 +406,10 @@ def create_win_ratio_plot(df_ppo, df_optimal, num_trucks, num_stops, metric_col,
     cbar_ticks = np.arange(0, 101, 10)
     cbar.set_ticks(cbar_ticks)
     cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f%%'))
-    cbar.set_label('Win Ratio (%)', fontsize=11, fontweight='bold')
+    cbar.ax.tick_params(labelsize=fx)
+    cbar.set_label('Win Ratio GraphPPO vs Optimal (%)', fontsize=fx, fontweight='bold')
 
-    ax2.view_init(elev=20, azim=120)
+    ax2.view_init(elev=25, azim=win_azim)
 
     plt.tight_layout()
 
@@ -431,7 +486,8 @@ def main():
     # Create 3D plot
     output_file = args.output
     if output_file is None:
-        output_file = 'grid_eval_3d_ratio_plot.png'
+        output_file = 'results/visualization/grid_eval_3d_ratio_plot.png'
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     
     print(f"\n🎨 Creating 3D bar plot with PPO/Optimal reward ratio...")
     fig, ax = create_3d_bar_plot(

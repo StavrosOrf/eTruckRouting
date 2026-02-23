@@ -219,12 +219,13 @@ def main() -> int:
     parser.add_argument(
         "--output",
         default=None,
-        help="Output path for plot (default: results_dir/win_rates.png).",
+        help="Output path for plot (default: results/visualization/win_rates.png).",
     )
     args = parser.parse_args()
     
     results_dir = Path(args.results_dir)
-    output_path = Path(args.output) if args.output else results_dir / "win_rates.png"
+    output_path = Path(args.output) if args.output else Path("results") / "visualization" / "win_rates.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Collect win rates for each setting
     settings_data = {}

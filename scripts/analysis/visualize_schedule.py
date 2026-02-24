@@ -53,14 +53,18 @@ POLICIES = [
 
     # ("saved_models/ppov_vrp_1T20S_spu256_ep5_ent0.1_g32_m256_vk2_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
     
-    ("saved_models/ppov_vrp_1T30S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"), 
-    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
-    ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),
-    ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
-    ("savings", "savings", "base"),
+    # ("saved_models/ppov_vrp_1T30S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"), 
+    # ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk5_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),        
+    # ("saved_models/ppov_vrp_1T10S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),
+    ("saved_models/ppov_vrp_1T30S_spu256_ep5_ent0.1_g32_m256_vk3_ck5_hl2_s0_8166/", "variable-ppo", "vrp"),
+    ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    
+    # ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    # ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
-    ("optimal-vrp", "optimal-vrp"),
+    # ("optimal-vrp", "optimal-vrp"),
     
     # ("heuristic", "heuristic"),
 ]
@@ -68,9 +72,9 @@ POLICIES = [
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1
-NUM_STOPS = 30
+NUM_STOPS = 20
 MAX_TIME = 200.0
-SEED = 1000111112 #10001
+SEED = 1002 #10001
 OUTPUT_DIR = "results/visualization"
 CACHE_DIR = os.path.join(OUTPUT_DIR, "cache")
 CACHE_ENABLED = False
@@ -872,7 +876,7 @@ def plot_route_maps(envs, policy_names, output_dir):
         return
 
     n_panels = len(panels)
-    n_cols = 2
+    n_cols = 3
     n_rows = int(np.ceil(n_panels / n_cols))
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(14 * n_cols, 9 * n_rows), dpi=300)
     axes = np.array(axes).reshape(-1)
@@ -1035,16 +1039,16 @@ def plot_route_maps(envs, policy_names, output_dir):
     for ax in axes[n_panels:]:
         ax.set_visible(False)
 
-    if edge_norm is not None:
-        sm = plt.cm.ScalarMappable(norm=edge_norm, cmap=edge_cmap)
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=axes[:n_panels], orientation="horizontal", fraction=0.03, pad=0.08, location="top")
-        tick_interval = 50
-        max_tick = int(np.ceil(vmax / tick_interval) * tick_interval)
-        ticks = np.arange(0, max_tick + tick_interval, tick_interval)
-        cbar.set_ticks(ticks)
-        cbar.ax.tick_params(pad=6)
-        cbar.set_label("Average Energy Needed (kWh)")
+    # if edge_norm is not None:
+    #     sm = plt.cm.ScalarMappable(norm=edge_norm, cmap=edge_cmap)
+    #     sm.set_array([])
+    #     cbar = fig.colorbar(sm, ax=axes[:n_panels], orientation="horizontal", fraction=0.03, pad=0.08, location="top")
+    #     tick_interval = 50
+    #     max_tick = int(np.ceil(vmax / tick_interval) * tick_interval)
+    #     ticks = np.arange(0, max_tick + tick_interval, tick_interval)
+    #     cbar.set_ticks(ticks)
+    #     cbar.ax.tick_params(pad=6)
+    #     cbar.set_label("Average Energy Needed (kWh)")
 
     common_handles = [
         plt.Line2D([0], [0], marker='o', color='none', markerfacecolor="#d95f02", markeredgecolor="#4a2a00", markersize=8, label="Visited Delivery Nodes"),
@@ -1059,9 +1063,10 @@ def plot_route_maps(envs, policy_names, output_dir):
         frameon=True,
         framealpha=0.9,
         bbox_to_anchor=(0.5, 0.01),
+        fontsize=20,
     )
 
-    fig.suptitle(f"Route Map Comparison (Seed {SEED})", fontsize=16, y=0.98)
+    # fig.suptitle(f"Route Map Comparison (Seed {SEED})", fontsize=16, y=0.98)
     fig.tight_layout(rect=[0.02, 0.06, 0.98, 0.94])
     save_path = os.path.join(output_dir, "route_maps_comparison.png")
     fig.savefig(save_path, dpi=300, bbox_inches='tight')

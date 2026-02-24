@@ -8,8 +8,10 @@ import sys
 import time
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 
 import numpy as np
+import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -86,11 +88,11 @@ POLICIES = [
     
     # ("saved_models/1trucks_10stops/maskppo_seed0_20260209_164605/best_model.zip", "sb3-maskppo", "base"),
     
-    # ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
-    # ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    ("saved_models/1trucks_20stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    ("saved_models/1trucks_20stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
     
-    ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
-    ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
+    # ("saved_models/1trucks_30stops/maskppo_seed0_20260219_172612/best_model.zip", "sb3-maskppo", "base"),
+    # ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
         
     ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
@@ -100,8 +102,8 @@ POLICIES = [
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
 CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
-NUM_STOPS = 30
-NUM_EVAL_SCENARIOS = 10
+NUM_STOPS = 20
+NUM_EVAL_SCENARIOS = 100
 SEED = 1000
 AUTO_DETECT_SB3_CONFIG = False  # Set False to force NUM_TRUCKS/NUM_STOPS
 
@@ -1077,6 +1079,67 @@ def run_parallel_eval(
 
         print(f"{'='*separator_width}\n")
 
+    # Save results to CSV files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(project_root, "results", f"evaluation_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    aggregated_rows = []
+    for policy_name, metrics in results.items():
+        policy_info = policies.get(policy_name, {})
+        row = {
+            "policy_name": policy_name,
+            "policy_full_name": policy_full_names.get(policy_name, policy_name),
+            "policy_path": policy_info.get("path", ""),
+            "policy_type": policy_info.get("type", ""),
+            "gnn_space": policy_info.get("gnn_space", ""),
+            "num_trucks": eval_num_trucks,
+            "num_stops": eval_num_stops,
+            "num_eval_scenarios": num_eval_scenarios,
+            "seed_base": seed,
+            "excluded_seed_count": len(excluded_indices),
+        }
+        for key, value in metrics.items():
+            if key == "episode_rewards":
+                continue
+            row[key] = value
+        aggregated_rows.append(row)
+
+    aggregated_df = pd.DataFrame(aggregated_rows)
+    if not aggregated_df.empty:
+        aggregated_df = aggregated_df.sort_values(["policy_name"]).reset_index(drop=True)
+    aggregated_csv = os.path.join(output_dir, "evaluation_summary.csv")
+    aggregated_df.to_csv(aggregated_csv, index=False)
+
+    episode_rows = []
+    for policy_name, episode_results in episode_results_by_policy.items():
+        policy_info = policies.get(policy_name, {})
+        for result in episode_results:
+            if result is None:
+                continue
+            episode_rows.append(
+                {
+                    "policy_name": policy_name,
+                    "policy_full_name": policy_full_names.get(policy_name, policy_name),
+                    "policy_path": policy_info.get("path", ""),
+                    "policy_type": policy_info.get("type", ""),
+                    "gnn_space": policy_info.get("gnn_space", ""),
+                    "num_trucks": eval_num_trucks,
+                    "num_stops": eval_num_stops,
+                    "seed": seed + result["episode_idx"],
+                    **result,
+                }
+            )
+
+    episode_df = pd.DataFrame(episode_rows)
+    if not episode_df.empty:
+        episode_df = episode_df.sort_values(["policy_name", "episode_idx"]).reset_index(drop=True)
+    episode_csv = os.path.join(output_dir, "evaluation_episode_results.csv")
+    episode_df.to_csv(episode_csv, index=False)
+
+    print(f"\n✓ Saved aggregated results CSV: {aggregated_csv}")
+    print(f"✓ Saved per-episode results CSV: {episode_csv}\n")
+
     return {
         "episode_results_by_policy": episode_results_by_policy,
         "policy_full_names": policy_full_names,
@@ -1085,6 +1148,9 @@ def run_parallel_eval(
         "results": results,
         "num_trucks": eval_num_trucks,
         "num_stops": eval_num_stops,
+        "output_dir": output_dir,
+        "aggregated_csv": aggregated_csv,
+        "episode_csv": episode_csv,
     }
 
 

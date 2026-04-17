@@ -64,7 +64,7 @@ POLICIES = [
     # ("saved_models/1trucks_30stops/ppo_seed1_20260219_172612/best_model.zip", "sb3-ppo", "base"),
     # ("savings", "savings", "base"),
     ("nn-2opt", "nn-2opt", "base"),
-    # ("optimal-vrp", "optimal-vrp"),
+    ("optimal-vrp", "optimal-vrp"),
     
     # ("heuristic", "heuristic"),
 ]

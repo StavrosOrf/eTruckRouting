@@ -206,4 +206,12 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-/visualizations/
+visualizations/
+results/
+uv.lock
+/EVRoutingEnv/data/vis_data/
+gnn_plots/
+wandb/
+saved_models/
+.vscode/
+logs/

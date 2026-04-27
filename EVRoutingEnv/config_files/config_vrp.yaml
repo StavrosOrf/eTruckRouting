@@ -1,0 +1,171 @@
+# Configuration File
+# =================================
+# This file contains all problem-specific initialization parameters
+# for the electric truck routing and charging environment.
+
+# Environment Settings
+# --------------------
+environment:
+
+  # Multi-truck simulation
+  num_trucks: 1
+
+  # Number of delivery stops per truck episode
+  num_stops: 10
+
+  # When enabled, each episode samples a random number of stops in [1, max_num_stops]
+  allow_variable_num_stops: False
+  # Sampling uses num_stops as the upper bound when enabled
+
+  # Minimum energy consumption between consecutive delivery stops (kWh)
+  min_hop_distance: 10.0
+
+  # Maximum energy consumption between consecutive delivery stops (kWh)
+  max_hop_distance: 50.0
+
+  # Maximum simulation time in hours (for event-driven environments)
+  max_time: 200
+
+  # Maximum number of steps per episode (prevents infinite episodes)
+  max_episode_steps: 200
+
+# Truck Configuration
+# -------------------
+truck:
+  # Electric truck specifications (single type)
+  battery_capacity: 400.0 # kWh
+  base_speed: 40.0 # km/h
+
+  # Initial battery level: "full", "random", or specific percentage (0-100)
+  initial_battery: "full"
+
+# Charging Configuration
+# ----------------------
+charging:
+  # Realistic charging curve model
+  # When enabled, DC Fast chargers will use SOC-dependent power tapering (CCCV model)
+  # When disabled, all chargers use constant power (linear model)
+  use_realistic_curve: true  # Toggle: true = realistic CCCV, false = linear (default)
+
+  # Two charger types based on input data
+
+  # Level 2 chargers (slower, more common)
+  level2:
+    charge_rate: 7.2 # kW (typical Level 2 charging power)
+    efficiency: 0.90 # 90% charging efficiency
+    # charge_rate: 50.0 # kW (typical DC Fast charging power)
+    # efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
+
+  # DC Fast chargers (faster, less common)
+  dcfast:
+    charge_rate: 50.0 # kW (peak DC Fast charging power)
+    efficiency: 0.85 # 85% charging efficiency (faster = slightly less efficient)
+    
+    # Realistic charging curve parameters (only used if use_realistic_curve=true)
+    taper_start_soc: 0.8  # SOC percentage (0.0-1.0) when power tapering begins
+    taper_power_min: 25.0  # Minimum power (kW) at 100% SOC during CV phase
+
+  # Available charging durations (hours)
+  charge_durations: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+# Delivery Configuration
+# ----------------------
+delivery:
+  # Enable flexible delivery order selection
+  # When enabled, trucks can navigate to any remaining delivery (not just next in sequence)
+  # When disabled, trucks must follow strict sequential delivery order
+  enable_flexible_delivery_order: true
+  
+  # Enable stochastic unloading time at delivery locations
+  # When enabled, unloading time varies based on time-of-day
+  # When disabled, constant base_unloading_time is used
+  enable_stochastic_unloading: false
+  
+  # Base unloading time at delivery locations (hours)
+  # Typical value: 0.5 hours = 30 minutes
+  base_unloading_time: 0.1
+  
+  # Standard deviation of unloading time as fraction of base time
+  # Example: 0.20 means std_dev = 20% of base_unloading_time during off-hours
+  # Unloading time ~ N(base_time, (std_dev_factor * base_time)^2)
+  std_dev_factor: 0.20
+  
+  # Maximum std_dev cap to avoid extreme values (hours)
+  # Set to 0 or negative to disable capping
+  max_std_dev_hours: 0.25  # 15 minutes max deviation
+  
+  # Business hours multiplier: increases variance during business hours (9am-5pm)
+  # Example: 1.5 means 1.5x variance during 9am-5pm vs. off-hours
+  # Represents variability from dock availability, facility traffic, staffing
+  business_hours_multiplier: 1.5
+  
+  # Unloading time bounds to keep values realistic
+  # min_unloading_multiplier: minimum bound (best case - quick unload)
+  # max_unloading_multiplier: maximum bound (worst case - delays)
+  min_unloading_multiplier: 0.75  # -25% (fast unload)
+  max_unloading_multiplier: 1.5   # +50% (slow unload)
+
+# Reward Function
+# ---------------
+rewards:
+  # Time-based reward coefficient (negative per hour spent)
+  time_multiplier: 1.0
+
+  # Bonus for completing all deliveries
+  delivery_bonus: 500.0
+
+  # Penalty for battery failure
+  failure_penalty: -1000.0
+  
+  # Leftover battery penalty (encourages efficient battery usage)
+  # When enabled, trucks are penalized for remaining battery at completion
+  # Penalty = leftover_battery_penalty_coef * (remaining_soc_percentage)
+  enable_leftover_battery_penalty: false
+  leftover_battery_penalty_coef: 1.0  # Penalty per percentage point of remaining SOC
+
+# Graph/Network Settings
+# -----------------------
+network:
+  data_path: "EVRoutingEnv/data/"
+  # Graph file names
+  shortest_path_energy_file: "shortest_path_energy_dict.json"
+  shortest_path_time_file: "shortest_path_time_dict.json"
+  station_info_file: "station_info_dict.json"
+
+# Traffic Simulation Settings
+# ----------------------------
+traffic:
+  # Enable traffic simulation (applies stochastic variation to travel times)
+  # Uses time-of-day dependent model with rush hour effects
+  enable_traffic: true
+  
+  # Standard deviation of travel time distribution as fraction of mean time
+  # Example: std_dev_factor: 0.15 means std_dev = 15% of mean_time during off-peak
+  # Travel time ~ N(mean_time, (std_dev_factor * mean_time)^2)
+  std_dev_factor: 0.15
+  
+  # Maximum std_dev cap to avoid extreme values (hours)
+  # Set to 0 or negative to disable capping
+  max_std_dev_hours: 1.0
+  
+  # Rush hour multiplier: increases variance during rush hours (7-9am, 5-7pm)
+  # Example: rush_hour_multiplier: 2.0 means 2x variance during rush hours
+  rush_hour_multiplier: 2.0
+  
+  # Energy consumption uncertainty (tied to traffic conditions)
+  # When enabled, traffic conditions affect energy efficiency
+  # Stop-and-go traffic, speed variations increase energy consumption
+  enable_energy_uncertainty: true
+  
+  # Energy uncertainty factor as fraction of base energy consumption
+  # Example: 0.10 means ±10% variation in energy consumption
+  # Energy ~ N(base_energy, (energy_uncertainty_factor * base_energy)^2)
+  energy_uncertainty_factor: 0.05
+  
+  # Maximum energy multiplier bounds to keep energy consumption realistic
+  # min_energy_multiplier: minimum (best case - smooth traffic)
+  # max_energy_multiplier: maximum (worst case - heavy stop-and-go)
+  min_energy_multiplier: 0.90  # -10% (smooth, efficient driving)
+  max_energy_multiplier: 1.20  # +20% (inefficient, stop-and-go)
+
+

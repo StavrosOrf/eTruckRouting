@@ -1,0 +1,42 @@
+{
+  "strategy": "staged",
+  "description": "Gradually increase difficulty through multiple stages",
+  "stages": [
+    {
+      "episodes": 500,
+      "truck_range": [1, 3],
+      "stop_range": [2, 5],
+      "description": "Stage 1: Easy - Few trucks and stops"
+    },
+    {
+      "episodes": 1000,
+      "truck_range": [3, 6],
+      "stop_range": [2, 5],
+      "description": "Stage 2: Medium - More trucks and stops"
+    },
+    {
+      "episodes": 1500,
+      "truck_range": [6, 8],
+      "stop_range": [2,5],
+      "description": "Stage 3: Hard - Many trucks and stops"
+    },
+    {
+      "episodes": 2000,
+      "truck_range": [8, 15],
+      "stop_range": [2,5],
+      "description": "Stage 3: Hard - Many trucks and stops"
+    },
+        {
+      "episodes": 3000,
+      "truck_range": [5, 50],
+      "stop_range": [2,5],
+      "description": "Stage 3: Hard - Many trucks and stops"
+    },
+    {
+      "episodes": -1,
+      "truck_range": [3, 50],
+      "stop_range": [2, 5],
+      "description": "Stage 4: Full range - Continue forever"
+    }
+  ]
+}

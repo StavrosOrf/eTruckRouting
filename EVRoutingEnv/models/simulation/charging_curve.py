@@ -151,6 +151,40 @@ class ChargingCurveModel:
             print(f"      Power: {average_power:.1f} kW (constant)")
         
         return actual_charge_kwh, details
+
+    @staticmethod
+    def cccv_power_at_soc(
+        soc: float,
+        peak_power: float,
+        taper_start_soc: float,
+        taper_power_min: float,
+    ) -> float:
+        """
+        Instantaneous CCCV charging power at a given SOC.
+
+        This is the same piecewise curve used by `_cccv_charge`.
+        """
+        soc = min(1.0, max(0.0, soc))
+
+        if soc < 0.1:
+            # Initial ramp-up (0-10%): start at ~60% power.
+            ramp_progress = soc / 0.1
+            return peak_power * (0.6 + 0.3 * ramp_progress)
+
+        if soc < 0.5:
+            # Continue ramp (10-50%): 90% to 100% power.
+            ramp_progress = (soc - 0.1) / 0.4
+            return peak_power * (0.9 + 0.1 * ramp_progress)
+
+        if soc < taper_start_soc:
+            # Plateau phase (50-80%): maintain peak power.
+            return peak_power
+
+        # Taper phase (80-100%): gradual decline matching the curve.
+        soc_progress = (soc - taper_start_soc) / (1.0 - taper_start_soc)
+        taper_ratio = 0.4  # End at 40% of peak power.
+        power_fraction = 1.0 - (1.0 - taper_ratio) * (soc_progress ** 1.5)
+        return max(peak_power * power_fraction, taper_power_min)
     
     def _cccv_charge(
         self,
@@ -186,29 +220,13 @@ class ChargingCurveModel:
         
         # Simulate charging process
         while time_elapsed < charge_hours and current_soc < 1.0:
-            # Determine current power based on SOC - matches real Silverado EV curve
-            if current_soc < 0.1:
-                # Initial ramp-up (0-10%): start at ~60% power
-                ramp_progress = current_soc / 0.1
-                current_power = peak_power * (0.6 + 0.3 * ramp_progress)  # 60% to 90%
-            elif current_soc < 0.5:
-                # Continue ramp (10-50%): 90% to 100% power
-                ramp_progress = (current_soc - 0.1) / 0.4
-                current_power = peak_power * (0.9 + 0.1 * ramp_progress)  # 90% to 100%
-            elif current_soc < taper_start_soc:
-                # Plateau phase (50-80%): maintain peak power
-                current_power = peak_power
-            else:
-                # Taper phase (80-100%): gradual decline matching the curve
-                # The curve shows a more gradual taper than exponential
-                soc_progress = (current_soc - taper_start_soc) / (1.0 - taper_start_soc)
-                
-                # Use polynomial taper for smoother decline (matches image better)
-                # Power declines from peak to ~40% at 100% SOC (image shows ~50kW from 150kW)
-                taper_ratio = 0.4  # End at 40% of peak power
-                power_fraction = 1.0 - (1.0 - taper_ratio) * (soc_progress ** 1.5)  # Gentler curve
-                current_power = peak_power * power_fraction
-                current_power = max(current_power, taper_power_min)  # Don't go below minimum
+            # Determine current power based on SOC - matches real Silverado EV curve.
+            current_power = self.cccv_power_at_soc(
+                current_soc,
+                peak_power,
+                taper_start_soc,
+                taper_power_min,
+            )
             
             # Calculate energy added in this time step (accounting for efficiency)
             energy_step = current_power * efficiency * dt

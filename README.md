@@ -28,20 +28,24 @@
 
 </div>
 
-`EVRP` is a research codebase for the Electric Vehicle Routing Problem with
-charging decisions, stochastic travel conditions, realistic charging dynamics,
-and graph-based reinforcement learning. The repository provides an event-driven
-Gymnasium environment for electric truck routing, custom PPO agents with
-heterogeneous GNN state encoders, variable-action policies, classical EVRP/VRP
-baselines, Gurobi-based optimization baselines, and evaluation utilities for
-policy comparison and generalization studies.
+> **Paper:** [Learning to Route Electric Truck Fleets Under Nonlinear Models
+> and Operational Uncertainty](https://arxiv.org/abs/2510.12335)
 
-The central idea is simple but demanding: an electric truck should not only
-choose *where* to go next, but also *when and how long to charge*, while the
-road network, battery state, charger availability, and delivery obligations keep
-changing around it. This codebase treats that decision process as an event-driven
-control problem and exposes it through graph-structured observations that are
-well suited to learning policies over changing problem sizes.
+## At a Glance
+
+- **Problem:** **Electric Vehicle Routing Problem** with charging,
+  traffic, battery limits, and delivery deadlines.
+- **Core idea:** Learn policies that decide **where to drive** and
+  **how long to charge** in an event-driven simulator.
+- **Environment:** **Gymnasium-compatible** electric truck simulator
+  with stochastic travel time, energy uncertainty, charger queues, and realistic
+  charging curves.
+- **Learning method:** **PPO + graph neural networks** over
+  heterogeneous routing states and variable feasible-action graphs.
+- **Baselines:** **Heuristics, classical VRP methods, SB3 agents, and
+  Gurobi optimizers** for controlled comparisons.
+- **Research use:** Designed for **paper experiments** on scalability,
+  generalization, charging behavior, and policy robustness.
 
 ## What Is in This Repository?
 
@@ -58,9 +62,9 @@ well suited to learning policies over changing problem sizes.
 - **Baselines** including heuristic routing, Clarke-Wright savings, nearest
   neighbor with 2-opt, Stable-Baselines3 PPO/DQN/QRDQN/MaskablePPO, and
   Gurobi-based optimal or robust planners.
-- **Evaluation and visualization scripts** for policy comparison, grid
-  generalization, route maps, charging curves, schedule analysis, win rates, and
-  optimality-gap summaries.
+- **Evaluation and analysis scripts** for policy comparison, grid
+  generalization, route maps, schedule analysis, network inspection, and
+  debugging.
 
 ## Research Framing
 
@@ -100,8 +104,8 @@ algo/
   networks.py              # Neural-network components
 scripts/
   training/                # PPO, curriculum, and SB3 training entry points
-  evaluation/              # Policy comparison and generalization scripts
-  analysis/                # Route, network, schedule, and state visualizers
+  evaluation/              # Policy comparison, parallel eval, generalization
+  analysis/                # Route, network, schedule, and state inspection
   runners/                 # tmux/grid experiment launchers
 ```
 
@@ -229,6 +233,19 @@ number of scenarios, and seeds, run:
 uv run python scripts/evaluation/eval_policies.py
 ```
 
+For larger comparisons, use the parallel evaluator. It is also configured by
+constants near the top of the file:
+
+```bash
+uv run python scripts/evaluation/eval_parallel_policies.py
+```
+
+To evaluate size-matched policies across the default truck/stop grid:
+
+```bash
+uv run python scripts/evaluation/eval_parallel_by_size.py
+```
+
 Grid generalization experiments are configured near the top of
 `scripts/evaluation/generalization_eval.py`:
 
@@ -236,9 +253,8 @@ Grid generalization experiments are configured near the top of
 uv run python scripts/evaluation/generalization_eval.py
 ```
 
-Evaluation outputs include per-episode metrics, summary CSV files, formatted
-tables, route visualizations, win-rate plots, and optimality-gap summaries under
-`results/`.
+Evaluation outputs include per-episode metrics, summary CSV files, policy
+comparison logs, and experiment artifacts under `results/`.
 
 Common metrics include:
 
@@ -253,19 +269,55 @@ Common metrics include:
 - terminal state-of-charge
 - execution time
 
+## Analysis
+
+The current analysis utilities focus on inspecting the environment, generated
+instances, learned-policy schedules, and graph state. Some scripts expose CLI
+arguments; others use a configuration block near the top of the file.
+
+```bash
+uv run python scripts/analysis/visualize_network.py \
+  --config EVRoutingEnv/config_files/config.yaml \
+  --output results/network_visualization.png \
+  --no-show
+```
+
+```bash
+uv run python scripts/analysis/visualize_transport_graph.py \
+  --config EVRoutingEnv/config_files/config.yaml \
+  --num-trucks 1 \
+  --num-stops 3 \
+  --output results/visualization/transport_graph.png
+```
+
+```bash
+uv run python scripts/analysis/analyze_delivery_routes.py \
+  --config EVRoutingEnv/config_files/config_vrp.yaml \
+  --num-samples 1000 \
+  --num-trucks 10 \
+  --num-stops 15
+```
+
+For schedule comparisons, edit the `POLICIES`, `CONFIG_FILE`, `NUM_TRUCKS`,
+`NUM_STOPS`, and `SEED` constants in `scripts/analysis/visualize_schedule.py`,
+then run:
+
+```bash
+uv run python scripts/analysis/visualize_schedule.py
+```
+
 ## Citation
 
 If you use this repository in academic work, please cite the accompanying paper.
-Replace the placeholder below with the final publication metadata.
 
 ```bibtex
-@misc{evrp2026,
-  title        = {Learning to Route Electric Trucks with Event-Driven Graph Reinforcement Learning},
+@misc{evrp2025,
+  title        = {Learning to Route Electric Truck Fleets Under Nonlinear Models and Operational Uncertainty},
   author       = {Author Names Placeholder},
-  year         = {2026},
-  eprint       = {arXiv:XXXX.XXXXX},
+  year         = {2025},
+  eprint       = {2510.12335},
   archivePrefix = {arXiv},
   primaryClass = {cs.LG},
-  url          = {https://github.com/<owner>/<repo>}
+  url          = {https://arxiv.org/abs/2510.12335}
 }
 ```

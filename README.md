@@ -49,6 +49,9 @@
 
 ## What Is in This Repository?
 
+<img width="2019" height="921" alt="image" src="https://github.com/user-attachments/assets/64b94fe5-e151-4652-93fd-5c33351c42a8" />
+
+
 - **Event-driven EV routing simulator** with a global clock, per-truck event
   queues, stochastic traffic, energy uncertainty, unloading-time models, charger
   queues, and route completion/failure accounting.
@@ -192,6 +195,9 @@ Most training scripts also expose command-line overrides such as `--num-trucks`,
 
 ## Method: PPO over State and Action Graphs
 
+<img width="2439" height="722" alt="image" src="https://github.com/user-attachments/assets/1eaa7e29-266e-4352-8111-04eb5b72902a" />
+
+
 The main learned policy is a PPO actor-critic with two graph components:
 
 1. A heterogeneous GNN state encoder embeds trucks, deliveries, chargers, and
@@ -203,6 +209,9 @@ This design avoids forcing every problem instance into a fixed action template.
 At each step, the environment provides an action graph containing candidate
 delivery moves and charging decisions. The policy scores the candidates,
 samples or selects an action, and maps the selected action back to the simulator.
+
+<img width="1973" height="892" alt="image" src="https://github.com/user-attachments/assets/75acf59d-00f1-4b7f-afa7-293acd2064c7" />
+
 
 Supported GNN state-space modes:
 

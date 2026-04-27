@@ -1,8 +1,6 @@
 <div align="center">
 
-# EVRP
-
-### Learning to Route Electric Trucks When Time, Charge, and Traffic Refuse to Sit Still
+# Learning to Route Electric Truck Fleets Under Nonlinear Models and Operational Uncertainty
 
 **Event-driven graph reinforcement learning for charge-aware electric truck routing.**
 
@@ -118,7 +116,7 @@ This project uses `uv` for reproducible Python environments.
 
 ```bash
 git clone <repository-url>
-cd EVRP
+cd eTruckRouting
 uv sync
 ```
 

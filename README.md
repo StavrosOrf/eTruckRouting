@@ -1,6 +1,6 @@
 <div align="center">
 
-# Learning to Route Electric Truck Fleets Under Nonlinear Models and Operational Uncertainty
+# Learning to Route Electric Truck Fleets Under Operational Uncertainty
 
 **Event-driven graph reinforcement learning for charge-aware electric truck routing.**
 
@@ -26,8 +26,7 @@
 
 </div>
 
-> **Paper:** [Learning to Route Electric Truck Fleets Under Nonlinear Models
-> and Operational Uncertainty](https://arxiv.org/abs/2510.12335)
+> **Paper:** [Learning to Route Electric Truck Fleets Under Operational Uncertainty](https://arxiv.org/abs/2604.26566)
 
 ## At a Glance
 
@@ -318,13 +317,13 @@ uv run python scripts/analysis/visualize_schedule.py
 If you use this repository in academic work, please cite the accompanying paper.
 
 ```bibtex
-@misc{evrp2025,
-  title        = {Learning to Route Electric Truck Fleets Under Nonlinear Models and Operational Uncertainty},
-  author       = {Author Names Placeholder},
-  year         = {2025},
-  eprint       = {2510.12335},
-  archivePrefix = {arXiv},
-  primaryClass = {cs.LG},
-  url          = {https://arxiv.org/abs/2510.12335}
+@misc{orfanoudakis2026leTruckRouting,
+      title={Learning to Route Electric Trucks Under Operational Uncertainty}, 
+      author={Stavros Orfanoudakis and Ziyan Li and Ruixiao Yang and Nikolay Aristov and Pedro P. Vergara and Chuchu Fan and Elenna Dugundji},
+      year={2026},
+      eprint={2604.26566},
+      archivePrefix={arXiv},
+      primaryClass={eess.SY},
+      url={https://arxiv.org/abs/2604.26566}, 
 }
 ```

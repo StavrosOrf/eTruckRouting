@@ -3,9 +3,9 @@ Event handling logic for the event-driven truck environment.
 """
 
 import heapq
-from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class EventType(Enum):
@@ -22,7 +22,7 @@ class Event:
     time: float  # When the event occurs
     truck_id: int  # Tie-breaker: lower truck_id gets priority when times are equal
     event_type: EventType = field(compare=False)
-    data: Dict = field(default_factory=dict, compare=False)
+    data: dict = field(default_factory=dict, compare=False)
 
     def __repr__(self):
         return f"Event(time={self.time:.2f}, type={self.event_type.value}, truck={self.truck_id})"
@@ -45,13 +45,14 @@ class EventHandler:
     def handle_truck_routing(
         self,
         event: Event,
-        trucks: List[Any],
-        truck_states: Dict[int, str],
-        truck_routes: Dict[int, List],
-        event_queue: List,
+        trucks: list[Any],
+        truck_states: dict[int, str],
+        truck_routes: dict[int, list],
+        event_queue: list,
         global_clock: float,
         enable_plotting: bool,
         delivery_simulator: Any = None,
+        task_registry: Any = None,
     ):
         """
         Handle truck arrival at a node (after routing).
@@ -69,14 +70,21 @@ class EventHandler:
         truck = trucks[event.truck_id]
         data = event.data
 
-        # Check if this will be a delivery event BEFORE updating truck state
+        # Joint-routing events carry an explicit task identity. Legacy events
+        # infer delivery status from the truck-owned sequence.
         destination = data["destination"]
+        task_id = data.get("task_id")
+        is_joint_delivery = task_registry is not None and task_id is not None
         next_delivery_target = truck.get_next_delivery_target()
-        
-        # Handle both sequential and flexible modes
-        if truck.enable_flexible_delivery_order:
-            # Flexible mode: check if destination is any remaining delivery
-            remaining_deliveries = next_delivery_target if isinstance(next_delivery_target, list) else []
+
+        if is_joint_delivery:
+            is_delivery = True
+        elif truck.enable_flexible_delivery_order:
+            remaining_deliveries = (
+                next_delivery_target
+                if isinstance(next_delivery_target, list)
+                else []
+            )
             is_delivery = destination in remaining_deliveries
         else:
             # Sequential mode: check if destination is next delivery
@@ -89,6 +97,7 @@ class EventHandler:
             travel_time=data["travel_time"],
             discharge=data["discharge"],
             timestamp=global_clock,
+            mark_delivery_on_arrival=not is_joint_delivery,
         )
 
         # Clear route tracking information
@@ -148,6 +157,16 @@ class EventHandler:
             
             print(f"    is_complete flag: {truck.is_complete}")
 
+        if is_joint_delivery:
+            if truck.failed:
+                task_registry.release_claim(destination, truck.truck_id)
+            else:
+                task_registry.start_service(
+                    destination,
+                    truck_id=truck.truck_id,
+                    timestamp=global_clock,
+                )
+
         # Check if truck failed (already logged in move_to_node)
         if truck.failed:
             truck_states[truck.truck_id] = "failed"
@@ -161,11 +180,15 @@ class EventHandler:
                 print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
         # If this was a delivery (and not complete/failed), apply unloading time
         elif is_delivery and delivery_simulator is not None:
-            # Apply stochastic unloading time
-            unloading_time = delivery_simulator.apply_unloading_time(
-                delivery_node=destination,
-                current_time=global_clock
-            )
+            # The navigation action samples service time once and stores it on
+            # the arrival event so reward accounting and event timing use the
+            # same realization. Fall back for legacy/external events.
+            unloading_time = data.get("unloading_time")
+            if unloading_time is None:
+                unloading_time = delivery_simulator.apply_unloading_time(
+                    delivery_node=destination,
+                    current_time=global_clock,
+                )
             
             # Start unloading event
             truck.start_unloading(timestamp=global_clock, delivery_node=destination)
@@ -179,7 +202,9 @@ class EventHandler:
                     truck_id=truck.truck_id,
                     data={
                         "reason": "unloading_complete",
-                        "unloading_duration": unloading_time
+                        "unloading_duration": unloading_time,
+                        "task_id": task_id,
+                        "customer_node": destination,
                     }
                 )
             )
@@ -196,5 +221,3 @@ class EventHandler:
             # Note: TRUCK_READY event will be scheduled by the main event loop
             truck.mark_ready(timestamp=global_clock, reason="arrived_at_charger")
             truck_states[truck.truck_id] = "ready"
-
-

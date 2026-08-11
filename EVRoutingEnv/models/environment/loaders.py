@@ -1,6 +1,8 @@
 """Loaders for trucks and other entities in the environment."""
 
+
 import numpy as np
+
 from EVRoutingEnv.models.core.truck import Truck
 
 
@@ -164,6 +166,7 @@ def create_truck(
     max_hop_distance: float,
     charging_nodes: list,
     enable_flexible_delivery_order: bool = False,
+    rng: np.random.Generator | None = None,
 ) -> tuple:
     """
     Create a new truck with random delivery sequence.
@@ -177,6 +180,7 @@ def create_truck(
         max_hop_distance: Maximum distance between stops
         charging_nodes: List of charging station nodes
         enable_flexible_delivery_order: If True, allow flexible delivery order selection
+        rng: Optional episode-scoped generator for reproducible instances
 
     Returns:
         Tuple of (truck, delivery_sequence, start_node)
@@ -211,7 +215,10 @@ def create_truck(
     
     # Shuffle valid start nodes to try different ones
     candidate_start_nodes = list(valid_start_nodes)
-    np.random.shuffle(candidate_start_nodes)
+    if rng is None:
+        np.random.shuffle(candidate_start_nodes)
+    else:
+        rng.shuffle(candidate_start_nodes)
     
     feasible = False
     delivery_sequence = None
@@ -227,13 +234,14 @@ def create_truck(
             start_node = candidate_start_nodes[start_node_attempt % len(candidate_start_nodes)]
             
             # Try to generate a feasible sequence from this start node
-            for sequence_attempt in range(max_sequence_tries_per_node):
+            for _sequence_attempt in range(max_sequence_tries_per_node):
                 delivery_sequence = transport_graph.generate_delivery_sequence(
                     start_node=start_node,
                     num_stops=num_stops,
                     min_hop_distance=current_min_hop,
                     max_hop_distance=current_max_hop,
                     exclude_charging_nodes=True,
+                    rng=rng,
                 )
                 
                 # Check if sequence has the correct number of stops
@@ -262,7 +270,10 @@ def create_truck(
             current_max_hop *= reduction_factor
             current_min_hop = min(current_min_hop, current_max_hop * 0.5)
             # Reshuffle start nodes for next iteration
-            np.random.shuffle(candidate_start_nodes)
+            if rng is None:
+                np.random.shuffle(candidate_start_nodes)
+            else:
+                rng.shuffle(candidate_start_nodes)
     
     if not feasible:
         # Last resort: generate any sequence with very small hops
@@ -270,13 +281,14 @@ def create_truck(
         for start_node_attempt in range(len(candidate_start_nodes)):
             start_node = candidate_start_nodes[start_node_attempt]
             
-            for sequence_attempt in range(20):
+            for _sequence_attempt in range(20):
                 delivery_sequence = transport_graph.generate_delivery_sequence(
                     start_node=start_node,
                     num_stops=num_stops,
                     min_hop_distance=0.1,
                     max_hop_distance=min_acceptable_hop,
                     exclude_charging_nodes=True,
+                    rng=rng,
                 )
                 
                 # Check if sequence has the correct number of stops
@@ -305,7 +317,10 @@ def create_truck(
     if initial_battery_setting == "full":
         initial_battery = battery_capacity
     elif initial_battery_setting == "random":
-        initial_battery = np.random.uniform(0.3, 1.0) * battery_capacity
+        if rng is None:
+            initial_battery = np.random.uniform(0.3, 1.0) * battery_capacity
+        else:
+            initial_battery = rng.uniform(0.3, 1.0) * battery_capacity
     elif isinstance(initial_battery_setting, (int, float)):
         initial_battery = (initial_battery_setting / 100.0) * battery_capacity
     else:

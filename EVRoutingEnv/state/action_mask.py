@@ -5,10 +5,13 @@ This module provides functionality to determine which actions are feasible
 for the active truck based on battery constraints, location, and state.
 """
 
-import numpy as np
 from typing import TYPE_CHECKING
 
+import numpy as np
+
+from EVRoutingEnv.state.feasibility import joint_action_feasibility
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
+
 
 if TYPE_CHECKING:
     from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
@@ -32,6 +35,14 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     # If no active truck, keep all infeasible
     if env.active_truck_id is None:
         return feasible_mask
+
+    # The primary joint model uses the centralized hard-feasibility engine.
+    # Legacy route-execution modes retain their historical graph-derived mask
+    # until they are migrated to the canonical feature/action schema.
+    if getattr(env, "joint_routing", False):
+        decisions = joint_action_feasibility(env)
+        env.last_action_feasibility = decisions
+        return np.asarray([item.feasible for item in decisions], dtype=bool)
 
     # Cache a default GNN state space on the env to avoid re-instantiation
     cached_space = getattr(env, "_default_gnn_state_space", None)

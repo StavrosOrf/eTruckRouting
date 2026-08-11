@@ -1,5 +1,7 @@
 # Reviewer Revision and Experimental Campaign Plan
 
+> **Superseded scope note (2026-08-11):** This was the initial audit. The author subsequently approved the joint fleet-routing path in `Exprimental notes and Campaigns/00_modeling_validation.md`. Use that campaign directory as the current source of truth; retain this file as audit history.
+
 Last audited: 2026-08-11
 
 This document records the repository audit, the planned response to the handling editor and reviewers, and the experimental campaigns required before resubmission.

@@ -2,11 +2,11 @@
 Transportation Graph class for managing the road network.
 """
 
-import networkx as nx
-import numpy as np
 import os
 import pickle
-from typing import List, Tuple, Dict, Set, Optional
+
+import networkx as nx
+import numpy as np
 
 
 class TransportationGraph:
@@ -40,7 +40,7 @@ class TransportationGraph:
         if precompute_distances:
             self._initialize_distance_cache()
 
-    def _extract_charging_nodes(self) -> List[int]:
+    def _extract_charging_nodes(self) -> list[int]:
         """Extract all nodes that have charging stations."""
         return [
             node
@@ -120,17 +120,17 @@ class TransportationGraph:
         except Exception as e:
             print(f"  - ✗ Error saving cache file: {e}")
 
-    def get_charging_nodes(self) -> List[int]:
+    def get_charging_nodes(self) -> list[int]:
         """Return list of all charging station nodes."""
         return self.charging_nodes.copy()
 
-    def get_charger_details(self) -> Dict[int, Dict[str, object]]:
+    def get_charger_details(self) -> dict[int, dict[str, object]]:
         """Return details for each charger node.
 
         Returns a dict keyed by internal node id with values:
         { 'original_id': <original node id>, 'types': {type: count, ...} }
         """
-        details: Dict[int, Dict[str, object]] = {}
+        details: dict[int, dict[str, object]] = {}
         for node in self.charging_nodes:
             data = self.graph.nodes[node]
             details[node] = {
@@ -139,7 +139,7 @@ class TransportationGraph:
             }
         return details
 
-    def get_all_nodes(self) -> List[int]:
+    def get_all_nodes(self) -> list[int]:
         """Return list of all nodes in the graph."""
         return list(self.graph.nodes())
 
@@ -182,7 +182,7 @@ class TransportationGraph:
             self._distance_cache[cache_key] = float('inf')
             return float('inf')
 
-    def get_shortest_path(self, from_node: int, to_node: int) -> List[int]:
+    def get_shortest_path(self, from_node: int, to_node: int) -> list[int]:
         """
         Get the shortest path between two nodes.
 
@@ -244,7 +244,7 @@ class TransportationGraph:
             self._time_cache[cache_key] = float('inf')
             return float('inf')
 
-    def get_edge_data(self, from_node: int, to_node: int) -> Dict:
+    def get_edge_data(self, from_node: int, to_node: int) -> dict:
         """
         Get edge data between two nodes.
 
@@ -259,7 +259,7 @@ class TransportationGraph:
             return self.graph[from_node][to_node]
         return {}
 
-    def get_neighbors(self, node: int) -> List[int]:
+    def get_neighbors(self, node: int) -> list[int]:
         """
         Get all neighboring nodes (direct connections).
 
@@ -278,7 +278,8 @@ class TransportationGraph:
         min_hop_distance: float = 10.0,
         max_hop_distance: float = 100.0,
         exclude_charging_nodes: bool = False,
-    ) -> List[int]:
+        rng: np.random.Generator | None = None,
+    ) -> list[int]:
         """
         Generate a random delivery sequence with constrained hop distances.
 
@@ -288,6 +289,7 @@ class TransportationGraph:
             min_hop_distance: Minimum distance between consecutive stops (km)
             max_hop_distance: Maximum distance between consecutive stops (km)
             exclude_charging_nodes: If True, avoid charging nodes as delivery stops
+            rng: Optional episode-scoped generator for reproducible instances
 
         Returns:
             List of nodes representing the delivery sequence [start, stop1, stop2, ...]
@@ -347,7 +349,10 @@ class TransportationGraph:
                     break
 
             # Randomly select next node
-            next_node = np.random.choice(valid_next_nodes)
+            if rng is None:
+                next_node = np.random.choice(valid_next_nodes)
+            else:
+                next_node = rng.choice(valid_next_nodes)
             sequence.append(next_node)
             current_node = next_node
 
@@ -367,7 +372,10 @@ class TransportationGraph:
             
             if not remaining_nodes:
                 break
-            next_node = np.random.choice(remaining_nodes)
+            if rng is None:
+                next_node = np.random.choice(remaining_nodes)
+            else:
+                next_node = rng.choice(remaining_nodes)
             sequence.append(next_node)
             current_node = next_node
 
@@ -376,7 +384,7 @@ class TransportationGraph:
 
         return sequence
 
-    def get_nearest_charging_node(self, from_node: int) -> Tuple[int, float]:
+    def get_nearest_charging_node(self, from_node: int) -> tuple[int, float]:
         """
         Find the nearest charging station from a given node.
 
@@ -400,7 +408,7 @@ class TransportationGraph:
 
         return nearest_node, min_distance
 
-    def get_charger_info(self, node: int) -> Dict:
+    def get_charger_info(self, node: int) -> dict:
         """
         Get charging station information for a node.
 
@@ -499,20 +507,20 @@ class TransportationGraph:
             True if successful, False otherwise
         """
         if not os.path.exists(self._cache_file):
-            print(f"[TransportationGraph] Cache file not found")
+            print("[TransportationGraph] Cache file not found")
             return False
 
         try:
             with open(self._cache_file, "rb") as f:
                 self._distance_cache = pickle.load(f)
-            print(f"[TransportationGraph] Distance cache loaded from disk")
+            print("[TransportationGraph] Distance cache loaded from disk")
             print(f"  - Contains {len(self._distance_cache)} distance entries")
             return True
         except Exception as e:
             print(f"[TransportationGraph] Error loading distance cache: {e}")
             return False
 
-    def get_cache_stats(self) -> Dict:
+    def get_cache_stats(self) -> dict:
         """
         Get statistics about the distance cache.
 

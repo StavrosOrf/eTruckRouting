@@ -17,6 +17,7 @@ class Truck:
         battery_capacity: float,
         base_speed: float,
         enable_flexible_delivery_order: bool = False,
+        payload_capacity: Optional[float] = None,
     ):
         """
         Initialize a truck.
@@ -29,6 +30,8 @@ class Truck:
             battery_capacity: Maximum battery capacity (kWh)
             base_speed: Base speed of truck (km/h)
             enable_flexible_delivery_order: If True, allow flexible delivery order selection
+            payload_capacity: Maximum delivery demand carried by the truck. Legacy
+                route-execution instances may omit this constraint.
         """
         self.truck_id = truck_id
         self.truck_type = truck_type
@@ -36,6 +39,13 @@ class Truck:
         self.battery_capacity = battery_capacity
         self.base_speed = base_speed
         self.enable_flexible_delivery_order = enable_flexible_delivery_order
+        if payload_capacity is not None and payload_capacity <= 0:
+            raise ValueError("payload_capacity must be positive when specified")
+        self.payload_capacity = (
+            float(payload_capacity) if payload_capacity is not None else None
+        )
+        self.remaining_payload = self.payload_capacity
+        self.served_task_ids: List[int] = []
         
         # Current state - clamp initial battery to capacity
         self.current_battery = min(battery_capacity, initial_battery)
@@ -58,6 +68,7 @@ class Truck:
         # Completion tracking
         self.is_complete = False
         self.failed = False  # True if ran out of battery
+        self.failure_reason = None
         self.battery_at_completion = None  # Store battery level when completing last delivery
         # VRP: require return to depot after last delivery in flexible mode
         self.return_to_depot_pending = False #True if enable_flexible_delivery_order else False
@@ -146,6 +157,42 @@ class Truck:
         else:
             # Sequential mode: return remaining in sequence
             return self.delivery_sequence[self.current_sequence_index + 1:]
+
+    def can_accept_demand(self, demand: float) -> bool:
+        """Return whether the truck has enough remaining payload for a task."""
+        if demand <= 0:
+            return False
+        if self.remaining_payload is None:
+            return True
+        return float(demand) <= self.remaining_payload + 1e-9
+
+    def complete_customer_service(
+        self,
+        task_id: int,
+        demand: float,
+        timestamp: float,
+        node_id: int,
+    ) -> None:
+        """Consume payload and record service of one fleet-owned task."""
+        if int(task_id) in self.served_task_ids:
+            raise ValueError(f"truck {self.truck_id} already served task {task_id}")
+        if not self.can_accept_demand(demand):
+            raise ValueError(
+                f"truck {self.truck_id} lacks payload for demand {demand}"
+            )
+        if self.remaining_payload is not None:
+            self.remaining_payload = max(0.0, self.remaining_payload - float(demand))
+        self.served_task_ids.append(int(task_id))
+        self._record_event(
+            event_type="CUSTOMER_SERVICE_COMPLETE",
+            timestamp=float(timestamp),
+            location=int(node_id),
+            details={
+                "task_id": int(task_id),
+                "demand": float(demand),
+                "remaining_payload": self.remaining_payload,
+            },
+        )
     
     def advance_to_next_delivery(self, delivered_node: Optional[int] = None):
         """
@@ -213,7 +260,8 @@ class Truck:
         distance: float,
         travel_time: float,
         discharge: float,
-        timestamp: Optional[float] = None
+        timestamp: Optional[float] = None,
+        mark_delivery_on_arrival: bool = True,
     ):
         """
         Update truck state after moving to a new node.
@@ -224,6 +272,9 @@ class Truck:
             travel_time: Time taken (hours)
             discharge: Battery consumed (kWh)
             timestamp: Current simulation time (for event logging)
+            mark_delivery_on_arrival: Preserve legacy route-execution semantics
+                when true. Joint-routing episodes set this to false and commit
+                service through the fleet task registry after unloading.
         """
         origin = self.current_node
         
@@ -250,29 +301,24 @@ class Truck:
                 }
             )
         
-        # Check if this was a delivery target
-        if self.enable_flexible_delivery_order:
-            # Flexible mode: check if node is any remaining delivery
-            remaining_deliveries = self.get_next_delivery_target()
-            if node in remaining_deliveries:
-                self.advance_to_next_delivery(delivered_node=node)
-        else:
-            # Sequential mode: check if node is next delivery
-            if node == self.get_next_delivery_target():
+        if mark_delivery_on_arrival:
+            # Check if this was a delivery target. This is the historical
+            # route-execution behavior; the joint model completes service only
+            # after its unloading event.
+            if self.enable_flexible_delivery_order:
+                remaining_deliveries = self.get_next_delivery_target()
+                if node in remaining_deliveries:
+                    self.advance_to_next_delivery(delivered_node=node)
+            elif node == self.get_next_delivery_target():
                 self.advance_to_next_delivery()
         
         # Check if out of battery
         if self.current_battery <= 0:
             self.current_battery = 0
-            self.failed = True
-            if timestamp is not None:
-                self._record_event(
-                    event_type="FAILED",
-                    timestamp=timestamp,
-                    location=node,
-                    details={"reason": "battery_depleted"}
-                )
-                self.current_state = "failed"
+            self.mark_failed(
+                reason="battery_depleted",
+                timestamp=timestamp if timestamp is not None else 0.0,
+            )
         elif self.enable_flexible_delivery_order and self.return_to_depot_pending:
             depot_node = self.delivery_sequence[0]
             if node == depot_node:
@@ -474,6 +520,19 @@ class Truck:
             }
         )
         self.current_state = "complete"
+
+    def mark_failed(self, reason: str, timestamp: float) -> None:
+        """Mark the truck failed once and retain a stable cause code."""
+        if self.failed:
+            return
+        self.failed = True
+        self.failure_reason = str(reason)
+        self._record_event(
+            event_type="FAILED",
+            timestamp=float(timestamp),
+            details={"reason": self.failure_reason},
+        )
+        self.current_state = "failed"
     
     def get_battery_percentage(self) -> float:
         """Get current battery level as percentage."""
@@ -518,11 +577,15 @@ class Truck:
             "current_battery": self.current_battery,
             "battery_capacity": self.battery_capacity,
             "battery_percentage": self.get_battery_percentage(),
+            "payload_capacity": self.payload_capacity,
+            "remaining_payload": self.remaining_payload,
+            "served_task_ids": self.served_task_ids.copy(),
             "base_speed": self.base_speed,
             "is_charging": self.is_charging,
             "must_leave_charger": self.must_leave_charger,
             "is_complete": self.is_complete,
             "failed": self.failed,
+            "failure_reason": self.failure_reason,
             "deliveries_remaining": len(self.get_remaining_deliveries()),
             "total_distance": self.total_distance_traveled,
             "total_time": self.total_time_elapsed,
@@ -662,10 +725,12 @@ class Truck:
             "truck_id": self.truck_id,
             "truck_type": self.truck_type,
             "battery_capacity": self.battery_capacity,
+            "payload_capacity": self.payload_capacity,
             "delivery_sequence": self.delivery_sequence,
             "episode_summary": {
                 "is_complete": self.is_complete,
-                "failed": self.failed,
+            "failed": self.failed,
+            "failure_reason": self.failure_reason,
                 "total_time_hours": self.total_time_elapsed,
                 "total_distance_km": self.total_distance_traveled,
                 "total_charging_time_hours": self.total_charging_time,

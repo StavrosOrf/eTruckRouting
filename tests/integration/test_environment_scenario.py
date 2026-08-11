@@ -25,7 +25,12 @@ def test_environment_reset_replays_instance_and_observation() -> None:
         second_observation, second_info = env.reset(seed=8123)
         second_plans = [tuple(truck.delivery_sequence) for truck in env.trucks]
 
-        assert first_info["scenario"] == {"seed": 8123, "version": "1"}
+        assert first_info["scenario"]["seed"] == 8123
+        assert first_info["scenario"]["rng_version"] == "1"
+        assert first_info["scenario"]["schema_version"] == "evrp-scenario-v1"
+        assert first_info["scenario"]["truck_routes"] == [
+            list(plan) for plan in first_plans
+        ]
         assert second_info["scenario"] == first_info["scenario"]
         assert second_plans == first_plans
         np.testing.assert_array_equal(second_observation, first_observation)

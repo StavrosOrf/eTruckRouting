@@ -2,22 +2,25 @@
 
 ## Gate A — Model correctness
 
-- [ ] Every customer is served exactly once in successful episodes.
-- [ ] Vehicle payload never exceeds capacity.
-- [ ] Battery state follows travel and charging updates within numerical tolerance.
+- [x] Every customer is served exactly once in successful episodes (unit, end-to-end, atomic-claim, and 20-scenario regression tests).
+- [x] Vehicle payload never exceeds capacity; generated demands have a guaranteed feasible partition.
+- [x] Battery state follows travel and charging updates within numerical tolerance in randomized unit sequences and 20 seeded complete episodes.
 - [ ] A truck never teleports or executes an action in an invalid state.
-- [ ] Depot-return rules are enforced consistently.
-- [ ] FCFS queue order and station port capacity are invariant-tested.
-- [ ] No hidden fallback converts an infeasible state into a nominally feasible action.
-- [ ] Charging integration is monotone, capacity-bounded, and validated against reference curves.
+- [x] Depot-return rules are enforced in the primary joint model and covered across stochastic scenarios.
+- [x] FCFS queue order, duplicate wakes, stale waiters, and station port capacity are invariant-tested.
+- [x] Primary joint actions use explicit hard-feasibility reasons; invalid actions cannot silently reroute or charge.
+- [x] Target-SoC charging integration is monotone, exact-target, and capacity-bounded; external reference-curve validation remains for the manuscript campaign.
+- [x] The controlled hard-time-window variant waits on early arrival, rejects nominally impossible actions, and records realized late-arrival failure without enabling windows in the base campaign.
+- [x] The primary joint, time-window, and legacy configurations satisfy Gymnasium's reset/step/space contract.
 
 ## Gate B — Stochastic correctness
 
 - [x] Same scenario ID and policy actions reproduce identical exogenous outcomes.
 - [x] Different scenario IDs produce distinct keyed samples; distribution-level validation remains under the next item.
 - [x] Policy RNG consumption is isolated from the exogenous scenario streams.
-- [ ] Empirical distributions match configured moments and clipping rules.
-- [ ] Scenario seed and generation version are exposed in episode `info`; persist them in every evaluation artifact.
+- [x] Deterministic Monte Carlo checks cover clipping, approximate means, rush/business-hour variance effects, and positive travel-energy correlation.
+- [x] A versioned full scenario descriptor, including config hash, instance, chargers, uncertainty configuration, and RNG version, is exposed in episode `info`.
+- [ ] Wire the descriptor into every training/evaluation runner and preserve it beside raw episode rows.
 
 ## Gate C — Comparison fairness
 
@@ -79,6 +82,8 @@ Every evaluation must save:
 ## Current execution constraint
 
 At campaign creation, `nvidia-smi` could not communicate with an NVIDIA driver in the current execution environment. This does not block design and implementation, but GPU training must not be reported as launched until the target compute environment is identified and verified.
+
+The lightweight `.venv` also does not currently contain PyTorch, PyTorch Geometric, Stable-Baselines3, or SB3-Contrib. Environment verification is complete without them, but action-head tests and learning smoke runs require a resolved ML environment. On Python 3.13, invoke coverage with one package target and `COVERAGE_CORE=ctrace`; multiple module-level `--cov` targets trigger a NumPy double-import failure in the current coverage stack.
 
 ## Resubmission definition of done
 

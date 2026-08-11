@@ -44,12 +44,16 @@ class CustomerTask:
 
         if self.task_id < 0:
             raise ValueError("task_id must be non-negative")
-        if self.demand <= 0.0:
+        if self.node_id < 0:
+            raise ValueError("node_id must be non-negative")
+        if not math.isfinite(self.demand) or self.demand <= 0.0:
             raise ValueError("customer demand must be positive")
-        if self.base_service_time < 0.0:
+        if not math.isfinite(self.base_service_time) or self.base_service_time < 0.0:
             raise ValueError("base service time cannot be negative")
-        if self.earliest_service < 0.0:
+        if not math.isfinite(self.earliest_service) or self.earliest_service < 0.0:
             raise ValueError("earliest service time cannot be negative")
+        if math.isnan(self.latest_service):
+            raise ValueError("latest service time cannot be NaN")
         if self.latest_service < self.earliest_service:
             raise ValueError("latest service time precedes earliest service time")
 
@@ -109,12 +113,16 @@ class FleetTaskRegistry:
         if remaining_payload is None:
             return tasks
         capacity = float(remaining_payload)
+        if not math.isfinite(capacity) or capacity < 0.0:
+            raise ValueError("remaining_payload must be finite and non-negative")
         return [task for task in tasks if task.demand <= capacity]
 
     def pending_tasks(self) -> list[CustomerTask]:
         return [task for task in self.tasks() if not task.is_served]
 
     def claim(self, node_id: int, truck_id: int, timestamp: float) -> CustomerTask:
+        truck_id = self._validate_truck_id(truck_id)
+        timestamp = self._validate_timestamp(timestamp)
         task = self.task_for_node(node_id)
         if task.status is not TaskStatus.UNASSIGNED:
             raise ValueError(
@@ -122,38 +130,50 @@ class FleetTaskRegistry:
                 "not available"
             )
         task.status = TaskStatus.CLAIMED
-        task.claimed_by = int(truck_id)
-        task.claimed_at = float(timestamp)
+        task.claimed_by = truck_id
+        task.claimed_at = timestamp
         return task
 
     def start_service(
         self, node_id: int, truck_id: int, timestamp: float
     ) -> CustomerTask:
+        truck_id = self._validate_truck_id(truck_id)
+        timestamp = self._validate_timestamp(timestamp)
         task = self.task_for_node(node_id)
         self._require_claimant(task, truck_id)
         if task.status is not TaskStatus.CLAIMED:
             raise ValueError(
                 f"task {task.task_id} cannot start service from {task.status.value}"
             )
+        if task.claimed_at is not None and timestamp < task.claimed_at - 1e-9:
+            raise ValueError("service cannot start before task claim")
         task.status = TaskStatus.IN_SERVICE
-        task.service_started_at = float(timestamp)
+        task.service_started_at = timestamp
         return task
 
     def complete_service(
         self, node_id: int, truck_id: int, timestamp: float
     ) -> CustomerTask:
+        truck_id = self._validate_truck_id(truck_id)
+        timestamp = self._validate_timestamp(timestamp)
         task = self.task_for_node(node_id)
         self._require_claimant(task, truck_id)
         if task.status is not TaskStatus.IN_SERVICE:
             raise ValueError(
                 f"task {task.task_id} cannot complete service from {task.status.value}"
             )
+        if (
+            task.service_started_at is not None
+            and timestamp < task.service_started_at - 1e-9
+        ):
+            raise ValueError("service cannot complete before it starts")
         task.status = TaskStatus.SERVED
-        task.served_at = float(timestamp)
-        task.served_by = int(truck_id)
+        task.served_at = timestamp
+        task.served_by = truck_id
         return task
 
     def release_claim(self, node_id: int, truck_id: int) -> CustomerTask:
+        truck_id = self._validate_truck_id(truck_id)
         task = self.task_for_node(node_id)
         self._require_claimant(task, truck_id)
         if task.status is TaskStatus.SERVED:
@@ -185,3 +205,17 @@ class FleetTaskRegistry:
                 f"task {task.task_id} is claimed by {task.claimed_by}, "
                 f"not truck {truck_id}"
             )
+
+    @staticmethod
+    def _validate_truck_id(truck_id: int) -> int:
+        truck_id = int(truck_id)
+        if truck_id < 0:
+            raise ValueError("truck_id must be non-negative")
+        return truck_id
+
+    @staticmethod
+    def _validate_timestamp(timestamp: float) -> float:
+        timestamp = float(timestamp)
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("timestamp must be finite and non-negative")
+        return timestamp

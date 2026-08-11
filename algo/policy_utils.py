@@ -146,6 +146,10 @@ def load_policy(
         "max_grad_norm": net_config["max_grad_norm"],
         "ppo_epochs": net_config["ppo_epochs"],
         "minibatch_size": net_config["minibatch_size"],
+        "action_head_type": net_config.get("action_head_type", "independent"),
+        "action_head_layers": net_config.get("action_head_layers", 2),
+        "action_attention_heads": net_config.get("action_attention_heads", 4),
+        "action_head_dropout": net_config.get("action_head_dropout", 0.0),
         "device": device,
     }
 

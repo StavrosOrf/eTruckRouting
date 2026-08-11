@@ -37,8 +37,8 @@ Evidence required: taxonomy table plus formulation and experiment table that enu
 
 - [x] Choose joint fleet assignment, sequencing, routing, charging, and depot return as the primary problem (D1).
 - [x] Add fleet-owned customer tasks, payload fields, and service lifecycle foundations.
-- [ ] Finish canonical joint observation/action semantics.
-- [ ] Add invariant tests across randomized instances: every customer once, capacity, energy, service completion, and depot return.
+- [x] Finish canonical joint observation/action semantics at the environment representation layer.
+- [x] Add invariant regressions across randomized mixed travel/charge sequences and 20 seeded instances for battery accounting, every-customer-once, capacity, service completion, and depot return.
 - [ ] Retain preassigned routes only as a clearly named secondary execution benchmark.
 - [ ] Rewrite the problem definition and all main claims around the implemented joint model.
 
@@ -71,7 +71,7 @@ Evidence required: taxonomy table plus formulation and experiment table that enu
 ### R1.5 — High reward despite zero success
 
 - [x] Approve feasibility-first, then makespan evaluation (D4).
-- [ ] Separate training reward from operational evaluation metrics.
+- [x] Separate training reward from per-episode operational evaluation metrics; statistical aggregation remains pending.
 - [ ] Retain every failed episode and classify the failure cause.
 - [ ] Report full-service probability first and time/cost only with explicit conditioning.
 - [ ] Explain the inherited `+500` delivery, `-1` time, and `-1000` failure shaping and replace it if needed for stable training.
@@ -108,7 +108,7 @@ Evidence required: taxonomy table plus formulation and experiment table that enu
 - [ ] Replace `stochastic edge traversing` near `main.tex:776` with `realized travel duration on the selected road-network transition`.
 - [ ] Publish every numerical training-reward coefficient.
 - [x] Select target-SoC actions at 50/60/70/80/90/100% for the primary model (D6).
-- [ ] Implement target-SoC actions through the nonlinear charging integrator.
+- [x] Implement target-SoC actions through the nonlinear charging integrator.
 - [ ] Compare 5% versus 10% targets and 15/30/60-minute duration actions.
 
 ### R2.7 — Optimization model unclear

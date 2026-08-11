@@ -1,7 +1,8 @@
 """
 Truck class representing individual delivery vehicles.
 """
-from typing import List, Dict, Optional
+import math
+
 import numpy as np
 
 
@@ -12,12 +13,12 @@ class Truck:
         self,
         truck_id: int,
         truck_type: str,
-        delivery_sequence: List[int],
+        delivery_sequence: list[int],
         initial_battery: float,
         battery_capacity: float,
         base_speed: float,
         enable_flexible_delivery_order: bool = False,
-        payload_capacity: Optional[float] = None,
+        payload_capacity: float | None = None,
     ):
         """
         Initialize a truck.
@@ -33,22 +34,40 @@ class Truck:
             payload_capacity: Maximum delivery demand carried by the truck. Legacy
                 route-execution instances may omit this constraint.
         """
-        self.truck_id = truck_id
+        if int(truck_id) < 0:
+            raise ValueError("truck_id must be non-negative")
+        if not delivery_sequence:
+            raise ValueError("delivery_sequence cannot be empty")
+        if any(int(node) < 0 for node in delivery_sequence):
+            raise ValueError("delivery_sequence nodes must be non-negative")
+        if not math.isfinite(battery_capacity) or battery_capacity <= 0.0:
+            raise ValueError("battery_capacity must be finite and positive")
+        if not math.isfinite(initial_battery) or initial_battery < 0.0:
+            raise ValueError("initial_battery must be finite and non-negative")
+        if initial_battery > battery_capacity:
+            raise ValueError("initial_battery cannot exceed battery_capacity")
+        if not math.isfinite(base_speed) or base_speed <= 0.0:
+            raise ValueError("base_speed must be finite and positive")
+
+        self.truck_id = int(truck_id)
         self.truck_type = truck_type
         self.delivery_sequence = delivery_sequence.copy()
         self.battery_capacity = battery_capacity
         self.base_speed = base_speed
         self.enable_flexible_delivery_order = enable_flexible_delivery_order
-        if payload_capacity is not None and payload_capacity <= 0:
-            raise ValueError("payload_capacity must be positive when specified")
+        if payload_capacity is not None and (
+            not math.isfinite(payload_capacity) or payload_capacity <= 0
+        ):
+            raise ValueError(
+                "payload_capacity must be finite and positive when specified"
+            )
         self.payload_capacity = (
             float(payload_capacity) if payload_capacity is not None else None
         )
         self.remaining_payload = self.payload_capacity
-        self.served_task_ids: List[int] = []
+        self.served_task_ids: list[int] = []
         
-        # Current state - clamp initial battery to capacity
-        self.current_battery = min(battery_capacity, initial_battery)
+        self.current_battery = initial_battery
         self.current_node = delivery_sequence[0]
         self.current_sequence_index = 0  # Index in delivery_sequence
         
@@ -58,9 +77,13 @@ class Truck:
         # Statistics
         self.total_distance_traveled = 0.0
         self.total_time_elapsed = 0.0
+        self.total_routing_time = 0.0
+        self.total_energy_consumed = 0.0
+        self.total_energy_charged = 0.0
         self.total_charging_time = 0.0
         self.num_charging_sessions = 0
         self.waiting_time = 0.0
+        self.time_window_waiting_time = 0.0
         self.total_unloading_time = 0.0  # Track cumulative unloading time at deliveries
         self.is_charging = False
         self.charge_start_time = None
@@ -85,18 +108,18 @@ class Truck:
         self.detour_charger_hops_since_delivery = 0
         
         # Event monitoring system
-        self.event_history: List[Dict] = []  # Log of all truck events with timestamps
+        self.event_history: list[dict] = []  # Log of all truck events with timestamps
         self.current_state: str = "initial"  # Track current state for event logging
-        self.unloading_start_time: Optional[float] = None  # Track when unloading started
-        self.waiting_start_time: Optional[float] = None  # Track when waiting started
-        self.routing_start_time: Optional[float] = None  # Track when routing started
+        self.unloading_start_time: float | None = None  # Track when unloading started
+        self.waiting_start_time: float | None = None  # Track when waiting started
+        self.routing_start_time: float | None = None  # Track when routing started
     
     def _record_event(
         self,
         event_type: str,
         timestamp: float,
-        location: Optional[int] = None,
-        details: Optional[Dict] = None
+        location: int | None = None,
+        details: dict | None = None
     ):
         """
         Record an event in the truck's event history.
@@ -144,7 +167,7 @@ class Truck:
                 return self.delivery_sequence[self.current_sequence_index + 1]
             return None
     
-    def get_remaining_deliveries(self) -> List[int]:
+    def get_remaining_deliveries(self) -> list[int]:
         """Get list of remaining delivery nodes."""
         if self.enable_flexible_delivery_order:
             # Return all undelivered nodes (excluding depot at index 0)
@@ -160,7 +183,7 @@ class Truck:
 
     def can_accept_demand(self, demand: float) -> bool:
         """Return whether the truck has enough remaining payload for a task."""
-        if demand <= 0:
+        if not math.isfinite(demand) or demand <= 0:
             return False
         if self.remaining_payload is None:
             return True
@@ -174,6 +197,12 @@ class Truck:
         node_id: int,
     ) -> None:
         """Consume payload and record service of one fleet-owned task."""
+        if int(task_id) < 0:
+            raise ValueError("task_id must be non-negative")
+        if int(node_id) < 0:
+            raise ValueError("node_id must be non-negative")
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("timestamp must be finite and non-negative")
         if int(task_id) in self.served_task_ids:
             raise ValueError(f"truck {self.truck_id} already served task {task_id}")
         if not self.can_accept_demand(demand):
@@ -194,7 +223,7 @@ class Truck:
             },
         )
     
-    def advance_to_next_delivery(self, delivered_node: Optional[int] = None):
+    def advance_to_next_delivery(self, delivered_node: int | None = None):
         """
         Mark delivery as complete and advance.
         
@@ -241,6 +270,14 @@ class Truck:
             destination: Target node ID
             timestamp: Current simulation time
         """
+        destination = int(destination)
+        timestamp = float(timestamp)
+        if destination < 0:
+            raise ValueError("routing destination must be non-negative")
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("routing timestamp must be finite and non-negative")
+        if self.route_destination is not None:
+            raise RuntimeError("truck is already routing")
         self.route_destination = destination
         self.routing_start_time = timestamp
         
@@ -260,7 +297,7 @@ class Truck:
         distance: float,
         travel_time: float,
         discharge: float,
-        timestamp: Optional[float] = None,
+        timestamp: float | None = None,
         mark_delivery_on_arrival: bool = True,
     ):
         """
@@ -276,14 +313,36 @@ class Truck:
                 when true. Joint-routing episodes set this to false and commit
                 service through the fleet task registry after unloading.
         """
+        node = int(node)
+        distance = float(distance)
+        travel_time = float(travel_time)
+        discharge = float(discharge)
+        if node < 0:
+            raise ValueError("destination node must be non-negative")
+        for label, value in (
+            ("distance", distance),
+            ("travel_time", travel_time),
+            ("discharge", discharge),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{label} must be finite and non-negative")
+        if discharge > self.current_battery + 1e-9:
+            raise ValueError("discharge cannot exceed current battery")
+        if timestamp is not None and (
+            not math.isfinite(timestamp) or timestamp < 0.0
+        ):
+            raise ValueError("routing timestamp must be finite and non-negative")
+
         origin = self.current_node
         
         self.current_node = node
         self.current_battery -= discharge
-        # Clamp in case of negative discharge (regen/uncertainty) or precision drift
+        # Clamp only for floating-point precision at exact depletion.
         self.current_battery = min(self.battery_capacity, max(0.0, self.current_battery))
         self.total_distance_traveled += distance
         self.total_time_elapsed += travel_time
+        self.total_routing_time += travel_time
+        self.total_energy_consumed += discharge
         self.must_leave_charger = False  # Reset flag when moving away
         
         # Record routing end event
@@ -329,6 +388,15 @@ class Truck:
     
     def start_charging(self, current_time: float):
         """Mark truck as starting to charge."""
+        current_time = float(current_time)
+        if not math.isfinite(current_time) or current_time < 0.0:
+            raise ValueError("charging start time must be finite and non-negative")
+        if self.failed or self.is_complete:
+            raise RuntimeError("failed or complete truck cannot start charging")
+        if self.is_charging:
+            raise RuntimeError("truck is already charging")
+        if self.current_battery >= self.battery_capacity - 1e-9:
+            raise RuntimeError("truck battery is already full")
         self.is_charging = True
         self.charge_start_time = current_time
         self.must_leave_charger = False  # Reset flag when starting new charge session
@@ -346,7 +414,7 @@ class Truck:
         )
         self.current_state = "charging"
     
-    def finish_charging(self, charge_amount: float, charge_duration: float, timestamp: Optional[float] = None):
+    def finish_charging(self, charge_amount: float, charge_duration: float, timestamp: float | None = None):
         """
         Update truck state after charging.
         
@@ -355,12 +423,30 @@ class Truck:
             charge_duration: Time spent charging (hours)
             timestamp: Current simulation time (for event logging)
         """
+        charge_amount = float(charge_amount)
+        charge_duration = float(charge_duration)
+        if not self.is_charging:
+            raise RuntimeError("truck is not charging")
+        for label, value in (
+            ("charge_amount", charge_amount),
+            ("charge_duration", charge_duration),
+        ):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{label} must be finite and non-negative")
+        available_capacity = self.battery_capacity - self.current_battery
+        if charge_amount > available_capacity + 1e-8:
+            raise ValueError("charge_amount exceeds available battery capacity")
+        if timestamp is not None and (
+            not math.isfinite(timestamp) or timestamp < 0.0
+        ):
+            raise ValueError("charging timestamp must be finite and non-negative")
         initial_soc = self.get_battery_percentage()
-        # Clamp to prevent exceeding capacity (handle floating point precision errors)
+        # Clamp only for floating-point precision at an exact target.
         self.current_battery = min(self.battery_capacity, max(0.0, self.current_battery + charge_amount))
         final_soc = self.get_battery_percentage()
         
         self.total_charging_time += charge_duration
+        self.total_energy_charged += charge_amount
         self.total_time_elapsed += charge_duration
         self.num_charging_sessions += 1
         self.is_charging = False
@@ -418,7 +504,7 @@ class Truck:
             )
             self.waiting_start_time = None
     
-    def add_waiting_time(self, wait_duration: float, timestamp: Optional[float] = None):
+    def add_waiting_time(self, wait_duration: float, timestamp: float | None = None):
         """
         Add waiting time at a charging station.
         
@@ -426,6 +512,13 @@ class Truck:
             wait_duration: Duration of wait (hours)
             timestamp: Current simulation time (for event logging)
         """
+        wait_duration = float(wait_duration)
+        if not math.isfinite(wait_duration) or wait_duration < 0.0:
+            raise ValueError("wait_duration must be finite and non-negative")
+        if timestamp is not None and (
+            not math.isfinite(timestamp) or timestamp < 0.0
+        ):
+            raise ValueError("waiting timestamp must be finite and non-negative")
         self.waiting_time += wait_duration
         self.total_time_elapsed += wait_duration
         
@@ -440,6 +533,24 @@ class Truck:
                 }
             )
             self.waiting_start_time = None
+
+    def add_time_window_waiting(self, duration: float, timestamp: float) -> None:
+        """Record waiting caused by arrival before a customer's opening time."""
+        duration = float(duration)
+        timestamp = float(timestamp)
+        if not math.isfinite(duration) or duration < 0.0:
+            raise ValueError("time-window waiting duration must be non-negative")
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("time-window waiting timestamp must be non-negative")
+        if duration == 0.0:
+            return
+        self.time_window_waiting_time += duration
+        self.total_time_elapsed += duration
+        self._record_event(
+            event_type="TIME_WINDOW_WAIT",
+            timestamp=timestamp,
+            details={"wait_duration_hours": duration},
+        )
     
     def start_unloading(self, timestamp: float, delivery_node: int):
         """
@@ -449,6 +560,14 @@ class Truck:
             timestamp: Current simulation time
             delivery_node: Node ID where unloading
         """
+        timestamp = float(timestamp)
+        delivery_node = int(delivery_node)
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("unloading timestamp must be finite and non-negative")
+        if delivery_node < 0:
+            raise ValueError("delivery_node must be non-negative")
+        if self.unloading_start_time is not None:
+            raise RuntimeError("truck is already unloading")
         self.unloading_start_time = timestamp
         
         self._record_event(
@@ -459,7 +578,7 @@ class Truck:
         )
         self.current_state = "unloading"
     
-    def finish_unloading(self, unloading_duration: float, timestamp: Optional[float] = None):
+    def finish_unloading(self, unloading_duration: float, timestamp: float | None = None):
         """
         Update truck state after unloading at a delivery.
         
@@ -467,6 +586,17 @@ class Truck:
             unloading_duration: Time spent unloading (hours)
             timestamp: Current simulation time (for event logging)
         """
+        unloading_duration = float(unloading_duration)
+        if not math.isfinite(unloading_duration) or unloading_duration < 0.0:
+            raise ValueError(
+                "unloading_duration must be finite and non-negative"
+            )
+        if self.unloading_start_time is None:
+            raise RuntimeError("truck is not unloading")
+        if timestamp is not None and (
+            not math.isfinite(timestamp) or timestamp < 0.0
+        ):
+            raise ValueError("unloading timestamp must be finite and non-negative")
         self.total_unloading_time += unloading_duration
         self.total_time_elapsed += unloading_duration
         
@@ -539,9 +669,9 @@ class Truck:
         # Fix battery if it exceeds capacity (handle floating point precision errors)
         if self.current_battery > self.battery_capacity:
             import os
-            from datetime import datetime
+            from datetime import UTC, datetime
             warning_msg = (
-                f"[{datetime.now().isoformat()}] "
+                f"[{datetime.now(UTC).isoformat()}] "
                 f"Truck {self.truck_id}: Battery exceeds capacity! "
                 f"current_battery={self.current_battery:.4f} kWh, "
                 f"battery_capacity={self.battery_capacity:.4f} kWh, "
@@ -560,7 +690,7 @@ class Truck:
         return min(100.0, max(0.0, percentage))
     
 
-    def get_state_dict(self) -> Dict:
+    def get_state_dict(self) -> dict:
         """
         Get truck state as a dictionary.
         
@@ -589,9 +719,13 @@ class Truck:
             "deliveries_remaining": len(self.get_remaining_deliveries()),
             "total_distance": self.total_distance_traveled,
             "total_time": self.total_time_elapsed,
+            "total_routing_time": self.total_routing_time,
+            "total_energy_consumed": self.total_energy_consumed,
+            "total_energy_charged": self.total_energy_charged,
             "total_charging_time": self.total_charging_time,
             "total_unloading_time": self.total_unloading_time,
             "waiting_time": self.waiting_time,
+            "time_window_waiting_time": self.time_window_waiting_time,
             "num_charging_sessions": self.num_charging_sessions,
             "detour_last_action_was_charge": self.detour_last_action_was_charge,
             "detour_charger_hops_since_delivery": self.detour_charger_hops_since_delivery,
@@ -621,7 +755,7 @@ class Truck:
             state["total_time"],
         ], dtype=np.float32)
     
-    def get_event_history(self) -> List[Dict]:
+    def get_event_history(self) -> list[dict]:
         """
         Get complete event history for this truck.
         
@@ -630,7 +764,7 @@ class Truck:
         """
         return self.event_history.copy()
     
-    def get_activity_timeline(self) -> List[Dict]:
+    def get_activity_timeline(self) -> list[dict]:
         """
         Get timeline of activities with durations.
         
@@ -669,7 +803,7 @@ class Truck:
         
         return timeline
     
-    def get_activity_breakdown(self) -> Dict[str, float]:
+    def get_activity_breakdown(self) -> dict[str, float]:
         """
         Get breakdown of time spent in each activity type.
         
@@ -694,7 +828,7 @@ class Truck:
         # Calculate ready time (time in ready state between activities)
         ready_events = [e for e in self.event_history if e["event_type"] == "READY_STATE"]
         if ready_events:
-            for i, ready_event in enumerate(ready_events):
+            for ready_event in ready_events:
                 # Find next activity start
                 ready_time = ready_event["timestamp"]
                 next_activity_time = None
@@ -711,7 +845,7 @@ class Truck:
         breakdown["total"] = self.total_time_elapsed
         return breakdown
     
-    def export_event_log(self, format: str = "dict") -> Dict:
+    def export_event_log(self, format: str = "dict") -> dict:
         """
         Export event log in structured format.
         

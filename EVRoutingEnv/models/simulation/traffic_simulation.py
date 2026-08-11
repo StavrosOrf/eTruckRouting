@@ -4,6 +4,7 @@ Traffic simulation module for electric vehicle routing environment.
 Provides time-of-day dependent traffic modeling with rush hour effects.
 """
 
+import math
 from collections import defaultdict, deque
 
 import numpy as np
@@ -48,6 +49,28 @@ class TrafficSimulator:
             verbose: Whether to print detailed traffic information
             seed: Random seed for reproducible uncertainty (if None, uses system random)
         """
+        if not math.isfinite(std_dev_factor) or std_dev_factor < 0.0:
+            raise ValueError("std_dev_factor must be finite and non-negative")
+        if not math.isfinite(max_std_dev_hours):
+            raise ValueError("max_std_dev_hours must be finite")
+        if not math.isfinite(rush_hour_multiplier) or rush_hour_multiplier < 1.0:
+            raise ValueError("rush_hour_multiplier must be finite and at least 1")
+        if (
+            not math.isfinite(energy_uncertainty_factor)
+            or energy_uncertainty_factor < 0.0
+        ):
+            raise ValueError(
+                "energy_uncertainty_factor must be finite and non-negative"
+            )
+        if (
+            not math.isfinite(min_energy_multiplier)
+            or not math.isfinite(max_energy_multiplier)
+            or not 0.0 < min_energy_multiplier <= 1.0 <= max_energy_multiplier
+        ):
+            raise ValueError(
+                "energy multipliers must satisfy 0 < min <= 1 <= max"
+            )
+
         self.enable_traffic = enable_traffic
         self.std_dev_factor = std_dev_factor
         self.max_std_dev_hours = max_std_dev_hours
@@ -93,6 +116,14 @@ class TrafficSimulator:
             Tuple of (actual_travel_time, traffic_multiplier) where traffic_multiplier
             can be used to correlate energy uncertainty
         """
+        if not math.isfinite(travel_time) or travel_time < 0.0:
+            raise ValueError("travel_time must be finite and non-negative")
+        if not math.isfinite(current_time) or current_time < 0.0:
+            raise ValueError("current_time must be finite and non-negative")
+        if from_node is not None and int(from_node) < 0:
+            raise ValueError("from_node must be non-negative")
+        if to_node is not None and int(to_node) < 0:
+            raise ValueError("to_node must be non-negative")
         if not self.enable_traffic or travel_time <= 0:
             return travel_time, 1.0
 
@@ -170,6 +201,18 @@ class TrafficSimulator:
         Returns:
             Energy consumption with traffic-induced variation applied (kWh)
         """
+        if not math.isfinite(base_energy) or base_energy < 0.0:
+            raise ValueError("base_energy must be finite and non-negative")
+        if not math.isfinite(traffic_multiplier) or traffic_multiplier <= 0.0:
+            raise ValueError("traffic_multiplier must be finite and positive")
+        if current_time is not None and (
+            not math.isfinite(current_time) or current_time < 0.0
+        ):
+            raise ValueError("current_time must be finite and non-negative")
+        if from_node is not None and int(from_node) < 0:
+            raise ValueError("from_node must be non-negative")
+        if to_node is not None and int(to_node) < 0:
+            raise ValueError("to_node must be non-negative")
         if (
             not self.enable_traffic
             or not self.enable_energy_uncertainty

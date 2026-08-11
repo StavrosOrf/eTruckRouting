@@ -32,13 +32,12 @@ Note:
 This enables GNNs to learn routing policies by reasoning over feasible actions.
 """
 
-import torch
+
 import numpy as np
-from typing import Optional, Dict, Tuple, Set
+import torch
+from torch_geometric.data import HeteroData
 
 from EVRoutingEnv.state.gnn_utils import feasible_mask_to_numpy
-
-from torch_geometric.data import Data, HeteroData
 
 
 class GNNStateSpace:
@@ -129,7 +128,7 @@ class GNNStateSpace:
         
         # Track which delivery nodes have been delivered (per-truck tracking)
         # A node is only "delivered" if ALL trucks that need to visit it have completed that visit
-        delivered_nodes: Set[int] = set()
+        delivered_nodes: set[int] = set()
         
         # Build a mapping of node_id -> set of trucks that still need to deliver there
         node_pending_trucks = {}
@@ -345,7 +344,7 @@ class GNNStateSpace:
                                 print(f"[GNN State] ERROR: Asymmetric path! {delivery_node}->{current_location} is inf but forward path exists")
                                 print(f"  Forward: energy={energy}, time={time}")
                                 print(f"  Reverse: energy_inv={energy_inv}, time_inv={time_inv}")
-                                print(f"  This suggests a directed graph issue or missing edges in transport_graph")
+                                print("  This suggests a directed graph issue or missing edges in transport_graph")
                         
                         # Only add edge if energy is feasible
                         max_energy_needed = energy * energy_safety_factor
@@ -542,7 +541,7 @@ class GNNStateSpace:
                 continue
             charger_idx = charger_node_to_idx[charger_id]
             
-            for delivery_id in delivery_node_to_idx.keys():
+            for delivery_id in delivery_node_to_idx:
                 delivery_idx = delivery_node_to_idx[delivery_id]
                 
                 # Charger → Delivery
@@ -557,7 +556,7 @@ class GNNStateSpace:
                     edge_dict[('charger', 'to', 'delivery')]['edge_index'].append([charger_idx, delivery_idx])
                     edge_dict[('charger', 'to', 'delivery')]['edge_attr'].append([energy_norm, time_norm])
                 
-        for delivery_id in delivery_node_to_idx.keys():
+        for delivery_id in delivery_node_to_idx:
             delivery_idx = delivery_node_to_idx[delivery_id]
             
             for charger_id in env.charging_nodes:
@@ -746,7 +745,7 @@ class GNNStateSpace:
                 def check_routing_feasible(safety_factor):
                     """Check if at least one routing action is feasible with given safety factor."""
                     # Check chargers
-                    for cid in charger_node_to_idx.keys():
+                    for cid in charger_node_to_idx:
                         if cid != current_location:
                             energy = env.transport_graph.get_path_energy(current_location, cid)
                             if energy * safety_factor < current_battery and not np.isinf(energy):
@@ -900,7 +899,7 @@ class GNNStateSpace:
                                     can_finish_route = True
                                 else:
                                     # Check if can reach any charger after delivery
-                                    for charger_id in charger_node_to_idx.keys():
+                                    for charger_id in charger_node_to_idx:
                                         energy_to_charger = env.transport_graph.get_path_energy(delivery_node, charger_id)
                                         max_energy_to_charger = energy_to_charger * routing_safety_factor
                                         if battery_after_delivery > max_energy_to_charger:
@@ -991,7 +990,7 @@ class GNNStateSpace:
                             if not has_more_deliveries:
                                 can_continue_after_delivery = True
                             else:
-                                for charger_id in charger_node_to_idx.keys():
+                                for charger_id in charger_node_to_idx:
                                     energy_to_charger = env.transport_graph.get_path_energy(next_delivery, charger_id)
                                     max_energy_to_charger = energy_to_charger * routing_safety_factor
                                     if battery_after_delivery > max_energy_to_charger:
@@ -1027,11 +1026,11 @@ class GNNStateSpace:
                             _append_action_metadata(current_location, True)
                             action_charge_durations.append(float(charge_hours))
                         if self.verbose:
-                            print(f"  Forcing truck to leave")
+                            print("  Forcing truck to leave")
                             
                             #print bottom 5 ditances to chargers and the delivery
                             distances = []
-                            for charger_id in charger_node_to_idx.keys():
+                            for charger_id in charger_node_to_idx:
                                 energy_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
                                 distances.append((charger_id, energy_to_charger))
                             distances.sort(key=lambda x: x[1])
@@ -1069,7 +1068,7 @@ class GNNStateSpace:
                                 feasible_destinations.append(energy_to_delivery)
                             
                             # Check all other chargers
-                            for charger_id in charger_node_to_idx.keys():
+                            for charger_id in charger_node_to_idx:
                                 if charger_id != current_location:
                                     energy_to_charger = env.transport_graph.get_path_energy(current_location, charger_id)
                                     # Only consider if feasible with full battery
@@ -1090,7 +1089,7 @@ class GNNStateSpace:
                             print(f"  Energy to next delivery {next_delivery_str}: {energy_to_delivery:.2f} kWh")
                             print(f"  Battery capacity: {active_truck.battery_capacity:.2f} kWh")
                             print(f"  Tried safety factors down to {min_safety_factor:.2f}, still no feasible destinations.")
-                            print(f"  FAILING TRUCK - environment will handle the failure.")
+                            print("  FAILING TRUCK - environment will handle the failure.")
                             
                             # Fail the truck in the environment
                             active_truck.failed = True
@@ -1179,7 +1178,7 @@ class GNNStateSpace:
                         if self.verbose:
                             print(f"  Result: can_charge_here = {can_charge_here}")
                             if not can_charge_here:
-                                print(f"  WARNING: NO FEASIBLE CHARGING ACTIONS! All durations insufficient.")
+                                print("  WARNING: NO FEASIBLE CHARGING ACTIONS! All durations insufficient.")
                 else:
                     # Not at charger - can't charge
                     can_charge_here = False
@@ -1241,7 +1240,7 @@ class GNNStateSpace:
                                     can_continue_after_delivery = True
                                     can_finish_route = True
                                 else:
-                                    for charger_id in charger_node_to_idx.keys():
+                                    for charger_id in charger_node_to_idx:
                                         energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
                                         max_energy_to_charger = energy_to_charger * routing_safety_factor
                                         if battery_after_delivery > max_energy_to_charger:
@@ -1315,7 +1314,7 @@ class GNNStateSpace:
                                     can_continue_after_delivery = True
                                     can_finish_route = True
                                 else:
-                                    for charger_id in charger_node_to_idx.keys():
+                                    for charger_id in charger_node_to_idx:
                                         energy_to_charger = env.transport_graph.get_path_energy(nav_node_id, charger_id)
                                         max_energy_to_charger = energy_to_charger * relaxed_safety
                                         if battery_after_delivery > max_energy_to_charger:
@@ -1372,7 +1371,7 @@ class GNNStateSpace:
         else:
             if self.verbose:
                 # Debug: Print action generation summary
-                print(f"\n[ACTION GENERATION ERROR]")
+                print("\n[ACTION GENERATION ERROR]")
                 print(f"  Active truck: {env.active_truck_id}")
                 print(f"  Total actions generated: {len(action_to_node_map)}")
                 print(f"  Feasible actions: {sum(feasible_action_mask)}")
@@ -1425,14 +1424,14 @@ class GNNStateSpace:
             infeasibility_details.append(f"  - Charging actions: {charging_actions} actions (all infeasible)")
 
             # Explain likely causes
-            infeasibility_details.append(f"\nLikely causes:")
+            infeasibility_details.append("\nLikely causes:")
             if active_truck.current_battery < 50.0:
                 infeasibility_details.append(f"  ⚠ Low battery ({active_truck.current_battery:.2f} kWh) - may not reach any destination")
             if active_truck.must_leave_charger:
-                infeasibility_details.append(f"  ⚠ Truck must leave charger but cannot reach any destination with current battery")
+                infeasibility_details.append("  ⚠ Truck must leave charger but cannot reach any destination with current battery")
             at_charger = active_truck.current_node in charger_node_to_idx
             if at_charger and not active_truck.must_leave_charger:
-                infeasibility_details.append(f"  ⚠ At charger but all charging durations insufficient to reach any destination")
+                infeasibility_details.append("  ⚠ At charger but all charging durations insufficient to reach any destination")
 
             # Fallback: pick the closest navigation action (by energy) or first charge action
             current_node = int(active_truck.current_node)
@@ -1545,7 +1544,7 @@ class GNNStateSpace:
                 max_energy = energy * energy_safety_factor
                 feasible = max_energy < active_truck.current_battery and not np.isinf(energy)
                 charger_distances.append(f"    Charger {charger_id}: {energy:.2f} kWh (×{energy_safety_factor:.2f}={max_energy:.2f}) - {'✓ feasible' if feasible else '✗ infeasible'}")
-            diagnostics.append(f"  Nearest chargers:")
+            diagnostics.append("  Nearest chargers:")
             diagnostics.extend(charger_distances)
         
         # Check at charger status
@@ -1964,7 +1963,7 @@ class GNNStateSpace:
 
     # ==================== Utility Functions ====================
 
-    def get_state_dict_for_gnn(self, env) -> Dict:
+    def get_state_dict_for_gnn(self, env) -> dict:
         """
         Get complete state information for GNN as dictionary.
 
@@ -1984,7 +1983,7 @@ class GNNStateSpace:
             "max_time": env.max_time,
         }
 
-    def get_action_graph(self, env) -> Dict:
+    def get_action_graph(self, env) -> dict:
         """Convenience wrapper returning action graph metadata.
 
         Returns:
@@ -2001,7 +2000,7 @@ class GNNStateSpace:
         }
 
     @staticmethod
-    def graph_to_numpy(data: HeteroData) -> Dict:
+    def graph_to_numpy(data: HeteroData) -> dict:
         """Convert PyTorch Geometric HeteroData to numpy for inspection."""
         result = {}
         
@@ -2019,11 +2018,11 @@ class GNNStateSpace:
     @staticmethod
     def visualize_graph_info(data: HeteroData):
         """Print information about the heterogeneous graph."""
-        print(f"PyTorch Geometric HeteroData Graph")
-        print(f"Node types:")
+        print("PyTorch Geometric HeteroData Graph")
+        print("Node types:")
         for node_type in data.node_types:
             print(f"  - {node_type}: {data[node_type].x.shape[0]} nodes, {data[node_type].x.shape[1]} features")
-        print(f"Edge types:")
+        print("Edge types:")
         for edge_type in data.edge_types:
             num_edges = data[edge_type].edge_index.shape[1]
             print(f"  - {edge_type}: {num_edges} edges")

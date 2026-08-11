@@ -14,6 +14,8 @@ Key Features:
 - Configurable parameters via config.yaml
 """
 
+import math
+
 import numpy as np
 
 from EVRoutingEnv.models.simulation.scenario import ScenarioRandomStreams
@@ -67,6 +69,35 @@ class DeliverySimulator:
             verbose: Print debug information
             seed: Random seed for reproducibility
         """
+        if not math.isfinite(base_unloading_time) or base_unloading_time < 0.0:
+            raise ValueError(
+                "base_unloading_time must be finite and non-negative"
+            )
+        if enable_stochastic_unloading and base_unloading_time <= 0.0:
+            raise ValueError(
+                "stochastic unloading requires positive base_unloading_time"
+            )
+        if not math.isfinite(std_dev_factor) or std_dev_factor < 0.0:
+            raise ValueError("std_dev_factor must be finite and non-negative")
+        if not math.isfinite(max_std_dev_hours):
+            raise ValueError("max_std_dev_hours must be finite")
+        if (
+            not math.isfinite(business_hours_multiplier)
+            or business_hours_multiplier < 1.0
+        ):
+            raise ValueError(
+                "business_hours_multiplier must be finite and at least 1"
+            )
+        if (
+            not math.isfinite(min_unloading_multiplier)
+            or not math.isfinite(max_unloading_multiplier)
+            or min_unloading_multiplier <= 0.0
+            or max_unloading_multiplier < min_unloading_multiplier
+        ):
+            raise ValueError(
+                "unloading multipliers must satisfy 0 < min <= max"
+            )
+
         self.enable_stochastic_unloading = enable_stochastic_unloading
         self.base_unloading_time = base_unloading_time
         self.std_dev_factor = std_dev_factor
@@ -100,6 +131,10 @@ class DeliverySimulator:
         Returns:
             Actual unloading time in hours (bounded to realistic range)
         """
+        if int(delivery_node) < 0:
+            raise ValueError("delivery_node must be non-negative")
+        if not math.isfinite(current_time) or current_time < 0.0:
+            raise ValueError("current_time must be finite and non-negative")
         if not self.enable_stochastic_unloading:
             return self.base_unloading_time
 

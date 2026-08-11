@@ -10,9 +10,10 @@ This flattened state space mirrors the GNN state representation,
 including all truck, delivery, and charger features.
 """
 
+from typing import Any
+
 import numpy as np
 from gymnasium import spaces
-from typing import Optional, Dict, Any, Set
 
 
 class StateSpace:
@@ -67,7 +68,7 @@ class StateSpace:
         # but the actual node IDs can be much larger (matching GNN behavior)
         self.observation_space = spaces.Box(
             low=0.0,
-            high=np.inf,  # Allow values > 1 for node IDs
+            high=np.finfo(np.float32).max,
             shape=(self._total_size,),
             dtype=np.float32,
         )
@@ -75,10 +76,10 @@ class StateSpace:
     def get_state(
         self,
         trucks: list,
-        active_truck_id: Optional[int],
+        active_truck_id: int | None,
         transport_graph,
         charging_nodes: list,
-        truck_states: Dict,
+        truck_states: dict,
         event_queue: list,
         global_clock: float,
         charging_station=None,
@@ -183,7 +184,7 @@ class StateSpace:
         
         return state
     
-    def _get_delivered_nodes(self, trucks: list) -> Set[int]:
+    def _get_delivered_nodes(self, trucks: list) -> set[int]:
         """
         Track which delivery nodes have been fully delivered.
         A node is delivered if no active trucks have it in remaining deliveries.
@@ -215,7 +216,7 @@ class StateSpace:
         self,
         truck,
         transport_graph,
-        truck_states: Dict,
+        truck_states: dict,
         global_clock: float,
         charging_station,
     ) -> np.ndarray:
@@ -383,7 +384,7 @@ class StateSpace:
         """Get the total size of the state vector."""
         return self.observation_space.shape[0]
     
-    def get_feature_info(self) -> Dict[str, Any]:
+    def get_feature_info(self) -> dict[str, Any]:
         """
         Get information about the state features and their positions.
         

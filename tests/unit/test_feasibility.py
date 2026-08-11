@@ -9,6 +9,7 @@ from EVRoutingEnv.state.feasibility import (
     FeasibilityReason,
     evaluate_duration_charge,
     evaluate_joint_route,
+    evaluate_target_soc_charge,
 )
 
 
@@ -18,6 +19,9 @@ class _EnergyGraph:
 
     def get_path_energy(self, origin: int, destination: int) -> float:
         return self.energies.get((origin, destination), math.inf)
+
+    def get_time_distance(self, origin: int, destination: int) -> float:
+        return 1.0 if (origin, destination) in self.energies else math.inf
 
 
 def _truck(*, node: int = 1, battery: float = 50.0, payload: float = 5.0) -> Truck:
@@ -179,3 +183,80 @@ def test_invalid_state_duration_and_must_leave_are_rejected() -> None:
     assert invalid_state.reason is FeasibilityReason.INVALID_TRUCK_STATE
     assert invalid_duration.reason is FeasibilityReason.INVALID_CHARGE_DURATION
     assert must_leave.reason is FeasibilityReason.MUST_LEAVE_CHARGER
+
+
+def test_target_soc_must_be_valid_and_above_current_soc() -> None:
+    truck = _truck(node=20, battery=50.0)
+    below = evaluate_target_soc_charge(
+        truck=truck,
+        truck_state="ready",
+        charger_node=20,
+        charging_nodes=[20],
+        target_soc=0.5,
+    )
+    invalid = evaluate_target_soc_charge(
+        truck=truck,
+        truck_state="ready",
+        charger_node=20,
+        charging_nodes=[20],
+        target_soc=1.01,
+    )
+    feasible = evaluate_target_soc_charge(
+        truck=truck,
+        truck_state="ready",
+        charger_node=20,
+        charging_nodes=[20],
+        target_soc=0.6,
+    )
+
+    assert below.reason is FeasibilityReason.TARGET_SOC_NOT_ABOVE_CURRENT
+    assert invalid.reason is FeasibilityReason.INVALID_TARGET_SOC
+    assert feasible.feasible
+
+
+def test_closed_charger_is_rejected_for_routing_and_charging() -> None:
+    route = _route(20, unavailable_charging_nodes={20})
+    charge = evaluate_target_soc_charge(
+        truck=_truck(node=20, battery=50.0),
+        truck_state="ready",
+        charger_node=20,
+        charging_nodes=[20],
+        target_soc=0.6,
+        station_available=False,
+    )
+
+    assert route.reason is FeasibilityReason.CHARGER_UNAVAILABLE
+    assert charge.reason is FeasibilityReason.CHARGER_UNAVAILABLE
+
+
+def test_hard_time_window_allows_early_wait_but_rejects_late_arrival() -> None:
+    early_registry = FleetTaskRegistry(
+        [
+            CustomerTask(
+                0,
+                10,
+                demand=2.0,
+                base_service_time=0.25,
+                earliest_service=5.0,
+                latest_service=6.0,
+            )
+        ]
+    )
+    late_registry = FleetTaskRegistry(
+        [
+            CustomerTask(
+                0,
+                10,
+                demand=2.0,
+                base_service_time=0.25,
+                earliest_service=0.0,
+                latest_service=1.5,
+            )
+        ]
+    )
+
+    early = _route(10, task_registry=early_registry, current_time=1.0)
+    late = _route(10, task_registry=late_registry, current_time=1.0)
+
+    assert early.feasible
+    assert late.reason is FeasibilityReason.TIME_WINDOW_EXPIRED

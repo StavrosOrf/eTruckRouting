@@ -9,13 +9,13 @@ Purpose: ensure subsequent compute is scientifically usable.
 - [x] Implement episode-scoped RNG and common scenario IDs.
 - [x] Test same-seed replay and different-seed variation.
 - [x] Test policy-RNG-independent exogenous streams.
-- [ ] Correct flat-state delivery capacity and establish observation parity.
+- [x] Correct flat-state delivery capacity and establish observation parity through the versioned canonical flat/set/graph adapters.
 - [ ] Correct action connectivity and add permutation-equivariance tests.
-- [ ] Remove or explicitly gate mask relaxation and fallback behavior.
-- [ ] Make queue actions and charger types consistent.
-- [ ] Split training reward from evaluation objectives.
-- [ ] Add configuration validation and immutable run manifests.
-- [ ] Add unit tests, smoke tests, and CI.
+- [x] Remove mask relaxation and fallback behavior from the primary joint model; legacy migration remains separate.
+- [x] Preserve charger types, allow FCFS queue joining, and invariant-test finite ports.
+- [x] Split operational episode metrics from shaped training reward; campaign aggregation remains.
+- [x] Add boundary configuration validation and strict immutable run-manifest primitives; runner wiring remains a smoke-campaign task.
+- [ ] Add CI; the local suite currently contains 178 unit/integration checks and all three campaign configurations pass Gymnasium's environment checker without warnings.
 
 Gate: no large training job starts until every Campaign 0 test passes.
 
@@ -24,9 +24,9 @@ Gate: no large training job starts until every Campaign 0 test passes.
 Purpose: prove that the simulator implements the mathematical model.
 
 - [ ] Hand-construct tiny instances with analytically known energy and timing outcomes.
-- [ ] Verify every-customer-once, capacity, energy, charging, queue, and depot-return invariants.
+- [x] Verify every-customer-once, payload capacity, battery conservation, charging/queue, service, and depot-return invariants across randomized unit sequences and seeded stochastic episodes.
 - [ ] Compare nonlinear charging integration with reference curves.
-- [ ] Verify event ordering when travel, unloading, charging, and queues overlap.
+- [x] Verify deterministic event ties, unloading completion, one-port FCFS handoff, station closure, and early time-window waiting; expand to randomized mixed-event property tests before the main campaign.
 - [ ] Verify exact-solver objective against exhaustive enumeration on very small instances.
 - [ ] Validate uncertainty mean, variance, clipping, time-of-day dependence, and correlation empirically.
 - [ ] Publish invariant and distribution-check reports.

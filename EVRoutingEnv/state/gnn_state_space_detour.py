@@ -29,11 +29,11 @@ Raises:
     ValueError: If no feasible actions exist (truck is stranded with no way forward)
 """
 
-import torch
-import numpy as np
-from typing import Optional, Dict, Tuple, Set, List
 
+import numpy as np
+import torch
 from torch_geometric.data import HeteroData
+
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.utils.utils import check_navigation_feasibility
 
@@ -256,7 +256,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                     # Even max charging won't help - allow escape routing to other chargers
                     allow_escape_routing = True
                     if self.verbose:
-                        print(f"[Detour] No charging duration helps - enabling escape routing to all reachable chargers")
+                        print("[Detour] No charging duration helps - enabling escape routing to all reachable chargers")
         
         # If we couldn't find any charger that both is reachable now and can reach the delivery on a full charge,
         # allow escape routing so the agent can chain chargers instead of getting stranded with zero actions.
@@ -431,7 +431,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         next_delivery: int,
         battery_capacity: float,
         energy_safety_factor: float,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Select top-2 chargers based purely on minimum detour to next delivery.
         
@@ -533,7 +533,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         current_battery: float,
         charge_duration: float,
         next_delivery: int,
-        remaining_deliveries: List[int],
+        remaining_deliveries: list[int],
         battery_capacity: float,
         energy_safety_factor: float,
     ) -> bool:
@@ -650,7 +650,7 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
         env,
         start_location: int,
         battery_at_start: float,
-        remaining_deliveries: List[int],
+        remaining_deliveries: list[int],
         battery_capacity: float,
         energy_safety_factor: float,
     ) -> bool:
@@ -757,5 +757,5 @@ class GNNStateSpaceDetourBased(GNNStateSpace):
                 print(f"[Detour]   Reached delivery {delivery} after charging, battery now {current_battery:.1f}")
         
         if self.verbose:
-            print(f"[Detour] Successfully completed all deliveries")
+            print("[Detour] Successfully completed all deliveries")
         return True

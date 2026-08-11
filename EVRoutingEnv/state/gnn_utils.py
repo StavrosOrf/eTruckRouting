@@ -9,9 +9,10 @@ framework dependencies where not required.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
+
 
 try:  # Torch is optional for callers that only need numpy masks
     import torch
@@ -58,7 +59,7 @@ def create_default_gnn_space(
     *,
     mode: str = "nonflex",
     use_detour: bool = False,
-    device: Optional[str] = None,
+    device: str | None = None,
     vrp_top_k_deliveries: int = 5,
     detour_num_chargers_to_keep: int = 2,
     detour_hop_limit: int = 2,

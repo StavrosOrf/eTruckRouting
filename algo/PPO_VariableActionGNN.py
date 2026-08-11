@@ -1,6 +1,5 @@
 """PPO variant with variable-sized discrete action spaces via an action graph head."""
 
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -9,9 +8,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 from torch_geometric.data import Batch, HeteroData
-from torch_geometric.nn import GCNConv
 
-from algo.PPO_actionGNN import GNNFeatureEncoder, BATCH_EXCLUDE_KEYS
+from algo.PPO_actionGNN import BATCH_EXCLUDE_KEYS, GNNFeatureEncoder
+from algo.action_heads import ActionHeadOutput, build_action_head
 
 
 VARIABLE_BATCH_EXCLUDE_KEYS = BATCH_EXCLUDE_KEYS + [
@@ -24,77 +23,8 @@ VARIABLE_BATCH_EXCLUDE_KEYS = BATCH_EXCLUDE_KEYS + [
 ]
 
 
-@dataclass
-class ActionGraphOutput:
-    """Holds logits and prefix sums for variable action batches."""
-
-    logits: torch.Tensor
-    ptr: torch.Tensor
-
-
-class ActionGraphHead(nn.Module):
-    """Two-layer GCN over fully connected feasible action graphs."""
-
-    def __init__(self, encoder_dim: int, mlp_dim: int, action_feature_dim: int):
-        super().__init__()
-        self.state_proj = nn.Linear(encoder_dim, mlp_dim)
-        self.action_proj = nn.Linear(action_feature_dim, mlp_dim)
-        self.gcn_layers = nn.ModuleList([
-            GCNConv(mlp_dim, mlp_dim, add_self_loops=True),
-            GCNConv(mlp_dim, mlp_dim, add_self_loops=True),
-        ])
-
-    def forward(
-        self,
-        embedding: torch.Tensor,
-        action_features: torch.Tensor,
-        ptr: torch.Tensor,
-    ) -> ActionGraphOutput:
-        if embedding.dim() == 1:
-            embedding = embedding.unsqueeze(0)
-        state_repr = F.relu(self.state_proj(embedding))
-        if action_features.numel() == 0:
-            return ActionGraphOutput(logits=action_features.new_zeros((0,)), ptr=ptr)
-
-        x = F.relu(self.action_proj(action_features))
-        edge_index = self._build_fully_connected_edges(ptr, action_features.device)
-        for conv in self.gcn_layers:
-            x = F.relu(conv(x, edge_index)) if x.numel() > 0 else x
-
-        logits = x.new_zeros(x.size(0))
-        batch_size = state_repr.size(0)
-        for i in range(batch_size):
-            start = ptr[i].item()
-            end = ptr[i + 1].item()
-            if end <= start:
-                continue
-            logits[start:end] = (x[start:end] * state_repr[i]).sum(dim=-1)
-
-        return ActionGraphOutput(logits=logits, ptr=ptr)
-
-    @staticmethod
-    def _build_fully_connected_edges(ptr: torch.Tensor, device: torch.device) -> torch.Tensor:
-        if ptr.numel() <= 1:
-            return torch.zeros((2, 0), dtype=torch.long, device=device)
-        edges = []
-        for i in range(ptr.numel() - 1):
-            start = int(ptr[i].item())
-            end = int(ptr[i + 1].item())
-            count = end - start
-            if count <= 1:
-                continue
-            node_range = torch.arange(start, end, device=device)
-            src = node_range[:-1]
-            dst = node_range[1:]
-            edges.append(torch.stack([src, dst], dim=0))
-            edges.append(torch.stack([dst, src], dim=0))
-        if not edges:
-            return torch.zeros((2, 0), dtype=torch.long, device=device)
-        return torch.cat(edges, dim=1)
-
-
 class PPOVariableActorCritic(nn.Module):
-    """Actor-Critic network with shared encoder and action graph head."""
+    """Actor-Critic network with a shared encoder and selectable action head."""
 
     def __init__(
         self,
@@ -105,6 +35,10 @@ class PPOVariableActorCritic(nn.Module):
         hidden_dim: int = 64,
         num_layers: int = 3,
         mlp_dim: int = 128,
+        action_head_type: str = "independent",
+        action_head_layers: int = 2,
+        action_attention_heads: int = 4,
+        action_head_dropout: float = 0.0,
         device: str = "cpu",
     ):
         super().__init__()
@@ -117,7 +51,15 @@ class PPOVariableActorCritic(nn.Module):
         )
         self.action_dim = action_dim
         encoder_dim = hidden_dim * len(node_feature_dims)
-        self.action_head = ActionGraphHead(encoder_dim, mlp_dim, action_feature_dim)
+        self.action_head = build_action_head(
+            action_head_type,
+            encoder_dim,
+            mlp_dim,
+            action_feature_dim,
+            num_layers=action_head_layers,
+            attention_heads=action_attention_heads,
+            dropout=action_head_dropout,
+        )
         self.value_head = nn.Sequential(
             nn.Linear(encoder_dim, mlp_dim),
             nn.ReLU(),
@@ -129,7 +71,7 @@ class PPOVariableActorCritic(nn.Module):
         data: HeteroData,
         action_features: torch.Tensor,
         ptr: torch.Tensor,
-    ) -> Tuple[ActionGraphOutput, torch.Tensor]:
+    ) -> Tuple[ActionHeadOutput, torch.Tensor]:
         embedding = self.encoder(data)
         action_output = self.action_head(embedding, action_features, ptr)
         value = self.value_head(embedding).squeeze(-1)
@@ -219,6 +161,10 @@ class PPOVariableActionGNN:
         max_grad_norm: float = 0.5,
         ppo_epochs: int = 10,
         minibatch_size: int = 128,
+        action_head_type: str = "independent",
+        action_head_layers: int = 2,
+        action_attention_heads: int = 4,
+        action_head_dropout: float = 0.0,
         device: str = None,
     ):
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -232,6 +178,7 @@ class PPOVariableActionGNN:
         self.minibatch_size = minibatch_size
         self.action_dim = action_dim
         self.node_feature_dims = node_feature_dims
+        self.action_head_type = action_head_type
         self.charge_durations = list(charge_durations) if charge_durations is not None else []
         # [normalized_action_type, resulting_soc, charge_duration_norm]
         self.action_feature_dim = 3
@@ -244,6 +191,10 @@ class PPOVariableActionGNN:
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             mlp_dim=mlp_dim,
+            action_head_type=action_head_type,
+            action_head_layers=action_head_layers,
+            action_attention_heads=action_attention_heads,
+            action_head_dropout=action_head_dropout,
             device=self.device,
         ).to(self.device)
 
@@ -284,6 +235,8 @@ class PPOVariableActionGNN:
         """
         if action_masks is None:
             action_masks = [None] * len(states)
+        if len(action_masks) != len(states):
+            raise ValueError("action_masks must contain one entry per state")
         
         # Prepare feasible actions for all states
         feasible_indices = []
@@ -366,18 +319,7 @@ class PPOVariableActionGNN:
         if expl_noise is not None:
             deterministic = expl_noise == 0
         _, feasible_idx = self._prepare_feasible_actions(state, action_mask, device=self.device)
-        
-        # Debug: Check what feasible_idx contains
-        state_mask = state.feasible_action_mask
-        state_feasible = torch.nonzero(state_mask, as_tuple=False).view(-1)
-        if feasible_idx.numel() != state_feasible.numel():
-            print(f"\nDEBUG in select_action:")
-            print(f"  state.feasible_action_mask sum: {state_mask.sum().item()}")
-            print(f"  state_feasible indices: {state_feasible.tolist()}")
-            print(f"  returned feasible_idx: {feasible_idx.tolist()}")
-            if action_mask is not None:
-                print(f"  action_mask: {action_mask.tolist() if action_mask.numel() < 50 else f'size={action_mask.numel()}, sum={action_mask.sum()}'}")
-        
+
         action_features, ptr = self._build_action_graph_inputs([state], [feasible_idx], device=self.device)
         data = state.to(self.device)
         action_output, _ = self.policy(data, action_features, ptr)
@@ -557,46 +499,32 @@ class PPOVariableActionGNN:
         feasible_indices: List[torch.Tensor],
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if len(states) != len(feasible_indices):
+            raise ValueError("feasible_indices must contain one tensor per state")
         features = []
         ptr = [0]
         for state, global_indices in zip(states, feasible_indices):
-            # action_graph_features contains features for ALL feasible actions in state.feasible_action_mask
-            # global_indices are the actual feasible action indices (same as what's in the mask)
-            # We need to map global_indices to positions in action_graph_features
-            
-            # Get the indices of feasible actions from the state's mask
             feasible_mask = state.feasible_action_mask
             state_feasible_indices = torch.nonzero(feasible_mask, as_tuple=False).view(-1)
-            
-            # Debug information
+
             if state_feasible_indices.numel() == 0:
                 raise RuntimeError("State has no feasible actions in feasible_action_mask")
-            
-            # Create mapping from global action index to local index in action_graph_features
+
             global_to_local = {int(g.item()): i for i, g in enumerate(state_feasible_indices)}
-            
-            # Map the requested global indices to local indices
-            # Filter out any indices that aren't in the feasible set (defensive programming)
             local_indices = []
             for g in global_indices:
                 g_int = int(g.item())
                 if g_int in global_to_local:
                     local_indices.append(global_to_local[g_int])
                 else:
-                    # Debug: print state of masks
-                    print(f"\nDEBUG: Action index {g_int} not in feasible set")
-                    print(f"  state_feasible_indices: {state_feasible_indices.tolist()}")
-                    print(f"  global_indices: {global_indices.tolist()}")
-                    print(f"  feasible_mask shape: {feasible_mask.shape}, sum: {feasible_mask.sum().item()}")
-                    if hasattr(state, 'action_graph_features'):
-                        print(f"  action_graph_features shape: {state.action_graph_features.shape}")
-                    raise KeyError(f"Action index {g_int} not found in feasible action set {state_feasible_indices.tolist()}")
-            
+                    raise KeyError(
+                        f"Action index {g_int} is absent from the hard feasible set "
+                        f"{state_feasible_indices.tolist()}"
+                    )
+
             if not local_indices:
-                # If no valid indices, use all feasible actions
-                print("Warning: No valid local indices found, using all feasible actions")
-                local_indices = list(range(len(state_feasible_indices)))
-            
+                raise RuntimeError("No feasible action rows were selected")
+
             local_indices = torch.tensor(local_indices, dtype=torch.long)
             
             node_features = self._action_node_features(state, local_indices)
@@ -620,13 +548,19 @@ class PPOVariableActionGNN:
         """
         if local_indices.numel() == 0:
             return torch.zeros((0, self.action_feature_dim), dtype=torch.float32)
-        
-        # State contains precomputed action graph features for feasible actions only
+        if not hasattr(state, "action_graph_features"):
+            raise ValueError("State is missing action_graph_features")
         action_graph_features = state.action_graph_features
-        
-        # Extract features for the requested local indices
+        if action_graph_features.ndim != 2:
+            raise ValueError("action_graph_features must be two-dimensional")
+        if action_graph_features.shape[1] != self.action_feature_dim:
+            raise ValueError(
+                "action_graph_features width mismatch: expected "
+                f"{self.action_feature_dim}, got {action_graph_features.shape[1]}"
+            )
+        if local_indices.min() < 0 or local_indices.max() >= action_graph_features.shape[0]:
+            raise IndexError("local action feature index is out of range")
         selected_features = action_graph_features[local_indices.to(action_graph_features.device)]
-        
         return selected_features.cpu()
 
     def _prepare_feasible_actions(
@@ -638,36 +572,19 @@ class PPOVariableActionGNN:
         if not hasattr(state, "feasible_action_mask"):
             raise ValueError("State is missing feasible_action_mask attribute.")
         mask = torch.as_tensor(state.feasible_action_mask, dtype=torch.bool)
-        
-        # If an additional action_mask is provided, combine it with the state's feasible mask
+        if mask.ndim != 1:
+            raise ValueError("feasible_action_mask must be one-dimensional")
+
         if action_mask is not None:
             env_mask = torch.as_tensor(action_mask, dtype=torch.bool)
-            # The env_mask might have different length, so align and combine
-            combined_mask = self._align_and_combine_masks(mask, env_mask)
-            
-            # If combining results in no feasible actions, use only the state's mask
-            # This happens when env_mask doesn't overlap with state's feasible actions
-            if combined_mask.any():
-                mask = combined_mask
-            # else: keep mask = state.feasible_action_mask (already set above)
-        
-        # Ensure we have at least one feasible action (use state's feasible actions as fallback)
+            mask = self._align_and_combine_masks(mask, env_mask)
+
         if not mask.any():
-            # If somehow the state mask is also empty, this is an error in state construction
-            # But provide a safe fallback
-            mask = torch.as_tensor(state.feasible_action_mask, dtype=torch.bool)
-            if not mask.any():
-                # Last resort: allow all actions
-                mask = torch.ones_like(mask, dtype=torch.bool)
-        
-        # Get indices where mask is True - these are the feasible action indices
+            raise RuntimeError(
+                "No feasible actions are available; refusing to relax the hard mask."
+            )
+
         indices = torch.nonzero(mask, as_tuple=False).view(-1)
-        if indices.numel() == 0:
-            # This should never happen given the checks above, but be defensive
-            indices = torch.nonzero(torch.as_tensor(state.feasible_action_mask, dtype=torch.bool), as_tuple=False).view(-1)
-            if indices.numel() == 0:
-                indices = torch.arange(mask.numel(), dtype=torch.long)
-        
         if device is not None:
             mask = mask.to(device)
             indices = indices.to(device)
@@ -675,34 +592,37 @@ class PPOVariableActionGNN:
 
     @staticmethod
     def _align_and_combine_masks(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        if a.numel() == b.numel():
-            return a & b.to(device=a.device)
-        min_len = min(a.numel(), b.numel())
-        a_trim = a[:min_len]
-        b_trim = b[:min_len].to(device=a.device)
-        combined = a_trim & b_trim
-        if combined.numel() < a.numel():
-            pad = torch.zeros(a.numel() - combined.numel(), dtype=torch.bool, device=a.device)
-            combined = torch.cat([combined, pad], dim=0)
-        return combined
+        if a.ndim != 1 or b.ndim != 1:
+            raise ValueError("action masks must be one-dimensional")
+        if a.numel() != b.numel():
+            raise ValueError(
+                "action mask length mismatch: "
+                f"state has {a.numel()} actions, environment has {b.numel()}"
+            )
+        return a & b.to(device=a.device)
 
     @staticmethod
     def _mask_to_indices(mask: torch.Tensor) -> Tuple[int, torch.Tensor]:
         mask = mask.to(torch.bool)
+        if mask.ndim != 1:
+            raise ValueError("action mask must be one-dimensional")
         if not mask.any():
-            mask = torch.ones_like(mask, dtype=torch.bool)
+            raise RuntimeError(
+                "No feasible actions are available; refusing to relax the hard mask."
+            )
         indices = torch.nonzero(mask, as_tuple=False).view(-1)
-        if indices.numel() == 0:
-            indices = torch.arange(mask.numel(), device=mask.device)
         return int(indices.numel()), indices
 
     @staticmethod
     def _locate_action_index(indices: torch.Tensor, action_value: torch.Tensor) -> int:
         if indices.numel() == 0:
-            return 0
+            raise RuntimeError("Cannot locate an action in an empty feasible set")
         matches = torch.nonzero(indices == int(action_value.item()), as_tuple=False).view(-1)
         if matches.numel() == 0:
-            return int(torch.clamp(action_value, 0, indices.numel() - 1).item())
+            raise ValueError(
+                f"Stored action {int(action_value.item())} is not in feasible set "
+                f"{indices.tolist()}"
+            )
         return int(matches[0].item())
 
     def _gather_logprobs(

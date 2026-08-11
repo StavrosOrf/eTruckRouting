@@ -6,8 +6,6 @@ Use this when ``enable_flexible_delivery_order`` is enabled; otherwise prefer
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 import numpy as np
 import torch
 
@@ -63,7 +61,7 @@ class GNNStateSpaceVRP(GNNStateSpace):
                 "Use GNNStateSpaceNonFlex for sequential runs."
             )
 
-        expected_actions: Optional[int] = getattr(getattr(env, "action_space", None), "n", None)
+        expected_actions: int | None = getattr(getattr(env, "action_space", None), "n", None)
         action_count = len(getattr(data, "action_to_node_map", []))
         if expected_actions is not None and action_count != expected_actions:
             raise ValueError(
@@ -88,7 +86,7 @@ class GNNStateSpaceVRP(GNNStateSpace):
         else:
             data["depot"].x = torch.zeros((0, self._delivery_feature_dim), dtype=torch.float32, device=self.device)
 
-        node_id_to_type: Dict[int, tuple] = dict(getattr(data, "node_id_to_type", {}))
+        node_id_to_type: dict[int, tuple] = dict(getattr(data, "node_id_to_type", {}))
         for depot_id, local_idx in depot_node_to_idx.items():
             node_id_to_type[depot_id] = ("depot", local_idx)
         data.node_id_to_type = node_id_to_type
@@ -364,7 +362,7 @@ class GNNStateSpaceVRP(GNNStateSpace):
         )
 
 
-def get_action_graph(env, state_space: Optional[GNNStateSpaceVRP] = None):
+def get_action_graph(env, state_space: GNNStateSpaceVRP | None = None):
     """Module-level helper for convenience when only an env is available."""
     space = state_space
     if space is None:

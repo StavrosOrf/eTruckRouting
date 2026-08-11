@@ -25,6 +25,7 @@ class FeasibilityReason(StrEnum):
     NO_ACTIVE_TRUCK = "no_active_truck"
     INVALID_TRUCK_STATE = "invalid_truck_state"
     UNKNOWN_DESTINATION = "unknown_destination"
+    CHARGER_UNAVAILABLE = "charger_unavailable"
     SAME_LOCATION = "same_location"
     TASK_UNAVAILABLE = "task_unavailable"
     PAYLOAD_EXCEEDED = "payload_exceeded"
@@ -36,6 +37,9 @@ class FeasibilityReason(StrEnum):
     CHARGER_MISMATCH = "charger_mismatch"
     BATTERY_FULL = "battery_full"
     INVALID_CHARGE_DURATION = "invalid_charge_duration"
+    INVALID_TARGET_SOC = "invalid_target_soc"
+    TARGET_SOC_NOT_ABOVE_CURRENT = "target_soc_not_above_current"
+    TIME_WINDOW_EXPIRED = "time_window_expired"
     MUST_LEAVE_CHARGER = "must_leave_charger"
     EMPTY_ACTION_SLOT = "empty_action_slot"
 
@@ -94,6 +98,8 @@ def evaluate_joint_route(
     task_registry: Any,
     depot_node: int,
     energy_multiplier: float = 1.0,
+    unavailable_charging_nodes: set[int] | None = None,
+    current_time: float = 0.0,
 ) -> FeasibilityResult:
     """Evaluate one routing destination using hard, observable constraints."""
     target_node = int(target_node)
@@ -112,9 +118,21 @@ def evaluate_joint_route(
             action_kind,
             target_node=target_node,
         )
+    if not math.isfinite(current_time) or current_time < 0.0:
+        raise ValueError("current_time must be finite and non-negative")
     if action_kind is ActionKind.UNKNOWN:
         return FeasibilityResult.reject(
             FeasibilityReason.UNKNOWN_DESTINATION,
+            action_kind,
+            target_node=target_node,
+        )
+    if (
+        action_kind is ActionKind.CHARGER
+        and unavailable_charging_nodes is not None
+        and target_node in unavailable_charging_nodes
+    ):
+        return FeasibilityResult.reject(
+            FeasibilityReason.CHARGER_UNAVAILABLE,
             action_kind,
             target_node=target_node,
         )
@@ -140,6 +158,28 @@ def evaluate_joint_route(
                 action_kind,
                 target_node=target_node,
             )
+        if math.isfinite(task.latest_service):
+            try:
+                nominal_travel_time = float(
+                    transport_graph.get_time_distance(
+                        int(truck.current_node),
+                        target_node,
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError):
+                nominal_travel_time = math.inf
+            service_start = max(
+                current_time + nominal_travel_time,
+                float(task.earliest_service),
+            )
+            if not math.isfinite(service_start) or (
+                service_start > float(task.latest_service) + 1e-9
+            ):
+                return FeasibilityResult.reject(
+                    FeasibilityReason.TIME_WINDOW_EXPIRED,
+                    action_kind,
+                    target_node=target_node,
+                )
     elif action_kind is ActionKind.DEPOT:
         if not task_registry.all_served():
             return FeasibilityResult.reject(
@@ -193,6 +233,7 @@ def evaluate_duration_charge(
     charger_node: int,
     charging_nodes: list[int],
     charge_hours: float,
+    station_available: bool = True,
 ) -> FeasibilityResult:
     """Evaluate a legacy duration charge without applying fallback behavior."""
     charger_node = int(charger_node)
@@ -220,6 +261,12 @@ def evaluate_duration_charge(
             ActionKind.CHARGE,
             target_node=charger_node,
         )
+    if not station_available:
+        return FeasibilityResult.reject(
+            FeasibilityReason.CHARGER_UNAVAILABLE,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
     if bool(getattr(truck, "must_leave_charger", False)):
         return FeasibilityResult.reject(
             FeasibilityReason.MUST_LEAVE_CHARGER,
@@ -229,6 +276,63 @@ def evaluate_duration_charge(
     if float(truck.current_battery) >= float(truck.battery_capacity) - 1e-9:
         return FeasibilityResult.reject(
             FeasibilityReason.BATTERY_FULL,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    return FeasibilityResult.allow(ActionKind.CHARGE, target_node=charger_node)
+
+
+def evaluate_target_soc_charge(
+    *,
+    truck: Any,
+    truck_state: str,
+    charger_node: int,
+    charging_nodes: list[int],
+    target_soc: float,
+    station_available: bool = True,
+) -> FeasibilityResult:
+    """Evaluate a target-SoC charge under hard location and state rules."""
+    charger_node = int(charger_node)
+    if truck_state != "ready":
+        return FeasibilityResult.reject(
+            FeasibilityReason.INVALID_TRUCK_STATE,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    if not math.isfinite(target_soc) or not 0.0 < target_soc <= 1.0:
+        return FeasibilityResult.reject(
+            FeasibilityReason.INVALID_TARGET_SOC,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    if int(truck.current_node) not in {int(node) for node in charging_nodes}:
+        return FeasibilityResult.reject(
+            FeasibilityReason.NOT_AT_CHARGER,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    if charger_node != int(truck.current_node):
+        return FeasibilityResult.reject(
+            FeasibilityReason.CHARGER_MISMATCH,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    if not station_available:
+        return FeasibilityResult.reject(
+            FeasibilityReason.CHARGER_UNAVAILABLE,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    if bool(getattr(truck, "must_leave_charger", False)):
+        return FeasibilityResult.reject(
+            FeasibilityReason.MUST_LEAVE_CHARGER,
+            ActionKind.CHARGE,
+            target_node=charger_node,
+        )
+    current_soc = float(truck.current_battery) / float(truck.battery_capacity)
+    if target_soc <= current_soc + 1e-9:
+        return FeasibilityResult.reject(
+            FeasibilityReason.TARGET_SOC_NOT_ABOVE_CURRENT,
             ActionKind.CHARGE,
             target_node=charger_node,
         )
@@ -261,6 +365,11 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
         )
 
     decisions: list[FeasibilityResult] = []
+    unavailable_chargers = {
+        int(node)
+        for node, available in env.charging_station.station_available.items()
+        if not available
+    }
     for charger_node in env.charging_nodes:
         decisions.append(
             evaluate_joint_route(
@@ -272,6 +381,8 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
                 task_registry=env.task_registry,
                 depot_node=env.joint_instance.depot_node,
                 energy_multiplier=energy_multiplier,
+                current_time=float(env.global_clock),
+                unavailable_charging_nodes=unavailable_chargers,
             )
         )
 
@@ -294,6 +405,8 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
                 task_registry=env.task_registry,
                 depot_node=env.joint_instance.depot_node,
                 energy_multiplier=energy_multiplier,
+                current_time=float(env.global_clock),
+                unavailable_charging_nodes=unavailable_chargers,
             )
         )
 
@@ -307,19 +420,41 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
             task_registry=env.task_registry,
             depot_node=env.joint_instance.depot_node,
             energy_multiplier=energy_multiplier,
+            current_time=float(env.global_clock),
+            unavailable_charging_nodes=unavailable_chargers,
         )
     )
 
-    for charge_hours in env.charging_config["charge_durations"]:
-        decisions.append(
-            evaluate_duration_charge(
-                truck=truck,
-                truck_state=truck_state,
-                charger_node=truck.current_node,
-                charging_nodes=env.charging_nodes,
-                charge_hours=float(charge_hours),
+    if env.charging_action_mode == "target_soc":
+        for target_soc in env.charge_action_values:
+            decisions.append(
+                evaluate_target_soc_charge(
+                    truck=truck,
+                    truck_state=truck_state,
+                    charger_node=truck.current_node,
+                    charging_nodes=env.charging_nodes,
+                    target_soc=float(target_soc),
+                    station_available=env.charging_station.station_available.get(
+                        int(truck.current_node),
+                        False,
+                    ),
+                )
             )
-        )
+    else:
+        for charge_hours in env.charge_action_values:
+            decisions.append(
+                evaluate_duration_charge(
+                    truck=truck,
+                    truck_state=truck_state,
+                    charger_node=truck.current_node,
+                    charging_nodes=env.charging_nodes,
+                    charge_hours=float(charge_hours),
+                    station_available=env.charging_station.station_available.get(
+                        int(truck.current_node),
+                        False,
+                    ),
+                )
+            )
 
     if len(decisions) != env.action_space.n:
         raise RuntimeError(

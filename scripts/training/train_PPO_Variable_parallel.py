@@ -565,6 +565,19 @@ def parse_args():
                           help='Hidden dimension for GNN layers')
     net_group.add_argument('--mlp-hidden-dim', type=int, default=256,
                           help='Hidden dimension for MLP layers in critic')
+    net_group.add_argument(
+        '--action-head',
+        type=str,
+        default='independent',
+        choices=['independent', 'complete_gcn', 'self_attention'],
+        help='Permutation-equivariant feasible-action head',
+    )
+    net_group.add_argument('--action-head-layers', type=int, default=2,
+                          help='Complete-GCN or self-attention action layers')
+    net_group.add_argument('--action-attention-heads', type=int, default=4,
+                          help='Number of heads in the self-attention action encoder')
+    net_group.add_argument('--action-head-dropout', type=float, default=0.0,
+                          help='Dropout in the self-attention action encoder')
     net_group.add_argument('--actor-gcn-layers', type=int, default=3, choices=[3, 4, 5, 6],
                           help='Number of GCN layers in actor')
     net_group.add_argument('--critic-gcn-layers', type=int, default=3, choices=[3, 4, 5],
@@ -719,6 +732,10 @@ def train(args):
         hidden_dim=args.gnn_hidden_dim,
         num_layers=args.actor_gcn_layers,
         mlp_dim=args.mlp_hidden_dim,
+        action_head_type=args.action_head,
+        action_head_layers=args.action_head_layers,
+        action_attention_heads=args.action_attention_heads,
+        action_head_dropout=args.action_head_dropout,
         lr=args.lr,
         gamma=args.gamma,
         gae_lambda=args.gae_lambda,
@@ -743,6 +760,10 @@ def train(args):
         "hidden_dim": args.gnn_hidden_dim,
         "num_layers": args.actor_gcn_layers,
         "mlp_dim": args.mlp_hidden_dim,
+        "action_head_type": args.action_head,
+        "action_head_layers": args.action_head_layers,
+        "action_attention_heads": args.action_attention_heads,
+        "action_head_dropout": args.action_head_dropout,
         "lr": args.lr,
         "gamma": args.gamma,
         "gae_lambda": args.gae_lambda,
@@ -767,6 +788,7 @@ def train(args):
     print(f"Max timesteps: {args.max_timesteps}")
     print(f"Steps per PPO update: {args.ppo_steps_per_update}")
     print(f"Minibatch size: {args.ppo_minibatch_size}")
+    print(f"Action head: {args.action_head}")
     print(f"{'='*80}\n")
 
     # Create parallel training environments

@@ -6,8 +6,7 @@ Implements realistic charging behavior including:
 - CCCV (Constant Current - Constant Voltage) - realistic DC fast charging with SOC-based tapering
 """
 
-import numpy as np
-from typing import Dict, Tuple, Optional
+import math
 
 
 class ChargingCurveModel:
@@ -33,9 +32,9 @@ class ChargingCurveModel:
         initial_soc: float,
         charge_hours: float,
         battery_capacity: float,
-        charger_config: Dict,
+        charger_config: dict,
         charger_type: str = "DCFast"
-    ) -> Tuple[float, Dict]:
+    ) -> tuple[float, dict]:
         """
         Calculate actual charge delivered over time period using configured model.
         
@@ -61,17 +60,25 @@ class ChargingCurveModel:
                 - power_curve: List of (time, power, soc) samples for logging
         """
         # Validate inputs
-        if not 0.0 <= initial_soc <= 1.0:
+        if not math.isfinite(initial_soc) or not 0.0 <= initial_soc <= 1.0:
             raise ValueError(f"Invalid initial_soc: {initial_soc}, must be in [0.0, 1.0]")
-        if charge_hours <= 0:
+        if not math.isfinite(charge_hours) or charge_hours <= 0:
             raise ValueError(f"Invalid charge_hours: {charge_hours}, must be > 0")
-        if battery_capacity <= 0:
+        if not math.isfinite(battery_capacity) or battery_capacity <= 0:
             raise ValueError(f"Invalid battery_capacity: {battery_capacity}, must be > 0")
             
         # Extract config parameters
-        peak_power = charger_config["charge_rate"]  # kW
-        efficiency = charger_config["efficiency"]
+        peak_power = float(charger_config["charge_rate"])  # kW
+        efficiency = float(charger_config["efficiency"])
         use_realistic = charger_config["use_realistic_curve"]
+        if not isinstance(use_realistic, bool):
+            raise TypeError("use_realistic_curve must be boolean")
+        if charger_type not in {"DCFast", "Level2"}:
+            raise ValueError("charger_type must be 'DCFast' or 'Level2'")
+        if not math.isfinite(peak_power) or peak_power <= 0.0:
+            raise ValueError("charge_rate must be positive")
+        if not math.isfinite(efficiency) or not 0.0 < efficiency <= 1.0:
+            raise ValueError("efficiency must be in (0, 1]")
         
         # Only apply realistic curve to DC Fast chargers
         if use_realistic and charger_type == "DCFast":
@@ -92,6 +99,114 @@ class ChargingCurveModel:
                 peak_power=peak_power,
                 efficiency=efficiency
             )
+
+    def calculate_charge_to_target(
+        self,
+        initial_soc: float,
+        target_soc: float,
+        battery_capacity: float,
+        charger_config: dict,
+        charger_type: str = "DCFast",
+    ) -> tuple[float, dict]:
+        """Integrate the charging curve until an exact target SoC is reached."""
+        if not math.isfinite(initial_soc) or not 0.0 <= initial_soc <= 1.0:
+            raise ValueError("initial_soc must be in [0, 1]")
+        if not math.isfinite(target_soc) or not 0.0 < target_soc <= 1.0:
+            raise ValueError("target_soc must be in (0, 1]")
+        if target_soc <= initial_soc + 1e-12:
+            raise ValueError("target_soc must be above initial_soc")
+        if not math.isfinite(battery_capacity) or battery_capacity <= 0.0:
+            raise ValueError("battery_capacity must be positive")
+
+        peak_power = float(charger_config["charge_rate"])
+        efficiency = float(charger_config["efficiency"])
+        use_realistic = charger_config["use_realistic_curve"]
+        if not isinstance(use_realistic, bool):
+            raise TypeError("use_realistic_curve must be boolean")
+        if charger_type not in {"DCFast", "Level2"}:
+            raise ValueError("charger_type must be 'DCFast' or 'Level2'")
+        if not math.isfinite(peak_power) or peak_power <= 0.0:
+            raise ValueError("charge_rate must be positive")
+        if not math.isfinite(efficiency) or not 0.0 < efficiency <= 1.0:
+            raise ValueError("efficiency must be in (0, 1]")
+
+        target_energy = (target_soc - initial_soc) * battery_capacity
+        if not use_realistic or charger_type != "DCFast":
+            duration = target_energy / (peak_power * efficiency)
+            charge, details = self._linear_charge(
+                initial_soc=initial_soc,
+                charge_hours=duration,
+                battery_capacity=battery_capacity,
+                peak_power=peak_power,
+                efficiency=efficiency,
+            )
+            details["target_soc"] = target_soc
+            return charge, details
+
+        taper_start_soc = float(charger_config["taper_start_soc"])
+        taper_power_min = float(charger_config["taper_power_min"])
+        if not math.isfinite(taper_start_soc) or not 0.0 < taper_start_soc < 1.0:
+            raise ValueError("taper_start_soc must be in (0, 1)")
+        if (
+            not math.isfinite(taper_power_min)
+            or taper_power_min <= 0.0
+            or taper_power_min > peak_power
+        ):
+            raise ValueError("taper_power_min must be in (0, charge_rate]")
+
+        dt = 0.001
+        elapsed = 0.0
+        current_soc = float(initial_soc)
+        delivered = 0.0
+        power_curve = [(0.0, self.cccv_power_at_soc(
+            current_soc,
+            peak_power,
+            taper_start_soc,
+            taper_power_min,
+        ), current_soc)]
+        next_sample_soc = min(target_soc, initial_soc + 0.025)
+
+        while current_soc < target_soc - 1e-12:
+            power = self.cccv_power_at_soc(
+                current_soc,
+                peak_power,
+                taper_start_soc,
+                taper_power_min,
+            )
+            remaining = (target_soc - current_soc) * battery_capacity
+            step_energy = power * efficiency * dt
+            step_time = dt
+            if step_energy >= remaining:
+                step_energy = remaining
+                step_time = remaining / (power * efficiency)
+
+            delivered += step_energy
+            elapsed += step_time
+            current_soc += step_energy / battery_capacity
+            if current_soc >= next_sample_soc - 1e-12:
+                power_curve.append((elapsed, power, min(current_soc, target_soc)))
+                next_sample_soc = min(target_soc, next_sample_soc + 0.025)
+
+        current_soc = target_soc
+        final_power = self.cccv_power_at_soc(
+            current_soc,
+            peak_power,
+            taper_start_soc,
+            taper_power_min,
+        )
+        if not power_curve or power_curve[-1][2] < target_soc - 1e-12:
+            power_curve.append((elapsed, final_power, target_soc))
+        average_power = delivered / elapsed if elapsed > 0.0 else 0.0
+        details = {
+            "actual_charge_hours": elapsed,
+            "final_soc": target_soc,
+            "target_soc": target_soc,
+            "average_power": average_power,
+            "taper_factor": average_power / peak_power,
+            "model_used": "cccv",
+            "power_curve": power_curve,
+        }
+        return delivered, details
     
     def _linear_charge(
         self,
@@ -100,7 +215,7 @@ class ChargingCurveModel:
         battery_capacity: float,
         peak_power: float,
         efficiency: float
-    ) -> Tuple[float, Dict]:
+    ) -> tuple[float, dict]:
         """
         Linear (constant-rate) charging model - existing behavior.
         
@@ -164,7 +279,22 @@ class ChargingCurveModel:
 
         This is the same piecewise curve used by `_cccv_charge`.
         """
-        soc = min(1.0, max(0.0, soc))
+        for label, value in (
+            ("soc", soc),
+            ("peak_power", peak_power),
+            ("taper_start_soc", taper_start_soc),
+            ("taper_power_min", taper_power_min),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{label} must be finite")
+        if not 0.0 <= soc <= 1.0:
+            raise ValueError("soc must be in [0, 1]")
+        if peak_power <= 0.0:
+            raise ValueError("peak_power must be positive")
+        if not 0.0 < taper_start_soc < 1.0:
+            raise ValueError("taper_start_soc must be in (0, 1)")
+        if not 0.0 < taper_power_min <= peak_power:
+            raise ValueError("taper_power_min must be in (0, peak_power]")
 
         if soc < 0.1:
             # Initial ramp-up (0-10%): start at ~60% power.
@@ -195,7 +325,7 @@ class ChargingCurveModel:
         efficiency: float,
         taper_start_soc: float,
         taper_power_min: float
-    ) -> Tuple[float, Dict]:
+    ) -> tuple[float, dict]:
         """
         CCCV (Constant Current - Constant Voltage) charging model.
         
@@ -315,7 +445,7 @@ class ChargingCurveModel:
         initial_soc: float,
         target_soc: float,
         battery_capacity: float,
-        charger_config: Dict,
+        charger_config: dict,
         charger_type: str = "DCFast"
     ) -> float:
         """
@@ -336,13 +466,9 @@ class ChargingCurveModel:
         if target_soc <= initial_soc:
             return 0.0
         
-        # Calculate required energy
-        energy_needed = (target_soc - initial_soc) * battery_capacity
-        
         # Use binary search to find time that delivers required energy
         # (more accurate than simple division for tapered curves)
         low, high = 0.0, 20.0  # Search range (0 to 20 hours)
-        tolerance = 0.01  # 0.01 hour = 36 seconds tolerance
         
         for _ in range(20):  # Max 20 iterations
             mid = (low + high) / 2

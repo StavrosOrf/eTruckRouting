@@ -14,6 +14,7 @@ This directory is the source of truth for the top-journal revision campaign. The
 - `03_implementation_map.md`: file-level change map, test structure, and dependency order for post-validation implementation.
 - `04_reviewer_response_todo.md`: point-by-point editor, reviewer, and coauthor response matrix aligned with D1–D10.
 - `05_execution_todo.md`: prioritized implementation and experiment checklist with current evidence.
+- `06_environment_verification.md`: supported environment semantics, verification commands, known constraints, and the immediate handoff checklist.
 
 ## Current branch baseline
 

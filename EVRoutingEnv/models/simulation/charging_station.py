@@ -3,9 +3,8 @@ Charging station management for the event-driven truck environment.
 """
 
 import heapq
-from typing import Dict, List, Optional, Tuple
 import json
-import os
+import math
 
 
 class ChargingStation:
@@ -16,10 +15,11 @@ class ChargingStation:
 
     def __init__(
         self,
-        charging_nodes: List[int],
+        charging_nodes: list[int],
         transport_graph,
         waiting_time_lookup_path: str,
         verbose: bool = False,
+        charging_config: dict | None = None,
     ):
         """
         Initialize the charging station manager.
@@ -29,13 +29,14 @@ class ChargingStation:
             transport_graph: TransportationGraph instance
             waiting_time_lookup_path: Path to waiting time lookup JSON file
             verbose: Print detailed information
+            charging_config: Optional station-power assignment configuration
         """
         self.charging_nodes = charging_nodes
         self.transport_graph = transport_graph
         self.verbose = verbose
 
         # Load waiting time lookup table for queue simulation
-        with open(waiting_time_lookup_path, "r") as f:
+        with open(waiting_time_lookup_path) as f:
             self.waiting_time_lookup = json.load(f)
 
         # Charger properties (capacity, type)
@@ -43,9 +44,66 @@ class ChargingStation:
             node: transport_graph.get_charger_capacity(node)
             for node in charging_nodes
         }
+        invalid_capacity = {
+            node: capacity
+            for node, capacity in self.charger_capacity.items()
+            if int(capacity) <= 0
+        }
+        if invalid_capacity:
+            raise ValueError(
+                f"charger capacities must be positive: {invalid_capacity}"
+            )
         self.charger_type = {
             node: transport_graph.get_charger_type(node) for node in charging_nodes
         }
+        charging_config = charging_config or {}
+        configured_classes = [
+            float(value)
+            for value in charging_config.get("station_power_classes_kw", [])
+        ]
+        if any(
+            not math.isfinite(value) or value <= 0.0
+            for value in configured_classes
+        ):
+            raise ValueError("station power classes must be positive")
+        raw_overrides = charging_config.get("station_power_overrides_kw", {})
+        power_overrides = {
+            int(node): float(power) for node, power in raw_overrides.items()
+        }
+        unknown_overrides = set(power_overrides) - set(charging_nodes)
+        if unknown_overrides:
+            raise ValueError(
+                "station power overrides reference unknown nodes: "
+                f"{sorted(unknown_overrides)}"
+            )
+        if any(
+            not math.isfinite(power) or power <= 0.0
+            for power in power_overrides.values()
+        ):
+            raise ValueError("station power overrides must be positive")
+
+        self.charger_power_kw: dict[int, float] = {}
+        for index, node in enumerate(sorted(charging_nodes)):
+            if node in power_overrides:
+                power = power_overrides[node]
+            elif configured_classes:
+                power = configured_classes[index % len(configured_classes)]
+            else:
+                charger_type = self.charger_type[node]
+                type_key = "dcfast" if charger_type == "DCFast" else "level2"
+                legacy_default = 50.0 if charger_type == "DCFast" else 7.2
+                power = float(
+                    charging_config.get(type_key, {}).get(
+                        "charge_rate",
+                        legacy_default,
+                    )
+                )
+            if power <= 0.0:
+                raise ValueError(
+                    f"charger {node} has no positive configured power"
+                )
+            self.charger_power_kw[node] = power
+        self.station_available = dict.fromkeys(charging_nodes, True)
 
         # Charging station occupancy tracking
         self.charger_occupancy = {
@@ -66,6 +124,7 @@ class ChargingStation:
         
         # Global sequence counter for strict FCFS ordering
         self.waitlist_sequence_counter = 0
+        self.pending_wake_trucks = {node: set() for node in charging_nodes}
 
         # Charging station utilization tracking
         self.charger_stats = {
@@ -98,6 +157,10 @@ class ChargingStation:
         self.truck_charge_end_time = {}
         self.charger_waitlist = {node: [] for node in self.charging_nodes}
         self.waitlist_sequence_counter = 0
+        self.pending_wake_trucks = {
+            node: set() for node in self.charging_nodes
+        }
+        self.station_available = dict.fromkeys(self.charging_nodes, True)
         self.charger_stats = {
             node: {
                 "total_charge_sessions": 0,
@@ -130,8 +193,17 @@ class ChargingStation:
         Returns:
             Expected waiting time in hours
         """
+        if (
+            not math.isfinite(current_utilization)
+            or not 0.0 <= current_utilization <= 1.0
+        ):
+            raise ValueError(
+                "current_utilization must be finite and in [0, 1]"
+            )
         charger_type = self.charger_type[charger_node]
         capacity = int(self.charger_capacity[charger_node])
+        if not self.station_available[charger_node]:
+            return math.inf
 
         # Get lookup table for this charger type and capacity
         if charger_type not in self.waiting_time_lookup:
@@ -141,8 +213,10 @@ class ChargingStation:
         if capacity_str not in self.waiting_time_lookup[charger_type]:
             # Use closest available capacity
             available_capacities = sorted(
-                [int(c) for c in self.waiting_time_lookup[charger_type].keys()]
+                [int(c) for c in self.waiting_time_lookup[charger_type]]
             )
+            if not available_capacities:
+                return 0.0
             closest_capacity = min(
                 available_capacities, key=lambda x: abs(x - capacity)
             )
@@ -161,7 +235,13 @@ class ChargingStation:
 
         return waiting_hours
 
-    def _record_queue_state(self, charger_node: int, global_clock: float, truck_id: int = None, event_type: str = None):
+    def _record_queue_state(
+        self,
+        charger_node: int,
+        global_clock: float,
+        truck_id: int | None = None,
+        event_type: str | None = None,
+    ):
         """
         Record current queue state for visualization.
         
@@ -181,7 +261,7 @@ class ChargingStation:
 
     def check_charger_gating(
         self, truck_id: int, charger_node: int, global_clock: float
-    ) -> Tuple[bool, Optional[float]]:
+    ) -> tuple[bool, float | None]:
         """
         Check if a truck can proceed with an action at a charging station.
         Pure event-driven FCFS with strict ordering via sequence numbers.
@@ -238,6 +318,7 @@ class ChargingStation:
             
             if free_slots > 0 and idx < free_slots:
                 # Eligible based on position
+                self.pending_wake_trucks[charger_node].discard(truck_id)
                 return True, None
             
             # Can't proceed yet - will be woken by wake_waiting_trucks
@@ -255,6 +336,37 @@ class ChargingStation:
             charge_hours: Duration of charging in hours
             global_clock: Current simulation time
         """
+        charge_hours = float(charge_hours)
+        global_clock = float(global_clock)
+        if not math.isfinite(charge_hours) or charge_hours <= 0.0:
+            raise ValueError("charge_hours must be positive")
+        if not math.isfinite(global_clock) or global_clock < 0.0:
+            raise ValueError("global_clock must be finite and non-negative")
+        if int(truck_id) < 0:
+            raise ValueError("truck_id must be non-negative")
+        if not self.station_available[charger_node]:
+            raise RuntimeError(f"charger {charger_node} is unavailable")
+
+        capacity = int(self.charger_capacity[charger_node])
+        occupancy = self.charger_occupancy[charger_node]
+        if truck_id in occupancy:
+            raise RuntimeError(
+                f"truck {truck_id} is already charging at {charger_node}"
+            )
+        if len(occupancy) >= capacity:
+            raise RuntimeError(
+                f"charger {charger_node} has no free port for truck {truck_id}"
+            )
+        occupied_elsewhere = [
+            node
+            for node, truck_ids in self.charger_occupancy.items()
+            if node != charger_node and truck_id in truck_ids
+        ]
+        if occupied_elsewhere:
+            raise RuntimeError(
+                f"truck {truck_id} is already charging at {occupied_elsewhere[0]}"
+            )
+
         # Calculate when this truck will finish charging
         charge_end_time = global_clock + charge_hours
         self.truck_charge_end_time[truck_id] = charge_end_time
@@ -266,10 +378,12 @@ class ChargingStation:
         )
         if idx is not None:
             waitlist.pop(idx)
+        self.pending_wake_trucks[charger_node].discard(truck_id)
 
         # Update occupancy
-        if truck_id not in self.charger_occupancy[charger_node]:
-            self.charger_occupancy[charger_node].append(truck_id)
+        was_empty = len(occupancy) == 0
+        if truck_id not in occupancy:
+            occupancy.append(truck_id)
         
         # Record start charging event
         self._record_queue_state(charger_node, global_clock, truck_id, 'start')
@@ -294,10 +408,8 @@ class ChargingStation:
 
         # Update utilization stats
         stats = self.charger_stats[charger_node]
-        if len(self.charger_occupancy[charger_node]) == 1:  # First truck at charger
-            if stats["last_update_time"] > 0:
-                stats["occupancy_time"] += global_clock - stats["last_update_time"]
-        stats["last_update_time"] = global_clock
+        if was_empty:
+            stats["last_update_time"] = global_clock
         stats["total_charge_sessions"] += 1
         stats["total_trucks_served"].add(truck_id)
         stats["total_charge_time"] += charge_hours
@@ -312,9 +424,18 @@ class ChargingStation:
             charger_node: Charging station node
             global_clock: Current simulation time
         """
+        global_clock = float(global_clock)
+        if not math.isfinite(global_clock) or global_clock < 0.0:
+            raise ValueError("global_clock must be finite and non-negative")
+        expected_end = self.truck_charge_end_time.get(truck_id)
+        if expected_end is not None and global_clock < expected_end - 1e-9:
+            raise ValueError("charging cannot finish before its scheduled end")
         # Remove from charger occupancy
-        if truck_id in self.charger_occupancy[charger_node]:
-            self.charger_occupancy[charger_node].remove(truck_id)
+        if truck_id not in self.charger_occupancy[charger_node]:
+            raise RuntimeError(
+                f"truck {truck_id} is not charging at {charger_node}"
+            )
+        self.charger_occupancy[charger_node].remove(truck_id)
 
         # Remove from queue
         self.charger_queue[charger_node] = [
@@ -338,12 +459,19 @@ class ChargingStation:
         # Clean up charge end time tracking
         if truck_id in self.truck_charge_end_time:
             del self.truck_charge_end_time[truck_id]
+        self.pending_wake_trucks[charger_node].discard(truck_id)
         
         # Record finish charging event
         self._record_queue_state(charger_node, global_clock, truck_id, 'finish')
 
     def wake_waiting_trucks(
-        self, charger_node: int, global_clock: float, event_queue: List, EventType, Event, truck_states: Dict = None
+        self,
+        charger_node: int,
+        global_clock: float,
+        event_queue: list,
+        EventType,
+        Event,
+        truck_states: dict | None = None,
     ):
         """
         Wake trucks waiting at a charging station when a port becomes available.
@@ -364,21 +492,48 @@ class ChargingStation:
         waitlist = self.charger_waitlist[charger_node]
 
         if free_slots > 0 and waitlist:
+            if truck_states is not None:
+                stale_ids = {
+                    entry["truck_id"]
+                    for entry in waitlist
+                    if truck_states.get(entry["truck_id"])
+                    in {"routing", "failed", "complete"}
+                }
+                if stale_ids:
+                    waitlist[:] = [
+                        entry
+                        for entry in waitlist
+                        if entry["truck_id"] not in stale_ids
+                    ]
+                    self.pending_wake_trucks[charger_node].difference_update(
+                        stale_ids
+                    )
+
             # Sort waitlist by sequence number to ensure strict FCFS
             # (should already be sorted, but this guarantees it)
             waitlist.sort(key=lambda x: x["sequence"])
-            
+
             # Wake up to free_slots number of trucks in strict FCFS order
-            num_to_wake = min(free_slots, len(waitlist))
-            
-            for i in range(num_to_wake):
-                tid = waitlist[i]["truck_id"]
-                sequence = waitlist[i]["sequence"]
+            unreserved_slots = max(
+                0,
+                free_slots - len(self.pending_wake_trucks[charger_node]),
+            )
+            num_to_wake = min(unreserved_slots, len(waitlist))
+            woken = 0
+
+            for entry in waitlist:
+                if woken >= num_to_wake:
+                    break
+                tid = entry["truck_id"]
+                sequence = entry["sequence"]
                 
                 # Skip trucks that are currently routing (to any destination)
                 if truck_states is not None and truck_states.get(tid) == "routing":
                     if self.verbose:
                         print(f"    Skipping truck {tid} (sequence {sequence}) - currently routing")
+                    continue
+
+                if tid in self.pending_wake_trucks[charger_node]:
                     continue
                 
                 if self.verbose:
@@ -398,6 +553,8 @@ class ChargingStation:
                         },
                     ),
                 )
+                self.pending_wake_trucks[charger_node].add(tid)
+                woken += 1
 
     def remove_from_waitlist(self, truck_id: int, charger_node: int):
         """
@@ -412,8 +569,32 @@ class ChargingStation:
             self.charger_waitlist[charger_node] = [
                 e for e in wl if e["truck_id"] != truck_id
             ]
+        self.pending_wake_trucks[charger_node].discard(truck_id)
 
-    def get_charger_info(self, charger_node: int, global_clock: float) -> Dict:
+    def set_station_available(
+        self,
+        charger_node: int,
+        available: bool,
+    ) -> list[int]:
+        """Set station availability and release queued trucks on closure."""
+        if charger_node not in self.station_available:
+            raise KeyError(f"node {charger_node} is not a charging station")
+        available = bool(available)
+        if self.station_available[charger_node] == available:
+            return []
+        self.station_available[charger_node] = available
+        if available:
+            return []
+
+        released = [
+            entry["truck_id"]
+            for entry in self.charger_waitlist[charger_node]
+        ]
+        self.charger_waitlist[charger_node] = []
+        self.pending_wake_trucks[charger_node].difference_update(released)
+        return released
+
+    def get_charger_info(self, charger_node: int, global_clock: float) -> dict:
         """
         Get current information about a charging station.
 
@@ -427,6 +608,8 @@ class ChargingStation:
         return {
             "node": int(charger_node),
             "type": self.charger_type[charger_node],
+            "power_kw": self.charger_power_kw[charger_node],
+            "available": self.station_available[charger_node],
             "capacity": int(self.charger_capacity[charger_node]),
             "current_occupancy": len(self.charger_occupancy[charger_node]),
             "waitlist_length": len(self.charger_waitlist[charger_node]),
@@ -437,7 +620,7 @@ class ChargingStation:
             ),
         }
 
-    def get_utilization_stats(self, global_clock: float) -> Dict:
+    def get_utilization_stats(self, global_clock: float) -> dict:
         """
         Calculate charging station utilization statistics.
 
@@ -483,6 +666,8 @@ class ChargingStation:
             charger_info = {
                 "node": int(node),
                 "type": c_type,
+                "power_kw": self.charger_power_kw[node],
+                "available": self.station_available[node],
                 "capacity": int(capacity),
                 "utilization_rate": utilization_rate,
                 "sessions": stats["total_charge_sessions"],
@@ -619,7 +804,7 @@ class ChargingStation:
         charger_type = self.charger_type[charger_node]
         
         print(f"  Charger Node {charger_node} ({charger_type}, Capacity: {capacity})")
-        print(f"  " + "-" * 76)
+        print("  " + "-" * 76)
         
         # Print charging trucks
         if charging:
@@ -641,4 +826,4 @@ class ChargingStation:
                 sequence = entry["sequence"]
                 print(f"      {i}. Truck {truck_id} (seq #{sequence})")
         else:
-            print(f"    Waiting: None")
+            print("    Waiting: None")

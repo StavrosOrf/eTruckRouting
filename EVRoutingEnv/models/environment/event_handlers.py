@@ -3,6 +3,7 @@ Event handling logic for the event-driven truck environment.
 """
 
 import heapq
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -20,9 +21,26 @@ class Event:
     """Represents a simulation event."""
 
     time: float  # When the event occurs
+    priority: int = field(init=False, repr=False)
     truck_id: int  # Tie-breaker: lower truck_id gets priority when times are equal
     event_type: EventType = field(compare=False)
     data: dict = field(default_factory=dict, compare=False)
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.time) or self.time < 0.0:
+            raise ValueError("event time must be finite and non-negative")
+        if self.truck_id < 0:
+            raise ValueError("event truck_id must be non-negative")
+        if self.event_type is EventType.TRUCK_ROUTING:
+            self.priority = 0
+        elif self.data.get("reason") in {
+            "charge_complete",
+            "unloading_complete",
+            "service_window_open",
+        }:
+            self.priority = 1
+        else:
+            self.priority = 2
 
     def __repr__(self):
         return f"Event(time={self.time:.2f}, type={self.event_type.value}, truck={self.truck_id})"
@@ -158,14 +176,49 @@ class EventHandler:
             print(f"    is_complete flag: {truck.is_complete}")
 
         if is_joint_delivery:
+            waiting_for_service = False
             if truck.failed:
                 task_registry.release_claim(destination, truck.truck_id)
             else:
-                task_registry.start_service(
-                    destination,
-                    truck_id=truck.truck_id,
-                    timestamp=global_clock,
-                )
+                task = task_registry.task_for_node(destination)
+                if global_clock > task.latest_service + 1e-9:
+                    task_registry.release_claim(destination, truck.truck_id)
+                    truck.mark_failed(
+                        reason="time_window_violation_after_realization",
+                        timestamp=global_clock,
+                    )
+                    truck_states[truck.truck_id] = "failed"
+                elif global_clock < task.earliest_service - 1e-9:
+                    waiting_for_service = True
+                    heapq.heappush(
+                        event_queue,
+                        Event(
+                            time=task.earliest_service,
+                            event_type=EventType.TRUCK_READY,
+                            truck_id=truck.truck_id,
+                            data={
+                                "reason": "service_window_open",
+                                "customer_node": destination,
+                                "task_id": task_id,
+                                "unloading_duration": data.get(
+                                    "unloading_time",
+                                    0.0,
+                                ),
+                                "wait_duration": (
+                                    task.earliest_service - global_clock
+                                ),
+                            },
+                        ),
+                    )
+                    truck_states[truck.truck_id] = "waiting_for_service"
+                else:
+                    task_registry.start_service(
+                        destination,
+                        truck_id=truck.truck_id,
+                        timestamp=global_clock,
+                    )
+        else:
+            waiting_for_service = False
 
         # Check if truck failed (already logged in move_to_node)
         if truck.failed:
@@ -179,6 +232,9 @@ class EventHandler:
             if self.verbose:
                 print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
         # If this was a delivery (and not complete/failed), apply unloading time
+        elif waiting_for_service:
+            # The opening-time event starts service and schedules completion.
+            pass
         elif is_delivery and delivery_simulator is not None:
             # The navigation action samples service time once and stores it on
             # the arrival event so reward accounting and event timing use the

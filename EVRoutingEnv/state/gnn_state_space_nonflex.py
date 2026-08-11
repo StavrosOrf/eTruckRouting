@@ -7,8 +7,6 @@ based variant behind a shared interface controlled by ``use_detour``.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.state.gnn_state_space_detour import GNNStateSpaceDetourBased
 from EVRoutingEnv.state.gnn_utils import extract_action_graph
@@ -44,7 +42,7 @@ class GNNStateSpaceNonFlex(GNNStateSpace):
         self.route_delivery_after_charge_only = route_delivery_after_charge_only
         self.detour_num_chargers_to_keep = detour_num_chargers_to_keep
         self.detour_hop_limit = detour_hop_limit
-        self._detour_space: Optional[GNNStateSpaceDetourBased] = None
+        self._detour_space: GNNStateSpaceDetourBased | None = None
 
     def _ensure_detour_space(self):
         if self._detour_space is None:
@@ -74,7 +72,7 @@ class GNNStateSpaceNonFlex(GNNStateSpace):
         return self._detour_space.get_action_graph(env)
 
 
-def get_action_graph(env, state_space: Optional[GNNStateSpaceNonFlex] = None):
+def get_action_graph(env, state_space: GNNStateSpaceNonFlex | None = None):
     """Module-level helper mirroring the class method for convenience."""
     space = state_space
     if space is None:

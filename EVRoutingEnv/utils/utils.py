@@ -44,9 +44,17 @@ def read_file(filename: str) -> Any:
 
 
 def map_charger_type(charger_type_str: str) -> str:
-    """Map charger type strings to standardized names. All chargers are mapped to DCFast."""
-    # Force all chargers to be DC Fast chargers
-    return "DCFast"
+    """Normalize a source charger label without erasing its technology class."""
+    normalized = "".join(
+        character
+        for character in str(charger_type_str).strip().lower()
+        if character.isalnum()
+    )
+    if normalized in {"level2", "l2", "aclevel2", "ac"}:
+        return "Level2"
+    if normalized in {"dcfast", "dcfc", "fast", "level3", "l3"}:
+        return "DCFast"
+    raise ValueError(f"unsupported charger type: {charger_type_str!r}")
 
 
 def check_navigation_feasibility(

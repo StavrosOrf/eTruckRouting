@@ -10,8 +10,10 @@ The environment steps forward when events finish. Only one truck is active at a 
 
 import datetime
 import heapq
+import math
 import os
 import sys
+from numbers import Integral
 
 import gymnasium as gym
 import numpy as np
@@ -21,6 +23,8 @@ from gymnasium import spaces
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from EVRoutingEnv.evaluation.artifacts import build_scenario_descriptor
+from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
 from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.core.truck import Truck
 from EVRoutingEnv.models.environment.event_handlers import (
@@ -28,11 +32,11 @@ from EVRoutingEnv.models.environment.event_handlers import (
     EventHandler,
     EventType,
 )
-from EVRoutingEnv.models.environment.loaders import create_truck
 from EVRoutingEnv.models.environment.joint_instance import (
     JointRoutingInstance,
     generate_joint_routing_instance,
 )
+from EVRoutingEnv.models.environment.loaders import create_truck
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
@@ -43,7 +47,15 @@ from EVRoutingEnv.state.feasibility import (
     FeasibilityReason,
     evaluate_duration_charge,
     evaluate_joint_route,
+    evaluate_target_soc_charge,
     joint_action_feasibility,
+)
+from EVRoutingEnv.state.features import SCHEMA_VERSION, extract_canonical_features
+from EVRoutingEnv.state.representations import (
+    CanonicalShapeSpec,
+    canonical_flat_observation,
+    canonical_graph_observation,
+    pad_canonical_features,
 )
 from EVRoutingEnv.state.state_space import StateSpace
 from EVRoutingEnv.utils.charging_logger import ChargingLogger
@@ -101,25 +113,54 @@ class EventDrivenTruckEnv(gym.Env):
         env_config = self.config["environment"]
 
         # Load all parameters from config (no overrides, no defaults)
-        self.num_trucks = env_config["num_trucks"]
+        self.num_trucks = _positive_integer(
+            env_config["num_trucks"],
+            "environment.num_trucks",
+        )
         # Delivery stops configuration
-        self.fixed_num_stops = env_config["num_stops"]
+        self.fixed_num_stops = _positive_integer(
+            env_config["num_stops"],
+            "environment.num_stops",
+        )
         self.allow_variable_num_stops = env_config["allow_variable_num_stops"]
+        if not isinstance(self.allow_variable_num_stops, bool):
+            raise TypeError("environment.allow_variable_num_stops must be boolean")
         # num_stops will be (re)set in reset(); initialize with fixed for defaults
         self.num_stops = self.fixed_num_stops
-        self.min_hop_distance = env_config["min_hop_distance"]
-        self.max_hop_distance = env_config["max_hop_distance"]
-        self.max_time = env_config["max_time"]
-        # self.max_episode_steps = env_config['max_episode_steps']
+        self.min_hop_distance = _nonnegative_finite(
+            env_config["min_hop_distance"],
+            "environment.min_hop_distance",
+        )
+        self.max_hop_distance = _nonnegative_finite(
+            env_config["max_hop_distance"],
+            "environment.max_hop_distance",
+        )
+        if self.max_hop_distance < self.min_hop_distance:
+            raise ValueError(
+                "environment.max_hop_distance must be at least min_hop_distance"
+            )
+        self.max_time = _positive_finite(
+            env_config["max_time"],
+            "environment.max_time",
+        )
         max_stops_for_bounds = self.fixed_num_stops
-        self.max_episode_steps = int(self.num_trucks * max_stops_for_bounds * 7.5)  # Safety cap
+        default_step_limit = int(self.num_trucks * max_stops_for_bounds * 7.5)
+        self.max_episode_steps = _positive_integer(
+            env_config.get("max_episode_steps", default_step_limit),
+            "environment.max_episode_steps",
+        )
         self.verbose = verbose if verbose is not None else env_config["verbose"]
+        if not isinstance(self.verbose, bool):
+            raise TypeError("environment.verbose must be boolean")
+        _validate_initial_battery_setting(
+            self.config["truck"]["initial_battery"]
+        )
 
         # Visualization and output settings
         self.enable_plotting = enable_plotting
 
         # Generate unique run_id based on timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S")
         self.run_id = f"run_{timestamp}" if run_id is None else run_id
 
         # Create output directory and helpers if plotting is enabled
@@ -219,7 +260,7 @@ class EventDrivenTruckEnv(gym.Env):
                     types = info.get("types", {})
                     types_str = ", ".join([f"{k}:{v}" for k, v in sorted(types.items())]) or "(none)"
                     print(f"    • node {nid} (orig {info.get('original_id')}): {types_str}")
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError, ValueError) as e:
                 print(f"[Env] Warning: failed to print charger summary: {e}")
 
         # Initialize charging station manager
@@ -229,11 +270,18 @@ class EventDrivenTruckEnv(gym.Env):
             "data",
             "waiting_time_lookup.json",
         )
+        station_charging_config = dict(self.charging_config)
+        if self.joint_routing:
+            station_charging_config.setdefault(
+                "station_power_classes_kw",
+                [150.0, 350.0, 750.0],
+            )
         self.charging_station = ChargingStation(
             charging_nodes=self.charging_nodes,
             transport_graph=self.transport_graph,
             waiting_time_lookup_path=waiting_time_path,
             verbose=self.verbose,
+            charging_config=station_charging_config,
         )
         
         # Initialize charging curve model
@@ -258,7 +306,47 @@ class EventDrivenTruckEnv(gym.Env):
         # Define action space - Discrete for single active truck
         # Sequential mode: [chargers (0 to num_charging_nodes-1), next_delivery (num_charging_nodes), charge_1h, ...]
         # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, depot_return, charge_1h, ...]
-        charge_durations = self.charging_config["charge_durations"]
+        default_charging_mode = "target_soc" if self.joint_routing else "duration"
+        self.charging_action_mode = self.charging_config.get(
+            "action_mode",
+            default_charging_mode,
+        )
+        if self.charging_action_mode == "target_soc":
+            self.charge_action_values = [
+                float(value)
+                for value in self.charging_config.get(
+                    "target_soc_levels",
+                    [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+                )
+            ]
+            if (
+                not self.charge_action_values
+                or any(
+                    not 0.0 < value <= 1.0
+                    for value in self.charge_action_values
+                )
+                or self.charge_action_values
+                != sorted(set(self.charge_action_values))
+            ):
+                raise ValueError(
+                    "charging.target_soc_levels must be unique, sorted, and in (0, 1]"
+                )
+        elif self.charging_action_mode == "duration":
+            self.charge_action_values = [
+                float(value)
+                for value in self.charging_config["charge_durations"]
+            ]
+            if not self.charge_action_values or any(
+                not math.isfinite(value) or value <= 0.0
+                for value in self.charge_action_values
+            ):
+                raise ValueError(
+                    "charging.charge_durations must be finite and positive"
+                )
+        else:
+            raise ValueError(
+                "charging.action_mode must be 'target_soc' or 'duration'"
+            )
         
         stops_for_action_space = self.fixed_num_stops
         if self.enable_flexible_delivery_order:
@@ -268,21 +356,53 @@ class EventDrivenTruckEnv(gym.Env):
             # Sequential mode: single next delivery action
             self.num_navigation_actions = self.num_charging_nodes + 1
         
-        self.num_charge_actions = len(charge_durations)  # Charge for 1-N hours
+        self.num_charge_actions = len(self.charge_action_values)
 
         # Discrete action space (single agent)
         self.action_space = spaces.Discrete(
             self.num_navigation_actions + self.num_charge_actions
         )
 
-        # Initialize state space
-        self.state_space_manager = StateSpace(
-            num_trucks=self.num_trucks,
-            num_stops=stops_for_action_space,
-            max_time=self.max_time,
-            num_charging_nodes=self.num_charging_nodes,
+        default_observation_mode = (
+            "canonical_flat" if self.joint_routing else "legacy_flat"
         )
-        self.observation_space = self.state_space_manager.observation_space
+        self.observation_mode = env_config.get(
+            "observation_mode",
+            default_observation_mode,
+        )
+        if self.observation_mode not in {"canonical_flat", "legacy_flat"}:
+            raise ValueError(
+                "environment.observation_mode must be 'canonical_flat' or "
+                "'legacy_flat'"
+            )
+        if self.observation_mode == "canonical_flat" and not self.joint_routing:
+            raise ValueError(
+                "canonical_flat observations require problem.mode=joint_fleet"
+            )
+
+        self.canonical_shape = CanonicalShapeSpec(
+            max_trucks=self.num_trucks,
+            max_customers=stops_for_action_space,
+            max_chargers=self.num_charging_nodes,
+            max_actions=self.action_space.n,
+        )
+        if self.observation_mode == "canonical_flat":
+            self.state_space_manager = None
+            float_limit = np.finfo(np.float32).max
+            self.observation_space = spaces.Box(
+                low=-float_limit,
+                high=float_limit,
+                shape=(self.canonical_shape.flat_size,),
+                dtype=np.float32,
+            )
+        else:
+            self.state_space_manager = StateSpace(
+                num_trucks=self.num_trucks,
+                num_stops=stops_for_action_space,
+                max_time=self.max_time,
+                num_charging_nodes=self.num_charging_nodes,
+            )
+            self.observation_space = self.state_space_manager.observation_space
 
         # Event-driven simulation state
         self.global_clock = 0.0  # Current simulation time
@@ -308,6 +428,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.last_action_feasibility = None
         self.termination_reason: str | None = None
         self.invalid_action_count = 0
+        self.scenario_descriptor: dict | None = None
 
     def reset(
         self, seed: int | None = None, options: dict | None = None
@@ -356,6 +477,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.last_action_feasibility = None
         self.termination_reason = None
         self.invalid_action_count = 0
+        self.scenario_descriptor = None
 
         # Reset charging station state
         self.charging_station.reset()
@@ -390,6 +512,8 @@ class EventDrivenTruckEnv(gym.Env):
                     data={"reason": "initial"},
                 ),
             )
+
+        self.scenario_descriptor = build_scenario_descriptor(self)
 
         # Process event queue until we find a truck that needs a decision
         self._advance_to_next_decision()
@@ -461,6 +585,7 @@ class EventDrivenTruckEnv(gym.Env):
                     self.delivery_config["base_unloading_time"],
                 )
             ),
+            time_window_config=self.problem_config.get("time_windows"),
         )
         self.task_registry = self.joint_instance.create_registry()
         shared_sequence = [self.joint_instance.depot_node] + [
@@ -498,7 +623,16 @@ class EventDrivenTruckEnv(gym.Env):
                 raise RuntimeError("random initial battery requires an episode RNG")
             return float(self.instance_rng.uniform(0.3, 1.0) * battery_capacity)
         if isinstance(setting, (int, float)):
-            return float(setting) / 100.0 * battery_capacity
+            percentage = float(setting)
+            if (
+                isinstance(setting, bool)
+                or not math.isfinite(percentage)
+                or not 0.0 <= percentage <= 100.0
+            ):
+                raise ValueError(
+                    "numeric truck.initial_battery must be in [0, 100]"
+                )
+            return percentage / 100.0 * battery_capacity
         raise ValueError(f"invalid truck.initial_battery setting: {setting!r}")
 
     def _complete_joint_customer_service(
@@ -614,6 +748,10 @@ class EventDrivenTruckEnv(gym.Env):
             event = heapq.heappop(self.event_queue)
 
             # Advance clock
+            if event.time < self.global_clock - 1e-9:
+                raise RuntimeError(
+                    f"event time reversal: {event.time} < {self.global_clock}"
+                )
             self.global_clock = event.time
 
             # Process event
@@ -633,6 +771,52 @@ class EventDrivenTruckEnv(gym.Env):
                 # This can happen when a truck gets woken early (port freed) but also had
                 # a scheduled event based on predicted wait time
                 reason = event.data.get("reason", "")
+                if reason == "service_window_open":
+                    if not self.joint_routing or self.task_registry is None:
+                        raise RuntimeError(
+                            "service-window event requires a joint task registry"
+                        )
+                    if self.truck_states.get(truck.truck_id) != "waiting_for_service":
+                        # A failure or cancellation can leave a stale opening event.
+                        continue
+                    customer_node = int(event.data["customer_node"])
+                    task = self.task_registry.task_for_node(customer_node)
+                    expected_task_id = int(event.data["task_id"])
+                    if task.task_id != expected_task_id:
+                        raise RuntimeError("service-window event task mismatch")
+                    self.task_registry.start_service(
+                        customer_node,
+                        truck_id=truck.truck_id,
+                        timestamp=self.global_clock,
+                    )
+                    wait_duration = float(event.data.get("wait_duration", 0.0))
+                    truck.add_time_window_waiting(
+                        wait_duration,
+                        timestamp=self.global_clock,
+                    )
+                    unloading_duration = float(
+                        event.data.get("unloading_duration", 0.0)
+                    )
+                    truck.start_unloading(
+                        timestamp=self.global_clock,
+                        delivery_node=customer_node,
+                    )
+                    heapq.heappush(
+                        self.event_queue,
+                        Event(
+                            time=self.global_clock + unloading_duration,
+                            event_type=EventType.TRUCK_READY,
+                            truck_id=truck.truck_id,
+                            data={
+                                "reason": "unloading_complete",
+                                "unloading_duration": unloading_duration,
+                                "task_id": expected_task_id,
+                                "customer_node": customer_node,
+                            },
+                        ),
+                    )
+                    self.truck_states[truck.truck_id] = "unloading"
+                    continue
                 if reason in [
                     "recheck_gating",
                     "recheck_after_arrival",
@@ -717,7 +901,11 @@ class EventDrivenTruckEnv(gym.Env):
                 # Charger gating: enforce FCFS waitlist with capacity ports
                 # Skip this check if truck just finished charging
                 node = int(truck.current_node)
-                if not skip_gating_check and node in self.charging_nodes:
+                if (
+                    not skip_gating_check
+                    and node in self.charging_nodes
+                    and self.charging_station.station_available[node]
+                ):
                     can_proceed, next_check_time = (
                         self.charging_station.check_charger_gating(
                             truck_id=truck.truck_id,
@@ -855,7 +1043,10 @@ class EventDrivenTruckEnv(gym.Env):
                 # Only schedule TRUCK_READY if truck is not complete or failed
                 if not (truck.is_complete or truck.failed):
                     # If truck arrived at a charger, check if port is available
-                    if destination in self.charging_nodes:
+                    if (
+                        destination in self.charging_nodes
+                        and self.charging_station.station_available[destination]
+                    ):
                         can_proceed, next_check_time = (
                             self.charging_station.check_charger_gating(
                                 truck_id=truck.truck_id,
@@ -912,7 +1103,10 @@ class EventDrivenTruckEnv(gym.Env):
                                 ),
                             )
                     # Check if truck is in unloading state (already scheduled by event_handler)
-                    elif self.truck_states[truck.truck_id] != "unloading":
+                    elif self.truck_states[truck.truck_id] not in {
+                        "unloading",
+                        "waiting_for_service",
+                    }:
                         # Arrived at delivery node (but not unloading) - schedule immediate TRUCK_READY
                         # If truck is unloading, the event_handler already scheduled TRUCK_READY
                         heapq.heappush(
@@ -934,7 +1128,23 @@ class EventDrivenTruckEnv(gym.Env):
             ):
                 self.termination_reason = "success"
             elif not self.task_registry.all_served():
-                self.termination_reason = "no_events_with_unserved_customers"
+                if self.termination_reason is None:
+                    unassigned = self.task_registry.available_tasks()
+                    live_trucks = [
+                        truck
+                        for truck in self.trucks
+                        if not truck.failed and not truck.is_complete
+                    ]
+                    if unassigned and not any(
+                        truck.can_accept_demand(task.demand)
+                        for truck in live_trucks
+                        for task in unassigned
+                    ):
+                        self.termination_reason = "payload_capacity_deadlock"
+                    else:
+                        self.termination_reason = (
+                            "no_events_with_unserved_customers"
+                        )
                 for truck in self.trucks:
                     if not truck.is_complete and not truck.failed:
                         truck.mark_failed(
@@ -953,9 +1163,9 @@ class EventDrivenTruckEnv(gym.Env):
                       * 0 to num_charging_nodes-1: Go to charging station
                       * num_charging_nodes: Go to next delivery
                       * num_charging_nodes+1 to end: Charge for 1-4 hours at current location
-                    - Tuple (new GNN format): (node_id, charging_duration, is_charging)
+                    - Tuple (new GNN format): (node_id, charge_value, is_charging)
                       * node_id: Target node to navigate to or charge at
-                      * charging_duration: Hours to charge (only used if is_charging=True)
+                      * charge_value: Target SoC in joint mode or hours in legacy mode
                       * is_charging: Whether this is a charging action
 
         Returns:
@@ -971,8 +1181,16 @@ class EventDrivenTruckEnv(gym.Env):
         # Decode action format
         if isinstance(action, tuple):
             # New GNN format: (node_id, charging_duration, is_charging)
-            node_id, charging_duration, is_charging = action
-            action_str = f"{'CHARGE' if is_charging else 'ROUTE'} at node {node_id}, charge={charging_duration:.2f}h"
+            node_id, charge_value, is_charging = action
+            charge_label = (
+                f"target_soc={charge_value:.0%}"
+                if is_charging and self.charging_action_mode == "target_soc"
+                else f"charge_hours={charge_value:.2f}"
+            )
+            action_str = (
+                f"{'CHARGE' if is_charging else 'ROUTE'} at node {node_id}, "
+                f"{charge_label}"
+            )
         else:
             # Legacy integer format
             action_str = self._action_to_string(action)
@@ -997,10 +1215,10 @@ class EventDrivenTruckEnv(gym.Env):
         # Execute action based on format
         if isinstance(action, tuple):
             # New GNN format: (node_id, charging_duration, is_charging)
-            node_id, charging_duration, is_charging = action
+            node_id, charge_value, is_charging = action
             if is_charging:
                 # Charging action at specified node
-                reward += self._execute_charge_action(truck, charging_duration, node_id)
+                reward += self._execute_charge_action(truck, charge_value, node_id)
             else:
                 # Navigation action to specified node
                 reward += self._execute_navigation_action(truck, node_id)
@@ -1035,9 +1253,12 @@ class EventDrivenTruckEnv(gym.Env):
             else:
                 # Charging action
                 charge_idx = action - self.num_navigation_actions
-                charge_durations = self.charging_config["charge_durations"]
-                charge_hours = charge_durations[charge_idx]
-                reward += self._execute_charge_action(truck, charge_hours, truck.current_node)
+                charge_value = self.charge_action_values[charge_idx]
+                reward += self._execute_charge_action(
+                    truck,
+                    charge_value,
+                    truck.current_node,
+                )
 
         # Accumulate reward
         self.episode_reward += reward
@@ -1095,6 +1316,14 @@ class EventDrivenTruckEnv(gym.Env):
                 task_registry=self.task_registry,
                 depot_node=self.joint_instance.depot_node,
                 energy_multiplier=energy_multiplier,
+                current_time=self.global_clock,
+                unavailable_charging_nodes={
+                    int(node)
+                    for node, available in (
+                        self.charging_station.station_available.items()
+                    )
+                    if not available
+                },
             )
             if not feasibility.feasible:
                 return self._reject_joint_action(truck, feasibility.reason)
@@ -1273,6 +1502,17 @@ class EventDrivenTruckEnv(gym.Env):
                 truck_id=truck.truck_id,
                 timestamp=departure_time,
             )
+
+        time_window_wait = 0.0
+        realized_time_window_violation = False
+        if joint_task is not None:
+            time_window_wait = max(
+                0.0,
+                joint_task.earliest_service - completion_time,
+            )
+            realized_time_window_violation = (
+                completion_time > joint_task.latest_service + 1e-9
+            )
         
         # Record routing start event
         truck.start_routing(destination=target_node, timestamp=departure_time)
@@ -1316,9 +1556,14 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Bonus if this is a delivery
         if is_delivery_nav:
+            if realized_time_window_violation:
+                return time_penalty + self.reward_config["failure_penalty"]
             delivery_bonus = self.reward_config["delivery_bonus"]
             # Use the same service-time realization carried by the arrival event.
             unloading_penalty = -actual_unloading_time * self.reward_config["time_multiplier"]
+            window_wait_penalty = (
+                -time_window_wait * self.reward_config["time_multiplier"]
+            )
             
             # Check if this is the last delivery for this truck
             # Apply leftover battery penalty if enabled
@@ -1341,7 +1586,13 @@ class EventDrivenTruckEnv(gym.Env):
                     print(f"  Last delivery! Expected SOC at completion: {remaining_soc_percentage:.1f}%")
                     print(f"  Leftover battery penalty: {leftover_battery_penalty:.2f}")
             
-            return time_penalty + delivery_bonus + unloading_penalty + leftover_battery_penalty
+            return (
+                time_penalty
+                + delivery_bonus
+                + unloading_penalty
+                + window_wait_penalty
+                + leftover_battery_penalty
+            )
 
         return time_penalty
 
@@ -1361,8 +1612,8 @@ class EventDrivenTruckEnv(gym.Env):
 
 
 
-    def _execute_charge_action(self, truck: Truck, charge_hours: float, charger_node: int) -> float:
-        """Execute charging action and schedule charge completion event."""
+    def _execute_charge_action(self, truck: Truck, charge_value: float, charger_node: int) -> float:
+        """Execute a target-SoC or legacy duration charging action."""
         # Convert to int if needed
         if hasattr(charger_node, "item"):
             charger_node = int(charger_node.item())
@@ -1370,13 +1621,30 @@ class EventDrivenTruckEnv(gym.Env):
             charger_node = int(charger_node)
 
         if self.joint_routing:
-            feasibility = evaluate_duration_charge(
-                truck=truck,
-                truck_state=self.truck_states[truck.truck_id],
-                charger_node=charger_node,
-                charging_nodes=self.charging_nodes,
-                charge_hours=float(charge_hours),
-            )
+            if self.charging_action_mode == "target_soc":
+                feasibility = evaluate_target_soc_charge(
+                    truck=truck,
+                    truck_state=self.truck_states[truck.truck_id],
+                    charger_node=charger_node,
+                    charging_nodes=self.charging_nodes,
+                    target_soc=float(charge_value),
+                    station_available=self.charging_station.station_available.get(
+                        charger_node,
+                        False,
+                    ),
+                )
+            else:
+                feasibility = evaluate_duration_charge(
+                    truck=truck,
+                    truck_state=self.truck_states[truck.truck_id],
+                    charger_node=charger_node,
+                    charging_nodes=self.charging_nodes,
+                    charge_hours=float(charge_value),
+                    station_available=self.charging_station.station_available.get(
+                        charger_node,
+                        False,
+                    ),
+                )
             if not feasibility.feasible:
                 return self._reject_joint_action(truck, feasibility.reason)
         
@@ -1461,17 +1729,31 @@ class EventDrivenTruckEnv(gym.Env):
         # Add global use_realistic_curve flag to charger config
         charger_config_with_curve = charger_config_type.copy()
         charger_config_with_curve["use_realistic_curve"] = charging_config["use_realistic_curve"]
+        charger_config_with_curve["charge_rate"] = (
+            self.charging_station.charger_power_kw[charger_node]
+        )
         
         # Calculate charge using charging curve model
         # Clamp to [0.0, 1.0] to handle any floating point precision issues
         initial_soc = min(1.0, max(0.0, truck.get_battery_percentage() / 100.0))
-        charge_amount, charging_details = self.charging_curve_model.calculate_charge(
-            initial_soc=initial_soc,
-            charge_hours=charge_hours,
-            battery_capacity=truck.battery_capacity,
-            charger_config=charger_config_with_curve,
-            charger_type=charger_type
-        )
+        if self.charging_action_mode == "target_soc":
+            charge_amount, charging_details = (
+                self.charging_curve_model.calculate_charge_to_target(
+                    initial_soc=initial_soc,
+                    target_soc=float(charge_value),
+                    battery_capacity=truck.battery_capacity,
+                    charger_config=charger_config_with_curve,
+                    charger_type=charger_type,
+                )
+            )
+        else:
+            charge_amount, charging_details = self.charging_curve_model.calculate_charge(
+                initial_soc=initial_soc,
+                charge_hours=float(charge_value),
+                battery_capacity=truck.battery_capacity,
+                charger_config=charger_config_with_curve,
+                charger_type=charger_type
+            )
         
         # Defensive: Ensure charge_amount doesn't exceed remaining capacity
         remaining_capacity = truck.battery_capacity - truck.current_battery
@@ -1595,6 +1877,13 @@ class EventDrivenTruckEnv(gym.Env):
 
     def _get_observation(self) -> np.ndarray:
         """Get observation/state for the active truck."""
+        if self.observation_mode == "canonical_flat":
+            return canonical_flat_observation(
+                self.get_canonical_features(),
+                self.canonical_shape,
+            )
+        if self.state_space_manager is None:
+            raise RuntimeError("legacy state-space manager is unavailable")
         return self.state_space_manager.get_state(
             trucks=self.trucks,
             active_truck_id=self.active_truck_id,
@@ -1631,17 +1920,18 @@ class EventDrivenTruckEnv(gym.Env):
         charger_utilization = self.charging_station.get_utilization_stats(
             self.global_clock
         )
+        operational_metrics = extract_operational_metrics(self).as_dict()
 
         return {
-            "scenario": (
-                self.scenario_random_streams.metadata()
-                if self.scenario_random_streams is not None
-                else None
-            ),
+            "scenario": self.scenario_descriptor,
             "global_clock": self.global_clock,
             "active_truck_id": self.active_truck_id,
             "episode_reward": self.episode_reward,
             "problem_mode": self.problem_mode,
+            "feature_schema_version": (
+                SCHEMA_VERSION if self.joint_routing else None
+            ),
+            "observation_mode": self.observation_mode,
             "all_complete": all_complete,
             "all_customers_served": all_customers_served,
             "successful": bool(all_complete and all_customers_served and not any_failed),
@@ -1649,6 +1939,7 @@ class EventDrivenTruckEnv(gym.Env):
             "termination_reason": self.termination_reason,
             "failure_causes": failure_causes,
             "invalid_action_count": self.invalid_action_count,
+            "operational_metrics": operational_metrics,
             "num_active_trucks": sum(
                 1
                 for state in self.truck_states.values()
@@ -1686,6 +1977,41 @@ class EventDrivenTruckEnv(gym.Env):
         """
         return get_action_mask(self)
 
+    def get_canonical_features(self):
+        """Return the versioned semantic feature snapshot for joint policies."""
+        return extract_canonical_features(self)
+
+    def get_canonical_sets(self):
+        """Return fixed-shape typed sets and explicit padding masks."""
+        return pad_canonical_features(
+            self.get_canonical_features(),
+            self.canonical_shape,
+        )
+
+    def get_canonical_graph(self):
+        """Return a complete heterogeneous view of the canonical features."""
+        return canonical_graph_observation(self)
+
+    def set_charger_available(self, charger_node: int, available: bool) -> None:
+        """Apply a station closure/reopening and wake trucks released from queue."""
+        released_trucks = self.charging_station.set_station_available(
+            int(charger_node),
+            available,
+        )
+        for truck_id in released_trucks:
+            heapq.heappush(
+                self.event_queue,
+                Event(
+                    time=self.global_clock,
+                    truck_id=truck_id,
+                    event_type=EventType.TRUCK_READY,
+                    data={
+                        "reason": "charger_closed",
+                        "charger_node": int(charger_node),
+                    },
+                ),
+            )
+
     def _action_to_string(self, action: int) -> str:
         """Convert action to human-readable string (supports flexible order)."""
         # Charging navigation actions
@@ -1718,12 +2044,12 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Charging actions (use configured durations to avoid negative hours)
         charge_idx = action - self.num_navigation_actions
-        charge_durations = self.charging_config.get("charge_durations", [])
-        if 0 <= charge_idx < len(charge_durations):
-            hours = charge_durations[charge_idx]
-        else:
-            hours = charge_idx + 1  # Fallback to sequential labeling
-        return f"Charge for {hours}h"
+        if 0 <= charge_idx < len(self.charge_action_values):
+            value = self.charge_action_values[charge_idx]
+            if self.charging_action_mode == "target_soc":
+                return f"Charge to {value:.0%} SoC"
+            return f"Charge for {value:g}h"
+        return f"Invalid charge action {charge_idx}"
 
     def get_delivery_sequence_index(self, node_id: int) -> int:
         """
@@ -1808,3 +2134,43 @@ class EventDrivenTruckEnv(gym.Env):
             if self.charging_logger:
                 self.charging_logger.save_session_logs(episode_id=self.run_id)
                 self.charging_logger.save_summary_statistics(episode_id=self.run_id)
+
+
+def _positive_integer(value, label: str) -> int:
+    if (
+        not isinstance(value, Integral)
+        or isinstance(value, bool)
+        or int(value) <= 0
+    ):
+        raise ValueError(f"{label} must be a positive integer")
+    return int(value)
+
+
+def _nonnegative_finite(value, label: str) -> float:
+    result = float(value)
+    if not math.isfinite(result) or result < 0.0:
+        raise ValueError(f"{label} must be finite and non-negative")
+    return result
+
+
+def _positive_finite(value, label: str) -> float:
+    result = _nonnegative_finite(value, label)
+    if result <= 0.0:
+        raise ValueError(f"{label} must be finite and positive")
+    return result
+
+
+def _validate_initial_battery_setting(setting) -> None:
+    if isinstance(setting, str):
+        if setting in {"full", "random"}:
+            return
+        raise ValueError(
+            "truck.initial_battery must be 'full', 'random', or a percentage"
+        )
+    if isinstance(setting, bool) or not isinstance(setting, (int, float)):
+        raise TypeError(
+            "truck.initial_battery must be 'full', 'random', or a percentage"
+        )
+    percentage = float(setting)
+    if not math.isfinite(percentage) or not 0.0 <= percentage <= 100.0:
+        raise ValueError("numeric truck.initial_battery must be in [0, 100]")

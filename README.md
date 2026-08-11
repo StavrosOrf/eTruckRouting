@@ -1,10 +1,10 @@
 <div align="center">
 
-# EVRP
+# eTruckRouting
 
-### Learning to Route Electric Trucks When Time, Charge, and Traffic Refuse to Sit Still
+### Learning to Route Electric Truck Fleets Under Nonlinear Models and Operational Uncertainty
 
-**Event-driven graph reinforcement learning for charge-aware electric truck routing.**
+**A research platform for charging-aware electric truck routing with event-driven simulation, graph reinforcement learning, and optimization baselines.**
 
 <p>
   <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white">
@@ -23,7 +23,7 @@
 </p>
 
 <p>
-  <em>Stochastic traffic. Realistic charging curves. Variable action spaces. Fleet-scale generalization.</em>
+  <em>Electric fleets. Nonlinear charging. Stochastic operations. Graph-based routing intelligence.</em>
 </p>
 
 </div>
@@ -33,6 +33,8 @@
 
 ## At a Glance
 
+- **Project:** **eTruckRouting** studies how electric truck fleets can route,
+  recharge, and recover from operational uncertainty.
 - **Problem:** **Electric Vehicle Routing Problem** with charging,
   traffic, battery limits, and delivery deadlines.
 - **Core idea:** Learn policies that decide **where to drive** and

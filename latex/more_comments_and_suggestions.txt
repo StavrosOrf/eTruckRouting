@@ -1,0 +1,4 @@
+Ziyan:
+Section 3.1.1, is unloading time a parameter in the formulation? The endogeneity is implicitly modeled when bookkeeping the number of vehicles exceeding the station’s capacity, do I understand correctly?
+Section 3.2.1, when I read EV literatures, most of the charging functions are concave piecewise linear in 3 pieces (SoC vs. time, Montoya 2017). Your equation (9) is from some references, or you defined it?
+You mentioned several stochastic elements in the 5.1 Experimental setup. Together with 3.1.1, maybe it would be better to have a list or table of how many “random” values are in the experiments?

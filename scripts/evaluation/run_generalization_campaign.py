@@ -222,6 +222,12 @@ def _run_one(job: tuple) -> dict:
     regime, method, settings, config_path, seeds, split, destination, max_steps = job
     definition = REGIMES[regime]
     config = _apply(load_config(config_path), definition["overrides"])
+    # The regime says what changed about the world; the method says what
+    # environment it was trained in. Both have to be applied, and the method's
+    # comes last: scoring the unmasked arm under the hard mask it never trained
+    # with reads as a collapse in generalization that is really an evaluation
+    # error. No regime touches those keys, so the two never fight.
+    config = _apply(config, settings.get("environment_overrides") or {})
     target = Path(destination) / regime / method
     if target.exists():
         summary_path = target / "summary.json"

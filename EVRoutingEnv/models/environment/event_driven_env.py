@@ -1835,7 +1835,12 @@ class EventDrivenTruckEnv(gym.Env):
         charger_config_with_curve["charge_rate"] = (
             self.charging_station.charger_power_kw[charger_node]
         )
-        
+        # Station-specific conversion efficiency, falling back to the class
+        # value when the station declares none.
+        charger_config_with_curve["efficiency"] = (
+            self.charging_station.charger_efficiency[charger_node]
+        )
+
         # Calculate charge using charging curve model
         # Clamp to [0.0, 1.0] to handle any floating point precision issues
         initial_soc = min(1.0, max(0.0, truck.get_battery_percentage() / 100.0))

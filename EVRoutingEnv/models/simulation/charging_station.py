@@ -103,6 +103,38 @@ class ChargingStation:
                     f"charger {node} has no positive configured power"
                 )
             self.charger_power_kw[node] = power
+
+        # Conversion efficiency was type-level only, so two stations of the same
+        # class necessarily charged at the same efficiency.  Empirical station
+        # data distinguishes them, and the review asks for station-specific
+        # values to be preserved rather than averaged into the class.
+        raw_efficiency = charging_config.get("station_efficiency_overrides", {})
+        efficiency_overrides = {
+            int(node): float(value) for node, value in raw_efficiency.items()
+        }
+        unknown_efficiency = set(efficiency_overrides) - set(charging_nodes)
+        if unknown_efficiency:
+            raise ValueError(
+                "station efficiency overrides reference unknown nodes: "
+                f"{sorted(unknown_efficiency)}"
+            )
+        if any(
+            not math.isfinite(value) or not 0.0 < value <= 1.0
+            for value in efficiency_overrides.values()
+        ):
+            raise ValueError("station efficiency overrides must be in (0, 1]")
+
+        self.charger_efficiency: dict[int, float] = {}
+        for node in sorted(charging_nodes):
+            if node in efficiency_overrides:
+                self.charger_efficiency[node] = efficiency_overrides[node]
+                continue
+            charger_type = self.charger_type[node]
+            type_key = "dcfast" if charger_type == "DCFast" else "level2"
+            self.charger_efficiency[node] = float(
+                charging_config.get(type_key, {}).get("efficiency", 0.90)
+            )
+
         self.station_available = dict.fromkeys(charging_nodes, True)
 
         # Charging station occupancy tracking

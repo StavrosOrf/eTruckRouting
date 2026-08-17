@@ -636,6 +636,13 @@ def nominal_charge_hours(
         "use_realistic_curve", False
     )
     charger_config["charge_rate"] = power
+    # Station-specific efficiency, the same value the environment charges at, so
+    # a planner cannot price a recharge the simulator will not deliver.
+    charger_config["efficiency"] = float(
+        station.charger_efficiency.get(
+            int(charger_node), charger_config.get("efficiency", 0.90)
+        )
+    )
 
     # The cache is process-wide, so the key carries every curve parameter that
     # could differ between configurations, not just the station identity.

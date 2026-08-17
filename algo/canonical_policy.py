@@ -48,6 +48,10 @@ class CanonicalPolicyConfig:
     # reject, and has to learn feasibility itself.  Persisted with the
     # checkpoint so a run cannot be evaluated under a mask it never trained on.
     allow_infeasible_actions: bool = False
+    # Component ablation: withhold the pooled state embedding from the action
+    # head. Persisted with the checkpoint so an ablated run is never reloaded as
+    # if it were the full architecture.
+    ablate_state_pooling: bool = False
 
     def __post_init__(self) -> None:
         if self.state_encoder not in STATE_ENCODER_TYPES:
@@ -161,7 +165,15 @@ class CanonicalActorCritic(nn.Module):
                     dtype=torch.bool, device=feasible.device
                 )
         embedding = self.encoder(tensors)
-        head_output = self.action_head(embedding, action_rows, ptr)
+        head_input = embedding
+        if self.config.ablate_state_pooling:
+            # Component ablation: the action head scores candidates without the
+            # pooled fleet embedding, so a candidate is judged only on its own
+            # row. The critic keeps the real embedding, so this isolates what
+            # pooling contributes to the *policy* rather than crippling value
+            # estimation as well.
+            head_input = torch.zeros_like(embedding)
+        head_output = self.action_head(head_input, action_rows, ptr)
         logits = scatter_logits(head_output.logits, head_output.ptr, feasible)
         values = self.value_head(embedding).squeeze(-1)
         return PolicyOutput(logits=logits, values=values, feasible_mask=feasible)

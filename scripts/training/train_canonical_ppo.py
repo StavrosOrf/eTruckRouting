@@ -142,6 +142,26 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "what those features contribute at a matched budget."
         ),
     )
+    parser.add_argument(
+        "--ablate-features",
+        nargs="+",
+        default=None,
+        choices=["queue", "active_truck", "depot", "edges"],
+        help=(
+            "Blank named canonical feature blocks. The observation width, "
+            "network shape, and budget are unchanged, so an arm differs from "
+            "its control only in what the rows carry."
+        ),
+    )
+    parser.add_argument(
+        "--ablate-state-pooling",
+        action="store_true",
+        help=(
+            "Withhold the pooled state embedding from the action head, so each "
+            "candidate is scored from its own row alone. The critic keeps the "
+            "embedding."
+        ),
+    )
     parser.add_argument("--output", default="results/canonical/training")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--torch-threads", type=int, default=1)
@@ -222,6 +242,14 @@ def main() -> None:
     if arguments.disable_routing_action_features:
         config["environment"]["routing_action_features"] = False
         print("routing action features zeroed (ablation arm)", flush=True)
+    if arguments.ablate_features:
+        config["environment"]["ablate_features"] = list(arguments.ablate_features)
+        print(
+            f"feature blocks zeroed (ablation arm): {arguments.ablate_features}",
+            flush=True,
+        )
+    if arguments.ablate_state_pooling:
+        print("state pooling withheld from the action head (ablation arm)", flush=True)
     config["environment"]["policy_action_mask"] = arguments.policy_action_mask
     config["environment"]["invalid_action_mode"] = arguments.invalid_action_mode
     config["environment"]["invalid_action_budget"] = int(
@@ -258,6 +286,7 @@ def main() -> None:
         action_head_layers=arguments.action_head_layers,
         action_attention_heads=arguments.action_attention_heads,
         allow_infeasible_actions=arguments.policy_action_mask == "structural",
+        ablate_state_pooling=arguments.ablate_state_pooling,
     )
     probe.close()
 

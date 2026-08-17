@@ -62,6 +62,36 @@ def _architecture_of(run_directory: Path, run_name: str) -> tuple[str, str]:
     return encoder, head
 
 
+def environment_overrides_for(checkpoint: Path) -> dict[str, dict]:
+    """Recover the environment a run trained in, from its own run_config.json.
+
+    Ablation arms change the environment, not only the network: an unmasked run
+    needs the structural mask, and a feature-ablated run needs the same blocks
+    blanked.  Re-scoring any of them under the default environment would measure
+    a policy on inputs it never saw, so the environment travels with the
+    checkpoint rather than being assumed.
+    """
+    import json
+
+    path = Path(checkpoint) / "run_config.json"
+    if not path.exists():
+        return {}
+    arguments = json.loads(path.read_text()).get("arguments", {})
+    environment: dict[str, object] = {}
+    for key in (
+        "policy_action_mask",
+        "invalid_action_mode",
+        "invalid_action_budget",
+        "ablate_features",
+    ):
+        value = arguments.get(key)
+        if value:
+            environment[key] = value
+    if arguments.get("disable_routing_action_features"):
+        environment["routing_action_features"] = False
+    return {"environment": environment} if environment else {}
+
+
 def _score_shard(job: tuple[str, str, list[int]]) -> tuple[str, list[dict]]:
     """Score one checkpoint on one shard of validation seeds, in its own process.
 
@@ -74,6 +104,7 @@ def _score_shard(job: tuple[str, str, list[int]]) -> tuple[str, list[dict]]:
 
     from algo.canonical_policy import CanonicalActorCritic
     from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+    from EVRoutingEnv.state.action_mask import policy_action_mask
     from EVRoutingEnv.utils.utils import load_config
     from scripts.evaluation.canonical_harness import evaluate_policy
 
@@ -84,13 +115,18 @@ def _score_shard(job: tuple[str, str, list[int]]) -> tuple[str, list[dict]]:
 
     def act(env, observation, info):
         batch = torch.as_tensor(np.expand_dims(observation, 0), dtype=torch.float32)
-        mask = torch.as_tensor(np.expand_dims(env.mask_fn(), 0), dtype=torch.bool)
+        # Whatever mask this run trained against: an unmasked arm re-scored
+        # under the hard mask would be measured on a policy it never was.
+        mask = torch.as_tensor(
+            np.expand_dims(policy_action_mask(env), 0), dtype=torch.bool
+        )
         actions, _, _ = policy.act(batch, mask, deterministic=True)
         return int(actions[0].item())
 
-    environment = EventDrivenTruckEnv(
-        load_config(config_path), verbose=False, enable_plotting=False
-    )
+    config = load_config(config_path)
+    for section, values in environment_overrides_for(Path(checkpoint)).items():
+        config[section].update(values)
+    environment = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
     try:
         outcomes = evaluate_policy(environment, act, seeds)
     finally:

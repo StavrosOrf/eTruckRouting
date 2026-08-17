@@ -316,6 +316,78 @@ class ChargingCurveModel:
         power_fraction = 1.0 - (1.0 - taper_ratio) * (soc_progress ** 1.5)
         return max(peak_power * power_fraction, taper_power_min)
     
+    def montoya_breakpoints(
+        self,
+        battery_capacity: float,
+        peak_power: float,
+        efficiency: float,
+        taper_start_soc: float,
+        taper_power_min: float,
+        boundaries: tuple[float, ...] = (0.5, 0.8, 1.0),
+    ) -> list[tuple[float, float]]:
+        """Breakpoints of a Montoya-style piecewise-linear charging function.
+
+        Montoya et al. (2017) model the nonlinear charging function as a concave
+        piecewise-linear map from charging time to state of charge, and solve
+        the routing problem over that approximation.  The breakpoints here are
+        not invented: each one is the (time, SoC) pair the simulator's own CCCV
+        integrator reaches, so the piecewise-linear function interpolates the
+        exact curve at the segment boundaries and the comparison isolates the
+        approximation rather than a different physical assumption.
+
+        The default boundaries are the phase changes of the underlying curve --
+        end of ramp, start of taper, full -- which is the three-segment form the
+        literature uses.
+        """
+        if not 0.0 < taper_start_soc < 1.0:
+            raise ValueError("taper_start_soc must be in (0, 1)")
+        if sorted(boundaries) != list(boundaries) or boundaries[-1] > 1.0:
+            raise ValueError("boundaries must be increasing and end at or below 1.0")
+
+        points = [(0.0, 0.0)]
+        for soc in boundaries:
+            _, details = self.calculate_charge_to_target(
+                initial_soc=0.0,
+                target_soc=float(soc),
+                battery_capacity=battery_capacity,
+                charger_config={
+                    "charge_rate": peak_power,
+                    "efficiency": efficiency,
+                    "use_realistic_curve": True,
+                    "taper_start_soc": taper_start_soc,
+                    "taper_power_min": taper_power_min,
+                },
+                charger_type="DCFast",
+            )
+            points.append((float(details["actual_charge_hours"]), float(soc)))
+        return points
+
+    @staticmethod
+    def montoya_time_to_soc(
+        breakpoints: list[tuple[float, float]],
+        initial_soc: float,
+        target_soc: float,
+    ) -> float:
+        """Charging hours from ``initial_soc`` to ``target_soc`` under the PWL model."""
+        if target_soc <= initial_soc:
+            return 0.0
+
+        def time_at(soc: float) -> float:
+            if soc <= breakpoints[0][1]:
+                return breakpoints[0][0]
+            for (time_low, soc_low), (time_high, soc_high) in zip(
+                breakpoints, breakpoints[1:], strict=False
+            ):
+                if soc <= soc_high:
+                    span = soc_high - soc_low
+                    if span <= 0.0:
+                        return time_high
+                    weight = (soc - soc_low) / span
+                    return time_low + weight * (time_high - time_low)
+            return breakpoints[-1][0]
+
+        return time_at(target_soc) - time_at(initial_soc)
+
     def _cccv_charge(
         self,
         initial_soc: float,
@@ -465,28 +537,20 @@ class ChargingCurveModel:
         """
         if target_soc <= initial_soc:
             return 0.0
-        
-        # Use binary search to find time that delivers required energy
-        # (more accurate than simple division for tapered curves)
-        low, high = 0.0, 20.0  # Search range (0 to 20 hours)
-        
-        for _ in range(20):  # Max 20 iterations
-            mid = (low + high) / 2
-            charge_kwh, _ = self.calculate_charge(
-                initial_soc=initial_soc,
-                charge_hours=mid,
-                battery_capacity=battery_capacity,
-                charger_config=charger_config,
-                charger_type=charger_type
-            )
-            
-            final_soc = initial_soc + charge_kwh / battery_capacity
-            
-            if abs(final_soc - target_soc) < 0.001:  # Close enough (0.1% SOC)
-                return mid
-            elif final_soc < target_soc:
-                low = mid
-            else:
-                high = mid
-        
-        return (low + high) / 2
+
+        # This used to bisect on charge duration. Bisection cannot converge at a
+        # target of 1.0, because the integrator stops exactly at full and the
+        # search never observes an overshoot: it exhausted its iterations and
+        # silently returned the midpoint of its 0-20 h range, i.e. 10 hours for
+        # a charge that actually takes about half an hour. Integrating the curve
+        # directly to the target is both exact and cheaper, and it is the same
+        # routine the simulator and every baseline already use, so masks and
+        # planners cannot disagree with what execution will do.
+        _, details = self.calculate_charge_to_target(
+            initial_soc=initial_soc,
+            target_soc=target_soc,
+            battery_capacity=battery_capacity,
+            charger_config=charger_config,
+            charger_type=charger_type,
+        )
+        return float(details["actual_charge_hours"])

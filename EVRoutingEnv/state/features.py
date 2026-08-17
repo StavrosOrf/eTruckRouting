@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -351,8 +351,68 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
             {key: value.astype(np.int64) for key, value in node_ids.items()},
         ),
     )
+    result = _apply_feature_ablations(env, result)
     result.validate()
     return result
+
+
+# Named blocks a component ablation may blank.  Zeroing rather than removing
+# keeps the observation width, the network shape, and the interaction budget
+# identical, so an arm differs from its control in what the rows *carry* and
+# nothing else -- the same discipline the routing-feature ablation already uses.
+ABLATION_BLOCKS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "queue": (
+        "charger",
+        ("port_capacity", "occupancy", "waitlist_length", "known_workload_hours"),
+    ),
+    "active_truck": ("truck", ("is_active",)),
+    "depot": ("all_nodes", DEPOT_FEATURES),
+    "edges": ("pairwise", EDGE_FEATURES),
+}
+
+
+def _apply_feature_ablations(env, features: CanonicalFleetFeatures):
+    """Blank the feature blocks this configuration ablates, if any."""
+    requested = env.config.get("environment", {}).get("ablate_features") or ()
+    if not requested:
+        return features
+
+    unknown = sorted(set(requested) - set(ABLATION_BLOCKS))
+    if unknown:
+        raise ValueError(
+            f"unknown ablation blocks {unknown}; expected any of "
+            f"{sorted(ABLATION_BLOCKS)}"
+        )
+
+    truck = features.truck_features.copy()
+    customer = features.customer_features.copy()
+    charger = features.charger_features.copy()
+    pairwise = {key: value.copy() for key, value in features.pairwise_features.items()}
+    blocks = {
+        "truck": (truck, TRUCK_FEATURES),
+        "customer": (customer, CUSTOMER_FEATURES),
+        "charger": (charger, CHARGER_FEATURES),
+    }
+
+    for name in requested:
+        scope, columns = ABLATION_BLOCKS[name]
+        if scope == "pairwise":
+            for array in pairwise.values():
+                array[...] = 0.0
+            continue
+        targets = blocks.values() if scope == "all_nodes" else (blocks[scope],)
+        for array, names in targets:
+            for column in columns:
+                if column in names:
+                    array[:, names.index(column)] = 0.0
+
+    return replace(
+        features,
+        truck_features=truck,
+        customer_features=customer,
+        charger_features=charger,
+        pairwise_features=pairwise,
+    )
 
 
 def _depot_columns(env, node: int, depot_node: int) -> tuple[float, float, float]:

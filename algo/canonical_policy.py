@@ -43,6 +43,11 @@ class CanonicalPolicyConfig:
     action_head_layers: int = 2
     action_attention_heads: int = 4
     action_head_dropout: float = 0.0
+    # Set only by the no-mask ablation.  The policy then scores every candidate
+    # the environment declares selectable, including ones the simulator would
+    # reject, and has to learn feasibility itself.  Persisted with the
+    # checkpoint so a run cannot be evaluated under a mask it never trained on.
+    allow_infeasible_actions: bool = False
 
     def __post_init__(self) -> None:
         if self.state_encoder not in STATE_ENCODER_TYPES:
@@ -137,12 +142,24 @@ class CanonicalActorCritic(nn.Module):
         action_mask: torch.Tensor | None = None,
     ) -> PolicyOutput:
         tensors = self.unpack(observation)
-        action_rows, ptr = tensors.ragged_actions(action_mask)
-        feasible = tensors.feasible_action_mask()
-        if action_mask is not None:
-            feasible = feasible & action_mask.to(
-                dtype=torch.bool, device=feasible.device
-            )
+        unmasked = self.config.allow_infeasible_actions
+        action_rows, ptr = tensors.ragged_actions(
+            action_mask, allow_infeasible=unmasked
+        )
+        if unmasked:
+            # The selectable set is whatever the environment offered, minus
+            # padding; feasibility is the policy's problem, not the mask's.
+            feasible = tensors.action_padding_mask
+            if action_mask is not None:
+                feasible = feasible & action_mask.to(
+                    dtype=torch.bool, device=feasible.device
+                )
+        else:
+            feasible = tensors.feasible_action_mask()
+            if action_mask is not None:
+                feasible = feasible & action_mask.to(
+                    dtype=torch.bool, device=feasible.device
+                )
         embedding = self.encoder(tensors)
         head_output = self.action_head(embedding, action_rows, ptr)
         logits = scatter_logits(head_output.logits, head_output.ptr, feasible)

@@ -22,7 +22,7 @@ from EVRoutingEnv.state.features import NODE_TYPES, RELATION_TYPES
 from EVRoutingEnv.state.representations import CanonicalShapeSpec
 
 
-STATE_ENCODER_TYPES = ("flat", "deep_sets", "hetero_graph")
+STATE_ENCODER_TYPES = ("flat", "deep_sets", "hetero_graph", "attention")
 _CLIP = 10.0
 _EPSILON = 1e-6
 
@@ -485,6 +485,186 @@ class HeteroGraphStateEncoder(_BaseStateEncoder):
         return self.readout(torch.cat(summary, dim=-1))
 
 
+class _AttentionBlock(nn.Module):
+    """Pre-norm transformer block over the concatenated node sequence."""
+
+    def __init__(self, hidden_dim: int, num_heads: int):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            hidden_dim, num_heads, batch_first=True
+        )
+        self.attention_norm = nn.LayerNorm(hidden_dim)
+        self.feedforward_norm = nn.LayerNorm(hidden_dim)
+        self.feedforward = nn.Sequential(
+            nn.Linear(hidden_dim, 4 * hidden_dim),
+            nn.ReLU(),
+            nn.Linear(4 * hidden_dim, hidden_dim),
+        )
+
+    def forward(
+        self,
+        sequence: torch.Tensor,
+        attention_bias: torch.Tensor,
+    ) -> torch.Tensor:
+        """``attention_bias`` already carries the padded-key suppression."""
+        normalized = self.attention_norm(sequence)
+        attended, _ = self.attention(
+            normalized,
+            normalized,
+            normalized,
+            attn_mask=attention_bias,
+            need_weights=False,
+        )
+        sequence = sequence + attended
+        return sequence + self.feedforward(self.feedforward_norm(sequence))
+
+
+class AttentionStateEncoder(_BaseStateEncoder):
+    """Transformer over the node set, in the style of the attention model.
+
+    This is the constructive attention baseline (R1.6, R2.8).  Kool et al.
+    encode a routing instance with multi-head self-attention over node
+    embeddings and decode a tour autoregressively; that model assumes one
+    vehicle, no charging, and no exogenous uncertainty, so it cannot be dropped
+    into this problem unchanged.  What transfers is the architecture: node
+    features are embedded, refined by stacked self-attention, and pooled into
+    the context that scores the next stop.  Paired with the attention action
+    head, the resulting policy is an attention-model-style constructive method
+    on the joint fleet problem.
+
+    The one deliberate deviation from a literal port is the attention bias.  A
+    plain transformer would see node features but not the pairwise travel,
+    energy, and reachability values the graph encoder consumes, which would make
+    it a weaker baseline through missing information rather than through its
+    architecture.  Each typed relation therefore projects its edge features to a
+    per-head additive bias, so every encoder in the comparison reads the same
+    canonical content and only the way it is combined differs.
+    """
+
+    encoder_type = "attention"
+
+    def __init__(
+        self,
+        shape: CanonicalShapeSpec,
+        hidden_dim: int,
+        output_dim: int,
+        *,
+        num_layers: int = 2,
+        num_heads: int = 4,
+    ):
+        super().__init__(shape, hidden_dim, output_dim)
+        if (
+            isinstance(num_layers, bool)
+            or not isinstance(num_layers, int)
+            or num_layers <= 0
+        ):
+            raise ValueError("num_layers must be a positive integer")
+        if hidden_dim % num_heads != 0:
+            raise ValueError("hidden_dim must be divisible by num_heads")
+        self.num_heads = num_heads
+        self.input_projections = nn.ModuleDict(
+            {
+                node_type: nn.Linear(NODE_FEATURE_DIMS[node_type], hidden_dim)
+                for node_type in NODE_TYPES
+            }
+        )
+        # A learned per-type embedding keeps trucks, customers, and chargers
+        # distinguishable once they share one sequence.
+        self.type_embedding = nn.Parameter(
+            torch.zeros(len(NODE_TYPES), hidden_dim)
+        )
+        nn.init.normal_(self.type_embedding, std=0.02)
+        self.relation_bias = nn.ModuleDict(
+            {
+                _relation_key(relation): nn.Linear(
+                    EDGE_FEATURE_DIM, num_heads, bias=False
+                )
+                for relation in RELATION_TYPES
+            }
+        )
+        self.layers = nn.ModuleList(
+            _AttentionBlock(hidden_dim, num_heads) for _ in range(num_layers)
+        )
+        self.output_norm = nn.LayerNorm(hidden_dim)
+        self.global_encoder = _mlp(GLOBAL_FEATURE_DIM, hidden_dim, hidden_dim)
+        summary_dim = 2 * hidden_dim * len(NODE_TYPES) + hidden_dim
+        self.readout = nn.Sequential(
+            nn.Linear(summary_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+            nn.ReLU(),
+        )
+
+    def _offsets(self) -> dict[str, tuple[int, int]]:
+        limits = self.shape.node_limits
+        offsets: dict[str, tuple[int, int]] = {}
+        start = 0
+        for node_type in NODE_TYPES:
+            offsets[node_type] = (start, start + limits[node_type])
+            start += limits[node_type]
+        return offsets
+
+    def forward(self, tensors: CanonicalTensors) -> torch.Tensor:
+        normalized = self.normalizer(tensors)
+        offsets = self._offsets()
+        total = sum(self.shape.node_limits[node_type] for node_type in NODE_TYPES)
+        batch = normalized.batch_size
+        device = normalized.global_features.device
+
+        embeddings = []
+        masks = []
+        for index, node_type in enumerate(NODE_TYPES):
+            projected = self.input_projections[node_type](normalized.nodes[node_type])
+            embeddings.append(projected + self.type_embedding[index])
+            masks.append(normalized.node_masks[node_type])
+        sequence = torch.cat(embeddings, dim=1)
+        padding_mask = torch.cat(masks, dim=1)
+
+        bias = torch.zeros(
+            batch, self.num_heads, total, total, device=device, dtype=sequence.dtype
+        )
+        for relation in RELATION_TYPES:
+            source, target = relation
+            source_slice = slice(*offsets[source])
+            target_slice = slice(*offsets[target])
+            projected = self.relation_bias[_relation_key(relation)](
+                normalized.pairwise[relation]
+            )
+            # [batch, sources, targets, heads] -> [batch, heads, sources, targets]
+            projected = projected.permute(0, 3, 1, 2)
+            edge_mask = normalized.pairwise_mask[relation].unsqueeze(1)
+            bias[:, :, source_slice, target_slice] = projected * edge_mask
+
+        # Padded keys are suppressed inside the same float mask rather than
+        # through a separate boolean one: torch deprecates mixing the two, and
+        # every query has at least the truck nodes to attend to, so no row can
+        # end up attending to nothing.
+        suppressed = torch.finfo(sequence.dtype).min / 2
+        bias = bias + torch.where(
+            padding_mask[:, None, None, :],
+            torch.zeros((), device=device, dtype=sequence.dtype),
+            torch.full((), suppressed, device=device, dtype=sequence.dtype),
+        )
+        # MultiheadAttention takes a float mask of shape [batch * heads, L, S].
+        flat_bias = bias.reshape(batch * self.num_heads, total, total)
+
+        for layer in self.layers:
+            sequence = layer(sequence, flat_bias)
+            sequence = sequence * padding_mask.unsqueeze(-1)
+        sequence = self.output_norm(sequence) * padding_mask.unsqueeze(-1)
+
+        summary = []
+        for node_type in NODE_TYPES:
+            start, end = offsets[node_type]
+            summary.append(
+                _masked_pool(
+                    sequence[:, start:end], normalized.node_masks[node_type]
+                )
+            )
+        summary.append(self.global_encoder(normalized.global_features))
+        return self.readout(torch.cat(summary, dim=-1))
+
+
 def _relation_key(relation: tuple[str, str]) -> str:
     return f"{relation[0]}__{relation[1]}"
 
@@ -505,6 +685,7 @@ def build_state_encoder(
         "flat": FlatStateEncoder,
         "deep_sets": DeepSetsStateEncoder,
         "hetero_graph": HeteroGraphStateEncoder,
+        "attention": AttentionStateEncoder,
     }
     if normalized not in builders:
         raise ValueError(

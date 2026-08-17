@@ -27,6 +27,7 @@ from algo.canonical_ppo import (
     RewardShaping,
 )
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.action_mask import policy_action_mask
 from EVRoutingEnv.utils.utils import load_config
 from scripts.evaluation.canonical_harness import (
     evaluate_policy,
@@ -44,7 +45,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-encoder",
         default="hetero_graph",
-        choices=["flat", "deep_sets", "hetero_graph"],
+        choices=["flat", "deep_sets", "hetero_graph", "attention"],
     )
     parser.add_argument(
         "--action-head",
@@ -97,6 +98,41 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Metric that breaks ties between equally feasible checkpoints.",
     )
     parser.add_argument("--disable-reward-shaping", action="store_true")
+    parser.add_argument(
+        "--policy-action-mask",
+        default="hard",
+        choices=["hard", "structural"],
+        help=(
+            "Mask handed to the policy. 'hard' is the proposed method. "
+            "'structural' removes the feasibility mask and keeps only the "
+            "slots that denote an action at all, so the policy must learn "
+            "feasibility; the observation and candidate set are unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--invalid-action-mode",
+        default="terminate",
+        choices=["terminate", "penalize"],
+        help=(
+            "What executing an infeasible action does. 'terminate' is the "
+            "simulator's own semantics (the truck strands). 'penalize' refuses "
+            "the action, leaves the state untouched, and continues until the "
+            "invalid-action budget is spent -- the charitable setting for the "
+            "unmasked ablation."
+        ),
+    )
+    parser.add_argument(
+        "--invalid-action-penalty",
+        type=float,
+        default=100.0,
+        help="Magnitude charged per refused action under --invalid-action-mode penalize.",
+    )
+    parser.add_argument(
+        "--invalid-action-budget",
+        type=int,
+        default=64,
+        help="Refused actions allowed per episode before the truck is failed.",
+    )
     parser.add_argument(
         "--disable-routing-action-features",
         action="store_true",
@@ -186,6 +222,20 @@ def main() -> None:
     if arguments.disable_routing_action_features:
         config["environment"]["routing_action_features"] = False
         print("routing action features zeroed (ablation arm)", flush=True)
+    config["environment"]["policy_action_mask"] = arguments.policy_action_mask
+    config["environment"]["invalid_action_mode"] = arguments.invalid_action_mode
+    config["environment"]["invalid_action_budget"] = int(
+        arguments.invalid_action_budget
+    )
+    config["rewards"]["invalid_action_penalty"] = float(
+        arguments.invalid_action_penalty
+    )
+    if arguments.policy_action_mask == "structural":
+        print(
+            "feasibility mask REMOVED (ablation arm): infeasible candidates stay "
+            f"selectable and are {arguments.invalid_action_mode}d on execution",
+            flush=True,
+        )
     if arguments.time_multiplier is not None:
         config["rewards"]["time_multiplier"] = float(arguments.time_multiplier)
         print(
@@ -207,6 +257,7 @@ def main() -> None:
         encoder_layers=arguments.encoder_layers,
         action_head_layers=arguments.action_head_layers,
         action_attention_heads=arguments.action_attention_heads,
+        allow_infeasible_actions=arguments.policy_action_mask == "structural",
     )
     probe.close()
 
@@ -365,7 +416,7 @@ def main() -> None:
                 device=trainer.device,
             )
             mask = torch.as_tensor(
-                np.expand_dims(env.mask_fn(), 0),
+                np.expand_dims(policy_action_mask(env), 0),
                 dtype=torch.bool,
                 device=trainer.device,
             )

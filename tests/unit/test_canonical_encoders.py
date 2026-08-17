@@ -97,7 +97,7 @@ def test_encoders_emit_the_requested_width_and_finite_values(encoder_type) -> No
     assert torch.isfinite(embedding).all()
 
 
-@pytest.mark.parametrize("encoder_type", ["deep_sets", "hetero_graph"])
+@pytest.mark.parametrize("encoder_type", ["deep_sets", "hetero_graph", "attention"])
 @pytest.mark.parametrize("node_type", NODE_TYPES)
 def test_set_and_graph_encoders_are_permutation_invariant(
     encoder_type, node_type

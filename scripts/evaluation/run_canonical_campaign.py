@@ -12,12 +12,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from algo.canonical_policy import CanonicalActorCritic
+from EVRoutingEnv.baselines.alns import ALNSParameters, ALNSPolicy
 from EVRoutingEnv.baselines.canonical_baselines import (
     GreedyHeuristicPolicy,
     HeuristicParameters,
@@ -32,6 +34,7 @@ from EVRoutingEnv.baselines.exact_optimization import (
 from EVRoutingEnv.evaluation.artifacts import collect_run_manifest
 from EVRoutingEnv.evaluation.runner import run_evaluation_campaign
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.state.action_mask import policy_action_mask
 from EVRoutingEnv.utils.utils import load_config
 from scripts.evaluation.canonical_harness import split_seeds
 
@@ -51,7 +54,12 @@ class CanonicalPolicyRunner:
 
     def __call__(self, env, observation, info) -> int:
         batch = torch.as_tensor(np.expand_dims(observation, 0), dtype=torch.float32)
-        mask = torch.as_tensor(np.expand_dims(env.mask_fn(), 0), dtype=torch.bool)
+        # Whichever mask this environment was configured to hand a policy: an
+        # arm trained without the feasibility mask must also be scored without
+        # it, or the evaluation would quietly repair what the ablation removed.
+        mask = torch.as_tensor(
+            np.expand_dims(policy_action_mask(env), 0), dtype=torch.bool
+        )
         actions, _, _ = self.policy.act(batch, mask, deterministic=self.deterministic)
         return int(actions[0].item())
 
@@ -82,9 +90,11 @@ def build_policy(name: str, settings: dict):
         return MathematicalProgrammingPolicy(
             ExactPlannerParameters(**settings.get("parameters", {}))
         )
+    if name == "alns":
+        return ALNSPolicy(ALNSParameters(**settings.get("parameters", {})))
     raise ValueError(
         f"unknown method {name!r}; non-learned methods must be one of "
-        "random/heuristic/mpc/cpsat, and a learned method must supply a checkpoint"
+        "random/heuristic/mpc/cpsat/alns, and a learned method must supply a checkpoint"
     )
 
 
@@ -117,8 +127,13 @@ def main() -> None:
     destination = Path(arguments.output) / arguments.split
     destination.mkdir(parents=True, exist_ok=True)
 
-    def factory():
-        return EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
+    def build_factory(method_config: dict):
+        def factory():
+            return EventDrivenTruckEnv(
+                method_config, verbose=False, enable_plotting=False
+            )
+
+        return factory
 
     published = {}
     for name, settings in methods.items():
@@ -127,12 +142,29 @@ def main() -> None:
         if target.exists():
             print(f"skipping {name}: {target} already exists", flush=True)
             continue
+        # A method may declare environment overrides -- the mask ablation is
+        # scored without the feasibility mask, a generalization regime shifts
+        # the instance distribution.  The override lands in the manifest as the
+        # resolved config, so the artifact records the environment the method
+        # was actually scored in rather than the campaign default.
+        method_config = config
+        overrides = settings.get("environment_overrides") or {}
+        if overrides:
+            method_config = deepcopy(config)
+            for section, values in overrides.items():
+                if section not in method_config or not isinstance(values, dict):
+                    raise ValueError(
+                        f"{name}: environment_overrides.{section} must be a dict "
+                        "naming an existing config section"
+                    )
+                method_config[section].update(values)
+            print(f"  {name}: config overrides {overrides}", flush=True)
         manifest = collect_run_manifest(
             run_id=run_id,
             algorithm=name,
             split=arguments.split,
             command=tuple(sys.argv),
-            resolved_config=config,
+            resolved_config=method_config,
             scenario_seeds=seeds,
             repository_root=REPOSITORY_ROOT,
             checkpoint=settings.get("checkpoint"),
@@ -141,7 +173,7 @@ def main() -> None:
             f"running {name} on {len(seeds)} {arguments.split} scenarios...", flush=True
         )
         artifacts = run_evaluation_campaign(
-            environment_factory=factory,
+            environment_factory=build_factory(method_config),
             policy=build_policy(name, settings),
             manifest=manifest,
             output_directory=target,

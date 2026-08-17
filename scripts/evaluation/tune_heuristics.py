@@ -49,6 +49,17 @@ MPC_GRID = {
     "energy_safety_factor": [1.05, 1.15, 1.25],
     "target_soc": [0.8, 1.0],
 }
+# The search budget is deliberately part of the grid: a metaheuristic that is
+# only allowed 500 iterations is a weak baseline by construction, and R1.6 asks
+# for a strong one.  The nominal search costs ~0.1 s per 2000 iterations here,
+# so the largest budget is still far cheaper than the CP-SAT time limit.
+ALNS_GRID = {
+    "iterations": [2000, 10000, 30000],
+    "max_destroy_fraction": [0.3, 0.4],
+    "energy_safety_factor": [1.05, 1.15, 1.25],
+    "target_soc": [0.8, 1.0],
+    "objective": ["total_time"],
+}
 
 
 def _combinations(grid: dict) -> list[dict]:
@@ -84,6 +95,13 @@ def _build(method: str, overrides: dict):
             ExactPlannerParameters(time_limit_seconds=15.0, workers=2), **overrides
         )
         return MathematicalProgrammingPolicy(parameters), parameters
+    if method == "alns":
+        from EVRoutingEnv.baselines.alns import ALNSParameters, ALNSPolicy
+
+        parameters = replace(
+            ALNSParameters(time_limit_seconds=15.0), **overrides
+        )
+        return ALNSPolicy(parameters), parameters
     raise ValueError(f"unknown method {method!r}")
 
 
@@ -120,7 +138,12 @@ def tune(
     shards: int,
 ) -> list[dict]:
     """Rank one baseline's grid, sharding scenarios across worker processes."""
-    grid = {"heuristic": HEURISTIC_GRID, "cpsat": CPSAT_GRID, "mpc": MPC_GRID}[method]
+    grid = {
+        "heuristic": HEURISTIC_GRID,
+        "cpsat": CPSAT_GRID,
+        "mpc": MPC_GRID,
+        "alns": ALNS_GRID,
+    }[method]
     points = _combinations(grid)
     shards = max(1, min(shards, len(seeds)))
     jobs = [
@@ -177,7 +200,7 @@ def main() -> None:
     parser.add_argument("--output", default="results/canonical/tuning")
     parser.add_argument(
         "--methods", nargs="+", default=["heuristic", "mpc"], choices=[
-            "heuristic", "mpc", "cpsat"
+            "heuristic", "mpc", "cpsat", "alns"
         ]
     )
     parser.add_argument(

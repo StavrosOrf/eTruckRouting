@@ -63,6 +63,9 @@ rewards:
   time_multiplier: 1.0
   delivery_bonus: 500.0
   failure_penalty: -1000.0
+  # Charged per refused action when environment.invalid_action_mode is
+  # "penalize"; unused under the default "terminate" semantics.
+  invalid_action_penalty: 100.0
   enable_leftover_battery_penalty: false
   leftover_battery_penalty_coef: 1.0
 

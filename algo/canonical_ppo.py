@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from algo.canonical_policy import CanonicalActorCritic, CanonicalPolicyConfig
+from EVRoutingEnv.state.action_mask import policy_action_mask
 
 
 @dataclass(frozen=True)
@@ -306,7 +307,7 @@ class SyncCanonicalVecEnv:
         for env in self.envs:
             observation, _ = env.reset(seed=self._next_seed())
             observations.append(observation)
-            masks.append(env.mask_fn())
+            masks.append(policy_action_mask(env))
         return np.stack(observations), np.stack(masks)
 
     def step(
@@ -329,7 +330,7 @@ class SyncCanonicalVecEnv:
                 rewards[index] += self.shaping.terminal_adjustment(info)
                 observation, _ = env.reset(seed=self._next_seed())
             observations.append(observation)
-            masks.append(env.mask_fn())
+            masks.append(policy_action_mask(env))
             infos.append(info)
         return np.stack(observations), rewards, dones, np.stack(masks), infos
 
@@ -375,7 +376,7 @@ def _worker_loop(connection, env_factory, seeds, shaping) -> None:
                 for index, env in enumerate(envs):
                     observation, _ = env.reset(seed=next_seed(index))
                     observations.append(observation)
-                    masks.append(env.mask_fn())
+                    masks.append(policy_action_mask(env))
                 connection.send((np.stack(observations), np.stack(masks)))
                 continue
             if command != "step":
@@ -401,7 +402,7 @@ def _worker_loop(connection, env_factory, seeds, shaping) -> None:
                 else:
                     infos.append(None)
                 observations.append(observation)
-                masks.append(env.mask_fn())
+                masks.append(policy_action_mask(env))
             connection.send(
                 (np.stack(observations), rewards, dones, np.stack(masks), infos)
             )

@@ -67,12 +67,19 @@ class CanonicalTensors:
     def ragged_actions(
         self,
         override_mask: torch.Tensor | None = None,
+        allow_infeasible: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return concatenated feasible action rows and their CSR pointers.
+        """Return concatenated selectable action rows and their CSR pointers.
 
         ``override_mask`` may narrow the hard mask (for example with the mask a
         vectorized environment reports), never widen it.  A state with no
         feasible action is refused rather than silently relaxed.
+
+        ``allow_infeasible`` is the one declared exception, used by the no-mask
+        ablation: the override then defines the selectable set directly and may
+        include actions the simulator would reject, which is exactly the
+        capability under test.  Padding rows stay excluded either way -- they
+        carry no action to score.
         """
         mask = self.feasible_action_mask()
         if override_mask is not None:
@@ -82,11 +89,16 @@ class CanonicalTensors:
                     f"override mask shape {tuple(override.shape)} does not match "
                     f"the canonical action mask {tuple(mask.shape)}"
                 )
-            if (override & ~mask).any():
-                raise ValueError(
-                    "override mask enables actions the simulator marked infeasible"
-                )
-            mask = mask & override
+            if allow_infeasible:
+                mask = override & self.action_padding_mask
+            else:
+                if (override & ~mask).any():
+                    raise ValueError(
+                        "override mask enables actions the simulator marked infeasible"
+                    )
+                mask = mask & override
+        elif allow_infeasible:
+            mask = self.action_padding_mask
         counts = mask.sum(dim=1)
         if int(counts.min().item()) == 0:
             raise RuntimeError(

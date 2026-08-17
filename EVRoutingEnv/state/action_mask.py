@@ -9,8 +9,23 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from EVRoutingEnv.state.feasibility import joint_action_feasibility
+from EVRoutingEnv.state.feasibility import (
+    FeasibilityReason,
+    joint_action_feasibility,
+)
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
+
+
+# Slots that denote no action at all rather than an action that happens to be
+# infeasible right now.  An unmasked policy still may not select these: there is
+# no customer behind an empty slot to route to, and with no active truck there is
+# no decision to make.
+STRUCTURALLY_UNDEFINED = frozenset(
+    {
+        FeasibilityReason.EMPTY_ACTION_SLOT,
+        FeasibilityReason.NO_ACTIVE_TRUCK,
+    }
+)
 
 
 if TYPE_CHECKING:
@@ -73,3 +88,40 @@ def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
         mask_np = clipped
 
     return mask_np
+
+
+def get_structural_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
+    """Return the candidate set without any feasibility filtering.
+
+    This is the mask for the no-mask ablation.  It differs from
+    :func:`get_action_mask` in exactly one respect: an action that the
+    feasibility engine rejects for a *dynamic* reason -- not enough energy, the
+    task is already claimed, the truck is not at a charger -- stays selectable,
+    and the environment rejects it at execution time under
+    ``environment.invalid_action_mode``.  Slots that denote no action at all are
+    still hidden, so both arms score the same number of real candidates and the
+    comparison isolates the mask rather than the action space.
+    """
+    if not getattr(env, "joint_routing", False):
+        raise NotImplementedError(
+            "the structural mask is defined for joint-fleet routing only"
+        )
+
+    decisions = joint_action_feasibility(env)
+    env.last_action_feasibility = decisions
+    return np.asarray(
+        [item.reason not in STRUCTURALLY_UNDEFINED for item in decisions],
+        dtype=bool,
+    )
+
+
+def policy_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
+    """Return whichever mask ``env`` hands to a learning policy.
+
+    Environments that predate the mask ablation -- and the lightweight stubs in
+    the test suite -- only expose ``mask_fn``, so fall back to it.
+    """
+    accessor = getattr(env, "policy_mask_fn", None)
+    if accessor is None:
+        return env.mask_fn()
+    return accessor()

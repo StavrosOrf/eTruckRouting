@@ -42,7 +42,10 @@ from EVRoutingEnv.models.simulation.charging_station import ChargingStation
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
 from EVRoutingEnv.models.simulation.scenario import ScenarioRandomStreams
 from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
-from EVRoutingEnv.state.action_mask import get_action_mask
+from EVRoutingEnv.state.action_mask import (
+    get_action_mask,
+    get_structural_action_mask,
+)
 from EVRoutingEnv.state.feasibility import (
     FeasibilityReason,
     evaluate_duration_charge,
@@ -380,8 +383,59 @@ class EventDrivenTruckEnv(gym.Env):
                 "canonical_flat observations require problem.mode=joint_fleet"
             )
 
+        # Which mask a learning policy is handed.  "hard" is the proposed method:
+        # the centralized feasibility engine removes every infeasible candidate
+        # before the policy scores it.  "structural" keeps the identical
+        # observation and candidate set but only hides slots that denote no
+        # action at all, so the policy must learn feasibility itself.  The
+        # simulator's dynamics are the same either way; only the mask differs,
+        # which is what makes this a clean ablation of the mask.
+        self.policy_action_mask = env_config.get("policy_action_mask", "hard")
+        if self.policy_action_mask not in {"hard", "structural"}:
+            raise ValueError(
+                "environment.policy_action_mask must be 'hard' or 'structural'"
+            )
+        # What happens when an infeasible action is actually executed.
+        # "terminate" is the simulator's own semantics: committing a truck to a
+        # leg it cannot complete strands it.  "penalize" is the charitable
+        # variant used to keep the unmasked ablation from being decided by that
+        # one modelling choice: the action is refused, the state is unchanged,
+        # and the episode continues until the invalid-action budget is spent.
+        self.invalid_action_mode = env_config.get("invalid_action_mode", "terminate")
+        if self.invalid_action_mode not in {"terminate", "penalize"}:
+            raise ValueError(
+                "environment.invalid_action_mode must be 'terminate' or 'penalize'"
+            )
+        self.invalid_action_budget = _positive_integer(
+            env_config.get("invalid_action_budget", 64),
+            "environment.invalid_action_budget",
+        )
+
+        # Generalization evaluation may run a smaller instance through a policy
+        # trained on a larger envelope.  The observation keeps the trained width
+        # and the surplus rows are padding, so the checkpoint still loads; the
+        # instance itself is genuinely smaller.
+        canonical_trucks = _positive_integer(
+            env_config.get("canonical_max_trucks", self.num_trucks),
+            "environment.canonical_max_trucks",
+        )
+        if canonical_trucks < self.num_trucks:
+            raise ValueError(
+                "environment.canonical_max_trucks cannot be smaller than num_trucks"
+            )
+        self.instance_num_stops = env_config.get("instance_num_stops")
+        if self.instance_num_stops is not None:
+            self.instance_num_stops = _positive_integer(
+                self.instance_num_stops, "environment.instance_num_stops"
+            )
+            if self.instance_num_stops > self.fixed_num_stops:
+                raise ValueError(
+                    "environment.instance_num_stops cannot exceed num_stops, which "
+                    "fixes the action envelope"
+                )
+
         self.canonical_shape = CanonicalShapeSpec(
-            max_trucks=self.num_trucks,
+            max_trucks=canonical_trucks,
             max_customers=stops_for_action_space,
             max_chargers=self.num_charging_nodes,
             max_actions=self.action_space.n,
@@ -457,7 +511,12 @@ class EventDrivenTruckEnv(gym.Env):
         )
 
         # Sample per-episode number of stops if enabled
-        if self.allow_variable_num_stops:
+        if self.instance_num_stops is not None:
+            # Size-transfer evaluation: the action envelope stays at
+            # fixed_num_stops so a trained policy still fits, while the instance
+            # carries fewer customers and the surplus slots report as empty.
+            self.num_stops = self.instance_num_stops
+        elif self.allow_variable_num_stops:
             # Always at least one stop; upper bound fixed_num_stops
             self.num_stops = int(
                 self.instance_rng.integers(1, self.fixed_num_stops + 1)
@@ -1232,12 +1291,31 @@ class EventDrivenTruckEnv(gym.Env):
                 else:
                     # Go to delivery
                     if self.enable_flexible_delivery_order:
-                        # Flexible mode: decode which delivery from action index
+                        # Flexible mode: decode which delivery from action index.
+                        #
+                        # The layout is the one the feasibility engine publishes
+                        # and is keyed to the *fixed* action envelope, not to how
+                        # many customers this particular instance happens to
+                        # carry: slots [0, fixed_num_stops) are customer slots
+                        # and the slot immediately after them is the depot.
+                        # Decoding against len(delivery_sequence) instead made
+                        # the two disagree on every instance smaller than the
+                        # envelope, which is exactly what size-transfer
+                        # evaluation produces.
                         delivery_idx = action - self.num_charging_nodes
-                        # Map action index to delivery node in sequence (skip depot at index 0)
-                        if delivery_idx < len(truck.delivery_sequence) - 1:
-                            target_node = truck.delivery_sequence[delivery_idx + 1]
-                        elif delivery_idx == len(truck.delivery_sequence) - 1:
+                        if delivery_idx < self.fixed_num_stops:
+                            if delivery_idx + 1 < len(truck.delivery_sequence):
+                                target_node = truck.delivery_sequence[delivery_idx + 1]
+                            elif self.joint_routing:
+                                # An empty slot denotes no action at all; only an
+                                # unmasked policy can select one, and it is
+                                # refused the same way any infeasible action is.
+                                target_node = None
+                            else:
+                                raise ValueError(
+                                    f"Invalid delivery action index: {delivery_idx}"
+                                )
+                        elif delivery_idx == self.fixed_num_stops:
                             if truck.return_to_depot_pending:
                                 target_node = truck.delivery_sequence[0]
                             else:
@@ -1249,7 +1327,12 @@ class EventDrivenTruckEnv(gym.Env):
                         target_node = truck.get_next_delivery_target()
                         if target_node is None:
                             raise ValueError("No remaining deliveries for truck")
-                reward += self._execute_navigation_action(truck, target_node)
+                if target_node is None:
+                    reward += self._reject_joint_action(
+                        truck, FeasibilityReason.EMPTY_ACTION_SLOT
+                    )
+                else:
+                    reward += self._execute_navigation_action(truck, target_node)
             else:
                 # Charging action
                 charge_idx = action - self.num_navigation_actions
@@ -1604,6 +1687,26 @@ class EventDrivenTruckEnv(gym.Env):
         """Fail an explicit invalid action without silently changing its meaning."""
         cause = f"invalid_action:{reason.value}"
         self.invalid_action_count += 1
+
+        if self.invalid_action_mode == "penalize":
+            # Refuse the action, leave the state untouched, and let the episode
+            # continue.  Nothing advances here -- not the clock, not the truck --
+            # so a policy that keeps proposing infeasible actions makes no
+            # progress and eventually exhausts the budget below.  That bound is
+            # what stops an unmasked policy from spinning forever on a single
+            # decision point.
+            penalty = -abs(
+                float(self.reward_config.get("invalid_action_penalty", 100.0))
+            )
+            if self.invalid_action_count >= self.invalid_action_budget:
+                exhausted = "invalid_action_budget_exhausted"
+                truck.mark_failed(reason=exhausted, timestamp=self.global_clock)
+                self.truck_states[truck.truck_id] = "failed"
+                if self.termination_reason is None:
+                    self.termination_reason = exhausted
+                return penalty + float(self.reward_config["failure_penalty"])
+            return penalty
+
         truck.mark_failed(reason=cause, timestamp=self.global_clock)
         self.truck_states[truck.truck_id] = "failed"
         if self.termination_reason is None:
@@ -1976,6 +2079,21 @@ class EventDrivenTruckEnv(gym.Env):
                        Order: [charger_0, ..., charger_N-1, next_delivery, charge_1h, ..., charge_4h]
         """
         return get_action_mask(self)
+
+    def structural_mask_fn(self) -> np.ndarray:
+        """Return the mask that hides only slots denoting no action at all.
+
+        Every semantically defined candidate stays selectable, including ones
+        the feasibility engine would reject, so a policy trained against this
+        mask has to learn feasibility from experience.
+        """
+        return get_structural_action_mask(self)
+
+    def policy_mask_fn(self) -> np.ndarray:
+        """Return whichever mask this configuration hands to a learning policy."""
+        if self.policy_action_mask == "structural":
+            return self.structural_mask_fn()
+        return self.mask_fn()
 
     def get_canonical_features(self):
         """Return the versioned semantic feature snapshot for joint policies."""

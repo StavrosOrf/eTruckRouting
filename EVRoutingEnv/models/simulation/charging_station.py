@@ -39,11 +39,17 @@ class ChargingStation:
         with open(waiting_time_lookup_path) as f:
             self.waiting_time_lookup = json.load(f)
 
-        # Charger properties (capacity, type)
+        # Charger properties (capacity, type). Port counts are station-specific
+        # and come from the network data; the scale factor exists so a
+        # congestion sensitivity can make ports scarce or plentiful without
+        # editing the data file, and it never drops a station below one port.
+        charging_config = charging_config or {}
         self.charger_capacity = {
             node: transport_graph.get_charger_capacity(node)
             for node in charging_nodes
         }
+        # Bad data still has to fail loudly; the scaling below is applied only
+        # to capacities that were valid to begin with.
         invalid_capacity = {
             node: capacity
             for node, capacity in self.charger_capacity.items()
@@ -53,10 +59,20 @@ class ChargingStation:
             raise ValueError(
                 f"charger capacities must be positive: {invalid_capacity}"
             )
+
+        port_scale = float(charging_config.get("port_capacity_scale", 1.0))
+        if not math.isfinite(port_scale) or port_scale <= 0.0:
+            raise ValueError("charging.port_capacity_scale must be positive")
+        if port_scale != 1.0:
+            # Congestion sensitivity: make ports scarce or plentiful without
+            # editing the network data, never dropping a station below one port.
+            self.charger_capacity = {
+                node: max(1.0, float(round(capacity * port_scale)))
+                for node, capacity in self.charger_capacity.items()
+            }
         self.charger_type = {
             node: transport_graph.get_charger_type(node) for node in charging_nodes
         }
-        charging_config = charging_config or {}
         configured_classes = [
             float(value)
             for value in charging_config.get("station_power_classes_kw", [])

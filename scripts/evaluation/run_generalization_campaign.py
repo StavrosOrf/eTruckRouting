@@ -104,6 +104,16 @@ REGIMES: dict[str, dict] = {
             },
         },
     },
+    "ports_scarce": {
+        "kind": "ood",
+        "description": "a third of the charging ports, so queues bind",
+        "overrides": {"charging": {"port_capacity_scale": 0.34}},
+    },
+    "ports_plentiful": {
+        "kind": "ood",
+        "description": "triple the charging ports, so queues rarely bind",
+        "overrides": {"charging": {"port_capacity_scale": 3.0}},
+    },
     # -- vehicle -------------------------------------------------------------
     "battery_small": {
         "kind": "ood",

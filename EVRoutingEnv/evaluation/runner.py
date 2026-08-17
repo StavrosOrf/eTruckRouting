@@ -194,6 +194,13 @@ def _run_episode(
             "episode_reward_diagnostic": episode_reward,
             **metrics,
         }
+        # A planner may expose per-episode evidence about its own solve --
+        # solver status, bound, gap, retries, fallbacks. R1.4 requires those to
+        # be published rather than summarised in prose, so they ride along with
+        # the episode they belong to.
+        diagnostics = getattr(policy, "diagnostics", None)
+        if callable(diagnostics):
+            row["policy_diagnostics"] = diagnostics()
         _strict_json(row)
         return row
     finally:

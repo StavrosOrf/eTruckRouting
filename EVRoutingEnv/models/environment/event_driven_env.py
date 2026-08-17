@@ -1966,17 +1966,42 @@ class EventDrivenTruckEnv(gym.Env):
     def _check_terminated(self) -> bool:
         """Check if episode is terminated (all trucks done)."""
         if self.active_truck_id is None:
+            if self.termination_reason is None:
+                self.termination_reason = "no_active_truck"
             return True
 
         all_done = all(
             state in ["complete", "failed"] for state in self.truck_states.values()
         )
+        if all_done and self.termination_reason is None:
+            # Every truck stopped before any event declared why. Name the
+            # outcome from the fleet state so no failed episode reaches the
+            # aggregates as "unspecified": R1.5 asks for the cause of every
+            # retained failure, and "we did not record it" is not a cause.
+            served = (
+                self.task_registry.all_served()
+                if self.joint_routing and self.task_registry is not None
+                else None
+            )
+            if served and all(truck.is_complete for truck in self.trucks):
+                self.termination_reason = "success"
+            elif all(state == "failed" for state in self.truck_states.values()):
+                self.termination_reason = "all_trucks_failed"
+            else:
+                self.termination_reason = "fleet_stopped_with_unserved_customers"
         return all_done
 
     def _check_truncated(self) -> bool:
-        """Check if episode is truncated (time limit or step limit exceeded)."""        
-
-        return self.global_clock >= self.max_time or self.episode_steps >= self.max_episode_steps
+        """Check if episode is truncated (time limit or step limit exceeded)."""
+        if self.global_clock >= self.max_time:
+            if self.termination_reason is None:
+                self.termination_reason = "time_limit_exhausted"
+            return True
+        if self.episode_steps >= self.max_episode_steps:
+            if self.termination_reason is None:
+                self.termination_reason = "step_limit_exhausted"
+            return True
+        return False
 
     def _get_observation(self) -> np.ndarray:
         """Get observation/state for the active truck."""

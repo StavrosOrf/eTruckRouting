@@ -36,7 +36,11 @@ from EVRoutingEnv.baselines.canonical_baselines import (
 from EVRoutingEnv.models.core.customer import TaskStatus
 
 
-_TIME_SCALE = 100.0
+# CP-SAT is integral, so every duration is scaled and rounded. At 100 the grain
+# was 0.01 h and rounding accumulated to ~0.02 h over a route, which is enough
+# to blur a comparison against exhaustive enumeration; at 1000 the grain is 3.6
+# seconds and costs the solver nothing at this instance size.
+_TIME_SCALE = 1000.0
 
 
 @dataclass(frozen=True)
@@ -126,10 +130,22 @@ def solve_nominal_plan(
         for node_index in range(size):
             literal = model.NewBoolVar(f"visit_t{truck_id}_n{node_index}")
             visit[(truck_id, node_index)] = literal
-            if node_index > 0:
-                # A self-loop marks a node this truck skips.
-                arcs.append((node_index, node_index, literal.Not()))
-        model.Add(visit[(truck_id, 0)] == 1)
+            # A self-loop marks a node this truck skips.  The depot needs one
+            # too: without it the circuit is forced through the depot, which
+            # forces the truck to serve at least one customer.  Under a
+            # total-time objective the optimum often leaves a truck idle, so
+            # that omission made the planner report a strictly worse plan and
+            # still call it optimal -- exhaustive enumeration beat it on every
+            # tiny instance until this was added.
+            arcs.append((node_index, node_index, literal.Not()))
+
+        # A circuit over customers alone would satisfy AddCircuit but describes
+        # a route that never leaves the depot, so serving anything requires the
+        # depot to be in this truck's circuit.
+        for node_index in range(1, size):
+            model.AddImplication(
+                visit[(truck_id, node_index)], visit[(truck_id, 0)]
+            )
 
         for source in range(size):
             for target in range(size):
@@ -234,6 +250,9 @@ class MathematicalProgrammingPolicy:
         self._plan: PlanSolution | None = None
         self._scenario_key: object = None
         self.last_plan: PlanSolution | None = None
+        self._solves = 0
+        self._fallbacks = 0
+        self._decisions = 0
 
     def reset(self) -> None:
         self._plan = None
@@ -242,10 +261,46 @@ class MathematicalProgrammingPolicy:
     def _ensure_plan(self, env) -> PlanSolution:
         key = (id(env), env.scenario_seed)
         if self._plan is None or self._scenario_key != key:
+            if self._scenario_key != key:
+                # A new scenario: the per-episode counters describe this episode
+                # only, so they restart with it.
+                self._solves = 0
+                self._fallbacks = 0
+                self._decisions = 0
             self._plan = solve_nominal_plan(env, self.parameters)
+            self._solves += 1
             self._scenario_key = key
             self.last_plan = self._plan
         return self._plan
+
+    def diagnostics(self) -> dict:
+        """Per-episode solver evidence published with the episode row.
+
+        The gap is reported only when a bound exists and is meaningful; a run
+        that proves nothing must not appear to have proven a gap of zero.
+        """
+        plan = self.last_plan
+        if plan is None:
+            return {"solver": "cpsat", "status": "NOT_RUN"}
+        gap = None
+        if (
+            plan.objective_hours is not None
+            and plan.best_bound_hours is not None
+            and plan.objective_hours > 1e-9
+        ):
+            gap = (plan.objective_hours - plan.best_bound_hours) / plan.objective_hours
+        return {
+            "solver": "cpsat",
+            "status": plan.status,
+            "proven_optimal": plan.proven_optimal,
+            "objective_hours": plan.objective_hours,
+            "best_bound_hours": plan.best_bound_hours,
+            "relative_gap": gap,
+            "solver_wall_seconds": plan.wall_seconds,
+            "solves": self._solves,
+            "decisions": self._decisions,
+            "plan_fallbacks": self._fallbacks,
+        }
 
     def __call__(self, env, observation=None, info=None) -> int:
         plan = self._ensure_plan(env)
@@ -255,8 +310,13 @@ class MathematicalProgrammingPolicy:
         for candidate in candidates:
             by_kind.setdefault(candidate.kind, []).append(candidate)
 
+        self._decisions += 1
         goal = self._next_planned_stop(env, plan, truck)
         if goal is None:
+            # The plan has nothing left for this truck, so the execution layer
+            # picks the stop instead. Counting this is what keeps "executed the
+            # optimal plan" honest.
+            self._fallbacks += 1
             goal = self.navigator._select_goal(
                 env,
                 truck,

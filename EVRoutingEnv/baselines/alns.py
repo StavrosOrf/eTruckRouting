@@ -488,6 +488,9 @@ class ALNSPolicy:
         self._plan: PlanSolution | None = None
         self._scenario_key: object = None
         self.last_plan: PlanSolution | None = None
+        self._searches = 0
+        self._fallbacks = 0
+        self._decisions = 0
 
     def reset(self) -> None:
         self._plan = None
@@ -496,10 +499,33 @@ class ALNSPolicy:
     def _ensure_plan(self, env) -> PlanSolution:
         key = (id(env), env.scenario_seed)
         if self._plan is None or self._scenario_key != key:
+            if self._scenario_key != key:
+                self._searches = 0
+                self._fallbacks = 0
+                self._decisions = 0
             self._plan = solve_alns_plan(env, self.parameters)
+            self._searches += 1
             self._scenario_key = key
             self.last_plan = self._plan
         return self._plan
+
+    def diagnostics(self) -> dict:
+        """Per-episode search evidence, with no bound and no optimality claim."""
+        plan = self.last_plan
+        if plan is None:
+            return {"solver": "alns", "status": "NOT_RUN"}
+        return {
+            "solver": "alns",
+            "status": plan.status,
+            "proven_optimal": False,
+            "objective_hours": plan.objective_hours,
+            "best_bound_hours": None,
+            "relative_gap": None,
+            "solver_wall_seconds": plan.wall_seconds,
+            "searches": self._searches,
+            "decisions": self._decisions,
+            "plan_fallbacks": self._fallbacks,
+        }
 
     def __call__(self, env, observation=None, info=None) -> int:
         plan = self._ensure_plan(env)
@@ -509,8 +535,10 @@ class ALNSPolicy:
         for candidate in candidates:
             by_kind.setdefault(candidate.kind, []).append(candidate)
 
+        self._decisions += 1
         goal = self._next_planned_stop(env, plan, truck)
         if goal is None:
+            self._fallbacks += 1
             goal = self.navigator._select_goal(
                 env,
                 truck,

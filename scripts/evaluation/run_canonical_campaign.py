@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 
@@ -115,6 +116,12 @@ def main() -> None:
         help="Path to a JSON file mapping method name -> frozen settings.",
     )
     parser.add_argument("--max-policy-steps", type=int, default=1000)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Methods scored in parallel processes; each method stays sequential.",
+    )
     arguments = parser.parse_args()
 
     methods = (
@@ -135,13 +142,13 @@ def main() -> None:
 
         return factory
 
-    published = {}
-    for name, settings in methods.items():
+    def score(item: tuple[str, dict]) -> tuple[str, dict | None]:
+        name, settings = item
         run_id = f"{name}__{arguments.split}"
         target = destination / name
         if target.exists():
             print(f"skipping {name}: {target} already exists", flush=True)
-            continue
+            return name, None
         # A method may declare environment overrides -- the mask ablation is
         # scored without the feasibility mask, a generalization regime shifts
         # the instance distribution.  The override lands in the manifest as the
@@ -180,7 +187,6 @@ def main() -> None:
             max_policy_steps=arguments.max_policy_steps,
         )
         summary = json.loads(artifacts.summary_path.read_text())
-        published[name] = summary
         aggregate = summary["aggregate"]
         interval = aggregate["success_wilson_95"]
         makespan = aggregate["metrics"]["fleet_makespan"]["mean"]
@@ -191,6 +197,30 @@ def main() -> None:
             f"episodes={artifacts.episode_count}",
             flush=True,
         )
+        return name, summary
+
+    published: dict[str, dict] = {}
+    if arguments.workers > 1 and len(methods) > 1:
+        # Methods are independent runs over the same seeds, and the slowest one
+        # (the CP-SAT planner) dominates a sequential campaign, so they are
+        # scored in parallel processes. Each method is still internally
+        # sequential, so per-episode inference timings stay comparable.
+        with ProcessPoolExecutor(max_workers=arguments.workers) as pool:
+            for name, summary in pool.map(score, list(methods.items())):
+                if summary is not None:
+                    published[name] = summary
+    else:
+        for item in methods.items():
+            name, summary = score(item)
+            if summary is not None:
+                published[name] = summary
+
+    # A resumed campaign must still publish an index covering every method,
+    # including the ones this invocation skipped because they already existed.
+    for name in methods:
+        summary_path = destination / name / "summary.json"
+        if name not in published and summary_path.exists():
+            published[name] = json.loads(summary_path.read_text())
 
     if published:
         (destination / "campaign_index.json").write_text(

@@ -1,5 +1,9 @@
 """
-Single-truck VRP solver (flexible delivery order) using Gurobi MILP.
+Single-truck VRP solver (flexible delivery order) using Gurobi MILP. LEGACY.
+
+Single-vehicle by construction, so it says nothing about the joint fleet problem
+D1 made primary. Kept for the inherited benchmark; see
+EVRoutingEnv/baselines/exact_optimization.py for the revision's baseline.
 
 Objective: minimize total completion time (travel + charging + waiting).
 Assumptions:

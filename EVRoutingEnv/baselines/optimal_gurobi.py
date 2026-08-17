@@ -1,5 +1,17 @@
 """
-Deterministic optimal charging planner built with Gurobi.
+Conservative per-truck deterministic MILP reference (Gurobi). LEGACY.
+
+R1.4 objects to this being presented as an optimality benchmark, and the
+objection is correct: it plans one truck at a time against a fixed delivery
+order, ignores charger contention entirely, and assumes deterministic travel,
+so it bounds neither the fleet problem nor the stochastic one. It is named for
+what it is and kept only for the inherited preassigned-route benchmark.
+
+The revision's optimization baseline is
+EVRoutingEnv/baselines/exact_optimization.py: a fleet-level nominal CP-SAT model
+validated against exhaustive enumeration on tiny instances, executed with
+energy-safe repair, publishing solver status, bound, gap, and fallback counts
+per episode.
 
 Assumptions:
 - Fixed delivery order per truck (provided by the environment)

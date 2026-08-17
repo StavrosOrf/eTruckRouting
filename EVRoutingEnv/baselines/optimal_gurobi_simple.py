@@ -1,5 +1,10 @@
 """
-Simplified optimal charging planner built with Gurobi with stochastic considerations.
+Conservative per-truck safety-margin MILP reference (Gurobi). LEGACY.
+
+Like optimal_gurobi.py it plans one truck at a time and cannot bound the fleet
+problem; the safety margin makes it robust, not optimal. Kept for the inherited
+preassigned-route benchmark. See EVRoutingEnv/baselines/exact_optimization.py
+for the revision's optimization baseline.
 
 Key features:
 - Applies energy safety margin based on config settings to account for stochastic variations

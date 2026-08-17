@@ -347,14 +347,33 @@ proposed model (0.824 against 0.858, overlapping intervals). On the campaign
 objective it is **31 hours worse** on 392 jointly solved scenarios, losing 86%
 of head-to-head pairs.
 
-So the two-part answer to R1.2 sharpens:
+The decisive comparison is against `graphppo_matched`: the masked control at
+the ablation's own budget (`v2_tm10`, stage A only, 2M steps), scored on the
+same 500 test scenarios. Everything is identical except the mask.
 
-1. **the mask is not what makes the policy feasible** -- an unmasked policy
-   learns feasibility on its own, given a real consequence for infeasibility;
-2. **the mask is what lets the policy spend its capacity on the objective.**
-   Without it, the learning problem includes staying feasible, and the plans
-   that result are long. That is a claim about where the model's effort goes,
-   and it is measured rather than asserted.
+| | Success | Paired travel hours |
+| --- | --- | --- |
+| `graphppo_matched` (masked, 2M) | 0.726 | reference |
+| `mask_none` (unmasked, 2M) | **0.824** | **+5.9 [+3.3, +8.5]** on 343 pairs |
+| `graphppo` (masked, full ladder) | 0.858 | **-25.7 [-28.8, -22.7]** on 352 pairs |
+
+Both intervals exclude zero, in opposite directions, so the answer to R1.2 is
+two-sided and neither half is a hedge:
+
+1. **The mask does not explain the feasibility.** Removing it *raises* success
+   by 0.098 [0.062, 0.134] at a matched budget. An unmasked policy learns
+   feasibility on its own -- 0.1 invalid actions per episode -- provided
+   infeasibility carries a real consequence. When it does not, the policy never
+   learns it at all (section 1.2).
+2. **The mask does help the objective, modestly.** Removing it costs 5.9 travel
+   hours.
+3. **Most of the travel-time advantage is not the mask at all.** The staged
+   refinement buys 25.7 hours over the same control -- four times the mask's
+   contribution -- which is where the reported result actually comes from.
+
+That is a more useful answer than the reviewer's hypothesis anticipated, and it
+is uncomfortable in one direction and favourable in the other, which is the
+sign that it was measured rather than argued.
 
 ## 8. Running: generalization
 

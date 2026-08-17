@@ -375,7 +375,66 @@ That is a more useful answer than the reviewer's hypothesis anticipated, and it
 is uncomfortable in one direction and favourable in the other, which is the
 sign that it was measured rather than argued.
 
-## 8. Running: generalization
+## 8. Generalization
+
+Every regime scores every method on the same 100 held-out test scenarios, and
+each learned arm is scored in the environment it trained in. Success rates:
+
+| Regime | Kind | GraphPPO | `mask_none` | CP-SAT | ALNS | Heuristic | MPC |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `in_distribution` | control | **0.82** | 0.75 | 0.59 | 0.60 | 0.54 | 0.57 |
+| `customers_4` | size | **0.91** | 0.93 | 0.72 | 0.72 | 0.70 | 0.67 |
+| `customers_6` | size | **0.89** | 0.86 | 0.67 | 0.67 | 0.59 | 0.61 |
+| `customers_8` | size | **0.81** | 0.81 | 0.68 | 0.69 | 0.57 | 0.57 |
+| `fleet_1` | size | **0.72** | 0.69 | 0.62 | 0.60 | 0.52 | 0.61 |
+| `chargers_weak` | ood | **0.83** | 0.78 | 0.63 | 0.63 | 0.56 | 0.56 |
+| `chargers_inefficient` | ood | **0.82** | 0.76 | 0.60 | 0.60 | 0.53 | 0.56 |
+| `ports_scarce` | ood | **0.81** | 0.77 | 0.59 | 0.60 | 0.54 | 0.57 |
+| `traffic_severe` | ood | **0.82** | 0.79 | 0.60 | 0.60 | 0.51 | 0.50 |
+| `network_slow` | ood | **0.68** | 0.68 | 0.60 | 0.61 | 0.54 | 0.56 |
+| `network_fast` | ood | **0.85** | 0.78 | 0.60 | 0.60 | 0.54 | 0.55 |
+| `demand_heavy` | ood | **0.74** | 0.61 | 0.59 | 0.49 | 0.45 | 0.43 |
+| `energy_severe` | ood | **0.41** | 0.27 | 0.35 | 0.35 | 0.28 | 0.16 |
+| `battery_small` | ood | 0.34 | 0.34 | **0.43** | 0.43 | 0.42 | 0.39 |
+| `service_slow` | ood | 0.46 | 0.51 | 0.59 | **0.60** | 0.54 | 0.57 |
+| `battery_large` | ood | 0.87 | 0.87 | **0.98** | 0.98 | 0.98 | 0.96 |
+
+### 8.1 What holds
+
+GraphPPO leads 13 of the 16 regimes every method was scored on, usually by 20
+points or more, and its lead is undiminished by charger power, charger
+efficiency, port scarcity, travel-time variance, demand pressure, and a road
+network whose legs are uniformly 25% faster or 40% slower. Size transfer
+downward is strong: 0.91, 0.89, and 0.81 at four, six, and eight customers
+against a ten-customer training distribution, and 0.72 with a single truck.
+
+### 8.2 What does not, and the pattern in it
+
+Three regimes reverse the ranking, and they are the same kind of regime:
+
+* `battery_small` (300 kWh instead of 400): 0.34 against CP-SAT's 0.43;
+* `service_slow` (0.4 h service instead of 0.2): 0.46 against ALNS's 0.60;
+* `battery_large` (500 kWh): 0.87 against the planners' 0.98.
+
+Each of these moves the **feasibility frontier itself** -- the energy budget or
+the time budget -- rather than the cost of a decision. A planner re-solves from
+scratch against whatever budget it is handed. A policy has learned where the
+frontier sits, and when the frontier moves it is wrong in a way no amount of
+in-distribution skill repairs. `battery_large` is the sharpest version: when the
+problem becomes easy the planners solve almost everything and the policy does
+not, because it never learned to exploit slack it never saw.
+
+Averaged over the out-of-distribution regimes, success changes by -0.110 for
+GraphPPO and -0.081 for the unmasked arm against -0.006 for ALNS, -0.004 for
+the heuristic, and +0.009 for CP-SAT. **The learned policies degrade more than
+the planners do.** They also start 20 points higher, so they still lead almost
+everywhere -- but the honest statement for the manuscript is that this method
+buys a large in-distribution advantage and gives part of it back under
+distribution shift, with the loss concentrated where the resource budget moves.
+
+This is the claim R1.7 asked to be separated from interpolation and from size
+transfer, and it is separated: interpolation and size transfer hold, parameter
+shift mostly holds, and budget shift does not.
 
 Eighteen regimes labelled `interpolation`, `size_transfer`, and `ood`, each
 scoring every method on the same held-out seeds: customer count, fleet size,

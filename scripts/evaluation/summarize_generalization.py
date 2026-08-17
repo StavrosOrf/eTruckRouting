@@ -21,6 +21,8 @@ import argparse
 import json
 from pathlib import Path
 
+from scripts.evaluation.run_generalization_campaign import REGIMES
+
 
 def _conditional(summary: dict, metric: str) -> float | None:
     entry = summary["aggregate"]["metrics"].get(metric)
@@ -38,10 +40,32 @@ def main() -> None:
     )
     arguments = parser.parse_args()
 
-    index = json.loads(
-        (Path(arguments.campaign) / "generalization_index.json").read_text()
-    )
-    regimes = index["regimes"]
+    # Read the artifact tree rather than the index. The index reflects only the
+    # methods of the invocation that wrote it, so a campaign completed in two
+    # passes -- baselines first, learned methods second -- would silently report
+    # whichever pass ran last. The per-method summaries on disk are the record.
+    campaign = Path(arguments.campaign)
+    index_path = campaign / "generalization_index.json"
+    labels: dict[str, dict] = {}
+    if index_path.exists():
+        labels = json.loads(index_path.read_text()).get("regimes", {})
+
+    regimes: dict[str, dict] = {}
+    for summary_path in sorted(campaign.glob("*/*/summary.json")):
+        regime = summary_path.parent.parent.name
+        method = summary_path.parent.name
+        entry = regimes.setdefault(
+            regime,
+            {
+                "kind": labels.get(regime, {}).get("kind")
+                or REGIMES.get(regime, {}).get("kind", "unknown"),
+                "description": labels.get(regime, {}).get("description")
+                or REGIMES.get(regime, {}).get("description", ""),
+                "methods": {},
+            },
+        )
+        entry["methods"][method] = json.loads(summary_path.read_text())
+
     if arguments.control not in regimes:
         raise SystemExit(f"control regime {arguments.control!r} was not scored")
 

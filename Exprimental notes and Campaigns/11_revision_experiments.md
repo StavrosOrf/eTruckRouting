@@ -312,6 +312,50 @@ objective. Both hold the best *makespan* (74.5 and 74.0) while being worst on
 all-episode travel, which is the same pattern document 10 reported: they build
 short balanced plans and then decline the instances those plans cannot survive.
 
+### 7.1 Paired differences on jointly solved scenarios
+
+Methods decline different instances, so their own conditional means are not
+comparable. Pairing by scenario seed is the only like-for-like reading;
+negative means GraphPPO drives fewer hours.
+
+| GraphPPO vs | Jointly solved | Travel hours | GraphPPO wins |
+| --- | --- | --- | --- |
+| `cpsat_plan` (corrected) | 285 | **+0.2 [-3.1, +3.7]** | 53% |
+| `alns_plan` | 282 | **+0.9 [-2.5, +4.4]** | 52% |
+| `greedy_heuristic` | 259 | **-23.0 [-26.7, -19.1]** | 76% |
+| `rolling_horizon_mpc` | 253 | **-26.1 [-29.7, -22.3]** | 81% |
+| `mask_none` | 392 | **-31.0 [-34.0, -28.0]** | 86% |
+| `ppo_stategnn` | 295 | **-36.2 [-39.8, -32.5]** | 87% |
+| `ppo_flat` | 247 | **-42.7 [-46.4, -38.8]** | 87% |
+| `ppo_deepsets` | 322 | **-47.5 [-50.8, -44.3]** | 92% |
+
+The central claim survives a larger sample *and* a stronger opponent: GraphPPO
+is statistically indistinguishable from the exact planner on travel hours --
+now against the corrected CP-SAT rather than the handicapped one -- while
+solving **23.6 percentage points more instances** (0.858 against 0.622). ALNS
+independently confirms the reading: it agrees with CP-SAT to within a
+half-hour, and GraphPPO ties it too.
+
+It beats every learned baseline decisively, with intervals nowhere near zero,
+which is the same conclusion the validation re-score reached and locates the
+contribution in the action-graph interaction rather than the state encoder.
+
+### 7.2 What this says about the mask
+
+The unmasked arm is the interesting row. On feasibility it nearly matches the
+proposed model (0.824 against 0.858, overlapping intervals). On the campaign
+objective it is **31 hours worse** on 392 jointly solved scenarios, losing 86%
+of head-to-head pairs.
+
+So the two-part answer to R1.2 sharpens:
+
+1. **the mask is not what makes the policy feasible** -- an unmasked policy
+   learns feasibility on its own, given a real consequence for infeasibility;
+2. **the mask is what lets the policy spend its capacity on the objective.**
+   Without it, the learning problem includes staying feasible, and the plans
+   that result are long. That is a claim about where the model's effort goes,
+   and it is measured rather than asserted.
+
 ## 8. Running: generalization
 
 Eighteen regimes labelled `interpolation`, `size_transfer`, and `ood`, each

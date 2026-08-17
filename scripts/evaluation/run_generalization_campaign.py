@@ -205,6 +205,12 @@ def _apply(config: dict, overrides: dict) -> dict:
 
 def _run_one(job: tuple) -> dict:
     """Score one (regime, method) pair in its own process."""
+    import torch
+
+    # See run_canonical_campaign.score_method: one thread per worker, or N
+    # processes each spawn a thread per core and the host thrashes.
+    torch.set_num_threads(1)
+
     regime, method, settings, config_path, seeds, split, destination, max_steps = job
     definition = REGIMES[regime]
     config = _apply(load_config(config_path), definition["overrides"])

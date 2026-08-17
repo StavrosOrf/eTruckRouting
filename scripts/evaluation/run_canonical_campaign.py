@@ -114,6 +114,13 @@ def score_method(job: tuple) -> tuple[str, dict | None]:
         max_policy_steps,
         argv,
     ) = job
+    # One thread per worker. Torch defaults to one thread per core, so N method
+    # processes each spawning 64 threads drives the load average past 90 on a
+    # 64-core host and starves everything else -- including any training sharing
+    # the machine. Inference here is one small forward pass at a time, so extra
+    # threads buy nothing anyway.
+    torch.set_num_threads(1)
+
     target = Path(destination) / name
     if target.exists():
         print(f"skipping {name}: {target} already exists", flush=True)

@@ -2,9 +2,21 @@
 
 Branch: `campaign/ieee-tits-revision`
 
-Status: **D1–D10 approved on 2026-08-11 — correctness implementation in progress**
+Status (2026-08-17): **correctness complete, primary campaign complete, supporting evidence and manuscript open**
 
-This directory is the source of truth for the top-journal revision campaign. The recommended choices in `00_modeling_validation.md` were approved by the author on 2026-08-11. Correctness and modeling implementation may proceed, but large training runs remain gated on the acceptance tests in `02_acceptance_and_reproducibility.md`.
+This directory is the source of truth for the top-journal revision campaign. The recommended choices in `00_modeling_validation.md` were approved by the author on 2026-08-11; correctness implementation and the primary campaign are now done.
+
+Where the work stands, in one table — `05_execution_todo.md` carries the item-level state and `04_reviewer_response_todo.md` the reviewer-level state:
+
+| Block | State |
+| --- | --- |
+| Simulator, feasibility, queues, charging semantics | complete, 281 tests pass |
+| Canonical observation, encoders, action heads, artifact contract | complete |
+| Primary campaign under the travel-time objective | complete (doc 10) |
+| Mask, pooling, active-truck ablations | not started, needs code |
+| ALNS, attention/transformer, learned-baseline family | not started |
+| Generalization, multi-seed, scale grid | not started |
+| Manuscript and response letter | not started |
 
 ## Documents
 

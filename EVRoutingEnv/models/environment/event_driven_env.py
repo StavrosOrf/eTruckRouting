@@ -236,7 +236,21 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Load graph and initialize transportation network
         graph = get_graph(self.config)
+        # Generalization needs a way to move the road network itself. Travel
+        # times and energies are read from precomputed tables rather than
+        # derived from truck.base_speed -- which is why changing that parameter
+        # leaves every leg unchanged -- so the network is perturbed at its own
+        # level, before any distance cache is built, and every consumer
+        # (simulator, mask, heuristic, planners, canonical features) sees the
+        # same scaled network.
+        network_config = self.config.get("network", {})
+        time_scale = float(network_config.get("travel_time_scale", 1.0))
+        energy_scale = float(network_config.get("energy_scale", 1.0))
+        for scale, label in ((time_scale, "travel_time_scale"), (energy_scale, "energy_scale")):
+            if not math.isfinite(scale) or scale <= 0.0:
+                raise ValueError(f"network.{label} must be positive")
         self.transport_graph = TransportationGraph(graph)
+        self.transport_graph.scale_network(time_scale, energy_scale)
 
         # Get charging nodes
         self.charging_nodes = self.transport_graph.get_charging_nodes()

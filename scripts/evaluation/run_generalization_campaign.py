@@ -125,10 +125,28 @@ REGIMES: dict[str, dict] = {
         "description": "500 kWh battery instead of 400",
         "overrides": {"truck": {"battery_capacity": 500.0}},
     },
-    "speed_slow": {
+    # truck.base_speed is deliberately absent as a regime: travel times are read
+    # from the network tables rather than derived from it, so changing it leaves
+    # every leg identical. The road network is perturbed directly instead.
+    "network_slow": {
         "kind": "ood",
-        "description": "30 km/h base speed instead of 40",
-        "overrides": {"truck": {"base_speed": 30.0}},
+        "description": "every leg takes 40% longer",
+        "overrides": {"network": {"travel_time_scale": 1.4}},
+    },
+    "network_fast": {
+        "kind": "ood",
+        "description": "every leg takes 25% less time",
+        "overrides": {"network": {"travel_time_scale": 0.75}},
+    },
+    "energy_hungry": {
+        "kind": "ood",
+        "description": "every leg draws 30% more energy",
+        "overrides": {"network": {"energy_scale": 1.3}},
+    },
+    "energy_frugal": {
+        "kind": "ood",
+        "description": "every leg draws 20% less energy",
+        "overrides": {"network": {"energy_scale": 0.8}},
     },
     # -- demand --------------------------------------------------------------
     "demand_heavy": {
@@ -141,21 +159,11 @@ REGIMES: dict[str, dict] = {
         "description": "0.4 h base service time instead of 0.2",
         "overrides": {"problem": {"base_service_time": 0.4}},
     },
-    # -- road network --------------------------------------------------------
-    "hops_short": {
-        "kind": "ood",
-        "description": "5-25 km hops instead of 10-50",
-        "overrides": {
-            "environment": {"min_hop_distance": 5.0, "max_hop_distance": 25.0},
-        },
-    },
-    "hops_long": {
-        "kind": "ood",
-        "description": "20-80 km hops instead of 10-50",
-        "overrides": {
-            "environment": {"min_hop_distance": 20.0, "max_hop_distance": 80.0},
-        },
-    },
+    # environment.min_hop_distance / max_hop_distance are deliberately absent
+    # too: the joint instance generator does not read them at all -- they are
+    # consumed only by the inherited preassigned-route generator -- so a regime
+    # built on them produces the identical instance and would read as spurious
+    # robustness.
     # -- uncertainty law -----------------------------------------------------
     "traffic_calm": {
         "kind": "ood",

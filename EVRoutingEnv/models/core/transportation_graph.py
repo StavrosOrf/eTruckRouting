@@ -44,6 +44,36 @@ class TransportationGraph:
         self._dense_node_index: dict[int, int] | None = None
         self._dense_transport: np.ndarray | None = None
 
+    def scale_network(self, time_scale: float = 1.0, energy_scale: float = 1.0) -> None:
+        """Scale every travel time and energy on this network.
+
+        Used by the generalization campaign to move the road network itself.
+        Edge attributes alone are not enough: shortest-path energies are served
+        from a precomputed cache that is loaded from disk and never consults the
+        edges again, so scaling one without the other would leave the simulator
+        and its planners disagreeing about the same leg. Everything derived is
+        scaled or invalidated here, in one place.
+        """
+        if time_scale == 1.0 and energy_scale == 1.0:
+            return
+        for _, _, attributes in self.graph.edges(data=True):
+            if "time" in attributes:
+                attributes["time"] = float(attributes["time"]) * time_scale
+            if "distance" in attributes:
+                attributes["distance"] = float(attributes["distance"]) * energy_scale
+
+        rescaled = {}
+        for key, value in self._distance_cache.items():
+            # Energy is keyed (source, target); time carries a third element.
+            scale = time_scale if len(key) > 2 and key[2] == "time" else energy_scale
+            rescaled[key] = value * scale
+        self._distance_cache = rescaled
+        # The dense view is derived from the above, so it has to be rebuilt.
+        self._dense_node_index = None
+        self._dense_transport = None
+        # A scaled network must never be written back over the shared cache file.
+        self._cache_file = None
+
     def dense_transport_matrix(self) -> tuple[dict[int, int], np.ndarray]:
         """Return an all-pairs (energy, travel hours, reachable) lookup table.
 

@@ -34,6 +34,10 @@ LEARNED_RUNS: dict[str, tuple[str, str]] = {
         "results/canonical/graphppo_seeds/seed2_C",
         "seed replication of the headline ladder",
     ),
+    "graphppo_matched": (
+        "results/canonical/graphppo_v2/v2_tm10",
+        "masked control at the mask ablation's budget (stage A only, 2M steps)",
+    ),
     "mask_none": (
         "results/canonical/mask_ablation/mask_none_terminate",
         "no feasibility mask; infeasible actions strand the truck",

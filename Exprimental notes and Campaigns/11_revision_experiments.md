@@ -280,12 +280,37 @@ Artifacts: `results/charging_curves/model_comparison.json`.
 * component ablations for state pooling and for the typed edge relations (E3);
 * penalty-magnitude sweep and seed replication for the mask arms.
 
-## 7. Running: the 500-scenario test campaign
+## 7. The 500-scenario test campaign
 
-The corrected CP-SAT planner, ALNS, the learned baseline family, and the mask
-arm are scored against the frozen GraphPPO policy on 500 held-out test
-scenarios, with paired bootstrap differences on jointly solved scenarios and a
-best-known travel reference.
+R1.7 asks for at least 500 paired test scenarios per main setting; document 10
+reported 300. Every method below is scored on the same 500 held-out seeds, and
+each learned arm is scored in the environment it trained in.
+
+| Method | Success | Wilson 95% | Travel h* | Makespan h* | Operating h* |
+| --- | --- | --- | --- | --- | --- |
+| **GraphPPO** | **0.858** | [0.82, 0.89] | **120.9** | 79.0 | **131.7** |
+| `mask_none` | 0.824 | [0.79, 0.85] | 140.4 | 88.0 | 153.2 |
+| `ppo_deepsets` | 0.670 | [0.63, 0.71] | 152.3 | 95.5 | 166.8 |
+| `cpsat_plan` (corrected) | 0.622 | [0.58, 0.66] | 167.5 | **74.5** | 184.9 |
+| `alns_plan` | 0.614 | [0.57, 0.66] | 168.6 | 74.0 | 186.3 |
+| `greedy_heuristic` | 0.552 | [0.51, 0.60] | 199.8 | 85.1 | 221.1 |
+| `rolling_horizon_mpc` | 0.532 | [0.49, 0.58] | 199.2 | 84.9 | 219.7 |
+| `ppo_flat` | 0.506 | [0.46, 0.55] | 143.1 | 90.5 | 156.3 |
+
+\* averaged over all episodes, not conditioned on success, so a method that
+declines instances is not flattered. Section 7.1 pairs by scenario seed, which
+is the like-for-like reading.
+
+**The headline reproduces.** GraphPPO reaches 0.858 on 500 scenarios against
+0.857 on document 10's 300, with travel hours essentially unchanged. Extending
+the sample did not move the result.
+
+**The corrected planners are stronger and still lose on feasibility.** CP-SAT
+rises to 0.622 from the 0.607 its defective model produced, and ALNS lands at
+0.614 -- two independent optimizers agreeing, as they did on the nominal
+objective. Both hold the best *makespan* (74.5 and 74.0) while being worst on
+all-episode travel, which is the same pattern document 10 reported: they build
+short balanced plans and then decline the instances those plans cannot survive.
 
 ## 8. Running: generalization
 

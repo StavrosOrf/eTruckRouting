@@ -202,6 +202,39 @@ larger budget was needed.
 Artifacts: `results/canonical/tuning_alns/`,
 `results/canonical/frozen_baselines_revision.json`.
 
+## 4b. Quality against compute, and what it says about the instances
+
+E3 asks for quality-versus-runtime evidence behind any scalability claim, and
+the execution checklist asks for an optimizer-budget sensitivity. Both search
+baselines have a budget knob; the learned policy does not, which is the
+comparison rather than an omission. On 60 validation scenarios:
+
+| Method | Budget | Success | Travel h | s/episode |
+| --- | --- | --- | --- | --- |
+| `cpsat` | 0.5 s | 0.533 | 108.8 | 0.37 |
+| `cpsat` | 45 s | 0.533 | 108.8 | 0.37 |
+| `alns` | 100 iterations | 0.567 | 109.5 | 0.22 |
+| `alns` | 2000 iterations | 0.533 | 108.8 | 0.33 |
+| `alns` | 50000 iterations | 0.533 | 108.8 | 2.90 |
+
+Two readings, and the second is the important one.
+
+**Neither search is budget-limited.** CP-SAT returns the identical plan at a
+half-second limit and at forty-five seconds, because it proves optimality long
+before either; ALNS reaches the same objective by 2000 iterations and then
+spends compute for nothing. Quoting a larger budget for either would be
+theatre.
+
+**The nominal planning problem is solved at this instance size.** ALNS and
+CP-SAT agree on 108.8 h, and section 3 shows both match exhaustive enumeration
+on tiny instances. Whatever separates the methods in execution is therefore not
+search quality: it is the closed-loop response to realized travel, energy,
+service, and queueing. That is the honest framing for R1.4 -- and it also means
+the ten-customer instance is small from an optimization standpoint, which the
+scale campaign in section 6 is there to probe.
+
+Artifacts: `results/canonical/optimizer_budget/sweep.json`.
+
 ## 5. Charging: what the model is, and what the standard alternative costs
 
 Ziyan asked for the nonlinear charging equation to be sourced and validated, and

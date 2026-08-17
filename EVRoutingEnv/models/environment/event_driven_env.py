@@ -1840,6 +1840,15 @@ class EventDrivenTruckEnv(gym.Env):
         charger_config_with_curve["efficiency"] = (
             self.charging_station.charger_efficiency[charger_node]
         )
+        # The taper floor is a property of the curve, not of the station, so a
+        # station rated below the configured floor would otherwise be rejected
+        # outright. Clamping keeps a weak station a weak station instead: it
+        # simply never tapers below its own rated power.
+        if "taper_power_min" in charger_config_with_curve:
+            charger_config_with_curve["taper_power_min"] = min(
+                float(charger_config_with_curve["taper_power_min"]),
+                float(charger_config_with_curve["charge_rate"]),
+            )
 
         # Calculate charge using charging curve model
         # Clamp to [0.0, 1.0] to handle any floating point precision issues

@@ -643,6 +643,12 @@ def nominal_charge_hours(
             int(charger_node), charger_config.get("efficiency", 0.90)
         )
     )
+    # Same clamp the environment applies, so a station rated below the
+    # configured taper floor is priced exactly as it will be executed.
+    if "taper_power_min" in charger_config:
+        charger_config["taper_power_min"] = min(
+            float(charger_config["taper_power_min"]), power
+        )
 
     # The cache is process-wide, so the key carries every curve parameter that
     # could differ between configurations, not just the station identity.

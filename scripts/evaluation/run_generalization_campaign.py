@@ -210,7 +210,20 @@ def _run_one(job: tuple) -> dict:
     config = _apply(load_config(config_path), definition["overrides"])
     target = Path(destination) / regime / method
     if target.exists():
-        summary = json.loads((target / "summary.json").read_text())
+        summary_path = target / "summary.json"
+        if not summary_path.exists():
+            # The artifact contract refuses to overwrite, so an interrupted run
+            # leaves its directory behind as evidence. Say so and skip this job
+            # rather than reading a summary that was never written or silently
+            # discarding the evidence; the rest of the campaign still completes.
+            return {
+                "regime": regime,
+                "method": method,
+                "summary": None,
+                "cached": True,
+                "incomplete": True,
+            }
+        summary = json.loads(summary_path.read_text())
         return {"regime": regime, "method": method, "summary": summary, "cached": True}
 
     manifest = collect_run_manifest(
@@ -304,8 +317,24 @@ def main() -> None:
             completed.append(result)
             _report(result)
 
+    incomplete = [
+        f"{result['regime']}/{result['method']}"
+        for result in completed
+        if result.get("incomplete")
+    ]
+    if incomplete:
+        print(
+            "\nincomplete runs left by an earlier interrupted campaign; delete "
+            "these directories to retry them:",
+            flush=True,
+        )
+        for name in incomplete:
+            print(f"  {destination / name}", flush=True)
+
     index: dict[str, dict] = {}
     for result in completed:
+        if result["summary"] is None:
+            continue
         regime = result["regime"]
         entry = index.setdefault(
             regime,
@@ -333,6 +362,13 @@ def main() -> None:
 
 
 def _report(result: dict) -> None:
+    if result["summary"] is None:
+        print(
+            f"  {result['regime']:22s} {result['method']:12s} INCOMPLETE "
+            "(directory exists without a summary)",
+            flush=True,
+        )
+        return
     aggregate = result["summary"]["aggregate"]
     travel = aggregate["metrics"].get("total_travel_time", {}).get("mean")
     print(

@@ -99,6 +99,80 @@ def build_policy(name: str, settings: dict):
     )
 
 
+def score_method(job: tuple) -> tuple[str, dict | None]:
+    """Score one method over every scenario, in its own process.
+
+    Module level rather than a closure so it can be sent to a process pool.
+    """
+    (
+        name,
+        settings,
+        config,
+        seeds,
+        split,
+        destination,
+        max_policy_steps,
+        argv,
+    ) = job
+    target = Path(destination) / name
+    if target.exists():
+        print(f"skipping {name}: {target} already exists", flush=True)
+        return name, None
+
+    # A method may declare environment overrides -- the mask ablation is scored
+    # without the feasibility mask, a generalization regime shifts the instance
+    # distribution.  The override lands in the manifest as the resolved config,
+    # so the artifact records the environment the method was actually scored in
+    # rather than the campaign default.
+    method_config = config
+    overrides = settings.get("environment_overrides") or {}
+    if overrides:
+        method_config = deepcopy(config)
+        for section, values in overrides.items():
+            if section not in method_config or not isinstance(values, dict):
+                raise ValueError(
+                    f"{name}: environment_overrides.{section} must be a dict "
+                    "naming an existing config section"
+                )
+            method_config[section].update(values)
+        print(f"  {name}: config overrides {overrides}", flush=True)
+
+    manifest = collect_run_manifest(
+        run_id=f"{name}__{split}",
+        algorithm=name,
+        split=split,
+        command=argv,
+        resolved_config=method_config,
+        scenario_seeds=seeds,
+        repository_root=REPOSITORY_ROOT,
+        checkpoint=settings.get("checkpoint"),
+    )
+    print(f"running {name} on {len(seeds)} {split} scenarios...", flush=True)
+
+    def factory():
+        return EventDrivenTruckEnv(method_config, verbose=False, enable_plotting=False)
+
+    artifacts = run_evaluation_campaign(
+        environment_factory=factory,
+        policy=build_policy(name, settings),
+        manifest=manifest,
+        output_directory=target,
+        max_policy_steps=max_policy_steps,
+    )
+    summary = json.loads(artifacts.summary_path.read_text())
+    aggregate = summary["aggregate"]
+    interval = aggregate["success_wilson_95"]
+    makespan = aggregate["metrics"]["fleet_makespan"]["mean"]
+    print(
+        f"  {name}: success={aggregate['success_rate']:.3f} "
+        f"[{interval['low']:.3f}, {interval['high']:.3f}] "
+        f"makespan={makespan if makespan is None else round(makespan, 2)} "
+        f"episodes={artifacts.episode_count}",
+        flush=True,
+    )
+    return name, summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -134,84 +208,33 @@ def main() -> None:
     destination = Path(arguments.output) / arguments.split
     destination.mkdir(parents=True, exist_ok=True)
 
-    def build_factory(method_config: dict):
-        def factory():
-            return EventDrivenTruckEnv(
-                method_config, verbose=False, enable_plotting=False
-            )
-
-        return factory
-
-    def score(item: tuple[str, dict]) -> tuple[str, dict | None]:
-        name, settings = item
-        run_id = f"{name}__{arguments.split}"
-        target = destination / name
-        if target.exists():
-            print(f"skipping {name}: {target} already exists", flush=True)
-            return name, None
-        # A method may declare environment overrides -- the mask ablation is
-        # scored without the feasibility mask, a generalization regime shifts
-        # the instance distribution.  The override lands in the manifest as the
-        # resolved config, so the artifact records the environment the method
-        # was actually scored in rather than the campaign default.
-        method_config = config
-        overrides = settings.get("environment_overrides") or {}
-        if overrides:
-            method_config = deepcopy(config)
-            for section, values in overrides.items():
-                if section not in method_config or not isinstance(values, dict):
-                    raise ValueError(
-                        f"{name}: environment_overrides.{section} must be a dict "
-                        "naming an existing config section"
-                    )
-                method_config[section].update(values)
-            print(f"  {name}: config overrides {overrides}", flush=True)
-        manifest = collect_run_manifest(
-            run_id=run_id,
-            algorithm=name,
-            split=arguments.split,
-            command=tuple(sys.argv),
-            resolved_config=method_config,
-            scenario_seeds=seeds,
-            repository_root=REPOSITORY_ROOT,
-            checkpoint=settings.get("checkpoint"),
+    jobs = [
+        (
+            name,
+            settings,
+            config,
+            seeds,
+            arguments.split,
+            str(destination),
+            arguments.max_policy_steps,
+            tuple(sys.argv),
         )
-        print(
-            f"running {name} on {len(seeds)} {arguments.split} scenarios...", flush=True
-        )
-        artifacts = run_evaluation_campaign(
-            environment_factory=build_factory(method_config),
-            policy=build_policy(name, settings),
-            manifest=manifest,
-            output_directory=target,
-            max_policy_steps=arguments.max_policy_steps,
-        )
-        summary = json.loads(artifacts.summary_path.read_text())
-        aggregate = summary["aggregate"]
-        interval = aggregate["success_wilson_95"]
-        makespan = aggregate["metrics"]["fleet_makespan"]["mean"]
-        print(
-            f"  {name}: success={aggregate['success_rate']:.3f} "
-            f"[{interval['low']:.3f}, {interval['high']:.3f}] "
-            f"makespan={makespan if makespan is None else round(makespan, 2)} "
-            f"episodes={artifacts.episode_count}",
-            flush=True,
-        )
-        return name, summary
+        for name, settings in methods.items()
+    ]
 
     published: dict[str, dict] = {}
-    if arguments.workers > 1 and len(methods) > 1:
+    if arguments.workers > 1 and len(jobs) > 1:
         # Methods are independent runs over the same seeds, and the slowest one
         # (the CP-SAT planner) dominates a sequential campaign, so they are
         # scored in parallel processes. Each method is still internally
         # sequential, so per-episode inference timings stay comparable.
         with ProcessPoolExecutor(max_workers=arguments.workers) as pool:
-            for name, summary in pool.map(score, list(methods.items())):
+            for name, summary in pool.map(score_method, jobs):
                 if summary is not None:
                     published[name] = summary
     else:
-        for item in methods.items():
-            name, summary = score(item)
+        for job in jobs:
+            name, summary = score_method(job)
             if summary is not None:
                 published[name] = summary
 

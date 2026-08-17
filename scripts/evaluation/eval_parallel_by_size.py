@@ -1,4 +1,11 @@
-"""Evaluate size-matched policies and write per-episode CSVs."""
+"""Evaluate size-matched policies and write per-episode CSVs.
+
+LEGACY, for the inherited preassigned-route problem only. Size transfer in the
+revision is measured by the size_transfer regimes of
+scripts/evaluation/run_generalization_campaign.py, which hold the action
+envelope fixed so a trained policy stays applicable and publish the full
+artifact contract.
+"""
 
 import csv
 import os

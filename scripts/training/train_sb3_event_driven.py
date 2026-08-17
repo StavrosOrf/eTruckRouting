@@ -1,6 +1,13 @@
 """
 Train the EventDrivenTruckEnv using Stable-Baselines3 discrete action space algorithms.
 Supports: PPO, MaskablePPO, DQN, and QR-DQN.
+
+LEGACY, for the inherited preassigned-route problem. The revision's learned
+arms -- including the flat-state MaskPPO equivalent, DeepSets-PPO, the
+state-GNN, the attention model, and the unmasked ablation -- all train through
+scripts/training/train_canonical_ppo.py, so that the observation, mask,
+curriculum, reward, seed stream, and budget are identical by construction and
+only the architecture or the ablated component differs.
 """
 
 import os

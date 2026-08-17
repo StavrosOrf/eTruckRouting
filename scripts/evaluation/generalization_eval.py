@@ -1,4 +1,15 @@
-"""Grid evaluation: Compare policies across different environment configurations."""
+"""Grid evaluation: Compare policies across different environment configurations.
+
+LEGACY AND SUPERSEDED. This predates the joint fleet formulation: it builds the
+old GNN observation space, loads Gurobi baselines that the campaign no longer
+uses, hardcodes checkpoint paths, and writes no manifest.
+
+The revision's generalization evidence comes from
+scripts/evaluation/run_generalization_campaign.py, which scores every method on
+the same held-out seeds across regimes labelled interpolation / size_transfer /
+ood, and publishes the immutable artifact contract for each. Nothing in the
+revision reads this file.
+"""
 
 import atexit
 import copy

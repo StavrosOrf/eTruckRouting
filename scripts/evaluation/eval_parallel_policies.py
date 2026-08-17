@@ -1,4 +1,10 @@
-"""Evaluate and compare different policies on multiple scenarios (parallel)."""
+"""Evaluate and compare different policies on multiple scenarios (parallel).
+
+LEGACY, for the inherited preassigned-route problem only; see
+scripts/evaluation/eval_policies.py for why, and use
+scripts/evaluation/run_canonical_campaign.py --workers N instead. No revision
+result is produced by this script.
+"""
 
 import atexit
 import copy

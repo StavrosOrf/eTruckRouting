@@ -1,4 +1,16 @@
-"""Evaluate and compare different policies on multiple scenarios."""
+"""Evaluate and compare different policies on multiple scenarios.
+
+LEGACY. This targets the inherited preassigned-route problem and writes ad-hoc
+CSVs rather than the immutable artifact contract (manifest, failure-retaining
+episode rows, aggregate summary). It is kept only so the secondary
+preassigned-execution benchmark remains runnable, and nothing in the revision
+campaign reads its output.
+
+The canonical replacements are:
+  scripts/evaluation/run_canonical_campaign.py       one split, every method
+  scripts/evaluation/run_generalization_campaign.py  transfer regimes
+  scripts/evaluation/compare_campaign.py             paired statistics
+"""
 
 import copy
 import os

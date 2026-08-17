@@ -12,14 +12,21 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.features import (
     ACTION_FEATURES,
+    CHARGER_FEATURES,
     CUSTOMER_FEATURES,
+    EDGE_FEATURES,
+    NODE_TYPES,
+    RELATION_TYPES,
     SCHEMA_VERSION,
     TRUCK_FEATURES,
+    extract_pairwise_relations,
 )
 from EVRoutingEnv.state.representations import (
     CanonicalShapeSpec,
     canonical_flat_observation,
+    canonical_graph_features,
     pad_canonical_features,
+    relation_matrix,
 )
 from EVRoutingEnv.utils.utils import load_config
 
@@ -194,8 +201,7 @@ def test_graph_view_preserves_all_semantic_rows_and_has_complete_relations(env) 
     np.testing.assert_array_equal(graph.global_features, canonical.global_features)
 
     node_counts = {
-        node_type: len(values)
-        for node_type, values in graph.node_features.items()
+        node_type: len(values) for node_type, values in graph.node_features.items()
     }
     assert len(graph.edge_indices) == 9
     for (source, target), edge_index in graph.edge_indices.items():
@@ -205,6 +211,275 @@ def test_graph_view_preserves_all_semantic_rows_and_has_complete_relations(env) 
         )
         assert graph.edge_features[(source, target)].shape[0] == edge_index.shape[1]
         assert np.isfinite(graph.edge_features[(source, target)]).all()
+
+
+def _node_ids(canonical) -> dict:
+    return {
+        "truck": canonical.truck_features[
+            :, TRUCK_FEATURES.index("current_node")
+        ].astype(int),
+        "customer": canonical.customer_features[
+            :, CUSTOMER_FEATURES.index("node_id")
+        ].astype(int),
+        "charger": canonical.charger_features[
+            :, CHARGER_FEATURES.index("node_id")
+        ].astype(int),
+    }
+
+
+def test_pairwise_relations_are_canonical_and_complete(env) -> None:
+    canonical = env.get_canonical_features()
+    counts = canonical.node_counts()
+
+    assert set(canonical.pairwise_features) == set(RELATION_TYPES)
+    assert len(RELATION_TYPES) == 9
+    for source, target in RELATION_TYPES:
+        values = canonical.pairwise_features[(source, target)]
+        assert values.shape == (counts[source], counts[target], len(EDGE_FEATURES))
+        assert np.isfinite(values).all()
+
+
+def test_pairwise_values_equal_the_transport_graph_for_reachable_pairs(env) -> None:
+    canonical = env.get_canonical_features()
+    node_ids = _node_ids(canonical)
+    reachable_column = EDGE_FEATURES.index("reachable")
+
+    for source, target in RELATION_TYPES:
+        values = canonical.pairwise_features[(source, target)]
+        for row, source_node in enumerate(node_ids[source]):
+            for column, target_node in enumerate(node_ids[target]):
+                if values[row, column, reachable_column] != 1.0:
+                    continue
+                assert values[row, column, 0] == pytest.approx(
+                    env.transport_graph.get_path_energy(
+                        int(source_node), int(target_node)
+                    ),
+                    rel=1e-6,
+                )
+                assert values[row, column, 1] == pytest.approx(
+                    env.transport_graph.get_time_distance(
+                        int(source_node), int(target_node)
+                    ),
+                    rel=1e-6,
+                )
+
+
+def test_identical_node_pairs_share_values_across_relations(env) -> None:
+    canonical = env.get_canonical_features()
+    node_ids = _node_ids(canonical)
+    seen: dict[tuple[int, int], np.ndarray] = {}
+
+    for source, target in RELATION_TYPES:
+        values = canonical.pairwise_features[(source, target)]
+        for row, source_node in enumerate(node_ids[source]):
+            for column, target_node in enumerate(node_ids[target]):
+                key = (int(source_node), int(target_node))
+                if key in seen:
+                    np.testing.assert_array_equal(seen[key], values[row, column])
+                else:
+                    seen[key] = values[row, column]
+
+
+def test_flat_set_and_graph_expose_identical_pairwise_semantics(env) -> None:
+    canonical = env.get_canonical_features()
+    padded = env.get_canonical_sets()
+    graph = env.get_canonical_graph()
+    flat = env._get_observation()
+    counts = canonical.node_counts()
+
+    for relation in RELATION_TYPES:
+        source, target = relation
+        expected = canonical.pairwise_features[relation]
+        np.testing.assert_array_equal(
+            padded.pairwise_features[relation][: counts[source], : counts[target]],
+            expected,
+        )
+        np.testing.assert_array_equal(relation_matrix(graph, relation), expected)
+
+    # The flat vector is the padded view, so a matching padded flatten proves the
+    # flat baseline observes exactly the same pairwise values.
+    np.testing.assert_array_equal(flat, padded.flatten())
+
+
+def test_padded_pairwise_masks_are_entity_mask_outer_products(env) -> None:
+    canonical = env.get_canonical_features()
+    shape = CanonicalShapeSpec(
+        max_trucks=len(env.trucks) + 1,
+        max_customers=len(env.task_registry) + 2,
+        max_chargers=len(env.charging_nodes) + 1,
+        max_actions=env.action_space.n + 3,
+    )
+    padded = pad_canonical_features(canonical, shape)
+    masks = padded.entity_masks()
+
+    for relation in RELATION_TYPES:
+        source, target = relation
+        mask = padded.pairwise_mask[relation]
+        np.testing.assert_array_equal(mask, np.outer(masks[source], masks[target]))
+        values = padded.pairwise_features[relation]
+        assert np.isfinite(values).all()
+        assert not values[~mask].any()
+        np.testing.assert_array_equal(
+            values[mask],
+            canonical.pairwise_features[relation].reshape(-1, len(EDGE_FEATURES)),
+        )
+
+
+def test_flat_size_accounts_for_the_pairwise_block(env) -> None:
+    shape = env.canonical_shape
+    observation = canonical_flat_observation(env.get_canonical_features(), shape)
+
+    limits = shape.node_limits
+    cells = sum(limits[source] * limits[target] for source, target in RELATION_TYPES)
+    assert shape.pairwise_size == cells * len(EDGE_FEATURES) + cells
+    assert observation.shape == (shape.flat_size,)
+    assert env.observation_space.shape == (shape.flat_size,)
+    assert env.observation_space.contains(observation)
+
+
+@pytest.mark.parametrize("permuted_type", NODE_TYPES)
+def test_pairwise_extraction_is_source_and_target_permutation_covariant(
+    env, permuted_type
+) -> None:
+    canonical = env.get_canonical_features()
+    node_ids = _node_ids(canonical)
+    order = np.arange(len(node_ids[permuted_type]))
+    if len(order) < 2:
+        pytest.skip(f"{permuted_type} set is too small to permute")
+    order = order[::-1]
+
+    permuted_ids = dict(node_ids)
+    permuted_ids[permuted_type] = node_ids[permuted_type][order]
+    permuted = extract_pairwise_relations(env.transport_graph, permuted_ids)
+    baseline = extract_pairwise_relations(env.transport_graph, node_ids)
+
+    for source, target in RELATION_TYPES:
+        expected = baseline[(source, target)]
+        if source == permuted_type:
+            expected = expected[order]
+        if target == permuted_type:
+            expected = expected[:, order]
+        np.testing.assert_array_equal(permuted[(source, target)], expected)
+
+
+def test_graph_adapter_never_queries_the_transport_graph(env) -> None:
+    canonical = env.get_canonical_features()
+    graph = canonical_graph_features(canonical)
+
+    for relation in RELATION_TYPES:
+        np.testing.assert_array_equal(
+            relation_matrix(graph, relation), canonical.pairwise_features[relation]
+        )
+
+
+def test_unreachable_pairs_are_finite_zero_and_flagged() -> None:
+    class _BrokenGraph:
+        def get_path_energy(self, source, target):
+            if source != target:
+                raise ValueError("no path")
+            return 0.0
+
+        def get_time_distance(self, source, target):
+            if source != target:
+                return float("inf")
+            return 0.0
+
+    relations = extract_pairwise_relations(
+        _BrokenGraph(),
+        {
+            "truck": np.asarray([0, 1]),
+            "customer": np.asarray([2]),
+            "charger": np.asarray([3]),
+        },
+    )
+    reachable_column = EDGE_FEATURES.index("reachable")
+    for values in relations.values():
+        assert np.isfinite(values).all()
+    off_diagonal = relations[("truck", "customer")]
+    assert off_diagonal[:, :, reachable_column].sum() == 0.0
+    assert not off_diagonal.any()
+    assert relations[("truck", "truck")][0, 0, reachable_column] == 1.0
+
+
+def test_depot_is_observable_from_every_node_type(env) -> None:
+    """The mandatory return destination must be visible before it is actionable.
+
+    The depot is not a truck, customer, or charger, so it appears in none of the
+    nine typed relations. Without these columns a policy cannot price the return
+    leg until the last customer is served, which is far too late to reserve
+    energy for it.
+    """
+    from EVRoutingEnv.state.features import CHARGER_FEATURES, DEPOT_FEATURES
+
+    features = env.get_canonical_features()
+    depot = int(env.joint_instance.depot_node)
+
+    for names, rows, id_column in (
+        (TRUCK_FEATURES, features.truck_features, "current_node"),
+        (CUSTOMER_FEATURES, features.customer_features, "node_id"),
+        (CHARGER_FEATURES, features.charger_features, "node_id"),
+    ):
+        for column in DEPOT_FEATURES:
+            assert column in names
+        energy_column = names.index("depot_energy_kwh")
+        hours_column = names.index("depot_travel_hours")
+        reach_column = names.index("depot_reachable")
+        for row in rows:
+            node = int(row[names.index(id_column)])
+            reachable = row[reach_column] == 1.0
+            assert np.isfinite(row[energy_column])
+            assert np.isfinite(row[hours_column])
+            if reachable:
+                assert row[energy_column] == pytest.approx(
+                    env.transport_graph.get_path_energy(node, depot), rel=1e-5
+                )
+                assert row[hours_column] == pytest.approx(
+                    env.transport_graph.get_time_distance(node, depot), rel=1e-5
+                )
+            else:
+                # Unreachable pairs are zeroed with the flag cleared, never inf.
+                assert row[energy_column] == 0.0
+                assert row[hours_column] == 0.0
+
+
+def test_truck_rows_expose_return_energy_headroom(env) -> None:
+    features = env.get_canonical_features()
+    depot = int(env.joint_instance.depot_node)
+    headroom_column = TRUCK_FEATURES.index("battery_minus_depot_energy")
+    battery_column = TRUCK_FEATURES.index("battery_kwh")
+
+    for row, truck in zip(
+        features.truck_features,
+        sorted(env.trucks, key=lambda item: item.truck_id),
+        strict=True,
+    ):
+        expected = float(truck.current_battery) - env.transport_graph.get_path_energy(
+            int(truck.current_node), depot
+        )
+        assert row[headroom_column] == pytest.approx(expected, rel=1e-5)
+        assert row[battery_column] == pytest.approx(float(truck.current_battery))
+
+
+def test_depot_action_reports_its_energy_even_while_customers_remain(env) -> None:
+    """A rejected depot action must still price the return leg."""
+    from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
+
+    decisions = joint_action_feasibility(env)
+    depot_indices = [
+        index
+        for index, decision in enumerate(decisions)
+        if decision.action_kind is ActionKind.DEPOT
+    ]
+    assert depot_indices
+
+    energy_column = ACTION_FEATURES.index("required_energy")
+    features = env.get_canonical_features()
+    for index in depot_indices:
+        decision = decisions[index]
+        if decision.reason.value in {"customers_remain", "depot_return_not_required"}:
+            # -1.0 is the sentinel for "no value"; the whole point of the fix is
+            # that this rejection now carries a real number.
+            assert features.action_features[index, energy_column] >= 0.0
 
 
 @pytest.mark.parametrize("observation_mode", ["unknown", "canonical_graph"])

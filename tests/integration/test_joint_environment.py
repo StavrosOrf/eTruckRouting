@@ -23,6 +23,7 @@ from EVRoutingEnv.models.environment.event_handlers import (
     EventType,
 )
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
+from EVRoutingEnv.state.features import SCHEMA_VERSION
 from EVRoutingEnv.utils.utils import load_config
 
 
@@ -57,7 +58,7 @@ def test_primary_joint_yaml_is_directly_runnable() -> None:
         observation, info = env.reset(seed=12345)
         assert observation.shape == env.observation_space.shape
         assert info["problem_mode"] == "joint_fleet"
-        assert info["feature_schema_version"] == "joint-fleet-v1"
+        assert info["feature_schema_version"] == SCHEMA_VERSION
         assert env.charging_action_mode == "target_soc"
         assert len(env.task_registry) == 10
         assert env.mask_fn().any()

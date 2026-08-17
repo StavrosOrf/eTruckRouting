@@ -1,0 +1,50 @@
+[
+  {
+    "name": "s1_short_hops_abundant",
+    "overrides": {
+      "truck": {"battery_capacity": 1600.0},
+      "environment": {"min_hop_distance": 4.0, "max_hop_distance": 14.0, "max_time": 400.0, "max_episode_steps": 400},
+      "traffic": {"enable_energy_uncertainty": false, "std_dev_factor": 0.0},
+      "delivery": {"enable_stochastic_unloading": false}
+    },
+    "advance_success": 0.70,
+    "min_updates": 10
+  },
+  {
+    "name": "s2_medium_hops",
+    "overrides": {
+      "truck": {"battery_capacity": 1100.0},
+      "environment": {"min_hop_distance": 6.0, "max_hop_distance": 24.0, "max_time": 320.0, "max_episode_steps": 320},
+      "traffic": {"enable_energy_uncertainty": false, "std_dev_factor": 0.05},
+      "delivery": {"enable_stochastic_unloading": true}
+    },
+    "advance_success": 0.70,
+    "min_updates": 10
+  },
+  {
+    "name": "s3_longer_hops",
+    "overrides": {
+      "truck": {"battery_capacity": 800.0},
+      "environment": {"min_hop_distance": 8.0, "max_hop_distance": 34.0, "max_time": 260.0, "max_episode_steps": 260},
+      "traffic": {"enable_energy_uncertainty": true, "energy_uncertainty_factor": 0.02, "std_dev_factor": 0.10}
+    },
+    "advance_success": 0.65,
+    "min_updates": 12
+  },
+  {
+    "name": "s4_near_target",
+    "overrides": {
+      "truck": {"battery_capacity": 550.0},
+      "environment": {"min_hop_distance": 9.0, "max_hop_distance": 44.0, "max_time": 220.0, "max_episode_steps": 220},
+      "traffic": {"enable_energy_uncertainty": true, "energy_uncertainty_factor": 0.035, "std_dev_factor": 0.12}
+    },
+    "advance_success": 0.60,
+    "min_updates": 15
+  },
+  {
+    "name": "s5_target",
+    "overrides": {},
+    "advance_success": 1.01,
+    "min_updates": 20
+  }
+]

@@ -2,6 +2,8 @@
 
 Updated: 2026-08-11
 
+For the complete restart snapshot, worktree map, and implementation-level resumption instructions, see `07_implementation_handoff.md`.
+
 ## Verified environment surface
 
 - [x] Primary joint fleet assignment, sequencing, charging, service, and depot return.

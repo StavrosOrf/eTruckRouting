@@ -181,17 +181,27 @@ def evaluate_joint_route(
                     target_node=target_node,
                 )
     elif action_kind is ActionKind.DEPOT:
+        # These rejections are reported with the return leg's energy attached.
+        # The verdict is unchanged -- only the diagnostic is richer -- so that a
+        # policy can price the mandatory depot return before the last customer
+        # is served, rather than discovering the cost once it is too late.
         if not task_registry.all_served():
             return FeasibilityResult.reject(
                 FeasibilityReason.CUSTOMERS_REMAIN,
                 action_kind,
                 target_node=target_node,
+                required_energy=_nominal_leg_energy(
+                    transport_graph, truck, target_node, energy_multiplier
+                ),
             )
         if not truck.return_to_depot_pending:
             return FeasibilityResult.reject(
                 FeasibilityReason.DEPOT_RETURN_NOT_REQUIRED,
                 action_kind,
                 target_node=target_node,
+                required_energy=_nominal_leg_energy(
+                    transport_graph, truck, target_node, energy_multiplier
+                ),
             )
 
     if not math.isfinite(energy_multiplier) or energy_multiplier < 1.0:
@@ -462,6 +472,24 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
             f"action space of size {env.action_space.n}"
         )
     return decisions
+
+
+def _nominal_leg_energy(
+    transport_graph: Any,
+    truck: Any,
+    target_node: int,
+    energy_multiplier: float,
+) -> float | None:
+    """Pessimistic energy for one leg, or ``None`` when the pair is unreachable."""
+    try:
+        nominal = float(
+            transport_graph.get_path_energy(int(truck.current_node), int(target_node))
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(nominal) or nominal < 0.0:
+        return None
+    return nominal * float(energy_multiplier)
 
 
 def _classify_destination(

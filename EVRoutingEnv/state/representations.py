@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from numbers import Integral
 
@@ -12,14 +11,25 @@ from EVRoutingEnv.state.features import (
     ACTION_FEATURES,
     CHARGER_FEATURES,
     CUSTOMER_FEATURES,
+    EDGE_FEATURES,
     GLOBAL_FEATURES,
+    RELATION_TYPES,
     SCHEMA_VERSION,
     TRUCK_FEATURES,
     CanonicalFleetFeatures,
 )
 
 
-EDGE_FEATURES = ("nominal_energy_kwh", "nominal_travel_hours", "reachable")
+__all__ = [
+    "EDGE_FEATURES",
+    "RELATION_TYPES",
+    "CanonicalGraphFeatures",
+    "CanonicalShapeSpec",
+    "PaddedCanonicalFeatures",
+    "canonical_flat_observation",
+    "canonical_graph_observation",
+    "pad_canonical_features",
+]
 
 
 @dataclass(frozen=True)
@@ -38,13 +48,27 @@ class CanonicalShapeSpec:
             ("max_chargers", self.max_chargers),
             ("max_actions", self.max_actions),
         ):
-            if (
-                not isinstance(value, Integral)
-                or isinstance(value, bool)
-                or value < 0
-            ):
+            if not isinstance(value, Integral) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a nonnegative integer")
             object.__setattr__(self, name, int(value))
+
+    @property
+    def node_limits(self) -> dict[str, int]:
+        """Return the padded row limit for each canonical node type."""
+        return {
+            "truck": self.max_trucks,
+            "customer": self.max_customers,
+            "charger": self.max_chargers,
+        }
+
+    @property
+    def pairwise_size(self) -> int:
+        """Number of scalars used by the padded pairwise relation block."""
+        limits = self.node_limits
+        cells = sum(
+            limits[source] * limits[target] for source, target in RELATION_TYPES
+        )
+        return cells * len(EDGE_FEATURES) + cells
 
     @property
     def flat_size(self) -> int:
@@ -56,12 +80,11 @@ class CanonicalShapeSpec:
             + self.max_actions * len(ACTION_FEATURES)
         )
         validity_masks = (
-            self.max_trucks
-            + self.max_customers
-            + self.max_chargers
-            + self.max_actions
+            self.max_trucks + self.max_customers + self.max_chargers + self.max_actions
         )
-        return feature_values + validity_masks + len(GLOBAL_FEATURES)
+        return (
+            feature_values + validity_masks + self.pairwise_size + len(GLOBAL_FEATURES)
+        )
 
 
 @dataclass(frozen=True)
@@ -78,6 +101,16 @@ class PaddedCanonicalFeatures:
     action_features: np.ndarray
     action_mask: np.ndarray
     global_features: np.ndarray
+    pairwise_features: dict[tuple[str, str], np.ndarray]
+    pairwise_mask: dict[tuple[str, str], np.ndarray]
+
+    def entity_masks(self) -> dict[str, np.ndarray]:
+        """Return the padding mask of each canonical node type."""
+        return {
+            "truck": self.truck_mask,
+            "customer": self.customer_mask,
+            "charger": self.charger_mask,
+        }
 
     def validate(self, shape: CanonicalShapeSpec) -> None:
         expected = (
@@ -122,22 +155,63 @@ class PaddedCanonicalFeatures:
         ):
             if mask.dtype != np.bool_:
                 raise ValueError(f"{label} must have boolean dtype")
+        self._validate_pairwise(shape)
+
+    def _validate_pairwise(self, shape: CanonicalShapeSpec) -> None:
+        if set(self.pairwise_features) != set(RELATION_TYPES):
+            raise ValueError("padded pairwise features must cover all nine relations")
+        if set(self.pairwise_mask) != set(RELATION_TYPES):
+            raise ValueError("padded pairwise masks must cover all nine relations")
+        limits = shape.node_limits
+        entity_masks = self.entity_masks()
+        for relation in RELATION_TYPES:
+            source, target = relation
+            values = self.pairwise_features[relation]
+            mask = self.pairwise_mask[relation]
+            expected = (limits[source], limits[target], len(EDGE_FEATURES))
+            if values.shape != expected:
+                raise ValueError(
+                    f"padded relation {relation} shape {values.shape} does not "
+                    f"match {expected}"
+                )
+            if not np.isfinite(values).all():
+                raise ValueError(f"padded relation {relation} has non-finite values")
+            if mask.shape != expected[:2]:
+                raise ValueError(f"padded relation mask {relation} has the wrong shape")
+            if mask.dtype != np.bool_:
+                raise ValueError(f"padded relation mask {relation} must be boolean")
+            expected_mask = np.outer(entity_masks[source], entity_masks[target])
+            if not np.array_equal(mask, expected_mask):
+                raise ValueError(
+                    f"padded relation mask {relation} must be the outer product of "
+                    "its source and target entity masks"
+                )
+            if values[~mask].any():
+                raise ValueError(
+                    f"padded relation {relation} must be zero outside its mask"
+                )
 
     def flatten(self) -> np.ndarray:
-        """Return one deterministic vector without dropping type masks."""
-        return np.concatenate(
-            (
-                self.truck_features.ravel(),
-                self.customer_features.ravel(),
-                self.charger_features.ravel(),
-                self.action_features.ravel(),
-                self.truck_mask.astype(np.float32),
-                self.customer_mask.astype(np.float32),
-                self.charger_mask.astype(np.float32),
-                self.action_mask.astype(np.float32),
-                self.global_features,
-            )
-        ).astype(np.float32, copy=False)
+        """Return one deterministic vector without dropping type or pair masks."""
+        blocks = [
+            self.truck_features.ravel(),
+            self.customer_features.ravel(),
+            self.charger_features.ravel(),
+            self.action_features.ravel(),
+            self.truck_mask.astype(np.float32),
+            self.customer_mask.astype(np.float32),
+            self.charger_mask.astype(np.float32),
+            self.action_mask.astype(np.float32),
+        ]
+        blocks.extend(
+            self.pairwise_features[relation].ravel() for relation in RELATION_TYPES
+        )
+        blocks.extend(
+            self.pairwise_mask[relation].ravel().astype(np.float32)
+            for relation in RELATION_TYPES
+        )
+        blocks.append(self.global_features)
+        return np.concatenate(blocks).astype(np.float32, copy=False)
 
 
 @dataclass(frozen=True)
@@ -167,6 +241,8 @@ class CanonicalGraphFeatures:
                 raise ValueError(f"{node_type} node features contain non-finite values")
         if set(self.edge_indices) != set(self.edge_features):
             raise ValueError("edge index and feature relations do not match")
+        if set(self.edge_indices) != set(RELATION_TYPES):
+            raise ValueError("graph must contain exactly the nine typed relations")
         for relation, edge_index in self.edge_indices.items():
             values = self.edge_features[relation]
             if edge_index.ndim != 2 or edge_index.shape[0] != 2:
@@ -195,9 +271,7 @@ def pad_canonical_features(
             f"expected {SCHEMA_VERSION!r}"
         )
 
-    trucks, truck_mask = _pad_rows(
-        features.truck_features, shape.max_trucks, "trucks"
-    )
+    trucks, truck_mask = _pad_rows(features.truck_features, shape.max_trucks, "trucks")
     customers, customer_mask = _pad_rows(
         features.customer_features, shape.max_customers, "customers"
     )
@@ -207,6 +281,25 @@ def pad_canonical_features(
     actions, action_mask = _pad_rows(
         features.action_features, shape.max_actions, "actions"
     )
+    entity_masks = {
+        "truck": truck_mask,
+        "customer": customer_mask,
+        "charger": charger_mask,
+    }
+    pairwise_features: dict[tuple[str, str], np.ndarray] = {}
+    pairwise_mask: dict[tuple[str, str], np.ndarray] = {}
+    limits = shape.node_limits
+    for relation in RELATION_TYPES:
+        source, target = relation
+        values = features.pairwise_features[relation]
+        padded = np.zeros(
+            (limits[source], limits[target], len(EDGE_FEATURES)), dtype=np.float32
+        )
+        rows, columns = values.shape[0], values.shape[1]
+        padded[:rows, :columns] = values
+        pairwise_features[relation] = padded
+        pairwise_mask[relation] = np.outer(entity_masks[source], entity_masks[target])
+
     result = PaddedCanonicalFeatures(
         schema_version=features.schema_version,
         truck_features=trucks,
@@ -218,6 +311,8 @@ def pad_canonical_features(
         action_features=actions,
         action_mask=action_mask,
         global_features=features.global_features.astype(np.float32, copy=True),
+        pairwise_features=pairwise_features,
+        pairwise_mask=pairwise_mask,
     )
     result.validate(shape)
     return result
@@ -236,43 +331,45 @@ def canonical_flat_observation(
 
 def canonical_graph_observation(env) -> CanonicalGraphFeatures:
     """Create a complete typed state graph from the canonical snapshot."""
-    canonical = env.get_canonical_features()
+    return canonical_graph_features(env.get_canonical_features())
+
+
+def canonical_graph_features(
+    features: CanonicalFleetFeatures,
+) -> CanonicalGraphFeatures:
+    """Expand the canonical pairwise tensors into dense typed edge lists.
+
+    The adapter never queries the transport graph itself; it consumes exactly
+    the pairwise values the flat and padded-set adapters receive.
+    """
+    features.validate()
     node_features = {
-        "truck": canonical.truck_features.copy(),
-        "customer": canonical.customer_features.copy(),
-        "charger": canonical.charger_features.copy(),
+        "truck": features.truck_features.copy(),
+        "customer": features.customer_features.copy(),
+        "charger": features.charger_features.copy(),
     }
-    node_ids = {
-        "truck": canonical.truck_features[
-            :, TRUCK_FEATURES.index("current_node")
-        ].astype(np.int64),
-        "customer": canonical.customer_features[
-            :, CUSTOMER_FEATURES.index("node_id")
-        ].astype(np.int64),
-        "charger": canonical.charger_features[
-            :, CHARGER_FEATURES.index("node_id")
-        ].astype(np.int64),
-    }
+    counts = features.node_counts()
     edge_indices: dict[tuple[str, str], np.ndarray] = {}
     edge_features: dict[tuple[str, str], np.ndarray] = {}
-    for source_type, source_nodes in node_ids.items():
-        for target_type, target_nodes in node_ids.items():
-            relation = (source_type, target_type)
-            index, values = _complete_relation(
-                source_nodes,
-                target_nodes,
-                env.transport_graph,
-            )
-            edge_indices[relation] = index
-            edge_features[relation] = values
+    for relation in RELATION_TYPES:
+        source, target = relation
+        source_count, target_count = counts[source], counts[target]
+        rows = np.repeat(np.arange(source_count, dtype=np.int64), target_count)
+        columns = np.tile(np.arange(target_count, dtype=np.int64), source_count)
+        edge_indices[relation] = np.stack((rows, columns))
+        edge_features[relation] = (
+            features.pairwise_features[relation]
+            .reshape(source_count * target_count, len(EDGE_FEATURES))
+            .astype(np.float32, copy=True)
+        )
 
     result = CanonicalGraphFeatures(
-        schema_version=canonical.schema_version,
+        schema_version=features.schema_version,
         node_features=node_features,
         edge_indices=edge_indices,
         edge_features=edge_features,
-        action_features=canonical.action_features.copy(),
-        global_features=canonical.global_features.copy(),
+        action_features=features.action_features.copy(),
+        global_features=features.global_features.copy(),
     )
     result.validate()
     return result
@@ -285,9 +382,7 @@ def _pad_rows(
 ) -> tuple[np.ndarray, np.ndarray]:
     count, width = values.shape
     if count > maximum:
-        raise ValueError(
-            f"{label} count {count} exceeds configured maximum {maximum}"
-        )
+        raise ValueError(f"{label} count {count} exceeds configured maximum {maximum}")
     padded = np.zeros((maximum, width), dtype=np.float32)
     mask = np.zeros(maximum, dtype=bool)
     if count:
@@ -296,38 +391,18 @@ def _pad_rows(
     return padded, mask
 
 
-def _complete_relation(
-    source_nodes: np.ndarray,
-    target_nodes: np.ndarray,
-    transport_graph,
-) -> tuple[np.ndarray, np.ndarray]:
-    edge_count = len(source_nodes) * len(target_nodes)
-    index = np.empty((2, edge_count), dtype=np.int64)
-    values = np.zeros((edge_count, len(EDGE_FEATURES)), dtype=np.float32)
-    offset = 0
-    for source_index, source_node in enumerate(source_nodes):
-        for target_index, target_node in enumerate(target_nodes):
-            index[:, offset] = (source_index, target_index)
-            energy = _path_value(
-                transport_graph.get_path_energy,
-                int(source_node),
-                int(target_node),
-            )
-            travel_time = _path_value(
-                transport_graph.get_time_distance,
-                int(source_node),
-                int(target_node),
-            )
-            reachable = math.isfinite(energy) and math.isfinite(travel_time)
-            if reachable:
-                values[offset] = (energy, travel_time, 1.0)
-            offset += 1
-    return index, values
-
-
-def _path_value(function, source: int, target: int) -> float:
-    try:
-        value = float(function(source, target))
-    except (KeyError, TypeError, ValueError):
-        return math.inf
-    return value if math.isfinite(value) and value >= 0.0 else math.inf
+def relation_matrix(
+    graph: CanonicalGraphFeatures,
+    relation: tuple[str, str],
+) -> np.ndarray:
+    """Fold one typed edge list back into its dense source-target matrix."""
+    if relation not in graph.edge_indices:
+        raise KeyError(f"graph has no relation {relation}")
+    source, target = relation
+    counts = {
+        node_type: int(values.shape[0])
+        for node_type, values in graph.node_features.items()
+    }
+    return graph.edge_features[relation].reshape(
+        counts[source], counts[target], len(EDGE_FEATURES)
+    )

@@ -8,7 +8,6 @@ to each state.  No head may exchange information across pointer segments.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import pairwise
 
 import torch
 import torch.nn.functional as F
@@ -93,12 +92,11 @@ class _BaseActionHead(nn.Module):
         if not torch.isfinite(action_features).all():
             raise ValueError("action_features contain non-finite values")
 
-        boundaries = ptr.detach().cpu().tolist()
-        if boundaries[0] != 0:
+        if int(ptr[0].item()) != 0:
             raise ValueError("ptr must start at zero")
-        if boundaries[-1] != action_features.shape[0]:
+        if int(ptr[-1].item()) != action_features.shape[0]:
             raise ValueError("ptr must end at the number of action rows")
-        if any(right < left for left, right in pairwise(boundaries)):
+        if ptr.numel() > 1 and bool((ptr[1:] < ptr[:-1]).any().item()):
             raise ValueError("ptr must be nondecreasing")
         return embedding
 
@@ -200,22 +198,34 @@ class CompleteGraphGCNActionHead(_BaseActionHead):
 
     @staticmethod
     def build_complete_edge_index(ptr: torch.Tensor) -> torch.Tensor:
-        """Return all within-segment ordered pairs ``source != target``."""
+        """Return all within-segment ordered pairs ``source != target``.
+
+        Built as one masked grid rather than a Python loop over segments; the
+        edge ordering matches the per-segment construction exactly.
+        """
         if ptr.ndim != 1:
             raise ValueError("ptr must be one-dimensional")
-        boundaries = ptr.detach().cpu().tolist()
-        edges: list[torch.Tensor] = []
-        for start, end in pairwise(boundaries):
-            nodes = torch.arange(start, end, device=ptr.device)
-            if nodes.numel() <= 1:
-                continue
-            source = nodes.repeat_interleave(nodes.numel())
-            target = nodes.repeat(nodes.numel())
-            keep = source != target
-            edges.append(torch.stack((source[keep], target[keep])))
-        if not edges:
-            return torch.zeros((2, 0), dtype=torch.long, device=ptr.device)
-        return torch.cat(edges, dim=1)
+        empty = torch.zeros((2, 0), dtype=torch.long, device=ptr.device)
+        if ptr.numel() < 2:
+            return empty
+        counts = (ptr[1:] - ptr[:-1]).to(torch.long)
+        keep = counts > 1
+        if not bool(keep.any().item()):
+            return empty
+        counts = counts[keep]
+        starts = ptr[:-1].to(torch.long)[keep]
+        width = int(counts.max().item())
+
+        positions = torch.arange(width, device=ptr.device)
+        rows = positions.view(1, width, 1)
+        columns = positions.view(1, 1, width)
+        limit = counts.view(-1, 1, 1)
+        valid = (rows < limit) & (columns < limit) & (rows != columns)
+        source = starts.view(-1, 1, 1) + rows
+        target = starts.view(-1, 1, 1) + columns
+        return torch.stack(
+            (source.expand_as(valid)[valid], target.expand_as(valid)[valid])
+        )
 
 
 class _SelfAttentionBlock(nn.Module):
@@ -236,8 +246,14 @@ class _SelfAttentionBlock(nn.Module):
         )
         self.output_norm = nn.LayerNorm(hidden_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        attended, _ = self.attention(x, x, x, need_weights=False)
+    def forward(
+        self,
+        x: torch.Tensor,
+        key_padding_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        attended, _ = self.attention(
+            x, x, x, need_weights=False, key_padding_mask=key_padding_mask
+        )
         x = self.attention_norm(x + attended)
         return self.output_norm(x + self.feed_forward(x))
 
@@ -290,21 +306,29 @@ class SelfAttentionActionHead(_BaseActionHead):
     ) -> ActionHeadOutput:
         embedding = self._validate_inputs(embedding, action_features, ptr)
         actions = F.relu(self.action_proj(action_features))
-        boundaries = ptr.detach().cpu().tolist()
-        encoded_segments: list[torch.Tensor] = []
-        for start, end in pairwise(boundaries):
-            segment = actions[start:end].unsqueeze(0)
-            if end <= start:
-                encoded_segments.append(segment.squeeze(0))
-                continue
-            for layer in self.layers:
-                segment = layer(segment)
-            encoded_segments.append(segment.squeeze(0))
-        encoded = (
-            torch.cat(encoded_segments, dim=0)
-            if encoded_segments
-            else actions.new_zeros((0, self.hidden_dim))
+        if actions.shape[0] == 0:
+            return self._score_actions(
+                embedding, actions.new_zeros((0, self.hidden_dim)), ptr
+            )
+
+        # Pad the ragged segments into one batch so that every state's action set
+        # is attended in a single kernel launch. `key_padding_mask` keeps each
+        # segment isolated exactly as the per-segment loop did.
+        counts = ptr[1:] - ptr[:-1]
+        nonempty = counts > 0
+        segment_counts = counts[nonempty]
+        width = int(segment_counts.max().item())
+        positions = torch.arange(width, device=actions.device)
+        valid = positions.unsqueeze(0) < segment_counts.unsqueeze(1)
+        starts = ptr[:-1][nonempty]
+        gather = (starts.unsqueeze(1) + positions.unsqueeze(0)).clamp(
+            max=actions.shape[0] - 1
         )
+
+        padded = actions[gather] * valid.unsqueeze(-1)
+        for layer in self.layers:
+            padded = layer(padded, key_padding_mask=~valid)
+        encoded = padded[valid]
         return self._score_actions(embedding, encoded, ptr)
 
 

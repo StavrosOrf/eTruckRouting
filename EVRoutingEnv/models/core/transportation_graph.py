@@ -40,6 +40,50 @@ class TransportationGraph:
         if precompute_distances:
             self._initialize_distance_cache()
 
+        # Lazily built dense all-pairs view used by the canonical state encoders.
+        self._dense_node_index: dict[int, int] | None = None
+        self._dense_transport: np.ndarray | None = None
+
+    def dense_transport_matrix(self) -> tuple[dict[int, int], np.ndarray]:
+        """Return an all-pairs (energy, travel hours, reachable) lookup table.
+
+        The road network is fixed for the lifetime of the environment, so this
+        table is built once and then reused by every canonical state extraction.
+        Unreachable pairs are stored as zeros with a reachability flag of zero
+        so that downstream tensors stay finite.
+        """
+        if self._dense_transport is not None and self._dense_node_index is not None:
+            return self._dense_node_index, self._dense_transport
+
+        nodes = sorted(self.graph.nodes())
+        index = {int(node): position for position, node in enumerate(nodes)}
+        values = np.zeros((len(nodes), len(nodes), 3), dtype=np.float32)
+        for source_position, source in enumerate(nodes):
+            for target_position, target in enumerate(nodes):
+                energy = self._finite_path_value(self.get_path_energy, source, target)
+                travel_hours = self._finite_path_value(
+                    self.get_time_distance, source, target
+                )
+                if energy is not None and travel_hours is not None:
+                    values[source_position, target_position] = (
+                        energy,
+                        travel_hours,
+                        1.0,
+                    )
+        self._dense_node_index = index
+        self._dense_transport = values
+        return index, values
+
+    @staticmethod
+    def _finite_path_value(function, source: int, target: int) -> float | None:
+        try:
+            value = float(function(int(source), int(target)))
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not np.isfinite(value) or value < 0.0:
+            return None
+        return value
+
     def _extract_charging_nodes(self) -> list[int]:
         """Extract all nodes that have charging stations."""
         return [

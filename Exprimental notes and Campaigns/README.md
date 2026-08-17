@@ -15,6 +15,10 @@ This directory is the source of truth for the top-journal revision campaign. The
 - `04_reviewer_response_todo.md`: point-by-point editor, reviewer, and coauthor response matrix aligned with D1–D10.
 - `05_execution_todo.md`: prioritized implementation and experiment checklist with current evidence.
 - `06_environment_verification.md`: supported environment semantics, verification commands, known constraints, and the immediate handoff checklist.
+- `07_implementation_handoff.md`: exact branch/worktree snapshot, completed code, dependency state, restart commands, critical information-parity gap, and ordered resumption steps.
+- `08_canonical_learning_and_baselines.md`: the canonical observation, the encoder/head sweep, the tuned baselines, and the warm-started learning results.
+- `09_graphppo_from_scratch_campaign.md`: GraphPPO trained from random initialisation with no imitation, the curriculum that made it work, and the makespan-era headline result.
+- `10_travel_time_objective_campaign.md`: **complete.** The objective moves from fleet makespan to **total fleet travel time**. Diagnosis of where GraphPPO lost, the three misalignments fixed (measurement, reward, per-action features), the re-tuned baselines, the four-stage campaign, and the final test-split result: GraphPPO at 119.9 fleet hours and 0.857 success, level with the CP-SAT planner on paired travel hours while solving 25 points more instances, and best on every column of the best-known travel reference.
 
 ## Current branch baseline
 

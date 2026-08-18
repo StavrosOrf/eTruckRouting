@@ -50,6 +50,10 @@ LEARNED_RUNS: dict[str, tuple[str, str]] = {
         "results/canonical/mask_ablation/mask_seed2",
         "no feasibility mask, seed 2",
     ),
+    "ppo_flat_unmasked": (
+        "results/canonical/learned_baselines/ppo_flat_unmasked",
+        "flat state, independent action scoring, no feasibility mask (the PPO row)",
+    ),
     "ppo_flat": (
         "results/canonical/learned_baselines/flat__independent",
         "flat state, independent action scoring (MaskPPO-equivalent)",

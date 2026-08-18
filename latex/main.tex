@@ -1147,23 +1147,23 @@ The objective in this setting is total fleet travel time on a plan that serves e
 \begin{table}
 \centering
 \small
-\caption{Performance comparison for the joint fleet eVRP setting over 500 held-out evaluation scenarios, in which assignment, sequencing, charging, and depot return are all decided online. GraphPPO reports the mean over three independent training seeds with the seed range in brackets; all other learning-based rows are single seeds trained at a smaller interaction budget. Travel, charging, service, and total times are fleet totals averaged over all episodes, so a method that declines instances is not flattered by conditioning.}
+\caption{Performance comparison for the joint fleet eVRP setting over 500 held-out evaluation scenarios, in which assignment, sequencing, charging, and depot return are all decided online. GraphPPO reports the mean over three independent training seeds with the seed range in brackets; all other learning-based rows are single seeds trained at a smaller interaction budget. As in the eTFRP tables, PPO denotes a flat-state policy with independent action scoring and no feasibility mask, and MaskPPO the same policy with the hard mask; DeepSets-PPO, the state-GNN, and the attention model are reported in the text rather than as further columns. Travel, charging, service, and total times are fleet totals averaged over all episodes, so a method that declines instances is not flattered by conditioning.}
 \begin{tabular}{@{}lcccccc@{}}
 \toprule
 Metric & CP-SAT & ALNS & Heuristic & PPO & MaskPPO & GraphPPO (Ours) \\
 \midrule
-Success rate (\%) & $62.2$ & $61.4$ & $55.2$ & $50.6$ & $67.0$ & $\mathbf{84.3}$ $[83.0, 85.8]$ \\
-Wilson 95\% CI & $[57.9, 66.3]$ & $[57.1, 65.6]$ & $[50.8, 59.5]$ & $[46.2, 55.0]$ & $[62.8, 71.0]$ & $[79.5, 88.6]$ \\
-Completed fraction (-) & $0.932$ & $0.930$ & $0.917$ & $0.968$ & $0.980$ & $\mathbf{0.991}$ \\
-Avg.\ truck SoC at finish (\%) & $56$ & $57$ & $62$ & $46$ & $44$ & $49$ \\
-Total charging sessions (-) & $34.6$ & $35.4$ & $44.4$ & $18.9$ & $16.1$ & $\mathbf{13.4}$ \\
+Success rate (\%) & $62.2$ & $61.4$ & $55.2$ & $45.2$ & $50.6$ & $\mathbf{84.3}$ $[83.0, 85.8]$ \\
+Wilson 95\% CI & $[57.9, 66.3]$ & $[57.1, 65.6]$ & $[50.8, 59.5]$ & $[40.9, 49.6]$ & $[46.2, 55.0]$ & $[79.5, 88.6]$ \\
+Completed fraction (-) & $0.932$ & $0.930$ & $0.917$ & $0.960$ & $0.968$ & $\mathbf{0.991}$ \\
+Avg.\ truck SoC at finish (\%) & $56$ & $57$ & $62$ & $40$ & $46$ & $49$ \\
+Total charging sessions (-) & $34.6$ & $35.4$ & $44.4$ & $16.2$ & $18.9$ & $\mathbf{13.4}$ \\
 \midrule
-Total charging time (H) & $15.6$ & $15.7$ & $19.4$ & $11.2$ & $12.5$ & $\mathbf{9.4}$ \\
-Total routing time (H) & $167.5$ & $168.6$ & $199.8$ & $143.1$ & $152.3$ & $\mathbf{123.5}$ $[120.9, 125.3]$ \\
+Total charging time (H) & $15.6$ & $15.7$ & $19.4$ & $10.7$ & $11.2$ & $\mathbf{9.4}$ \\
+Total routing time (H) & $167.5$ & $168.6$ & $199.8$ & $136.6$ & $143.1$ & $\mathbf{123.5}$ $[120.9, 125.3]$ \\
 Unloading time (H) & $1.9$ & $1.9$ & $1.9$ & $2.0$ & $2.0$ & $2.0$ \\
-Total time (H) & $184.9$ & $186.3$ & $221.1$ & $156.3$ & $166.8$ & $\mathbf{134.8}$ \\
+Total time (H) & $184.9$ & $186.3$ & $221.1$ & $149.2$ & $156.3$ & $\mathbf{134.8}$ \\
 \midrule
-Exec.\ time (ms/decision) & $2.4$ & $2.0$ & $\mathbf{0.8}$ & $1.9$ & $3.9$ & $5.6$ \\
+Exec.\ time (ms/decision) & $2.4$ & $2.0$ & $\mathbf{0.8}$ & $1.9$ & $1.9$ & $5.6$ \\
 \bottomrule
 \end{tabular}
 \label{tab:joint_evrp_metrics}
@@ -1171,7 +1171,7 @@ Exec.\ time (ms/decision) & $2.4$ & $2.0$ & $\mathbf{0.8}$ & $1.9$ & $3.9$ & $5.
 
 As shown in Table~\ref{tab:joint_evrp_metrics}, the ordering observed in the eTFRP is preserved when the combinatorial decisions are restored, but the margin is obtained on a different axis. A success rate of $84.3\%$ is achieved by GraphPPO, against $62.2\%$ for CP-SAT and $61.4\%$ for ALNS, a difference of more than twenty percentage points whose Wilson intervals are disjoint. The two search-based planners agree closely with one another, which is expected given that both solve the same nominal problem and both match exhaustive enumeration where enumeration is possible; their shortfall is therefore not a failure of search but of open-loop execution under realized travel times, energy draws, and service durations.
 
-Because methods decline different instances, their conditional means are not directly comparable, and a paired reading on jointly solved scenarios is required. On the $285$ scenarios solved by both, GraphPPO and CP-SAT differ by $+0.2$ hours of fleet travel time with a $95\%$ confidence interval of $[-3.1, +3.7]$, and GraphPPO wins $53\%$ of the head-to-head comparisons; against ALNS the difference is $+0.9$ hours $[-2.5, +4.4]$. The proposed method is therefore statistically indistinguishable from a validated exact planner on the campaign objective while completing substantially more instances. Against the remaining baselines the differences are unambiguous: $-23.0$ hours $[-26.7, -19.1]$ against the heuristic and $-26.1$ hours $[-29.7, -22.3]$ against the rolling-horizon controller.
+Because methods decline different instances, their conditional means are not directly comparable, and a paired reading on jointly solved scenarios is required. On the $285$ scenarios solved by both, GraphPPO and CP-SAT differ by $+0.2$ hours of fleet travel time with a $95\%$ confidence interval of $[-3.1, +3.7]$, and GraphPPO wins $53\%$ of the head-to-head comparisons; against ALNS the difference is $+0.9$ hours $[-2.5, +4.4]$. The proposed method is therefore statistically indistinguishable from a validated exact planner on the campaign objective while completing substantially more instances. Against the remaining baselines the differences are unambiguous: $-23.0$ hours $[-26.7, -19.1]$ against the heuristic and $-26.1$ hours $[-29.7, -22.3]$ against the rolling-horizon controller. The remaining learned baselines, omitted from the table for width, sit between the two extremes: DeepSets-PPO reaches $67.0\%$ success at $152.3$ travel hours, the state-GNN with independent action scoring $61.2\%$ at $141.0$, and the constructive attention model $78.8\%$ at $144.5$. The attention model is the strongest of them, and at the matched interaction budget it is statistically indistinguishable from the proposed encoder, which is why the state encoder is not claimed as the source of the advantage.
 
 The operational metrics indicate where the advantage originates. The planners build short nominal tours, reflected in their competitive makespans, but sustain them with $34.6$ and $35.4$ charging sessions and $15.6$ to $15.7$ hours of charging, and they abandon roughly four instances in ten when execution departs from the plan. GraphPPO completes $99.1\%$ of deliveries using $13.4$ charging sessions and $9.4$ hours of charging, and its total operating time of $134.8$ hours is $27\%$ below the planners'. A conservative energy policy is retained, with an average terminal state of charge of $49\%$, but it is achieved with fewer and better-placed charging stops rather than with additional ones.
 

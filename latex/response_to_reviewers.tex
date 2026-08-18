@@ -76,12 +76,23 @@ presents the contribution as the combination rather than as the treatment of
 uncertainty per se. Table~2 now records for each quantity whether it is drawn
 exogenously or arises endogenously.
 
-We also report a limitation that this analysis exposed. In the evaluated
-instances two trucks are distributed over twenty-five stations, so charger
-contention almost never binds: an ablation that blanks the entire
-charging-queue state leaves performance statistically unchanged. The endogenous
-queueing mechanism is modelled and implemented, but the benchmark as configured
-does not exercise it, and we now say so rather than claim credit for it.
+We also report what this analysis exposed about our own evaluation. In the
+joint fleet setting of Section~\ref{sec:joint_evrp} only two trucks are
+distributed over twenty-five stations, so charger contention rarely binds, and
+an ablation that blanks the entire charging-queue state leaves performance
+inside the seed band. We therefore make no queue-related claim from that
+setting.
+
+We then constructed a regime in which contention does bind, with four trucks and
+a single port per station. Mean queueing time rises from $0.23$ to $1.92$ hours
+for the CP-SAT planner, confirming that the mechanism is exercised, and the
+learned policy incurs $1.31$ hours against the planner's $1.92$, i.e.\ $32\%$
+less waiting. Queue-aware routing is therefore real and measurable; it simply is
+not what limits performance at small fleet sizes, where the time budget is
+slack. The main eTFRP benchmark, with fleets an order of magnitude larger over
+the same twenty-five stations, is the regime in which contention is severe, and
+we make no new claim about it here because those experiments were not re-run for
+this revision.
 
 \comment{E3. The methodological novelty is unclear; component-level evidence is
 needed.}

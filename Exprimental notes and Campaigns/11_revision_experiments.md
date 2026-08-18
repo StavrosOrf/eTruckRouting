@@ -371,11 +371,15 @@ below the proposed model's worst seed and cost travel hours on top.
 architecture.** Blanking the charger queue state (0.793) or the active-truck
 flag (0.727) leaves the model inside its own seed band. For the queue features
 the explanation is measurable: two trucks across twenty-five stations with 209
-ports essentially never contend, so there is no queue signal to exploit. The
-honest statement is that this campaign's instance distribution does not
-exercise the endogenous-queue mechanism the formulation models -- which is a
-limitation of the evaluation, and one E2 and Ziyan's comment on endogenous
-queueing should be answered with rather than around.
+ports essentially never contend, so there is no queue signal to exploit at this
+fleet-to-station ratio.
+
+This is a statement about *these instances*, not about the model. Section 10.2
+builds a regime where contention does bind -- four trucks, one port per station
+-- and there the learned policy waits 32% less than the CP-SAT planner. The
+inertness measured here is therefore a limitation of the joint setting's
+evaluation distribution, which is the honest way to answer E2 and Ziyan's
+comment on endogenous queueing.
 
 ## 7. The 500-scenario test campaign
 
@@ -653,3 +657,67 @@ construction.
 Together these close R2.6 and vindicate D6: target-SoC actions at 10%
 granularity are the right choice, and both alternatives the reviewer asked
 about have now been measured rather than argued.
+
+## 10. Upward size transfer and congestion
+
+Sections 8.1-8.2 measure transfer *downward*, because the headline policy has a
+fixed observation width and cannot be evaluated above its own envelope. A
+separate policy was therefore trained on a variable-size envelope of up to four
+trucks and fourteen customers, and scored across a scale grid and a congestion
+regime. Success rate, 100 held-out scenarios per cell:
+
+| Regime | Envelope policy | CP-SAT | ALNS | Heuristic | MPC |
+| --- | --- | --- | --- | --- | --- |
+| 1 truck, 4 customers | 0.580 | **0.730** | 0.720 | 0.690 | 0.670 |
+| 2 trucks, 8 customers | 0.360 | 0.680 | **0.690** | 0.570 | 0.570 |
+| 3 trucks, 11 customers | 0.290 | **0.620** | 0.620 | 0.490 | 0.570 |
+| 4 trucks, 14 customers | 0.190 | **0.600** | 0.590 | 0.530 | 0.490 |
+| 4 trucks, 1 port/station | 0.190 | **0.590** | 0.580 | 0.510 | 0.510 |
+
+### 10.1 Training on a size envelope costs more than it buys
+
+**The envelope policy is beaten by every classical baseline at every size, and
+degrades sharply as instances grow** -- 0.580, 0.360, 0.290, 0.190 -- while the
+planners hold 0.60-0.73 throughout. For comparison, the fixed-size headline
+policy reaches 0.858 on its own 2-truck/10-customer distribution.
+
+This is a negative result and is reported as one. Training on a distribution of
+instance sizes at a fixed 2M-step budget produced a policy far weaker than a
+specialist trained on a single size for the same budget, and the deficit widens
+with size. Whether that reflects the budget, the curriculum, or something
+structural about variable-size training is not established here; what is
+established is that upward size transfer is **not** obtained for free by
+widening the training envelope, and no claim of scale generalization beyond the
+trained envelope is supported by this campaign.
+
+### 10.2 Congestion binds, and queue-aware routing is real after all
+
+Section 6 found the charger-queue features inert, which is expected when two
+trucks share twenty-five stations holding 209 ports. Reducing the network to one
+port per station with four trucks makes contention bind for the first time:
+
+| | Queue hours, CP-SAT | Queue hours, learned policy |
+| --- | --- | --- |
+| 4 trucks, normal ports | 0.23 | 0.31 |
+| 4 trucks, 1 port/station | **1.92** | **1.31** |
+
+Mean queueing time rises eight-fold for the planner, so the mechanism is
+genuinely exercised. And under that contention the learned policy waits **32%
+less than the planner** (1.31 h against 1.92 h) while both lose only about one
+point of success, because the time budget is slack at this fleet size.
+
+Two corrections follow, and the second is a correction to this document's own
+earlier text:
+
+1. The inertness of the queue features in Section 6 is a property of the
+   fleet-to-station ratio, not evidence that the model ignores queues. Given
+   contention, it routes around it better than a planner that re-solves.
+2. The earlier statement that "this campaign's instance distribution does not
+   exercise the endogenous-queue mechanism" was too broad. It holds for the
+   two-truck joint setting and not for the congestion regime, and it says
+   nothing about the main eTFRP benchmark, where fleets are an order of
+   magnitude larger over the same twenty-five stations and contention is severe
+   by construction. That benchmark was not re-run here, so no new claim is made
+   about it in either direction.
+
+Artifacts: `results/canonical/scale_campaign/`.

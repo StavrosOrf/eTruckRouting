@@ -212,11 +212,30 @@ says why and what was done instead.
    response letter referenced a label that exists only in the manuscript and
    would have compiled to `??`. Run the checker in CI; run a real compile before
    submitting.
-2. **Regenerate the architecture figure.** The panel label is drawn as glyph
-   indices against a subsetted font with no ToUnicode map, so it cannot be
-   located or rewritten without risking corruption of the figure. The caption now
-   names the panels correctly instead, so the document text is right. Replacing
-   the image needs the authors' source file.
+2. **Regenerate the architecture figure** (`latex/TruckNetwork.pdf`). The
+   caption now names the panels correctly, including `(c) Actor Network Head`,
+   so the document text is right; the pixels are not. Four routes were tried and
+   the diagnosis is recorded here so nobody repeats them:
+
+   * *Patch the string.* The label exists -- it reconstructs as
+     `c. Actor Network head` at content coordinates `x=1562.0, y=197.5` -- but
+     it is drawn one glyph per text block, so the substring `Actor` never
+     appears contiguously in the stream. Changing `c.` to `(c)` means inserting
+     new positioned glyph runs whose advance widths would have to be guessed:
+     the font is subsetted with no `ToUnicode` map.
+   * *Rewrite the file.* Changing even one byte requires recompressing the
+     stream, updating `/Length`, and rebuilding every xref offset by hand. No
+     PDF library is installed (`pikepdf`, `pypdf`, `fitz` all absent), and with
+     no renderer available the result could not be checked.
+   * *Overlay in LaTeX.* The content coordinates sit outside the page MediaBox
+     (`473.86 184.77 2448.57 1078.32`), so the drawing is inside a Form XObject
+     with its own matrix. Placing an overlay correctly needs the full transform
+     chain resolved, and a mistake puts text in the middle of the figure.
+   * *Redraw it.* Possible with matplotlib, but substituting our own schematic
+     for the authors' would lose design intent to fix a capitalisation.
+
+   The fix is thirty seconds in the original drawing program. It needs the
+   source file, which is not in the repository.
 3. **Add electric bus and ride-sharing citations.** The fleet-level literature
    matrix is built and populated from the existing bibliography, which covers
    electric freight, fleet-level eVRP, shared charging and fleet-scale RL. Those

@@ -45,42 +45,64 @@ Two things had to be separated, because they are usually conflated:
 The `penalize` arm exists so the result cannot be dismissed as an artefact of
 the harshest possible treatment of a mistake.
 
-### 1.2 Result
+### 1.2 Result, at three seeds per arm
 
-Re-scored on 150 validation scenarios disjoint from the 40 used to pick each
-checkpoint, which is the protocol document 10 §6.3 used:
+Every run below is 2M steps from random initialisation under the identical
+curriculum, reward, and seed stream, re-scored on 150 validation scenarios
+disjoint from the 40 that picked its checkpoint (the protocol of document 10
+§6.3). Three training seeds per arm, because at one seed this table supports
+conclusions that vanish at two -- see §1.3.
 
-| Arm | Mask | Invalid action | Success | Completed | Travel h |
-| --- | --- | --- | --- | --- | --- |
-| `v2_tm10` (control) | hard | cannot be selected | 0.700 | 0.976 | 145.0 |
-| **`mask_none_terminate`** | structural | strands the truck | **0.793** | 0.982 | 149.5 |
-| `mask_none_penalize` | structural | refused, episode continues | 0.000 | 0.521 | n/a |
+| Arm | Mask | Invalid action costs | seed 0 | seed 1 | seed 2 | Mean | Travel h |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `v2_tm10` (control) | hard | unselectable | 0.700 | 0.807 | 0.773 | **0.760** | 139.1 |
+| `mask_none_terminate` | structural | strands the truck | 0.793 | 0.820 | 0.707 | **0.773** | 147.3 |
+| `penalize_p1000` | structural | -1000, episode continues | 0.773 | -- | -- | 0.773 | 154.0 |
+| `mask_none_penalize` | structural | -100, episode continues | 0.000 | -- | -- | 0.000 | n/a |
 
-**The mask is not what produces the result.** Trained without it, under the
-simulator's own consequence for an infeasible commitment, the same architecture
-reaches 0.793 against the masked control's 0.700 at an identical budget. It
-also learns feasibility almost perfectly: on 20 held-out scenarios it averages
-**0.1 invalid actions per episode**, and one episode in twenty ends by selecting
-an infeasible action.
+**The hard feasibility mask makes no measurable difference to feasibility.**
+Masked 0.760, unmasked 0.773, with per-arm seed ranges of 0.107 and 0.113. The
+two distributions overlap almost completely. This is the direct answer to R1.2,
+and it is the opposite of the hypothesis: masking is not what produces the
+reported feasibility. An unmasked policy learns feasibility on its own, to
+**0.1 invalid actions per episode**.
 
-**But the consequence has to be real.** The charitable variant collapses to
-zero. Its failure mode is measurable rather than mysterious: 1.6 refused actions
-per episode, and every episode ends either in `no_events_with_unserved_customers`
-(14 of 20) or `no_feasible_action` (6 of 20). A refusal advances nothing -- not
-the clock, not the truck -- so when every truck refuses in the same round the
-event queue empties and the episode deadlocks. Making mistakes cheap removed the
-pressure to be feasible without removing the need for it.
+**What matters is that infeasibility costs something commensurate with
+failure.** The two penalized arms differ only in magnitude and bracket the
+entire effect:
 
-The honest reading for the response letter is therefore *not* "masking is
-unnecessary". It is:
+* at -100, a tenth of the -1000 failure penalty, the policy never learns
+  feasibility at all: 0.000 success, 1.6 refused actions per episode, and every
+  episode ending in a deadlock (`no_events_with_unserved_customers`, 14 of 20)
+  or `no_feasible_action` (6 of 20). A refusal advances nothing -- not the
+  clock, not the truck -- so when every truck refuses in the same round the
+  event queue empties;
+* at -1000, matching the failure penalty, the same arm reaches 0.773 -- level
+  with both the masked control and the stranding variant.
 
-1. the hard mask is a convenience, not the source of the reported performance;
-2. what the policy actually needs is an unambiguous, costly consequence for
-   infeasibility -- which the mask provides for free, and which a penalty term
-   has to be strong enough to replicate.
+So the earlier reading that "the consequence must be terminal" was wrong: it
+was an artefact of the penalty magnitude, which is exactly what the fairness
+sweep was run to check. Stranding is sufficient but not necessary; a
+proportionate penalty does the same job.
 
-Caveat carried into the write-up: these are single seeds. The penalty magnitude
-sweep and seed replication of both arms are in section 6.
+**On the objective the mask may help, weakly.** Masked runs average 139.1
+travel hours against 147.3 unmasked -- about 8 hours, against per-arm seed
+ranges of 13.6 and 7.1. The direction is consistent across all three pairs but
+the magnitude is inside seed noise, so it is reported as a tendency, not a
+result.
+
+### 1.3 Why three seeds
+
+At one seed per arm this table read: masked 0.700, unmasked 0.793, penalized
+0.000 -- which supports "removing the mask *improves* feasibility" and "the
+consequence must be terminal". Both dissolve at three seeds. Seed 1 of the
+masked control (0.807) beats every unmasked run, and a ten-fold penalty change
+moves the penalized arm from 0.000 to 0.773.
+
+Effects smaller than roughly 0.1 success are not separable from training noise
+at this budget. That threshold is what licenses the rest of the ablation table
+in §2 and §6: the component ablations and the independent-head family clear it,
+the attention encoder does not.
 
 Artifacts: `results/canonical/mask_ablation/`, `results/canonical/rescore_batch1.json`.
 Reproduce with `scripts/runners/run_mask_ablation.sh`.
@@ -394,14 +416,13 @@ with nothing changed but the seed.** The mask effect measured from one seed per
 arm -- +0.098 success, +5.9 travel hours -- is inside that band. Seed 1 of the
 *masked* control beats the unmasked arm on both axes.
 
-So the honest statement, pending the seed replicates of the unmasked arm now
-training, is narrower than section 7.2 alone suggests:
+With three seeds now trained on both arms (§1.2), the statement settles at:
 
-* the strong claim **"removing the mask improves feasibility"** is not supported
-  once training variance is accounted for;
-* the claim **"the mask is not necessary for feasibility"** is supported: an
-  unmasked policy lands squarely inside the masked control's own seed band,
-  which is the opposite of the reviewer's hypothesis that masking does the work;
+* the strong claim **"removing the mask improves feasibility"** is withdrawn:
+  masked 0.760 and unmasked 0.773 across three seeds each, with overlapping
+  ranges;
+* the claim **"the mask is not necessary for feasibility"** is supported and is
+  the answer to R1.2 -- the opposite of the reviewer's hypothesis;
 * the claim that the refinement stages, not the mask, buy the travel time
   survives, because -25.7 hours is twice the seed range.
 

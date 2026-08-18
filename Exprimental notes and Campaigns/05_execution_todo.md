@@ -197,19 +197,26 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## Critical path
 
-Nothing further is blocked on computation. What remains is authorial:
+The experimental programme is discharged, including the eTFRP-setting check that
+was the last outstanding gap. What remains needs an author or a licence, not
+computation:
 
-1. **Compile and proofread.** No LaTeX toolchain exists on this host, so the
-   revised `main.tex` and `response_to_reviewers.tex` have been checked
-   structurally but never typeset.
+1. **Compile and proofread.** No LaTeX toolchain exists on this host, so
+   `main.tex` and `response_to_reviewers.tex` are verified structurally (62
+   labels, 34 references resolved, environments and columns balanced) but have
+   never been typeset.
 2. **Regenerate the architecture figure** with the panel label `(c) Actor
-   Network Head`; the label lives in the figure asset, not in the source.
-3. **Write the E1 literature matrix** on fleet-level eVRP, bus, ride-sharing,
-   shared charging, and fleet RL, and decide how the introduction frames the
-   contribution now that the mask and the graph encoder are no longer claimed
-   as its source.
-4. **Decide what to do about the main eTFRP experiments.** They were not re-run
-   for this revision. The three findings that changed the joint-setting claims
-   -- mask attribution, the defective planner, seed variance -- have not been
-   checked against them, and the corrected CP-SAT model is not the planner those
-   tables used.
+   Network Head`; it lives in the figure asset, not the source.
+3. **Write the E1 literature matrix** and settle the introduction's framing,
+   given that neither the mask nor the graph encoder is claimed as the source of
+   the advantage any more.
+4. **Validate the per-truck Gurobi MILP against enumeration**, the way the fleet
+   planner was validated. `gurobipy` is not installed here and the check needs a
+   licence. This is the one place where a published table still rests on an
+   optimization baseline whose correctness has not been checked, and the fleet
+   planner turned out to be wrong when it was checked.
+5. **Decide whether to recompute the published eTFRP tables.** They carry
+   single-seed comparisons and normalized-reward headlines, both of which this
+   revision argues against. The findings were tested against an eTFRP-style
+   setting and the mask result replicates, but the tables themselves were not
+   reproduced.

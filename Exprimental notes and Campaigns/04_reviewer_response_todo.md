@@ -242,7 +242,7 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 | Manuscript revision | complete except the items below |
 | Response letter | complete (`latex/response_to_reviewers.tex`) |
 
-**Remaining, all authorial rather than computational:**
+**Remaining, none of them computational except item 4, which needs a licence:**
 
 1. Compile the LaTeX. No toolchain exists on the machine this revision was
    prepared on, so `main.tex` and the response letter were verified
@@ -253,10 +253,15 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 3. Write the E1 literature matrix, and settle how the introduction frames the
    contribution now that neither the mask nor the graph encoder is claimed as
    its source.
-4. Decide what to do about the main eTFRP experiments, which were not re-run.
-   The three findings that changed the joint-setting claims have not been
-   checked against them, and the corrected CP-SAT model is not the planner
-   those tables used.
+4. Validate the per-truck Gurobi MILP against exhaustive enumeration, as the
+   fleet planner was validated. `gurobipy` is not installed here and the check
+   needs a licence. The fleet planner was wrong when it was finally checked, so
+   this is not a formality.
+5. Decide whether to recompute the published eTFRP tables, which carry
+   single-seed comparisons and normalized-reward headlines. The findings *were*
+   tested against an eTFRP-style setting -- the mask result replicates, and
+   pre-assignment turns out to make the problem harder rather than easier (doc
+   11 §11) -- but those tables themselves were not reproduced.
 
 **The three findings the response letter leads with**, because they change
 claims rather than adding to them:

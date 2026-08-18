@@ -1,8 +1,25 @@
 # Revision Experiments: Mask, Baselines, Optimality, Generalization
 
-Updated: 2026-08-17
-Status: **in progress.** Sections 1-5 are complete and reproducible from the
-artifacts they cite. Sections 6-8 are running.
+Updated: 2026-08-18
+Status: **sections 1-8 complete** and reproducible from the artifacts they
+cite. Section 9 (charging action-space granularity) and the seed replication of
+the *full* ladder are still training.
+
+**The three results that should change the manuscript**, before the detail:
+
+1. **The hard feasibility mask does not explain the reported feasibility**
+   (§1). Three seeds per arm: masked 0.760, unmasked 0.773, overlapping
+   ranges. What matters is that infeasibility costs something commensurate with
+   failure, not that it is unselectable.
+2. **The optimization baseline was defective and is now stronger** (§3). Its
+   CP-SAT model could not leave a truck idle, so it returned worse-than-optimal
+   plans labelled OPTIMAL. Exhaustive enumeration found it; after the fix
+   CP-SAT matches brute force on 30/30 tiny instances, and the headline is
+   reported against the corrected planner.
+3. **Training-seed variance is larger than most effects being measured** (§1.3).
+   The same configuration spans 0.107 success across three seeds. Every
+   single-seed conclusion in documents 08-10 -- and several of this document's
+   own first drafts -- has to be read against that.
 
 Documents 08-10 established the method and the headline result under the fleet
 travel-time objective. This document covers the experiments the reviewers asked
@@ -526,10 +543,25 @@ scoring every method on the same held-out seeds: customer count, fleet size,
 charger power and efficiency, battery capacity, vehicle speed, demand, service
 time, road distances, and three different uncertainty laws.
 
-A defect surfaced in building this and is worth recording: `step()` decoded
-delivery action indices against `len(delivery_sequence)` while the feasibility
-engine used the fixed action envelope, so the two disagreed on any instance
-smaller than the envelope and selecting the depot raised. No published result is
-affected -- the curriculum never changes `num_stops`, so every earlier episode
-ran at full size -- but no size-transfer evaluation was possible until it was
-fixed.
+### 8.3 Defects this campaign surfaced
+
+Three, all found by running the experiments rather than by inspection:
+
+* `step()` decoded delivery action indices against `len(delivery_sequence)`
+  while the feasibility engine used the fixed action envelope, so the two
+  disagreed on any instance smaller than the envelope and selecting the depot
+  raised. No published result is affected -- the curriculum never changes
+  `num_stops`, so every earlier episode ran at full size -- but no size-transfer
+  evaluation was possible until it was fixed.
+* Six regimes initially returned results identical to the control. Three were
+  vacuous: `truck.base_speed` does not affect travel time (times come from the
+  precomputed network tables), and `min_hop_distance`/`max_hop_distance` are not
+  read by the joint instance generator at all. **This means the energy-ramp
+  curriculum's stages are named for hop distances they never changed** -- what
+  they actually ramp is battery capacity, horizon, and uncertainty. The
+  curriculum works; documents 09 and 10 describe its mechanism incorrectly and
+  the manuscript must not repeat that.
+* The generalization runner applied each regime's config overrides but ignored
+  each *method's* own environment, so the unmasked arm was scored under the hard
+  mask it never trained with -- 0.560 where the correct environment gives 0.750.
+  A wrong conclusion about generalization was one commit away.

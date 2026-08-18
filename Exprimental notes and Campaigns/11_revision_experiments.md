@@ -792,11 +792,41 @@ So the correct statement is: the *findings* were tested against the eTFRP-style
 setting and the mask finding replicates, but the *published eTFRP tables* still
 carry the defects this campaign identified elsewhere -- single-seed
 comparisons, and an optimization baseline whose correctness has never been
-checked against enumeration. The per-truck MILP cannot suffer the specific
-defect found in the fleet CP-SAT model, since with a fixed assignment there is
-no idle-truck decision to get wrong, but it has not been validated either.
-Doing so requires a Gurobi licence and is the one substantive item this
-revision leaves open.
+checked against enumeration. ### 11.4 The per-truck MILP, validated without a Gurobi licence
+
+The per-truck model cannot suffer the *specific* defect found in the fleet
+planner, since with a fixed assignment there is no idle-truck decision to get
+wrong. But the fleet defect was not a solver bug: the model could not *express*
+the optimal plan. That class of defect is testable without solving anything, and
+the per-truck model documents a restriction of exactly that kind:
+
+> "At most one charger visit between consecutive deliveries"
+
+`scripts/evaluation/validate_per_truck_model.py` enumerates, on tiny
+deterministic instances, the best plan reachable under that restriction against
+the best plan reachable when up to two charging stops per leg are allowed,
+pricing every recharge with the simulator's own integrator.
+
+| Configuration | Plans | Restriction binds | ...and makes a feasible route infeasible |
+| --- | --- | --- | --- |
+| 3 customers, 4 chargers | 20 | 1 | **1** |
+| 4 customers, 3 chargers | 40 | 0 | 0 |
+
+**The restriction is not vacuous.** On one of sixty enumerated plans it turns a
+route that is feasible in 31.5 hours into one the model reports as infeasible.
+On such an instance the per-truck MILP cannot return the optimum no matter how
+well Gurobi solves it, which is the same failure mode the fleet planner had, in
+a different guise.
+
+It is also rare at this scale -- one plan in sixty -- and enumeration does not
+reach the paper's actual settings, so the frequency at twenty stops and tighter
+batteries is unmeasured and could be higher or lower. The honest summary is
+that the model has a documented expressiveness limit that demonstrably binds,
+its rate is unknown at scale, and it should not be described as an optimality
+reference without that qualification.
+
+What still needs a licence is narrower than before: checking the Gurobi
+*encoding* of the model, rather than the model itself.
 
 Artifacts: `results/canonical/preassigned/`,
 `results/canonical/ablation_summary_preassigned.json`,

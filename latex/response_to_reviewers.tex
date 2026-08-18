@@ -341,10 +341,18 @@ Gurobi licence was available to us during this revision; their headline metric
 is normalized reward, which we now argue against; and their fleet sizes reach
 an order of magnitude beyond anything scored here. That per-truck model cannot
 suffer the specific defect we found in the fleet planner, since a fixed
-assignment leaves no idle-truck decision to get wrong, but it has not been
-validated against enumeration either. We consider this the most substantial
-item this revision leaves open, and we would rather state it than let it be
-inferred.
+assignment leaves no idle-truck decision to get wrong. But the fleet defect was
+not a solver bug -- the model could not express the optimal plan -- and that
+class of defect is testable without a solver. The per-truck model documents the
+restriction ``at most one charger visit between consecutive deliveries''.
+Enumerating tiny deterministic instances, we find that this restriction binds on
+one of sixty plans, and in that case it turns a route that is feasible in $31.5$
+hours into one the model reports as infeasible. It is therefore a genuine
+expressiveness limit rather than a harmless modelling convenience; it is rare at
+the scale we can enumerate; and its frequency at the paper's own instance sizes
+is unmeasured. We describe that baseline with this qualification attached rather
+than as an optimality reference. What remains unchecked is only the Gurobi
+encoding of the model, not the model itself.
 
 \section*{Remaining limitations}
 

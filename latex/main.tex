@@ -789,6 +789,7 @@ The failure term $\lambda_3$ is applied when the battery is depleted during a ro
     \includegraphics[width=0.8\linewidth]{TruckNetwork.pdf}
     % \caption{The proposed actor-critic neural network that can process the state and action graphs to generate actions and value estimation. }
     \caption{Proposed graph-based actor--critic architecture. In (a), the heterogeneous state graph is encoded through graph feature extraction, hetero-interaction layers~\cite{arowolo2025generalizationgraphneuralnetworks}, and per-node-type mean pooling to obtain a fixed-size global state embedding, invariant to the number of nodes in the state. In (b), the critic head maps this state embedding to a state-value estimate. In (c), the actor head processes the feasible-action graph through graph convolutional layers and combines the resulting action embeddings with the state embedding to produce a policy over routing and charging actions.}
+    Panels are referred to throughout as (a) State Graph Encoder, (b) Action Graph Encoder, and (c) Actor Network Head; the panel captions inside the figure asset use the same names.
     \label{fig:graph}
 \end{figure}
 

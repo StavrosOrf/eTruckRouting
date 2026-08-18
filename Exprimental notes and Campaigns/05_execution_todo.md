@@ -197,26 +197,34 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## Critical path
 
-The experimental programme is discharged, including the eTFRP-setting check that
-was the last outstanding gap. What remains needs an author or a licence, not
-computation:
+Every experiment is done, including the eTFRP-setting replication and a
+solver-free validation of the per-truck model. Three items remain, and each is
+blocked by something this machine does not have rather than by work not done.
 
-1. **Compile and proofread.** No LaTeX toolchain exists on this host, so
-   `main.tex` and `response_to_reviewers.tex` are verified structurally (62
-   labels, 34 references resolved, environments and columns balanced) but have
-   never been typeset.
-2. **Regenerate the architecture figure** with the panel label `(c) Actor
-   Network Head`; it lives in the figure asset, not the source.
-3. **Write the E1 literature matrix** and settle the introduction's framing,
-   given that neither the mask nor the graph encoder is claimed as the source of
-   the advantage any more.
-4. **Validate the per-truck Gurobi MILP against enumeration**, the way the fleet
-   planner was validated. `gurobipy` is not installed here and the check needs a
-   licence. This is the one place where a published table still rests on an
-   optimization baseline whose correctness has not been checked, and the fleet
-   planner turned out to be wrong when it was checked.
-5. **Decide whether to recompute the published eTFRP tables.** They carry
-   single-seed comparisons and normalized-reward headlines, both of which this
-   revision argues against. The findings were tested against an eTFRP-style
-   setting and the mask result replicates, but the tables themselves were not
-   reproduced.
+1. **Compile and proofread.** There is no LaTeX toolchain on this host, no
+   network to fetch one, and no root to install one, so `main.tex` and
+   `response_to_reviewers.tex` have been verified structurally -- 62 labels, 34
+   references resolved, environments and table columns balanced -- and never
+   typeset. This is the only item that could silently break the submission, so
+   it should be done first.
+2. **Regenerate the architecture figure.** The panel label lives in the figure
+   PDF as glyph indices in an embedded font, not as editable text, so it cannot
+   be patched without the source asset. The caption now names the panels
+   correctly, including `(c) Actor Network Head`, so the document text is right
+   even where the image is not.
+3. **Write the E1 literature matrix.** Classifying prior fleet-level eVRP, bus,
+   ride-sharing and shared-charging work requires reading those papers.
+   Fabricating that classification would be worse than leaving it, so it is left
+   to the authors.
+
+Two further judgement calls, neither blocking:
+
+* whether to recompute the published eTFRP tables, which carry single-seed
+  comparisons and normalized-reward headlines. The *findings* were tested
+  against an eTFRP-style setting (doc 11 §11) and the mask result replicates;
+  the tables themselves were not reproduced, and their Gurobi column cannot be
+  recomputed without a licence.
+* whether to check the Gurobi *encoding* of the per-truck model. Its
+  *formulation* is now validated by enumeration (doc 11 §11.4), which found a
+  real expressiveness limit, so what a licence would add is narrower than
+  before.

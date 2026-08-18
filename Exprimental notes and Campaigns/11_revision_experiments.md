@@ -385,7 +385,8 @@ each learned arm is scored in the environment it trained in.
 
 | Method | Success | Wilson 95% | Travel h* | Makespan h* | Operating h* |
 | --- | --- | --- | --- | --- | --- |
-| **GraphPPO** | **0.858** | [0.82, 0.89] | **120.9** | 79.0 | **131.7** |
+| **GraphPPO** (3 seeds) | **0.843** [0.830, 0.858] | -- | **123.5** [120.9, 125.3] | 80.1 | **134.8** |
+| GraphPPO (seed 0) | 0.858 | [0.82, 0.89] | 120.9 | 79.0 | 131.7 |
 | `mask_none` | 0.824 | [0.79, 0.85] | 140.4 | 88.0 | 153.2 |
 | `ppo_deepsets` | 0.670 | [0.63, 0.71] | 152.3 | 95.5 | 166.8 |
 | `cpsat_plan` (corrected) | 0.622 | [0.58, 0.66] | 167.5 | **74.5** | 184.9 |
@@ -398,9 +399,19 @@ each learned arm is scored in the environment it trained in.
 declines instances is not flattered. Section 7.1 pairs by scenario seed, which
 is the like-for-like reading.
 
-**The headline reproduces.** GraphPPO reaches 0.858 on 500 scenarios against
-0.857 on document 10's 300, with travel hours essentially unchanged. Extending
-the sample did not move the result.
+**The headline reproduces, and now carries a seed range.** GraphPPO reaches
+0.858 on 500 scenarios against 0.857 on document 10's 300 -- extending the
+sample did not move the result -- and the two further seeds of the full ladder
+give 0.830 and 0.842. The three-seed summary is **0.843 success [0.830, 0.858]
+at 123.5 travel hours [120.9, 125.3]**, which is the number the manuscript
+should quote. Every other learned row in this table is a single seed at a 2M
+budget and is marked as such.
+
+Budget matters for reading the rest of the table: GraphPPO is the full
+A→B→C ladder (6M steps), while `mask_none`, `ppo_attention`, and the
+`ppo_*` family are 2M-step arms. The budget-matched control is
+`graphppo_matched` at 0.726. Comparisons across different budgets are noted
+where they occur rather than presented as architecture results.
 
 **The corrected planners are stronger and still lose on feasibility.** CP-SAT
 rises to 0.622 from the 0.607 its defective model produced, and ALNS lands at
@@ -471,6 +482,20 @@ two-sided and neither half is a hedge:
 That is a more useful answer than the reviewer's hypothesis anticipated, and it
 is uncomfortable in one direction and favourable in the other, which is the
 sign that it was measured rather than argued.
+
+### 7.2b The mask arm on the test split, at three seeds
+
+| Arm | Budget | Success (3 seeds) | Travel h |
+| --- | --- | --- | --- |
+| GraphPPO | 6M (A→B→C) | 0.843 [0.830, 0.858] | 123.5 [120.9, 125.3] |
+| `mask_none` | 2M (A only) | 0.793 [0.750, 0.824] | 140.9 [138.1, 144.1] |
+| `graphppo_matched` | 2M (A only) | 0.726 (1 seed) | 136.0 |
+
+Read at matched budget, the unmasked arm's three seeds (0.750-0.824) straddle
+the masked control's single 0.726, which is the same null result §1.2 reports
+on validation. Read across budgets, the full ladder's three seeds (0.830-0.858)
+sit entirely above the unmasked arm's, and the two ranges do not overlap: the
+refinement stages, not the mask, are what separate the final model.
 
 ### 7.3 The seed caveat, which is load-bearing
 

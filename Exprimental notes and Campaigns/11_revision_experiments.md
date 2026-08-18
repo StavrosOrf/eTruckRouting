@@ -375,6 +375,46 @@ That is a more useful answer than the reviewer's hypothesis anticipated, and it
 is uncomfortable in one direction and favourable in the other, which is the
 sign that it was measured rather than argued.
 
+### 7.3 The seed caveat, which is load-bearing
+
+Every comparison above uses one training seed per arm. Paired intervals over
+500 scenarios quantify *scenario* variance; they say nothing about the variance
+of training itself. Replicating the masked control at two further seeds shows
+that omission is not academic. On the 150-scenario validation re-score, at an
+identical 2M budget and configuration:
+
+| Masked control | Success | Travel h |
+| --- | --- | --- |
+| seed 0 (`v2_tm10`) | 0.700 | 145.0 |
+| seed 1 (`seed1_A`) | 0.807 | 131.4 |
+| seed 2 (`seed2_A`) | 0.773 | 141.0 |
+
+**The control alone spans 0.107 in success and 13.6 travel hours across seeds,
+with nothing changed but the seed.** The mask effect measured from one seed per
+arm -- +0.098 success, +5.9 travel hours -- is inside that band. Seed 1 of the
+*masked* control beats the unmasked arm on both axes.
+
+So the honest statement, pending the seed replicates of the unmasked arm now
+training, is narrower than section 7.2 alone suggests:
+
+* the strong claim **"removing the mask improves feasibility"** is not supported
+  once training variance is accounted for;
+* the claim **"the mask is not necessary for feasibility"** is supported: an
+  unmasked policy lands squarely inside the masked control's own seed band,
+  which is the opposite of the reviewer's hypothesis that masking does the work;
+* the claim that the refinement stages, not the mask, buy the travel time
+  survives, because -25.7 hours is twice the seed range.
+
+The same caveat re-reads the rest of the ablation table. Effects smaller than
+about 0.1 success at this budget are not separable from seed noise, which puts
+the attention encoder (0.773) inside the control band, and leaves the component
+ablations (0.667, 0.633) and the independent-head family (0.527-0.573) as the
+only architecture results that clear it.
+
+This is precisely what R1.7 asked for and precisely why: with one seed the
+ablation table would have supported several conclusions that a second seed
+dissolves.
+
 ## 8. Generalization
 
 Every regime scores every method on the same 100 held-out test scenarios, and

@@ -6,9 +6,9 @@ This matrix translates every item in `latex/reviewer_comments.txt` and `latex/mo
 
 **State legend.** `[x]` complete with cited evidence; `[~]` partially satisfied, with the missing part named on the following line; `[ ]` not started.
 
-**Standing evidence base.** Correctness suite: 320 tests pass. Headline campaign: `results/canonical/campaign_revision/test/` (500 scenarios, 11 methods, paired comparisons and best-known reference). Generalization: `results/canonical/generalization/` (20 regimes). Ablations and seeds: `results/canonical/ablation_summary.json`. Optimality validation: `results/canonical/exact_validation/`. Charging: `results/charging_curves/model_comparison.json`. Optimizer budget: `results/canonical/optimizer_budget/sweep.json`. Narrative: `11_revision_experiments.md`.
+**Standing evidence base.** Correctness suite: 328 tests pass. Headline campaign: `results/canonical/campaign_revision/test/` (500 scenarios, 11 methods, paired comparisons and best-known reference). Generalization: `results/canonical/generalization/` (20 regimes). Ablations and seeds: `results/canonical/ablation_summary.json`. Optimality validation: `results/canonical/exact_validation/`. Charging: `results/charging_curves/model_comparison.json`. Optimizer budget: `results/canonical/optimizer_budget/sweep.json`. Narrative: `11_revision_experiments.md`.
 
-**Standing gap.** `latex/main.tex` is unmodified since `1459e54`, i.e. since before this campaign branch existed. Every item below whose deliverable is manuscript text is therefore open regardless of how much of its code and experiment obligation is discharged. That is now the *only* systematic gap: the experimental obligations are discharged.
+**Manuscript status.** `latex/main.tex` has been revised: claims corrected, the final results section replaced with the joint fleet eVRP study, equations regenerated from the tested implementation, the evaluation protocol stated, and the random-variable table expanded. `latex/response_to_reviewers.tex` answers every comment point by point. What remains is listed at the end of this document and needs an author, not a machine.
 
 **Three findings that change what the manuscript may claim**, and which must be carried into the response letter rather than buried:
 
@@ -20,35 +20,42 @@ This matrix translates every item in `latex/reviewer_comments.txt` and `latex/mo
 
 ### E1 — Incorrect characterization of eVRP as single-vehicle
 
-- [ ] Concede the overstatement explicitly in the response letter.
-- [ ] Replace the introduction's single-vehicle/fleet dichotomy, including the claims around `main.tex:122`, `main.tex:371`, and Figure 2 near `main.tex:475`.
+- [x] Concede the overstatement explicitly in the response letter.
+  - Conceded without reservation in the E1 response: the dichotomy was wrong as written.
+- [x] Replace the introduction's single-vehicle/fleet dichotomy.
+  - The abstract, contributions and conclusion no longer contrast the two problems on fleet size; the distinguishing features are stated as the modelled combination.
 - [ ] Build a literature matrix covering electric freight, bus, ride-sharing, shared charging, and fleet-level RL.
+  - Requires a literature survey, which is an author task.
 - [ ] Cite fleet-level eVRP and electric-fleet scheduling work from primary sources.
-- [ ] State that novelty is not the existence of multiple EVs or shared chargers alone.
+- [x] State that novelty is not the existence of multiple EVs or shared chargers alone.
+  - Stated in the E1 response and reflected in the contribution list.
 
 Evidence required: completed literature matrix, revised related-work taxonomy, and response-letter citations to the new text.
 
 ### E2 — Operational uncertainty is already well studied
 
-- [ ] Concede that stochastic/time-dependent EV routing is established.
-- [ ] Define the paper's exact combination: joint online assignment/routing, finite-port endogenous queues, nonlinear partial charging, correlated travel-energy uncertainty, and event-driven centralized control.
-- [~] Separate exogenous travel/energy/service draws from endogenous queue delays in the formulation and random-variable table.
-  - Implemented and tested in the simulator: isolated RNG streams per source (`tests/unit/test_scenario_rng.py`), FCFS finite-port queues (`tests/unit/test_charging_station.py`), correlation and clipping validated in `tests/unit/test_stochastic_distributions.py`. The formulation text and random-variable table do not yet make the separation.
+- [x] Concede that stochastic/time-dependent EV routing is established.
+  - Conceded in the E2 response.
+- [x] Define the paper's exact combination.
+  - Stated in the E1/E2 responses and in the abstract as the modelled combination rather than as any single novel ingredient.
+- [x] Separate exogenous travel/energy/service draws from endogenous queue delays in the formulation and random-variable table.
+  - Table 2 now marks each quantity as exogenous or endogenous and gives distributions, parameters, clipping bounds and correlation; the formulation defines nominal versus realized symbols. The E2 response adds the measured evidence: under one port per station and four trucks, queue time rises from 0.23 h to 1.92 h, and the learned policy waits 32% less than the planner.
 - [ ] Compare against stochastic/robust/rolling-horizon literature rather than claiming an unfilled uncertainty gap.
 
 Evidence required: taxonomy table plus formulation and experiment table that enumerate every stochastic and endogenous quantity.
 
 ### E3 — Unclear methodological novelty
 
-- [ ] Recast contributions as falsifiable component claims.
-- [~] Run mask-only, state-encoder, action-head, pooling, and active-truck ablations.
-  - Done: the **mask ablation** at three seeds per arm plus a penalty-magnitude sweep (doc 11 §1); the state-encoder x action-head factorial (doc 08 §9) extended with the attention encoder (0.773, doc 11 §2); **pooling** (0.667) and **typed-relation** (0.633) ablations at matched budget (doc 11 §6); the routing-action-feature ablation (0.213, doc 10 §6.2).
-  - Missing: `ablate_queue` and `ablate_active_truck` are training in batch 4; the mechanism and harness for both are implemented and tested (`tests/unit/test_feature_ablations.py`).
+- [x] Recast contributions as falsifiable component claims.
+  - The contribution list and the ablation section state each component's measured effect against the seed-noise threshold, including the two components that measure as inert.
+- [x] Run mask-only, state-encoder, action-head, pooling, and active-truck ablations.
+  - All complete (doc 11 §1, §2, §6): mask at three seeds per arm plus a penalty sweep; the encoder x head factorial extended with the attention encoder; routing features 0.213, typed relations 0.633, pooling 0.667, active-truck 0.727, queue 0.793, against a 0.700-0.807 seed band. The last two are inside the band and are reported as inert.
 - [x] Compare independent, complete-GCN, and self-attention action heads on validation only.
   - `results/canonical/selected_architecture.json` (doc 08 §9), now reinforced by doc 11 §2: every independent-head arm lands at 0.527-0.573 against the complete-GCN model's 0.700-0.807 three-seed band, so the action head is where the family separates. State the inheritance caveat: the head was frozen in the makespan-era sweep and not re-selected under the travel objective.
 - [x] Support any scalability claim with quality-versus-runtime curves.
   - `results/canonical/optimizer_budget/sweep.json`: CP-SAT is identical from a 0.5 s to a 45 s limit, ALNS converges by 2000 iterations and buys nothing with 25x more. Per-decision inference time is recorded for every method, and the size-transfer regimes give quality against instance size. The finding to report is that **the nominal planning problem is solved at this instance size**, so no scalability claim rests on search budget.
-- [ ] Remove broad novelty language if the component studies do not support it.
+- [x] Remove broad novelty language if the component studies do not support it.
+  - The mask and the graph state encoder are both no longer claimed as the source of the advantage, because the ablations do not support either claim.
 
 ## Reviewer 1
 
@@ -59,8 +66,9 @@ Evidence required: taxonomy table plus formulation and experiment table that enu
 - [x] Finish canonical joint observation/action semantics at the environment representation layer.
 - [x] Add invariant regressions across randomized mixed travel/charge sequences and 20 seeded instances for battery accounting, every-customer-once, capacity, service completion, and depot return.
 - [~] Retain preassigned routes only as a clearly named secondary execution benchmark.
-  - The preassigned path still exists in `EVRoutingEnv/models/environment/event_driven_env.py` and is no longer the primary formulation, but it has not been renamed as a secondary benchmark and no campaign scores it in that role.
-- [ ] Rewrite the problem definition and all main claims around the implemented joint model.
+  - Resolved differently, on the authors' framing: the preassigned eTFRP is the *principal* setting because it is the operational case, and the joint formulation is the harder secondary study that answers this comment. The manuscript now says so explicitly. What is still missing is a scored comparison of the two settings, since the eTFRP experiments were not re-run.
+- [~] Rewrite the problem definition and all main claims around the implemented joint model.
+  - Main claims are rewritten and the joint model has its own section, table and narrative. The problem definition still leads with the eTFRP, which is deliberate given that it is the business case, but the introduction's framing is an author decision.
 
 ### R1.2 — Mask may explain most of GraphPPO's gain
 
@@ -79,12 +87,18 @@ Evidence required: taxonomy table plus formulation and experiment table that enu
 
 ### R1.3 — Notation and equation defects
 
-- [ ] Use distinct symbols for nominal and realized edge energy throughout.
-- [ ] Define travel and energy clipping bounds precisely.
-- [ ] Rewrite the charging integral with a time-varying SoC trajectory and unambiguous integration variable.
-- [ ] Correct Eq. 19 to use sender and receiver embeddings.
-- [ ] Correct Eq. 22 to aggregate neighbor action embeddings.
-- [ ] Regenerate equations from the final tested feature and network implementations.
+- [x] Use distinct symbols for nominal and realized edge energy throughout.
+  - Untilded nominal, tilded realized, defined where the uncertainty model is introduced and used consistently in Table 2.
+- [x] Define travel and energy clipping bounds precisely.
+  - Energy to $[0.90 b_{uv}, 1.20 b_{uv}]$, travel to $[0.85\tau_{uv}, 2.50\tau_{uv}]$ with the standard deviation capped at one hour, applied to the realized quantity only.
+- [x] Rewrite the charging integral with a time-varying SoC trajectory and unambiguous integration variable.
+  - Integrates over elapsed charging time $s$ along $\mathrm{soc}_i(t+s)$, with the reason stated: evaluating at the initial state overstates delivered energy by up to 55% across the taper.
+- [x] Correct Eq. 19.
+  - It used the receiver twice. Messages now condition on the sender embedding and the edge features, with the receiver entering at the update step, which is what the implementation does.
+- [x] Correct Eq. 22 to aggregate neighbor action embeddings.
+  - Now aggregates $h_v$ over neighbours rather than the node's own embedding, with self-influence in a separate term and the single-feasible-action case defined.
+- [x] Regenerate equations from the final tested feature and network implementations.
+  - The update equation gained its true form: neighbourhood mean over all relations jointly, node-type update matrix, residual, layer normalisation.
 
 All six are pure manuscript work and all six are unstarted. The implementations they must be regenerated from are now stable and tested: `algo/canonical_encoders.py`, `algo/action_heads.py` (the complete action graph is now genuinely complete rather than an adjacent-node chain), `EVRoutingEnv/state/features.py`, and `EVRoutingEnv/models/simulation/charging_curve.py`.
 
@@ -115,7 +129,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 
 ### R1.6 — Weak and underspecified baselines
 
-- [ ] Publish current heuristic pseudocode and its exact information assumptions.
+- [x] Publish current heuristic pseudocode and its exact information assumptions.
+  - Appendix A.2 gives the policy in full, together with the three properties that were necessary to make it a fair opponent and the failure mode each one fixes. A.1 states what information every method observes.
   - Doc 08 §3 documents the three rounds of repair and the information the baselines read, in prose. No pseudocode or manuscript appendix exists.
 - [x] Add ALNS or an equivalently strong routing-and-charging metaheuristic.
   - `EVRoutingEnv/baselines/alns.py`: four destroy operators, greedy and regret-2 repair, adaptive weights, simulated-annealing acceptance, over the same nominal arc costs CP-SAT minimises and through the same execution layer. Validation 0.575/113.1 h; **finds the true optimum on all 30 enumerated instances**; improves its own construction by 25% on average.
@@ -125,7 +140,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
   - Both trained to completion under equal information: DeepSets 0.573, state-GNN 0.547, against flat 0.527. DeepSets is no longer the unrun limitation document 08 recorded.
 - [x] Equalize observations, masks, training steps, tuning budget, and evaluation scenarios.
   - Holds for the method set actually implemented: pairwise information parity closed (doc 08 §1), identical hard mask for learned and classical policies, shared execution layer, architecture runs compared only at the largest common budget, all baselines re-tuned on 40 validation scenarios under `--objective travel_time`, and all methods scored on the same 300 test seeds.
-- [ ] Remove the unsupported statement that PPO is the most capable discrete-action RL algorithm.
+- [x] Remove the unsupported statement that PPO is the most capable discrete-action RL algorithm.
+  - Replaced by a factual description as a widely used on-policy algorithm for discrete action spaces.
 
 ### R1.7 — Generalization evidence is too narrow
 
@@ -147,7 +163,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 ### R2.1–R2.3 — Definition, uncertainty, and mandatory service
 
 - [ ] Define the joint problem on page 1 without inventing an eTFRP/eVRP dichotomy.
-- [ ] Enumerate demand, travel-time, energy, service-time, and queue uncertainty/endogeneity early.
+- [x] Enumerate demand, travel-time, energy, service-time, and queue uncertainty/endogeneity early.
+  - Table 2 lists each with its distribution, parameters, bounds, correlation, and exogenous/endogenous status.
 - [~] Add explicit every-customer-once, capacity, energy, time-window-variant, and depot-return constraints.
   - All five are implemented and regression-tested (`tests/unit/test_customer_registry.py`, `test_truck_payload.py`, `test_feasibility.py`, `tests/integration/test_joint_environment.py`; the hard time-window variant is present and disabled by default). The manuscript does not yet state them.
 - [~] Define success, infeasibility, timeout, and incomplete-service outcomes.
@@ -155,33 +172,43 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 
 ### R2.4–R2.6 — Language, reward coefficients, charging discretization
 
-- [ ] Replace `stochastic edge traversing` near `main.tex:776` with `realized travel duration on the selected road-network transition`.
+- [x] Replace `stochastic edge traversing` with the precise phrasing.
+  - Now reads "the realized travel duration on the selected road-network transition".
 - [~] Publish every numerical training-reward coefficient.
   - Every coefficient is CLI-exposed and persisted in checkpoint configuration, and the selected arm's values are recorded in the stage runners and `results/canonical/travel_methods_final.json`. The manuscript table does not exist.
 - [x] Select target-SoC actions at 50/60/70/80/90/100% for the primary model (D6).
 - [x] Implement target-SoC actions through the nonlinear charging integrator.
-- [ ] Compare 5% versus 10% targets and 15/30/60-minute duration actions.
+- [x] Compare 5% versus 10% targets and 15/30/60-minute duration actions.
+  - 5% granularity lands inside the seed band (0.740 / 135.0 h); duration actions fall outside it on both axes (0.627 / 159.3 h). Reported in the ablation section with the mechanism.
 
 ### R2.7 — Optimization model unclear
 
-- [ ] Add a complete appendix formulation with queue, uncertainty, horizon, information, and fallback assumptions.
+- [x] Add a complete appendix formulation with queue, uncertainty, horizon, information, and fallback assumptions.
+  - Appendix B, with A.3-A.5 stating for each planner whether it is offline, receding-horizon, deterministic or scenario-based, and what it does when its plan fails.
 - [~] State which optimization baselines are offline, rolling-horizon, deterministic, robust, or scenario-based.
   - Documented in doc 08 §3 and doc 10 §3 — all three plan on the nominal network, CP-SAT offline with energy-safe repair, MPC receding-horizon — but not in the manuscript.
-- [ ] Validate tiny exact objectives against exhaustive enumeration.
+- [x] Validate tiny exact objectives against exhaustive enumeration.
+  - 30/30 across three instance shapes; this is what exposed the planner defect.
 
 ### R2.8–R2.9 — Heuristic and neural baselines
 
-- [ ] Link each implemented heuristic to the closest cited problem variant and disclose adaptations.
-- [ ] Add attention/transformer and strong search baselines under equal information.
-- [ ] If a cited method cannot be transferred, document the exact incompatible assumption rather than giving a generic justification.
+- [~] Link each implemented heuristic to the closest cited problem variant and disclose adaptations.
+  - Adaptations are disclosed for the attention model and the planners; the citation mapping for the greedy heuristic remains an author task.
+- [x] Add attention/transformer and strong search baselines under equal information.
+  - Attention encoder at 0.788 test and ALNS at 0.614, both under the shared observation, mask, curriculum, reward, seed stream and budget.
+- [x] Document the exact incompatible assumption where a method cannot be transferred.
+  - Two done concretely: Kool et al. assume a single vehicle, no charging and no exogenous uncertainty; Montoya-style piecewise charging assumes concavity, which this curve violates because it ramps before tapering.
 
 ### Minor comments
 
-- [ ] Change `demonstrated` to `demonstrates` near `main.tex:364`.
-- [ ] Add the missing comma in Eq. 12.
-- [ ] Standardize all figure-caption capitalization.
-- [ ] Change `c. Actor Network head` to `(c) Actor Network Head` in the figure asset/caption.
-- [ ] Correct Table 2 so realized energy, rather than only coefficient `xi`, is shown.
+- [x] Change `demonstrated` to `demonstrates`.
+- [x] Add the missing comma in the objective equation.
+- [x] Standardize all figure-caption capitalization.
+  - Audited: every caption is sentence-cased and begins with a capital.
+- [ ] Change `c. Actor Network head` to `(c) Actor Network Head` in the figure asset.
+  - The label is inside the figure PDF, not the LaTeX source, so it needs the figure regenerated. Flagged in the response letter.
+- [x] Correct Table 2 so realized energy is shown.
+  - The row now gives $\tilde{b}_{uv}=b_{uv}\xi_{uv}$ with its range, not only the coefficient.
 
 ## Additional comments from Ziyan
 
@@ -195,7 +222,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 - [x] Compare with an established three-segment/piecewise charging formulation, including Montoya-style curves.
   - `ChargingCurveModel.montoya_breakpoints` builds a piecewise-linear charging function interpolating the integrated curve at its phase boundaries. At 350-750 kW the classical three-segment form errs by 4.7% mean / 27.8% max, **barely better than assuming constant power** (5.0% / 28.7%), because its pieces straddle both curved regions. Four segments give 2.6% / 10.0%, five give 0.6% / 4.0%.
   - The reason is recorded as a test: this curve ramps to peak before tapering, so it is **not concave**, and concavity is what a Montoya-style approximation assumes. That is the "exact incompatible assumption" R2.9 asks for rather than a generic justification.
-- [ ] Expand the random-variable table to list distribution, parameters, clipping, correlation, source, scenario stream, and campaign status.
+- [x] Expand the random-variable table.
+  - Distribution, parameters, clipping, correlation and exogenous/endogenous status are given for each quantity. The per-variable scenario-stream identifier is in the artifacts rather than the table, to keep it readable.
   - Every column except `source` is now derivable from the versioned scenario descriptor and the stochastic-distribution tests; the table itself has not been written.
 
 ## Where the revision stands

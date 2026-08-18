@@ -775,7 +775,7 @@ r(s_t,a_t,s_{t+1})
 % -\lambda_1\,\Delta t^{\mathrm{wait}}_i,
 \label{eq:reward}
 \end{equation}
-where $\Delta t_i$ is the time passed since the last ``action pending'' status of truck $i$, including stochastic edge traversing, unloading, charging, and waiting at a charger queue times.
+where $\Delta t_i$ is the time passed since the last ``action pending'' status of truck $i$, comprising the realized travel duration on the selected road-network transition, the realized unloading time, the charging duration, and any waiting incurred in a charger queue.
 This choice ensures that the reward directly reflects the operational time consumed by routing, service, and charging decisions under uncertainty. 
 Furthermore, $\lambda_1>0$ and $\lambda_2>0$ are scalar coefficients, and $\lambda_3<0$ is a terminal penalty.
 The delivery completion term $\lambda_2$ provides a sparse positive signal whenever a truck successfully completes a delivery, improving exploration and encouraging policies that complete assigned tasks efficiently.
@@ -1211,6 +1211,133 @@ Such extensions would further strengthen the role of learning-based methods as d
 %% Loading bibliography style file
 %\bibliographystyle{model1-num-names}
 % \bibliographystyle{cas-model2-names}
+
+\appendix
+
+\section{Baseline Specifications and Information Assumptions}\label{app:baselines}
+
+This appendix states what each non-learning baseline knows, what it assumes, and
+what it does when its plan fails, so that the comparison in
+Section~\ref{sec:joint_evrp} can be reproduced or disputed on its details rather
+than on its summary.
+
+\subsection*{A.1 Information available to every method}
+
+All methods, learned and classical, observe the same state: the position,
+battery, remaining payload and status of every truck; the location, demand and
+service status of every customer; the location, power, port count, occupancy and
+waiting list of every station; and the nominal travel time and energy of every
+network transition. No method observes a realized travel time, energy draw or
+service duration before it is incurred, and no method observes another truck's
+future decisions. The nominal network is the same table for all methods and is
+never perturbed by the realizations drawn during an episode.
+
+\subsection*{A.2 Greedy heuristic}
+
+The heuristic is goal-directed rather than myopic, and three properties were
+necessary to make it a fair opponent rather than a straw man; each is stated
+because each corresponds to a failure mode we measured.
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Charger choice must close distance to the goal.} Selecting the
+nearest station makes trucks shuttle between two adjacent stations indefinitely
+when a customer lies more than one battery away.
+\item \textbf{A stop is only taken if the truck can also leave it.} Serving a
+customer the truck cannot depart from strands it, because the episode requires a
+depot return.
+\item \textbf{Customers claimed by another truck are excluded.} They are
+permanently infeasible for this truck, and targeting them wastes decisions.
+\end{enumerate}
+
+\noindent The resulting policy is, at each decision point for the active truck
+$i$ at node $n_i$:
+
+\begin{quote}
+\small
+\textbf{if} a delivery is in progress or the truck must leave a charger:
+  take the forced transition.\\
+\textbf{else} let $G$ be the set of unserved customers claimable by $i$ within
+its remaining payload, plus the depot if all customers are served.\\
+\quad Choose the goal $g\in G$ minimising
+$\tau_{n_i g} + w\cdot d_g$, where $d_g$ is the customer's demand and $w$ the
+demand weight.\\
+\quad \textbf{if} $\alpha\cdot b_{n_i g} \le$ battery and the truck can also
+leave $g$: drive to $g$.\\
+\quad \textbf{else} choose the station $c$ minimising
+$\tau_{n_i c} + \tau_{c g}$ among stations reachable with the energy margin
+$\alpha$, and drive to $c$; on arrival, charge to the target state of charge.
+\end{quote}
+
+\noindent Here $\alpha$ is the energy safety factor. Recharge duration is priced
+with the same nonlinear charging routine the simulator executes, not with an
+energy-over-power approximation, so the heuristic never plans a recharge the
+simulator will not deliver. Parameters ($\alpha$, target state of charge, demand
+weight) are grid-searched on validation scenarios only.
+
+\subsection*{A.3 Rolling-horizon controller}
+
+The controller enumerates sequences of the next $H$ stops with branching factor
+$B$ over the nominal network, scores each by its nominal completion time with
+energy-safe recharges inserted, commits only the first stop, and re-plans at the
+next decision point. It is therefore deterministic and receding-horizon: it uses
+expected values for travel and energy and never samples scenarios. It executes
+through the heuristic's navigation layer, so a failure to reach a planned stop
+is repaired rather than propagated.
+
+\subsection*{A.4 CP-SAT planner}
+
+The planner solves the nominal deterministic problem once per scenario: a
+circuit formulation per truck over the depot and all unserved customers, with
+payload capacity enforced, arc costs equal to nominal travel time plus the
+recharge time that arc's energy implies at an average charging power, and an
+objective of either the longest route or the sum of routes. It is offline and
+deterministic; it does not model queueing, does not sample realizations, and
+does not re-solve when execution departs from the plan. Execution uses the same
+energy-safe navigation layer, and every episode records how often the plan ran
+out and the executor chose instead.
+
+Two properties matter for interpreting the results. First, the circuit admits an
+empty route, so a truck may be left idle; without this the model is forced to
+use every vehicle and returns strictly worse plans while reporting them as
+optimal. Second, the objective is validated: on instances small enough to
+enumerate, the solved objective matches exhaustive enumeration over all
+assignments and orderings.
+
+\subsection*{A.5 Adaptive large neighbourhood search}
+
+ALNS searches the same nominal objective as the CP-SAT planner. It begins from a
+cheapest-insertion construction and repeats: remove a fraction of customers with
+one of four destroy operators (random, worst-cost, Shaw-related, whole-route),
+reinsert them with greedy or regret-2 insertion, and accept by a
+simulated-annealing criterion. Operator weights adapt on the standard
+Ropke--Pisinger schedule. The search is deterministic given its seed, and it
+executes through the same navigation layer as the other planners. It reports no
+optimality bound by construction.
+
+\section{Formulation Assumptions}\label{app:assumptions}
+
+\begin{description}[leftmargin=*,nosep]
+\item[Queueing.] Stations admit trucks first-come-first-served up to their port
+count. Waiting time is endogenous: it depends on the fleet's own earlier
+decisions, not on an exogenous draw. Joining the waiting list of a full station
+is a legal routing decision rather than an error.
+\item[Uncertainty.] Travel time, energy draw and service duration are drawn per
+event from independent random streams keyed by the scenario seed, so a scenario
+replays exactly. Energy is correlated with the realized travel time. Bounds are
+given in Section~\ref{sec:problem}.
+\item[Horizon and information.] The episode ends when every truck is complete or
+failed, when the time limit is reached, or when no decision remains. Decisions
+are taken at events, and the decision maker is centralized: it observes the
+whole fleet and commits one action for the active truck.
+\item[Fallback.] An action that the feasibility engine rejects is not silently
+repaired. Under the default semantics it strands the truck and the episode
+records the reason; under the variant used for the mask ablation it is refused
+and charged a penalty. Every terminated or truncated episode carries a cause,
+and failures are retained in every aggregate that is not explicitly conditioned
+on success.
+\end{description}
+
+
 \bibliographystyle{elsarticle-num-names}
 
 % Loading bibliography database

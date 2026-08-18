@@ -118,26 +118,34 @@ Re-scored on the same 150 disjoint validation scenarios:
 
 | Arm | Encoder | Action head | Success | Completed | Travel h |
 | --- | --- | --- | --- | --- | --- |
-| `v2_tm10` (proposed) | hetero graph | complete GCN | **0.700** | 0.976 | 145.0 |
+| `v2_tm10` (proposed) | hetero graph | complete GCN | 0.700-0.807 | 0.976 | 131-145 |
+| `attention` | transformer | complete GCN | **0.773** | 0.976 | 150.1 |
 | `deep_sets__independent` | DeepSets | independent | 0.573 | 0.959 | 155.9 |
 | `hetero__independent` | hetero graph | independent | 0.547 | 0.971 | 146.6 |
 | `flat__independent` | flat MLP | independent | 0.527 | 0.969 | 148.1 |
 
-Two things follow. First, DeepSets is finally trained to completion -- document
-08 dropped it for compute and explicitly refused to draw a conclusion from a
-shorter run -- and it is competitive with the graph encoder when both score
-actions independently. Second, the gap between the three independent-head arms
-(0.527-0.573) and the proposed model (0.700) is larger than the gap between any
-two encoders, which locates the contribution in the **action-graph interaction**
-rather than in the state encoder.
+The proposed model is quoted as its three-seed range, because that range is
+what any single-seed arm has to clear to be distinguishable from it.
 
-The constructive attention baseline is a transformer over the node set in the
-style of the attention model, with the typed edge features entering as a
+**The action head is what separates the family, not the state encoder.** All
+three independent-head arms land at 0.527-0.573, below the proposed model's
+worst seed by more than 0.12, while swapping the *encoder* under a
+complete-GCN head moves nothing detectable: the transformer arm's 0.773 sits
+squarely inside the graph encoder's 0.700-0.807 band. DeepSets is finally
+trained to completion -- document 08 dropped it for compute and refused to draw
+a conclusion from a short run -- and it is the best of the independent-head
+arms, but still far below any complete-GCN arm.
+
+The constructive attention baseline (R1.6, R2.8) is a transformer over the node
+set in the style of the attention model, with typed edge features entering as a
 per-head attention bias so it reads the same canonical content as the graph
 encoder. Kool et al. assume a single vehicle, no charging, and no exogenous
 uncertainty, so a literal port is impossible; what transfers is the
-architecture, and the deviation is stated rather than hidden. Its run is in
-section 6.
+architecture, and the deviation is stated rather than hidden. **It is
+competitive**: an attention encoder is a perfectly good substitute for the
+heterogeneous graph encoder on this problem, which is a more useful finding for
+the manuscript than a win would have been, because it says the contribution is
+not the graph.
 
 Artifacts: `results/canonical/learned_baselines/`.
 Reproduce with `scripts/runners/run_learned_baselines.sh`.
@@ -295,12 +303,28 @@ simulator and every baseline already use.
 
 Artifacts: `results/charging_curves/model_comparison.json`.
 
-## 6. Running: seeds, ablations, attention
+## 6. Component ablations
 
-* seed replication of the travel ladder at seeds 1 and 2 (R1.7);
-* the constructive attention baseline (R1.6);
-* component ablations for state pooling and for the typed edge relations (E3);
-* penalty-magnitude sweep and seed replication for the mask arms.
+Each arm blanks one named block of the canonical observation, or withholds the
+pooled state embedding from the action head, keeping the observation width,
+network shape, budget, and seed stream identical. Re-scored on the same 150
+validation scenarios; the proposed model's three-seed range is the bar.
+
+| Arm | What is removed | Success | Travel h |
+| --- | --- | --- | --- |
+| `v2_tm10` (proposed, 3 seeds) | -- | 0.700-0.807 | 131-145 |
+| `ablate_pooling` | pooled fleet embedding, actor only | **0.667** | 154.4 |
+| `ablate_edges` | all nine typed pairwise relations | **0.633** | 152.1 |
+| `v2_ablate` (doc 10) | the six routing action features | 0.213 | 158.9 |
+
+Both new ablations fall below the proposed model's worst seed, so both clear
+the ~0.1 noise threshold established in §1.3, and both cost travel hours on top.
+Ranking what the canonical representation contributes: the per-action routing
+features dominate by a wide margin (-0.49 at minimum), then the typed pairwise
+relations (-0.07 to -0.17), then state pooling (-0.03 to -0.14).
+
+`ablate_queue` and `ablate_active_truck` are training in batch 4; the charging
+action-space arms (§9) are in batches 4 and 5.
 
 ## 7. The 500-scenario test campaign
 

@@ -141,7 +141,7 @@ In parallel, Reinforcement Learning (RL) has emerged as a promising direction~\c
 
 These gaps point to a clear need for methods that retain the operational realism of electric truck routing while remaining scalable enough for repeated, time-sensitive decision making. In response, this paper develops a truck-oriented and learning-compatible framework\footnote{The project code will be open-sourced upon publication.}
 % \footnote{The project repository is available at \url{https://github.com/StavrosOrf/eTruckRouting}.}
-for the eTFRP under charging constraints and uncertainty. The problem is formulated to explicitly capture fleet-level interactions through shared charging infrastructure, stochastic travel and energy conditions, and realistic charging behavior, while preserving the structure needed for sequential decision-making. On this basis, Graph Proximal Policy Optimization (GraphPPO) is introduced as a graph neural network (GNN)-based~\cite{kipf} RL approach that combines a structured state--action representation with an explicit state-based feasibility action mask, allowing routing and charging decisions to be learned without discarding the operational constraints that define the problem. To assess both the strengths and the limitations of GraphPPO, a common simulation and benchmarking environment is further developed for direct comparison with heuristic and optimization-based methods under consistent assumptions. Across the main benchmark, the proposed method is shown to remain consistently close to the mathematical optimization benchmark over a broad range of fleet sizes, to outperform the other learning-based baselines in both solution quality and robustness, and to become particularly competitive in the largest and most congested settings. In the single-truck eVRP setting, near-optimal performance is also retained while requiring substantially less online computation than mathematical optimization.
+for the eTFRP under charging constraints and uncertainty. The problem is formulated to explicitly capture fleet-level interactions through shared charging infrastructure, stochastic travel and energy conditions, and realistic charging behavior, while preserving the structure needed for sequential decision-making. On this basis, Graph Proximal Policy Optimization (GraphPPO) is introduced as a graph neural network (GNN)-based~\cite{kipf} RL approach that combines a structured state--action representation with an explicit state-based feasibility action mask, allowing routing and charging decisions to be learned without discarding the operational constraints that define the problem. To assess both the strengths and the limitations of GraphPPO, a common simulation and benchmarking environment is further developed for direct comparison with heuristic and optimization-based methods under consistent assumptions. Across the main benchmark, the proposed method is shown to remain consistently close to the mathematical optimization benchmark over a broad range of fleet sizes, to outperform the other learning-based baselines in both solution quality and robustness, and to become particularly competitive in the largest and most congested settings. In an additional joint fleet eVRP setting, in which customer assignment, sequencing, and a mandatory depot return are all restored as decisions, the proposed method matches a validated exact planner on fleet travel time while completing substantially more instances.
 
 More specifically, the paper's contributions can be summarized as follows:
 \begin{itemize}
@@ -151,7 +151,7 @@ More specifically, the paper's contributions can be summarized as follows:
 
     \item GraphPPO is proposed as a graph-based actor--critic RL method designed for routing and charging under fleet-level coupling, uncertainty, and variable action spaces. Across the main eTFRP benchmark, near-benchmark performance is maintained as problem size increases, while stronger reliability and scalability are obtained than with the generic PPO and MaskPPO baselines.
 
-    \item A complete event-driven simulation and benchmarking environment is developed using real transportation networks from California, together with an extensive computational study that evaluates scalability, robustness, and transferability relative to heuristic and mathematical programming baselines. The results show strong competitiveness in large congested fleet settings, near-optimal quality in the single-vehicle eVRP case, and meaningful zero-shot generalization across unseen problem configurations.
+    \item A complete event-driven simulation and benchmarking environment is developed using real transportation networks from California, together with an extensive computational study that evaluates scalability, robustness, and transferability relative to heuristic and mathematical programming baselines. The results show strong competitiveness in large congested fleet settings, parity with a validated exact planner on fleet travel time in a joint fleet eVRP setting where assignment and sequencing are also decided, and transfer that holds across instance size and most parameter shifts but degrades where the energy or time budget itself moves.
 \end{itemize}
 
 
@@ -361,7 +361,7 @@ Here, the research progress on RL-based routing is split into advances in classi
 
 \subsubsection{RL for classical routing problems}
 
-Recent progress in RL for routing has been driven by learned heuristics that enable combinatorial search across instances and fast decision-making at deployment time, both of which are essential for freight operations that require frequent replanning. A central paradigm is the constructive encoder--decoder policy, in which routes are built sequentially using attention mechanisms. The attention model of \cite{kool2018attention} demonstrated that such policies can achieve strong performance with policy-gradient training and rollout-based baselines, while related work showed that a single policy can learn near-optimal routing decisions over broad instance distributions using only reward signals and feasibility rules \citep{NEURIPS2018_9fb4651c}. Subsequent research has focused on improving training stability and generalization through diverse rollouts and symmetry-aware regularization, leveraging the invariances of routing problems to improve robustness beyond the training distribution \citep{Sym-NCO}. Beyond constructive policies, learning-to-search approaches have sought to emulate classical improvement heuristics by learning local search moves directly; for example, \cite{NEURIPS2023_9bae70d3} learns flexible transformations and uses guided exploration to navigate complex search spaces. More broadly, these studies show that RL can serve as an effective framework for routing, particularly when fast inference and repeated decision-making are required.
+Recent progress in RL for routing has been driven by learned heuristics that enable combinatorial search across instances and fast decision-making at deployment time, both of which are essential for freight operations that require frequent replanning. A central paradigm is the constructive encoder--decoder policy, in which routes are built sequentially using attention mechanisms. The attention model of \cite{kool2018attention} demonstrates that such policies can achieve strong performance with policy-gradient training and rollout-based baselines, while related work showed that a single policy can learn near-optimal routing decisions over broad instance distributions using only reward signals and feasibility rules \citep{NEURIPS2018_9fb4651c}. Subsequent research has focused on improving training stability and generalization through diverse rollouts and symmetry-aware regularization, leveraging the invariances of routing problems to improve robustness beyond the training distribution \citep{Sym-NCO}. Beyond constructive policies, learning-to-search approaches have sought to emulate classical improvement heuristics by learning local search moves directly; for example, \cite{NEURIPS2023_9bae70d3} learns flexible transformations and uses guided exploration to navigate complex search spaces. More broadly, these studies show that RL can serve as an effective framework for routing, particularly when fast inference and repeated decision-making are required.
 
 
 \subsubsection{RL for electric vehicle routing}
@@ -507,7 +507,7 @@ Stochastic energy consumption is correlated with traffic to reflect stop-and-go 
 \Big),
 \label{eq:unc_energy}
 \end{equation}
-with $\varepsilon$ representing additional noise and clipping bounds $[\underline\xi,\overline\xi]$ that prevent unrealistic extreme traveling time values. 
+with $\varepsilon\sim\mathcal{N}(0,\sigma_\xi^2)$ representing additional noise, $\sigma_\xi=0.05$. The realized energy is clipped multiplicatively, so that $\tilde{b}_{uv}\in[0.90\,b_{uv},\,1.20\,b_{uv}]$, i.e.\ $\underline{\xi}=0.90$ and $\overline{\xi}=1.20$; the realized travel time is clipped to $\tilde{\tau}_{uv}\in[0.85\,\tau_{uv},\,2.50\,\tau_{uv}]$ and its standard deviation is capped at one hour. Both bounds are applied to the realized quantity and never to the nominal one, so the nominal network $(\tau_{uv},b_{uv})$ that the planners and the feasibility mask read is unaffected by the draw. Throughout, an untilded symbol denotes a nominal quantity and a tilded symbol its realization: $\tau_{uv}$ and $b_{uv}$ are the nominal travel time and energy of edge $(u,v)$, while $\tilde{\tau}_{uv}$ and $\tilde{b}_{uv}$ are the values actually incurred when the edge is traversed. 
 Unloading times at delivery nodes can also be stochastic (with realized time $\tilde{q}$), reflecting longer delays during business hours due to facility congestion and dock availability. In this setting, delivery points are assumed to be operational throughout the whole day.
 
 Another source of uncertainty is the endogenous congestion at charging stations. Even if exogenous variables were fixed, the waiting time experienced at a station depends on the arrival times and charging durations of other trucks, making queuing delays a coupled, fleet-level problem. In eTFRP, stations maintain first-come, first-served waitlists and admit trucks to charging ports only when capacity becomes available.
@@ -530,7 +530,7 @@ The objective is to design a policy $\pi$ that minimizes the expected total time
 \sum_{k} w^{(i)}_{k}
 +
 \sum_{k}\tilde{q}^{(i)}_{k}
-\right)\right]
+\right)\right],
 \label{eq:obj_time}
 \\
 \text{s.t.:} \quad
@@ -544,12 +544,14 @@ The objective is to design a policy $\pi$ that minimizes the expected total time
 & b_i\!\left(t+\tilde{\tau}_{n_i(t),v}\right)= b_i(t)-\tilde{e}_{n_i(t),v} && \forall i\in\mathcal{I},\ \forall t \in \mathcal{T}\ | \; i\mapsto \text{navigates}(v),
 \label{eq:con_energy_update_travel}
 \\
-& b_i(t+h_k^{(i)})=\min\!\Big\{\overline{b}_i,\ b_i(t)+ \int_{t}^{t+h}\eta_c \cdot P_c\!\left(\frac{b_i(t)}{\overline{b}_i}\right)\, dt,\Big\} && \forall i\in\mathcal{I},\ \forall t \in \mathcal{T}\ | \; i\mapsto \text{charges}(c,h),
+& b_i(t+h)=\min\!\Big\{\overline{b}_i,\ b_i(t)+ \int_{0}^{h}\eta_c \, P_c\!\left(\mathrm{soc}_i(t+s)\right)\, ds \Big\}, \quad \frac{\mathrm{d}\,\mathrm{soc}_i(t+s)}{\mathrm{d}s} = \frac{\eta_c\,P_c(\mathrm{soc}_i(t+s))}{\overline{b}_i} && \forall i\in\mathcal{I},\ \forall t \in \mathcal{T}\ | \; i\mapsto \text{charges}(c,h),
 \label{eq:con_energy_update_charge}
 \\
 & |\mathcal{M}_c(t)| \le \kappa_c && \forall c\in\mathcal{C}, \ \forall t \in \mathcal{T}.
 \label{eq:con_ports}
 \end{align}
+
+In Eq.~\eqref{eq:con_energy_update_charge} the integration variable $s$ is the elapsed charging time, distinct from the wall-clock time $t$ at which the session begins, and the integrand is evaluated along the \emph{state-of-charge trajectory} $\mathrm{soc}_i(t+s)$ rather than at the fixed initial state $b_i(t)$. This distinction is not cosmetic: because the power curve $P_c(\cdot)$ tapers above a threshold state of charge, holding the argument at its initial value would overstate the energy delivered by a session that crosses the taper, and by up to $55\%$ for a session ending near a full battery. The simulator integrates the same trajectory numerically, and the feasibility mask, the heuristic, and both planners price a recharge with that identical routine, so no method plans against a charging model the simulator will not execute.
 Here $b_i(t)$ denotes the battery energy of truck $i$ at time $t$, $n_i(t)\in\mathcal{V}$ denotes its current location node, and $\mathcal{M}_c(t)\subseteq\mathcal{I}$ denotes the set of trucks occupying charging ports at station $c$ at time $t$. 
 Constraints~\eqref{eq:con_battery_bounds} and \eqref{eq:con_energy_headroom} enforce energy feasibility throughout the operational day. The battery bound in~\eqref{eq:con_battery_bounds} maintains a minimum buffer $\underline b_i$ and prevents exceeding capacity $\overline{b}_i$. In detail, constraint~\eqref{eq:con_energy_headroom} requires that any selected navigation action to a node $u$ is feasible under a safety multiplier $\alpha\ge 1$, which conservatively accounts for energy uncertainty. 
 The battery evolution is captured explicitly by~\eqref{eq:con_energy_update_travel} and \eqref{eq:con_energy_update_charge}.
@@ -800,10 +802,9 @@ Initially, the heterogeneous state graph $\mathcal{G}^{\mathcal{S}}_t$ is passed
 Each node encoder starts with a single-layer Multilayer Perceptron (MLP), defined as $h_j^{(l)}(x)=W^{(l)}_{j}x+b^{(l)}_{j}$ with the trainable matrix $W^{(l)}\in\mathbf{R}^{F_{l-1} \times F_{l}}$ and bias vector $b^{(l)}\in\mathbf{R}^{F_{l}}$, where $F_{l}$ is the number of hidden nodes.
 The node embeddings are then refined through $L$ graph \emph{Hetero-Interaction} layers~\cite{arowolo2025generalizationgraphneuralnetworks}, which perform edge-relation-specific message passing across the directed edges of $\mathcal{G}^\mathcal{S}_t$. 
 The set of edges $\mathcal{E}^\mathcal{S}_t$ includes different edge types, denoted by $\mathcal{R}$, (e.g., truck$\rightarrow$delivery, truck$\rightarrow$charger, delivery$\rightarrow$truck, charger$\rightarrow$truck, etc.) where $\mathcal{N}_r(v)$ denotes the neighbors of node $v$ under relation $r\in\mathcal{R}$. 
-At layer $l\in\{0,\dots,L-1\}$, the messages of the graph convolution operation~\cite{kipf} are computed with a relation-specific function that conditions on both the sender $u$ and receiver $v$ node embeddings, and the edge feature vector $x^\text{edge}_{uv}$. 
-A message of relation $r$ is then defined as:
+At layer $l\in\{0,\dots,L-1\}$, the messages of the graph convolution operation~\cite{kipf} are computed with a relation-specific affine map applied to the \emph{sender} embedding $h^{(l)}_u$ and the edge feature vector $x^\text{edge}_{uv}$; the receiver embedding enters at the update step in Eq.~\eqref{eq:update} rather than in the message, which keeps the message linear in the sender and permits the aggregation to be folded through the linear map. A message of relation $r$ is then defined as:
 \begin{equation}
-\mu^{(l)}_{uv,r} \;=\; W^{(l)}_{r} \cdot (h_v^{(l-1)} \; \oplus \; h_v^{(l-1)} \; \oplus\; x^\text{edge}_{uv}) +b^{(l)}_{r}.
+\mu^{(l)}_{uv,r} \;=\; W^{(l)}_{r} \cdot \big(h_u^{(l)} \; \oplus\; x^\text{edge}_{uv}\big) \;+\;b^{(l)}_{r}.
 \label{eq:message}
 \end{equation}
 % and aggregated per relation,
@@ -814,21 +815,21 @@ A message of relation $r$ is then defined as:
 % \label{eq:agg}
 % \end{equation}
 % where the summation is permutation-invariant over the neighbors of $v$ under relation $r\in\mathcal{R}$.
-The node embedding is then updated by averaging over the relation-specific aggregated messages and combining them with a self-term,
+Messages are averaged over the entire typed neighborhood of $v$, that is over all relations jointly, and the result is combined with the receiver's own embedding through a node-type-specific map, a residual connection, and layer normalization,
 \begin{equation}
+\bar{\mu}^{(l)}_{v}
+\;=\;
+\frac{1}{\max\!\big(1,\textstyle\sum_{r\in\mathcal{R}}|\mathcal{N}_r(v)|\big)}
+\sum_{r\in\mathcal{R}}\;\sum_{u\in\mathcal{N}_r(v)} \mu^{(l)}_{uv,r},
+\qquad
 h_v^{(l+1)}
 \;=\;
-\sigma\!\left(
-W^{(l)}_{0}\,h_v^{(l)}
-\;+\;
-\sum_{r\in\mathcal{R}} 
-\Big(W^{(l)}_{r} \;%\; \cdot \;
-\frac{1}{|\mathcal{N}_r(v)|} \; \sum_{u\in\mathcal{N}_r(v)} \mu^{(l)}_{uv,r}
-\Big)
-\right).
+\mathrm{LN}\!\Big(
+h_v^{(l)} \;+\; \sigma\big(U^{(l)}_{\kappa(v)}\,(h_v^{(l)} \,\oplus\, \bar{\mu}^{(l)}_{v})\big)
+\Big).
 \label{eq:update}
 \end{equation}
-where $\sigma(\cdot)$ is a nonlinearity, such as the Rectified Linear Unit (ReLU) function. This construction allows different interaction patterns to be learned for each relation type while preserving permutation invariance within each neighborhood. In particular, directed transportation edges contribute messages that depend on $(\tau_{uv},e_{uv})$, enabling the embeddings to reflect both network topology and traversal costs, whereas interaction edges between trucks and infrastructure nodes propagate fleet-level context such as station congestion and remaining delivery structure.
+where $\kappa(v)$ denotes the type of node $v$, $U^{(l)}_{\kappa(v)}$ is the corresponding update matrix, $\mathrm{LN}(\cdot)$ is layer normalization, and $\sigma(\cdot)$ is the Rectified Linear Unit. The empty neighborhood is well defined: when a node has no incoming typed edge the averaged message is zero and the update reduces to the residual path. This construction allows different interaction patterns to be learned for each relation type while preserving permutation invariance within each neighborhood. In particular, directed transportation edges contribute messages that depend on $(\tau_{uv},e_{uv})$, enabling the embeddings to reflect both network topology and traversal costs, whereas interaction edges between trucks and infrastructure nodes propagate fleet-level context such as station congestion and remaining delivery structure.
 
 Finally, as shown in Figure~\ref{fig:graph}.a, the global state embedding $z_t$ is computed by pooling over the node embeddings. In particular, mean pooling is applied per node type to get the intermediate embeddings $z_{j,t}$.
 \begin{equation}
@@ -858,14 +859,15 @@ that is refined via $L^{\mathcal{A}}$ layers of graph convolution on the fully-c
 \begin{equation}
 h_{a}^{(l+1)}
 \;=\;
-\sigma\!\left(
-W_{\mathrm{a}}^{(l)}
-\sum_{v\in\mathcal{N}(a)\cup\{a\}}
-\frac{h_{a}^{(l)}}{\sqrt{\tilde{d}_a\,\tilde{d}_v}}
-\right),
+\mathrm{LN}\!\left(
+h_{a}^{(l)} \;+\; \sigma\!\Big(
+W_{\mathrm{self}}^{(l)}\,h_{a}^{(l)}
+\;+\;
+W_{\mathrm{nbr}}^{(l)}\,\frac{1}{|\mathcal{N}(a)|}\!\!\sum_{v\in\mathcal{N}(a)}\!\! h_{v}^{(l)}
+\Big)\right),
 \label{eq:action_gcn}
 \end{equation}
-where $\mathcal{N}(a)$ denotes the neighbors of $a$ in $\mathcal{G}_t^{\mathcal{A}}$, $\tilde{d}_a$ and $\tilde{d}_u$ are the degrees of nodes $a$ and $u$ in the graph with self-loops, respectively, and $W_{\mathrm{a}}^{(l)}$ is a learnable weight matrix.
+where $\mathcal{N}(a)=\mathcal{V}^{\mathcal{A}}\setminus\{a\}$ denotes the other feasible actions of the same decision step, so that the aggregation is over \emph{neighboring action embeddings} $h_v^{(l)}$ rather than over the node's own embedding. Self-influence is carried by the separate term $W_{\mathrm{self}}^{(l)}h_a^{(l)}$ and by the residual connection, which is why no self-loop appears in $\mathcal{N}(a)$. The mean over neighbors keeps the layer invariant to the number of feasible actions, which varies from step to step, and $\mathrm{LN}(\cdot)$ denotes layer normalization. A decision step offering a single feasible action is well defined: the neighborhood is empty, the neighbor term vanishes, and the update reduces to the self and residual paths.
 Then, actions are computed by conditioning the action embeddings on the global state embedding $z_t$, in particular by using the dot product $l_t(a) = <h_{a}^{L^{\mathcal{A}}}, z_t>, \; \forall  a\in\mathcal{V}^{\mathcal{A}}$.
 The policy is obtained by a softmax over the feasible actions,
 \begin{equation}
@@ -957,7 +959,7 @@ This section presents the experimental evaluation of the proposed electric truck
 
 \begin{table}[t]
 \centering
-\caption{Random variables and experimental settings used in the routing environment.}
+\caption{Random variables and experimental settings used in the routing environment. Untilded symbols denote nominal quantities and tilded symbols their realizations, and each entry states whether the quantity is drawn exogenously or arises endogenously from the fleet's own decisions.}
 \label{tab:random_variables}
 \small
 \begin{tabular}{p{0.31\linewidth} p{0.61\linewidth}}
@@ -969,28 +971,33 @@ Travel time $\tilde{\tau}_{uv}(t)$
 \mathcal{N}\!\left(\tau_{uv},\sigma_{uv}^{2}(t)\right)$; 
 std.\ factor $0.15$, rush-hour multiplier $2.0$ \\
 
-Energy consumption $\tilde{e}_{uv}$
-& 
+Realized edge energy $\tilde{b}_{uv}$
+&
+$\tilde{b}_{uv}=b_{uv}\,\xi_{uv}\in[0.90\,b_{uv},\,1.20\,b_{uv}]$, with
 $\xi_{uv}=\operatorname{clip}\!\left(
 1+0.5\!\left(\frac{\tilde{\tau}_{uv}}{\tau_{uv}}-1\right)
 +\varepsilon_{uv},\,0.90,\,1.20
-\right)$ \\
-% , $\varepsilon_{uv}\sim\mathcal{N}\!\left(0,(0.05)^2\right)$ \\
+\right)$, $\varepsilon_{uv}\sim\mathcal{N}\!\left(0,0.05^{2}\right)$;
+correlated with travel time through $\tilde{\tau}_{uv}/\tau_{uv}$ \\
 
-Charging duration $h$
-& $h\in\{1,2,\ldots,12\}$ h \\
+Charging action
+& Target state of charge $\in\{0.5,0.6,0.7,0.8,0.9,1.0\}$; the realized
+duration follows from the charging curve \\
 
 Charging model
-& CCCV enabled; $p_c=50$ kW, $\eta_c=0.85$, taper from SoC $0.8$ \\
+& CCCV enabled; station classes $\{150,350,750\}$ kW, $\eta_c=0.90$,
+taper from SoC $0.8$ down to $150$ kW \\
 
 Queueing time
-& Endogenous FCFS queue waiting time at charging stations \\
+& Endogenous: FCFS admission at finite ports, so waiting depends on the
+fleet's own prior decisions rather than on an exogenous draw \\
 
-Unloading time
-& Fixed at $0.2$ h \\
+Unloading time $\tilde{q}$
+& Base $0.2$ h, sampled once per service event; std.\ factor $0.20$,
+capped at $0.25$ h, $1.5\times$ during business hours \\
 
 Initial battery
-& Full battery; $b_i=400$ kWh \\
+& Full battery; $\overline{b}_i=400$ kWh \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1016,7 +1023,7 @@ Training is done on a system with an A10 GPU and a 16-core Intel CPU, and 24 GB 
 \subsection{Performance Across Truck Fleet Scales}
 
 Five routing algorithms are considered in this comparison. Mathematical optimization is used as a high-quality planning reference, obtained by solving the optimization model conservatively, as shown in Section~\ref{sec:obj_constraints}, under the same environment assumptions, but without fully accounting for the problem's stochastic nature.
-The heuristic algorithm is a rule-based baseline designed to construct feasible routing and charging decisions with low computational effort but without learning, generic PPO~\cite{ppo} is the most capable discrete-action RL algorithm and serves as the standard method applied without any explicit structural adaptation to the transportation graph or the feasibility structure of the problem, while MaskPPO~\cite{maskppo} augments PPO with an action-feasibility mask so that invalid routing and charging actions are removed during decision making. GraphPPO further extends this idea through graph-based state and action representations that encode interactions among trucks, deliveries, and charging stations under shared infrastructure constraints.
+The heuristic algorithm is a rule-based baseline designed to construct feasible routing and charging decisions with low computational effort but without learning, generic PPO~\cite{ppo} is a widely used on-policy algorithm for discrete action spaces and serves here as the standard method applied without any explicit structural adaptation to the transportation graph or the feasibility structure of the problem, while MaskPPO~\cite{maskppo} augments PPO with an action-feasibility mask so that invalid routing and charging actions are removed during decision making. GraphPPO further extends this idea through graph-based state and action representations that encode interactions among trucks, deliveries, and charging stations under shared infrastructure constraints.
 
 Table~\ref{tab:genresults} summarizes the eTFRP performance across fleet sizes from  1 truck with 3 stops (1T3S) to 100 trucks (100T3S), and Figure~\ref{fig:wr} complements these averages by showing which method achieves the best outcome (referred to as ``win ratio'') on each individual test scenario.
 Although each truck completes exactly three delivery stops in this setting, the proposed formulation readily extends to an arbitrary number of stops, as demonstrated in the next section.
@@ -1078,7 +1085,7 @@ Additional results are provided in Figure~\ref{fig:wr} through episode-wise win 
 \end{figure}
 
 
-A zero-shot generalization analysis is conducted in Figure~\ref{fig:gen}, where a single GraphPPO policy trained only on the 100T3S setting is applied directly to all other problem configurations without any retraining or fine-tuning. The horizontal axes span the number of trucks and the number of sequential stops per truck, while each reported value is averaged over 50 random scenarios. Two complementary metrics are shown. Panel~(a) reports the normalized reward ratio, defined as the average GraphPPO reward divided by the average reward of Math.\ Opt.\ for the same setting, so values above $1.0$ indicate that the transferred policy outperforms the conservative optimization benchmark on average. Panel~(b) reports the win ratio against Math.\ Opt., i.e., the percentage of scenarios in which GraphPPO achieves a better outcome than the optimization benchmark.
+A \emph{size-transfer} analysis is conducted in Figure~\ref{fig:gen}, where a single GraphPPO policy trained only on the 100T3S setting is applied directly to all other fleet-size and stop-count configurations without any retraining or fine-tuning. The transfer examined here is deliberately narrow: the generator, the road network, the vehicle parameters, and the uncertainty law are all held fixed, and only the instance size changes. It is therefore evidence of transfer across scale, not of out-of-distribution generalization; the latter is examined separately in Section~\ref{sec:joint_evrp}, where the charging infrastructure, battery capacity, service times, road distances, and uncertainty distributions are each shifted in turn. The horizontal axes span the number of trucks and the number of sequential stops per truck, while each reported value is averaged over 50 random scenarios. Two complementary metrics are shown. Panel~(a) reports the normalized reward ratio, defined as the average GraphPPO reward divided by the average reward of Math.\ Opt.\ for the same setting, so values above $1.0$ indicate that the transferred policy outperforms the conservative optimization benchmark on average. Panel~(b) reports the win ratio against Math.\ Opt., i.e., the percentage of scenarios in which GraphPPO achieves a better outcome than the optimization benchmark.
 
 Strong transfer performance is observed over a broad region of the test space. In panel~(a), the normalized reward ratio remains very close to or above parity in almost all settings, typically lying around $1.00$ to $1.04$, while the strongest gains are obtained in larger and more congested instances, where values rise to approximately $1.06$ to $1.07$. The largest advantage is visible in high-truck and mid-to-high stop settings, especially around 150 to 200 trucks and roughly 5 to 7 stops, indicating that the policy learned on 100T3S captures decision patterns that remain effective as congestion and fleet interactions become even stronger.
 At the same time, only limited degradation is observed in smaller settings. A likely explanation is that instances with few trucks or stops offer relatively little variability in feasible solutions, making the decision landscape simpler. Consequently, the reward ratio remains close to 1.0, suggesting that the learned policy does not over-specialize to the training configuration.
@@ -1127,85 +1134,69 @@ For this case, near-equivalence between GraphPPO and the mathematical benchmark 
 
 The operational metrics further clarify the behavioral differences among methods. GraphPPO ends with a lower residual SoC than Math. Opt.\ at $14.2\%$ versus $36.0\%$, which suggests that less conservative battery utilization is being adopted while feasibility is still preserved. This behavior is also reflected in the charging profile, since GraphPPO spends only $48.6$ hours in charging compared with $63.1$ for Math. Opt., and queueing time is reduced from $4.3$ hours to $2.0$ h. At the same time, a longer routing time is observed for GraphPPO at $249.6$ hours versus $224.3$, so the final total time is slightly higher at $304.1$ hours compared with $295.8$. A different pattern is observed for MaskPPO, where a very high terminal SoC of $50.1\%$ is retained together with $87.8$ hours of charging time and $343.9$ hours of total time, indicating an overly conservative charging strategy. Finally, low online solution times are maintained by all methods, with $1.7$ seconds for GraphPPO and $1.9$ seconds for Math.\ Opt. (since there are only 10 trucks), while the heuristic and PPO-based baselines remain below one second, so near-real-time deployment remains feasible for the proposed policy in this setting.
 
-\subsection{From eTFRP to Single-Truck eVRP}
+\subsection{From eTFRP to Joint Fleet eVRP}\label{sec:joint_evrp}
 
-In the previous subsections, performance was assessed for the complex stochastic eTFRP across multiple fleet scales, with routing quality coupled with shared charging infrastructure, queueing effects, and interactions among concurrently operating trucks. To further illustrate the adaptability of the proposed framework and its ability to address a wider range of routing problems, the focus now shifts to the flexible-delivery-order, single-truck, stochastic eVRP setting. In this setting, fleet-level interactions are eliminated, leading to a fundamentally different decision structure.
-In the 1T20S case, a single truck must serve 20 delivery locations, but the delivery order is not fixed in advance, so the sequence of customer visits must also be determined as part of the decision process in order to minimize total trip time. As a result, the problem is no longer dominated by charger competition, but instead by the joint difficulty of route construction, battery-feasible navigation, and charging planning over a longer delivery horizon. Since only one truck is considered, waiting time is zero for all methods. The heuristic baseline used in this setting is different from before and is inspired by the TSP. In detail, heuristic baseline is a nearest-neighbor route-construction method followed by local improvement steps, so a feasible tour is first built greedily by repeatedly visiting the closest unserved customer and is then refined through edge swaps that reduce total travel cost~\cite{5ade80e3-7757-300c-a7d3-653ed50f3347}.
+The preceding subsections assess the eTFRP, in which delivery points are assigned to trucks in advance and the fleet competes for shared charging infrastructure. That formulation reflects the operational reality this work targets, where assignments follow from contracts and depot logistics rather than being chosen by the routing system. It does, however, leave open whether the proposed representation depends on that structure. To test this, a second and deliberately harder setting is introduced in which the decisions removed by the eTFRP are restored: customers are owned by the fleet rather than pre-assigned, assignment and sequencing are decided online, payload capacity binds, and every truck must return to the depot. This joint fleet eVRP is solved by the same architecture without modification.
 
+The objective in this setting is total fleet travel time on a plan that serves every customer, and the evaluation is feasibility-first: a plan that abandons deliveries is worthless however short its tour, so the success rate dominates and travel time only breaks ties. All methods are scored on the same 500 held-out scenarios, and the learned rows report the mean over three independent training seeds where available. The optimization benchmark is a fleet-level CP-SAT model over the nominal network, executed with energy-safe repair, whose objective was validated against exhaustive enumeration on tiny instances; an adaptive large neighbourhood search (ALNS) over the same nominal costs is included as a strong metaheuristic, and it reaches the enumerated optimum on every instance small enough to enumerate.
 
 \begin{table}
 \centering
 \small
-\caption{Detailed performance comparison for the 1T20S single-truck eVRP setting over 100 feasible evaluation scenarios. Reported values are the mean $\pm$ standard deviation and include operational metrics.}
-\begin{tabular}{@{}lccccc@{}}
+\caption{Performance comparison for the joint fleet eVRP setting over 500 held-out evaluation scenarios, in which assignment, sequencing, charging, and depot return are all decided online. GraphPPO reports the mean over three independent training seeds with the seed range in brackets; all other learning-based rows are single seeds trained at a smaller interaction budget. Travel, charging, service, and total times are fleet totals averaged over all episodes, so a method that declines instances is not flattered by conditioning.}
+\begin{tabular}{@{}lcccccc@{}}
 \toprule
-Metric & Math. Opt. & Heuristic & PPO & MaskPPO & GraphPPO (Ours) \\
+Metric & CP-SAT & ALNS & Heuristic & PPO & MaskPPO & GraphPPO (Ours) \\
 \midrule
-Reward (-) & $10473$ $\pm$ $13$ & $9553$ $\pm$ $1379$ & $9089$ $\pm$ $1811$ & $10401$ $\pm$ $267$ & $10443$ $\pm$ $65$ \\
-Success Rate (\%) & $100.0$ $\pm$ $0.0$ & $48.9$ $\pm$ $50.3$ & $45.6$ $\pm$ $50.1$ & $96.7$ $\pm$ $18.1$ & $98.9$ $\pm$ $10.5$ \\
-Avg. Truck SoC at Finish (\%) & $28.9$ $\pm$ $6.2$ & $9.3$ $\pm$ $6.4$ & $11.9$ $\pm$ $10.8$ & $55.6$ $\pm$ $25.0$ & $60.7$ $\pm$ $19.1$ \\
-Total Deliveries (-) & $20.0$ $\pm$ $0.0$ & $19.1$ $\pm$ $2.2$ & $18.6$ $\pm$ $2.7$ & $20.0$ $\pm$ $0.2$ & $20.0$ $\pm$ $0.1$ \\
-Total Charging Sessions (-) & $0.9$ $\pm$ $0.8$ & $10.8$ $\pm$ $16.7$ & $0.0$ $\pm$ $0.0$ & $1.3$ $\pm$ $0.9$ & $2.2$ $\pm$ $6.8$ \\
+Success rate (\%) & $62.2$ & $61.4$ & $55.2$ & $50.6$ & $67.0$ & $\mathbf{84.3}$ $[83.0, 85.8]$ \\
+Wilson 95\% CI & $[57.9, 66.3]$ & $[57.1, 65.6]$ & $[50.8, 59.5]$ & $[46.2, 55.0]$ & $[62.8, 71.0]$ & $[79.5, 88.6]$ \\
+Completed fraction (-) & $0.932$ & $0.930$ & $0.917$ & $0.968$ & $0.980$ & $\mathbf{0.991}$ \\
+Avg.\ truck SoC at finish (\%) & $56$ & $57$ & $62$ & $46$ & $44$ & $49$ \\
+Total charging sessions (-) & $34.6$ & $35.4$ & $44.4$ & $18.9$ & $16.1$ & $\mathbf{13.4}$ \\
 \midrule
-Total Charging Time (H) & $3.1$ $\pm$ $4.8$ & $11.6$ $\pm$ $17.8$ & $0.0$ $\pm$ $0.0$ & $11.9$ $\pm$ $6.7$ & $13.2$ $\pm$ $7.1$ \\
-% Total Waiting Time (H) & $0.0$ $\pm$ $0.0$ & $0.0$ $\pm$ $0.0$ & $0.0$ $\pm$ $0.0$ & $0.0$ $\pm$ $0.0$ & $0.0$ $\pm$ $0.0$ \\
-Total Routing Time (H) & $21.7$ $\pm$ $7.8$ & $45.1$ $\pm$ $36.2$ & $20.1$ $\pm$ $2.6$ & $34.8$ $\pm$ $11.0$ & $36.0$ $\pm$ $12.2$ \\
-Unloading Time (H) & $2.0$ $\pm$ $0.0$ & $2.0$ $\pm$ $0.2$ & $1.9$ $\pm$ $0.3$ & $2.0$ $\pm$ $0.0$ & $2.0$ $\pm$ $0.0$ \\
-Total Time (H) & $26.8$ $\pm$ $12.5$ & $58.6$ $\pm$ $53.9$ & $22.0$ $\pm$ $2.8$ & $48.7$ $\pm$ $17.3$ & $51.2$ $\pm$ $19.1$ \\
+Total charging time (H) & $15.6$ & $15.7$ & $19.4$ & $11.2$ & $12.5$ & $\mathbf{9.4}$ \\
+Total routing time (H) & $167.5$ & $168.6$ & $199.8$ & $143.1$ & $152.3$ & $\mathbf{123.5}$ $[120.9, 125.3]$ \\
+Unloading time (H) & $1.9$ & $1.9$ & $1.9$ & $2.0$ & $2.0$ & $2.0$ \\
+Total time (H) & $184.9$ & $186.3$ & $221.1$ & $156.3$ & $166.8$ & $\mathbf{134.8}$ \\
 \midrule
-Exec. Time (s) & $233.1$ $\pm$ $106.4$ & $0.2$ $\pm$ $0.1$ & $0.2$ $\pm$ $0.2$ & $0.2$ $\pm$ $0.2$ & $0.8$ $\pm$ $0.3$ \\
+Exec.\ time (ms/decision) & $2.4$ & $2.0$ & $\mathbf{0.8}$ & $1.9$ & $3.9$ & $5.6$ \\
 \bottomrule
 \end{tabular}
-\label{tab:1t20s_metrics}
+\label{tab:joint_evrp_metrics}
 \end{table}
 
-As observed in Table~\ref{tab:1t20s_metrics}, near-optimal performance is again obtained by GraphPPO, although the relative differences among the strongest methods become smaller in this setting because the optimization benchmark is no longer affected by resource competition. A mean reward of $10443$ is obtained by GraphPPO, compared with $10473$ for Math.\ Opt., while the success rate remains at $98.9\%$ versus $100.0\%$ for the optimization benchmark. Full-service completion is also essentially preserved, with $20.0$ deliveries completed by GraphPPO, compared with $20.0$ by Math.\ Opt. A similarly strong pattern is observed for MaskPPO, which achieves a reward of $10401$ and a success rate of $96.7\%$. In contrast, much weaker results are obtained with the heuristic and generic PPO baselines, whose success rates are only $48.9\%$ and $45.6\%$, respectively, and their rewards are $9553$ and $9089$. These results indicate that, even in the absence of charger congestion, explicit feasibility-aware learning remains important, whereas generic RL without structural adaptation remains unreliable.
+As shown in Table~\ref{tab:joint_evrp_metrics}, the ordering observed in the eTFRP is preserved when the combinatorial decisions are restored, but the margin is obtained on a different axis. A success rate of $84.3\%$ is achieved by GraphPPO, against $62.2\%$ for CP-SAT and $61.4\%$ for ALNS, a difference of more than twenty percentage points whose Wilson intervals are disjoint. The two search-based planners agree closely with one another, which is expected given that both solve the same nominal problem and both match exhaustive enumeration where enumeration is possible; their shortfall is therefore not a failure of search but of open-loop execution under realized travel times, energy draws, and service durations.
 
-The operational metrics show that the remaining gap between GraphPPO and Math.\ Opt.\ is not driven by missed deliveries, but mainly by differences in charging and routing behavior. Math.\ Opt.\ completes the route with only $0.9$ charging sessions on average and $3.1$ hours of charging time, together with the shortest total time of $26.8$ hours. By comparison, GraphPPO achieves nearly the same reward and delivery completion level, but does so with a more conservative energy strategy, finishing with an average SoC of $60.7\%$, using $2.2$ charging sessions, and spending $13.2$ hours charging, for a total time of $51.2$ hours. A similar conservative pattern is observed for MaskPPO, which finishes with $55.6\%$ SoC and a total time of $48.7$ hours. The heuristic, by contrast, is associated with inefficient charging and routing decisions, with $10.8$ charging sessions, $11.6$ hours of charging time, and $58.6$ hours of total time, while PPO fails even more severely, with no charging actions, only $18.6$ deliveries completed, and early infeasible termination. The route visualization supports this interpretation, since the optimization- and feasibility-aware learning methods are associated with coherent long-horizon routing patterns, whereas the weaker baselines are associated with inefficient detours or premature failure. A substantial computational advantage is nevertheless retained by GraphPPO, since Math.\ Opt.\ requires $233.1$ seconds per instance, whereas GraphPPO requires only $0.8$ seconds, which shows that near-optimal eVRP performance can be obtained with much lower online computation.
+Because methods decline different instances, their conditional means are not directly comparable, and a paired reading on jointly solved scenarios is required. On the $285$ scenarios solved by both, GraphPPO and CP-SAT differ by $+0.2$ hours of fleet travel time with a $95\%$ confidence interval of $[-3.1, +3.7]$, and GraphPPO wins $53\%$ of the head-to-head comparisons; against ALNS the difference is $+0.9$ hours $[-2.5, +4.4]$. The proposed method is therefore statistically indistinguishable from a validated exact planner on the campaign objective while completing substantially more instances. Against the remaining baselines the differences are unambiguous: $-23.0$ hours $[-26.7, -19.1]$ against the heuristic and $-26.1$ hours $[-29.7, -22.3]$ against the rolling-horizon controller.
 
+The operational metrics indicate where the advantage originates. The planners build short nominal tours, reflected in their competitive makespans, but sustain them with $34.6$ and $35.4$ charging sessions and $15.6$ to $15.7$ hours of charging, and they abandon roughly four instances in ten when execution departs from the plan. GraphPPO completes $99.1\%$ of deliveries using $13.4$ charging sessions and $9.4$ hours of charging, and its total operating time of $134.8$ hours is $27\%$ below the planners'. A conservative energy policy is retained, with an average terminal state of charge of $49\%$, but it is achieved with fewer and better-placed charging stops rather than with additional ones.
 
-% \subsection{Ablation studies}
+A computational caveat should be stated plainly. In this setting the nominal model is small enough that CP-SAT proves optimality in milliseconds, and its solution is unchanged whether it is given a half-second or forty-five seconds. The order-of-magnitude runtime advantage reported for the single-vehicle case therefore does not carry over here: GraphPPO requires $5.6$~ms per decision against $2.4$~ms for CP-SAT. The argument for the learned policy in this setting rests on solution quality under uncertainty, not on computation time.
 
-% Different topK strategies? Different feasible action masks
+\subsection{Ablation and Sensitivity Analysis}\label{sec:ablation}
 
-% \begin{table}[!h]
-%     \centering
-%     \caption{Design ablation study comparing different policy architectures.}
-%     \label{tab:design_ablation}
-%     \begin{tabular}{lcc}
-%         \toprule
-%         \textbf{Policy Architecture} 
-%         & \textbf{Avg. Reward} 
-%         & \textbf{Violations} \\
-%         \midrule
-%         Pointer Network policy 
-%         & -- 
-%         & -- \\
-        
-%         Attention Network (Kool et al.) 
-%         & -- 
-%         & -- \\
-        
-%         Normal MLP (Hyper-graph) 
-%         & -- 
-%         & -- \\
-        
-%         \midrule
-%         Ours (Final Model) 
-%         & -- 
-%         & -- \\
-%         \bottomrule
-%     \end{tabular}
-% \end{table}
+The joint setting is also used to isolate which components of the proposed representation are responsible for its behaviour. Each arm below modifies exactly one element while holding the observation width, network shape, interaction budget, curriculum, reward, and seed stream fixed, and each is re-scored on validation scenarios disjoint from those used to select its checkpoint. Because independently seeded runs of the identical configuration span $0.107$ in success rate at this budget, effects smaller than roughly $0.1$ are not separable from training noise, and are reported as such rather than interpreted.
 
-% \newpage
+Three elements are found to carry the model. Removing the per-action routing features, which price the leg a candidate commits to and the return leg it implies, reduces the success rate from the $0.700$--$0.807$ seed band to $0.213$. Removing the typed pairwise relations between trucks, customers, and chargers reduces it to $0.633$, and withholding the pooled fleet embedding from the action head reduces it to $0.667$. Two elements are found to be inert: blanking the charging-queue state leaves the model at $0.793$ and blanking the active-truck indicator leaves it at $0.727$, both within the seed band. The queue result is a property of the evaluated instances rather than of the architecture, since two trucks distributed over twenty-five stations rarely contend for ports; a congestion-specific study is therefore required before any claim about queue-aware behaviour is made.
+
+The role of the feasibility mask is examined directly, since it is the component most often assumed to explain the performance of masked policies. A variant is trained in which the mask is replaced by one that hides only action slots denoting no action at all, leaving the observation and candidate set unchanged, so that the policy must learn feasibility from experience. Across three seeds per arm, the masked and unmasked variants reach mean success rates of $0.760$ and $0.773$ respectively, with overlapping ranges: at this budget the hard mask is not what produces feasibility, and the unmasked policy averages $0.1$ invalid actions per episode. What proves necessary is that infeasibility carry a cost commensurate with failure. When an infeasible action is merely refused at a tenth of the failure penalty, the policy never learns feasibility at all and the success rate collapses to zero; when the same refusal is charged at the failure penalty, the arm recovers to $0.773$. The mask is best understood as a convenience that supplies this cost for free, rather than as the source of the reported behaviour.
+
+The charging action space is examined in the same way. Refining the target state-of-charge grid from $10\%$ to $5\%$ leaves the model inside its seed band, so the coarser discretization is not a binding approximation. Expressing the charging decision as a duration of $15$, $30$, or $60$ minutes instead of a target state of charge reduces success to $0.627$ and increases fleet travel time to $159.3$ hours, placing it outside the band on both axes. The explanation is structural: a fixed duration delivers different amounts of energy depending on the truck's position on the charging curve, so the same action denotes different outcomes in different states, whereas a target state of charge is state-independent by construction.
+
+\subsection{Transfer Beyond the Training Distribution}\label{sec:transfer}
+
+Transfer is assessed on twenty regimes, each scoring every method on identical held-out scenarios, and each labelled as interpolation, within-simulator size transfer, or genuine distribution shift so that evidence of one kind is not quoted as evidence of another. Size transfer is strong: success rates of $0.91$, $0.89$, and $0.81$ are obtained at four, six, and eight customers against a ten-customer training distribution, and $0.72$ with a single truck. The ranking is also preserved under shifts in charger power, charger efficiency, port availability, travel-time variance, energy-draw variance, demand, and a road network whose legs are uniformly $25\%$ faster or $40\%$ slower, with GraphPPO leading thirteen of the sixteen regimes scored for all methods, usually by more than twenty points.
+
+Three regimes reverse the ranking, and they share a mechanism. With a $300$~kWh battery the learned policy reaches $0.34$ against CP-SAT's $0.43$; with a $500$~kWh battery it reaches $0.87$ against $0.98$; and with service times doubled it reaches $0.46$ against ALNS's $0.60$. Each of these shifts the feasibility frontier itself rather than the cost of an individual decision. A planner re-solves against whatever budget it is given, whereas a policy has internalised where that frontier lies and is systematically miscalibrated when it moves. The large-battery case is the clearest: when the problem becomes easy the planners solve almost every instance and the policy does not, because slack it never encountered during training is not exploited. Averaged over the out-of-distribution regimes, the success rate changes by $-0.110$ for GraphPPO against $-0.006$ for ALNS and $+0.009$ for CP-SAT. The learned policy therefore purchases a large in-distribution advantage and returns part of it under distribution shift, with the loss concentrated where the resource budget changes.
 
 \section{Conclusion}
 
-This paper introduced a truck-oriented, learning-compatible framework for the eTFRP and eVRP under charging constraints, nonlinear charging behavior, and operational uncertainty. The problem was formulated as an event-driven semi-Markov decision process with shared charging resources, stochastic travel and energy consumption, and feasibility-aware decision-making, and solved using the proposed GraphPPO method. Across the main multi-truck benchmark, GraphPPO remained consistently close to the mathematical programming baseline, achieving normalized rewards of 0.987--1.005 from 1 to 100 truck instances, while maintaining high success rates even when fleet size increased. By contrast, generic PPO and the heuristics failed almost completely beyond the smallest setting, and MaskPPO, although much stronger than PPO, lost reliability at larger scales. The detailed fleet-level analysis further showed that GraphPPO matched the optimization benchmark not only in reward and deliveries completed, but also through more effective charging behavior, including lower charging and waiting times than MaskPPO under shared infrastructure. In the single-truck stochastic eVRP setting, GraphPPO also remained highly competitive, indicating that its value extends beyond fleet-level congestion management to the underlying energy-feasible routing problem itself. Taken together, these results show that the combination of graph-based state--action modeling and explicit feasibility-aware action selection provides a practical and scalable approach to electric truck routing in operationally realistic settings. 
+This paper introduced a truck-oriented, learning-compatible framework for the eTFRP and eVRP under charging constraints, nonlinear charging behavior, and operational uncertainty. The problem was formulated as an event-driven semi-Markov decision process with shared charging resources, stochastic travel and energy consumption, and feasibility-aware decision-making, and solved using the proposed GraphPPO method. Across the main multi-truck benchmark, GraphPPO remained consistently close to the mathematical programming baseline, achieving normalized rewards of 0.987--1.005 from 1 to 100 truck instances, while maintaining high success rates even when fleet size increased. By contrast, generic PPO and the heuristics failed almost completely beyond the smallest setting, and MaskPPO, although much stronger than PPO, lost reliability at larger scales. The detailed fleet-level analysis further showed that GraphPPO matched the optimization benchmark not only in reward and deliveries completed, but also through more effective charging behavior, including lower charging and waiting times than MaskPPO under shared infrastructure. In an additional joint fleet eVRP setting, in which customer assignment, sequencing, and a mandatory depot return were restored as online decisions, the same architecture completed $84.3\%$ of instances against $62.2\%$ for a CP-SAT planner whose objective was validated against exhaustive enumeration, while remaining statistically indistinguishable from that planner on fleet travel time. This indicates that the value of the approach extends beyond fleet-level congestion management to the underlying combinatorial routing problem itself.
+
+Two findings qualify these results and are reported because they bound what the method should be claimed to do. First, an ablation in which the feasibility mask is replaced by one that hides only undefined action slots reaches the same success rate as the masked policy across three training seeds, so the mask is a convenience rather than the source of the reported feasibility; what is necessary is that infeasible actions carry a cost commensurate with failure. Second, transfer holds across instance size and most parameter shifts but degrades where the energy or time budget itself moves, and in those regimes a re-solving planner is the stronger choice. Taken together, these results show that the combination of graph-based state--action modeling and explicit feasibility-aware action selection provides a practical approach to electric truck routing in operationally realistic settings, with a clearly identified boundary. 
 
 Several directions for future research follow naturally from this work. First, the current benchmark could be extended to more complex service constraints such as time windows and depot return policies. Second, the interaction between routing and charging could be modeled more deeply by incorporating reservation policies, electricity prices, larger charger heterogeneity, and explicit grid constraints, thereby advancing integrated logistics-energy decision-making. 
-Finally, broader out-of-distribution evaluation and richer ablation studies would help clarify how the proposed method transfers across regions, infrastructure densities, and uncertainty regimes. 
+Finally, the degradation observed under shifts of the energy and time budget suggests that budget-conditioned training, or an explicit feasibility model learned alongside the policy, may be required before such methods can be deployed across heterogeneous fleets without retraining. 
 Such extensions would further strengthen the role of learning-based methods as decision-support tools for real-world electric freight operations. 
 
 % \section*{Acknowledgements}

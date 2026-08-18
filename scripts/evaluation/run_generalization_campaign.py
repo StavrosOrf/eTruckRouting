@@ -74,6 +74,73 @@ REGIMES: dict[str, dict] = {
             "environment": {"num_trucks": 1, "canonical_max_trucks": 2},
         },
     },
+    # -- scale grid, for the 4-truck / 14-customer envelope policy only ------
+    # These require --config config_joint_scale.yaml: the headline policy has a
+    # fixed observation width and cannot be evaluated above its own envelope,
+    # which is exactly why a separate envelope policy exists.
+    "scale_1t4c": {
+        "kind": "size_transfer",
+        "description": "1 truck, 4 customers",
+        "overrides": {
+            "environment": {
+                "num_trucks": 1,
+                "canonical_max_trucks": 4,
+                "instance_num_stops": 4,
+                "allow_variable_num_stops": False,
+            }
+        },
+    },
+    "scale_2t8c": {
+        "kind": "size_transfer",
+        "description": "2 trucks, 8 customers",
+        "overrides": {
+            "environment": {
+                "num_trucks": 2,
+                "canonical_max_trucks": 4,
+                "instance_num_stops": 8,
+                "allow_variable_num_stops": False,
+            }
+        },
+    },
+    "scale_3t11c": {
+        "kind": "size_transfer",
+        "description": "3 trucks, 11 customers",
+        "overrides": {
+            "environment": {
+                "num_trucks": 3,
+                "canonical_max_trucks": 4,
+                "instance_num_stops": 11,
+                "allow_variable_num_stops": False,
+            }
+        },
+    },
+    "scale_4t14c": {
+        "kind": "size_transfer",
+        "description": "4 trucks, 14 customers -- the full envelope",
+        "overrides": {
+            "environment": {
+                "num_trucks": 4,
+                "canonical_max_trucks": 4,
+                "instance_num_stops": 14,
+                "allow_variable_num_stops": False,
+            }
+        },
+    },
+    # The one mechanism the two-truck distribution never exercises: with four
+    # trucks and a single port per station, charger contention finally binds.
+    "congestion_4t_1port": {
+        "kind": "ood",
+        "description": "4 trucks, one port per station, so queues bind",
+        "overrides": {
+            "environment": {
+                "num_trucks": 4,
+                "canonical_max_trucks": 4,
+                "instance_num_stops": 14,
+                "allow_variable_num_stops": False,
+            },
+            "charging": {"port_capacity_scale": 0.02},
+        },
+    },
     # -- charging infrastructure --------------------------------------------
     "chargers_weak": {
         "kind": "ood",

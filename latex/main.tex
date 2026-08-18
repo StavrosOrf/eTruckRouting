@@ -1185,6 +1185,22 @@ Three elements are found to carry the model. Removing the per-action routing fea
 
 The role of the feasibility mask is examined directly, since it is the component most often assumed to explain the performance of masked policies. A variant is trained in which the mask is replaced by one that hides only action slots denoting no action at all, leaving the observation and candidate set unchanged, so that the policy must learn feasibility from experience. Across three seeds per arm, the masked and unmasked variants reach mean success rates of $0.760$ and $0.773$ respectively, with overlapping ranges: at this budget the hard mask is not what produces feasibility, and the unmasked policy averages $0.1$ invalid actions per episode. What proves necessary is that infeasibility carry a cost commensurate with failure. When an infeasible action is merely refused at a tenth of the failure penalty, the policy never learns feasibility at all and the success rate collapses to zero; when the same refusal is charged at the failure penalty, the arm recovers to $0.773$. The mask is best understood as a convenience that supplies this cost for free, rather than as the source of the reported behaviour.
 
+The same ablation was repeated in a pre-assigned variant of the problem, in which customers are bound to
+trucks before the episode begins as they are in the eTFRP benchmark, so that only sequencing, charging and routing
+remain to be decided. Across two seeds per arm the masked and unmasked policies reach $0.340$ and $0.330$ mean
+success, against per-arm seed ranges of $0.054$ and $0.034$: the conclusion is unchanged in the setting the main
+benchmark uses. This also locates what the earlier PPO-versus-MaskPPO comparison measures. Those two baselines differ
+in their action representation as well as in masking, so their gap is evidence for the structured action space rather
+than for the mask specifically.
+
+A second observation from that variant is worth recording because it runs against intuition. At an identical budget
+and architecture the same model reaches $0.70$--$0.81$ success when it also decides the assignment, and only
+$0.31$--$0.37$ when the assignment is fixed. Removing a decision did not make the problem easier: under
+pre-assignment a truck must serve its own customers wherever they fall, so the fleet cannot rebalance when one truck
+draws a distant or energy-expensive set, and a customer that becomes unreachable stays unreachable. Assignment is not
+only a decision the eTFRP removes; it is also the mechanism by which the joint formulation recovers from an adverse
+draw.
+
 The charging action space is examined in the same way. Refining the target state-of-charge grid from $10\%$ to $5\%$ leaves the model inside its seed band, so the coarser discretization is not a binding approximation. Expressing the charging decision as a duration of $15$, $30$, or $60$ minutes instead of a target state of charge reduces success to $0.627$ and increases fleet travel time to $159.3$ hours, placing it outside the band on both axes. The explanation is structural: a fixed duration delivers different amounts of energy depending on the truck's position on the charging curve, so the same action denotes different outcomes in different states, whereas a target state of charge is state-independent by construction.
 
 \subsection{Transfer Beyond the Training Distribution}\label{sec:transfer}

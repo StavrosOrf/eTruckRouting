@@ -45,6 +45,11 @@ GROUPS: dict[str, tuple[str, list[str], str]] = {
          "seed1_C", "seed2_C"],
         "training-seed variance of the ladder (R1.7)",
     ),
+    "preassigned": (
+        "results/canonical/preassigned",
+        ["pre_masked_s0", "pre_masked_s1", "pre_unmasked_s0", "pre_unmasked_s1"],
+        "do the mask and seed findings hold in the eTFRP-style setting (R1.1, R1.2)",
+    ),
     "charging_actions": (
         "results/canonical/charging_actions",
         ["soc5", "duration"],

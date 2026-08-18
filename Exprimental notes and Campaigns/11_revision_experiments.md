@@ -721,3 +721,84 @@ earlier text:
    about it in either direction.
 
 Artifacts: `results/canonical/scale_campaign/`.
+
+## 11. Do the findings hold in the eTFRP setting?
+
+Sections 1-10 all use the joint fleet formulation. The paper's principal
+benchmark is the eTFRP, where customers are assigned to trucks in advance, and
+until this campaign that setting could not be expressed in the canonical stack
+at all. It now can: `problem.assignment=preassigned` binds each customer to one
+truck at generation time, balanced within payload capacity, with the same
+observation width, action space, mask machinery, curriculum, reward and
+artifact contract as the joint setting. The architecture is identical, so the
+comparison between settings is controlled.
+
+Two seeds per arm, 2M steps, re-scored on the 150 validation scenarios beyond
+those used for checkpoint selection:
+
+| Arm | seed 0 | seed 1 | Mean | Travel h |
+| --- | --- | --- | --- | --- |
+| Masked | 0.313 | 0.367 | **0.340** | 163.0 |
+| Unmasked | 0.347 | 0.313 | **0.330** | 161.1 |
+
+### 11.1 The mask finding replicates
+
+The mask changes success by **0.010**, against per-arm seed ranges of 0.054 and
+0.034, and changes travel time by 1.9 hours in the *opposite* direction. The
+conclusion of §1 therefore holds in the paper's principal setting as well: at
+this budget the hard feasibility mask is not what produces feasibility.
+
+This matters for how the manuscript reads its own eTFRP results. The published
+tables show generic PPO far below MaskPPO and conclude that feasibility-aware
+learning is essential. That comparison is real, but it varies the architecture
+and the action representation as well as the mask, so it cannot separate them.
+The arms above vary only the mask, and the gap disappears. **The published
+PPO-versus-MaskPPO gap is evidence for the structured action representation,
+not for masking**, and the revised text says so.
+
+### 11.2 Pre-assignment makes the problem harder, not easier
+
+The absolute numbers are the surprise. At an identical budget and architecture,
+the same model reaches 0.70-0.81 success on the joint formulation and only
+0.31-0.37 here.
+
+Removing decisions did not make the problem easier. Under pre-assignment a
+truck must serve its own customers wherever they happen to be, so the fleet
+cannot rebalance when one truck draws a distant or energy-expensive set; a
+customer that becomes unreachable is unreachable, whereas in the joint
+formulation another truck can take it. Assignment is not merely a decision the
+eTFRP removes, it is also the mechanism by which the joint formulation recovers
+from bad draws.
+
+This cuts against the natural reading of R1.1 -- that the eTFRP is the easier
+problem because the hard combinatorial decisions were removed. On feasibility
+it is the harder one. It remains true, as the reviewer said, that it asks less
+of the method combinatorially; but it asks more of it operationally.
+
+### 11.3 What was not re-run, and why it matters
+
+The published eTFRP tables themselves were **not** reproduced. Three obstacles,
+stated so that nobody assumes otherwise:
+
+* their optimization baseline is a per-truck Gurobi MILP, and `gurobipy` is not
+  installed on the machine this revision was prepared on, so the "Math. Opt."
+  column cannot be recomputed here at all;
+* those tables report normalized reward, which this revision argues against as
+  a headline metric;
+* their fleet sizes reach 100 trucks and above, an order of magnitude beyond
+  anything scored here.
+
+So the correct statement is: the *findings* were tested against the eTFRP-style
+setting and the mask finding replicates, but the *published eTFRP tables* still
+carry the defects this campaign identified elsewhere -- single-seed
+comparisons, and an optimization baseline whose correctness has never been
+checked against enumeration. The per-truck MILP cannot suffer the specific
+defect found in the fleet CP-SAT model, since with a fixed assignment there is
+no idle-truck decision to get wrong, but it has not been validated either.
+Doing so requires a Gurobi licence and is the one substantive item this
+revision leaves open.
+
+Artifacts: `results/canonical/preassigned/`,
+`results/canonical/ablation_summary_preassigned.json`,
+`results/canonical/exact_validation/enumeration_preassigned_c5t2.json`.
+Reproduce with `scripts/runners/run_preassigned_campaign.sh`.

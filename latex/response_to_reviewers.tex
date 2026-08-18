@@ -309,6 +309,43 @@ Table~2 is expanded to give, for each random variable, its distribution,
 parameters, clipping bounds, correlation structure, and whether it is exogenous
 or endogenous.
 
+\section*{Do these findings hold in the eTFRP setting?}
+
+Because the eTFRP is the principal benchmark, we tested the revision's central
+finding there rather than only in the joint setting. A pre-assigned variant of
+the joint formulation was implemented, in which customers are bound to trucks
+before the episode begins exactly as the eTFRP does, so that the identical
+architecture, observation, mask machinery and evaluation contract apply to
+both. Across two seeds per arm, the masked and unmasked policies reach $0.340$
+and $0.330$ mean success against per-arm seed ranges of $0.054$ and $0.034$.
+The mask finding therefore replicates in the setting that matters most.
+
+This changes how the manuscript's own PPO-versus-MaskPPO figures should be
+read. Those two baselines differ in their action representation as well as in
+masking, so the gap between them is evidence for the structured action space
+rather than for the feasibility mask specifically, and the revised text now
+says so instead of attributing it to masking.
+
+A second result from that variant runs against the natural reading of
+Reviewer~1's first comment. At an identical budget the same model reaches
+$0.70$--$0.81$ success when it also decides the assignment and only
+$0.31$--$0.37$ when the assignment is fixed. Removing that decision made the
+problem \emph{harder}, because a truck must then serve its own customers
+wherever they fall and the fleet can no longer rebalance after an adverse draw.
+The eTFRP does ask less of the method combinatorially, as the reviewer says,
+but it asks more of it operationally.
+
+We are explicit about what was \emph{not} done. The published eTFRP tables were
+not recomputed. Their optimization column is a per-truck Gurobi model and no
+Gurobi licence was available to us during this revision; their headline metric
+is normalized reward, which we now argue against; and their fleet sizes reach
+an order of magnitude beyond anything scored here. That per-truck model cannot
+suffer the specific defect we found in the fleet planner, since a fixed
+assignment leaves no idle-truck decision to get wrong, but it has not been
+validated against enumeration either. We consider this the most substantial
+item this revision leaves open, and we would rather state it than let it be
+inferred.
+
 \section*{Remaining limitations}
 
 We prefer to name these rather than leave them to be found.
@@ -318,7 +355,11 @@ instances, so no claim about queue-aware behaviour is supported by our results.
 \item Optimality is bounded only on instances small enough to enumerate.
 \item Out-of-distribution performance degrades where the energy or time budget
 moves, and in those regimes a re-solving planner is the better choice.
-\item Learned results use three training seeds. Given the measured variance we
+\item The published eTFRP tables retain the defects identified elsewhere in
+this revision: single-seed comparisons, and an optimization baseline never
+validated against enumeration.
+\item Learned results use three training seeds in the joint setting and two in
+the pre-assigned variant. Given the measured variance we
 consider three sufficient for the final configuration, whose spread is $0.026$,
 but not for the intermediate training stages, whose spread is $0.120$ and whose
 rankings we therefore no longer interpret.

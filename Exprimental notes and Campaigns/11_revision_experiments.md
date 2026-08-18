@@ -330,18 +330,29 @@ validation scenarios; the proposed model's three-seed range is the bar.
 | Arm | What is removed | Success | Travel h |
 | --- | --- | --- | --- |
 | `v2_tm10` (proposed, 3 seeds) | -- | 0.700-0.807 | 131-145 |
-| `ablate_pooling` | pooled fleet embedding, actor only | **0.667** | 154.4 |
+| `v2_ablate` (doc 10) | the six routing action features | **0.213** | 158.9 |
 | `ablate_edges` | all nine typed pairwise relations | **0.633** | 152.1 |
-| `v2_ablate` (doc 10) | the six routing action features | 0.213 | 158.9 |
+| `ablate_pooling` | pooled fleet embedding, actor only | **0.667** | 154.4 |
+| `ablate_active_truck` | the flag marking which truck decides | 0.727 | 145.0 |
+| `ablate_queue` | port count, occupancy, waitlist, workload | 0.793 | 144.0 |
 
-Both new ablations fall below the proposed model's worst seed, so both clear
-the ~0.1 noise threshold established in §1.3, and both cost travel hours on top.
-Ranking what the canonical representation contributes: the per-action routing
-features dominate by a wide margin (-0.49 at minimum), then the typed pairwise
-relations (-0.07 to -0.17), then state pooling (-0.03 to -0.14).
+Read against the ~0.1 seed-noise threshold of §1.3, the canonical
+representation splits cleanly in two.
 
-`ablate_queue` and `ablate_active_truck` are training in batch 4; the charging
-action-space arms (§9) are in batches 4 and 5.
+**Three blocks carry the model.** The per-action routing features dominate by a
+wide margin -- removing them costs at least 0.49 success -- followed by the
+typed pairwise relations and the pooled state embedding, both of which fall
+below the proposed model's worst seed and cost travel hours on top.
+
+**Two blocks are inert, and that is a result about the instances, not the
+architecture.** Blanking the charger queue state (0.793) or the active-truck
+flag (0.727) leaves the model inside its own seed band. For the queue features
+the explanation is measurable: two trucks across twenty-five stations with 209
+ports essentially never contend, so there is no queue signal to exploit. The
+honest statement is that this campaign's instance distribution does not
+exercise the endogenous-queue mechanism the formulation models -- which is a
+limitation of the evaluation, and one E2 and Ziyan's comment on endogenous
+queueing should be answered with rather than around.
 
 ## 7. The 500-scenario test campaign
 
@@ -565,3 +576,19 @@ Three, all found by running the experiments rather than by inspection:
   each *method's* own environment, so the unmasked arm was scored under the hard
   mask it never trained with -- 0.560 where the correct environment gives 0.750.
   A wrong conclusion about generalization was one commit away.
+
+## 9. Charging action space (R2.6)
+
+R2.6 asks whether the 10% target-SoC grid is a limiting discretization. It
+changes the action space, so each variant is a separate policy trained under
+otherwise identical settings.
+
+| Arm | Charging actions | Success | Travel h |
+| --- | --- | --- | --- |
+| `v2_tm10` (proposed, 3 seeds) | 6 target SoCs at 10% | 0.700-0.807 | 131-145 |
+| `soc5` | 11 target SoCs at 5% | 0.740 | 135.0 |
+| `duration` | 15/30/60-minute durations | training (batch 5) | -- |
+
+**Finer granularity buys nothing measurable.** Doubling the resolution of the
+charging decision lands inside the proposed model's seed band on both axes, so
+the 10% grid is not a binding approximation and the choice made in D6 stands.

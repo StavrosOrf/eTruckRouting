@@ -1,0 +1,316 @@
+\documentclass[11pt]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\newcommand{\comment}[1]{\medskip\noindent\textbf{#1}\par\nopagebreak\smallskip}
+\newcommand{\reply}{\noindent\textit{Response.}\ }
+
+\title{Response to Reviewers\\[2mm]
+\large Manuscript: Graph-Based Reinforcement Learning for Electric Truck Fleet
+Routing and Charging under Operational Uncertainty}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent We thank the editor and both reviewers for reviews that were, in
+several places, more accurate about our manuscript than we were. Three of the
+criticisms turned out to identify real defects rather than presentational
+weaknesses, and addressing them changed our own conclusions. We state those
+three at the outset, because they alter claims that appeared in the original
+submission and we would rather they be visible than discovered.
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{The feasibility mask does not explain our results.} Prompted by
+Reviewer~1's comment~2, we implemented a training path without the hard mask.
+Across three training seeds per arm, the masked and unmasked variants reach mean
+success rates of $0.760$ and $0.773$ with overlapping ranges. The mask is a
+convenience, not the source of the reported behaviour. What is necessary is that
+infeasibility carry a cost commensurate with failure. The revised manuscript
+says so in Section~5.6 and no longer attributes performance to masking.
+
+\item \textbf{Our optimization benchmark was defective, and is now stronger.}
+Prompted by Reviewer~1's comment~4 and Reviewer~2's comment~7, we validated the
+nominal planner against exhaustive enumeration. On tiny deterministic instances
+brute force beat our ``optimal'' planner on six of six scenarios, because its
+circuit formulation could not leave a truck idle and therefore forced every
+vehicle to serve at least one customer. After correction the planner matches
+exhaustive enumeration on $30$ of $30$ instances, and every comparison in the
+revised manuscript is against the corrected, stronger baseline.
+
+\item \textbf{Training-seed variance exceeds most of the effects we previously
+reported.} Replicating the identical configuration across seeds gives a spread
+of $0.107$ in success rate. Several single-seed comparisons in the original
+submission are inside that band and are no longer presented as findings. All
+learned results now report either a seed range or an explicit single-seed
+marker.
+\end{enumerate}
+
+\noindent Every experimental claim below is reproducible from artifacts
+published with the revision, and each response states what changed, where, on
+what evidence, and what remains open.
+
+\section*{Handling Editor}
+
+\comment{E1. The paper's claim that eVRP addresses single vehicles while eTFRP
+addresses fleets is incorrect; there is extensive fleet-level eVRP literature,
+including RL methods.}
+\reply We accept this without reservation; the dichotomy was wrong as written.
+The introduction no longer contrasts eTFRP with eVRP on the basis of fleet size.
+The distinguishing features of our setting are now stated as the specific
+combination we model, namely finite-port charging stations with endogenous
+queueing, a nonlinear charging function integrated along the state-of-charge
+trajectory, correlated travel and energy uncertainty, and event-driven
+centralized control. We no longer claim that the existence of multiple vehicles
+or shared chargers is itself novel.
+
+\comment{E2. Operational uncertainty is well studied and the paper presents it
+as an unfilled gap.}
+\reply Accepted. The revision separates exogenous randomness (travel time,
+energy draw, service time) from endogenous delay (queueing, which arises from
+the fleet's own prior decisions), states the clipping bounds numerically, and
+presents the contribution as the combination rather than as the treatment of
+uncertainty per se. Table~2 now records for each quantity whether it is drawn
+exogenously or arises endogenously.
+
+We also report a limitation that this analysis exposed. In the evaluated
+instances two trucks are distributed over twenty-five stations, so charger
+contention almost never binds: an ablation that blanks the entire
+charging-queue state leaves performance statistically unchanged. The endogenous
+queueing mechanism is modelled and implemented, but the benchmark as configured
+does not exercise it, and we now say so rather than claim credit for it.
+
+\comment{E3. The methodological novelty is unclear; component-level evidence is
+needed.}
+\reply The contributions are restated as falsifiable component claims, each
+tested at matched budget, observation width, curriculum, reward, and seed
+stream, and re-scored on validation scenarios disjoint from those used for
+checkpoint selection. Results appear in Section~5.6. Because independently
+seeded runs of the identical configuration span $0.107$ in success rate, we
+treat effects below roughly $0.1$ as indistinguishable from training noise and
+report them as such.
+
+Three components clear that threshold: the per-action routing features
+($0.213$ when removed, against a $0.700$--$0.807$ seed band), the typed pairwise
+relations ($0.633$), and the pooled state embedding ($0.667$). Two do not: the
+charging-queue state ($0.793$) and the active-truck indicator ($0.727$). We
+report the negative results alongside the positive ones. On scalability, we no
+longer claim a computational advantage in the joint setting: the nominal model
+is small enough that CP-SAT proves optimality in milliseconds, and a budget
+sweep from $0.5$~s to $45$~s returns an identical plan.
+
+\section*{Reviewer 1}
+
+\comment{R1.1. In the main eTFRP experiments, deliveries are pre-assigned and
+mostly ordered, and depot return is not required, so the problem is closer to
+energy-feasible execution than to fleet routing.}
+\reply The observation is correct. We have kept the eTFRP as the principal
+setting because it reflects the operational case this work targets, in which
+assignments follow from contracts and depot logistics rather than from the
+routing system, and we now say this explicitly rather than implying that the
+harder combinatorial problem is being solved.
+
+To address the substance of the criticism, we added a second setting in which
+precisely the removed decisions are restored: customers are owned by the fleet,
+assignment and sequencing are decided online, payload capacity binds, and every
+truck must return to the depot. It replaces the former single-truck eVRP study
+as the final experimental section, since it answers this comment directly
+whereas the single-vehicle study did not. The same architecture is applied
+unchanged and reaches $84.3\%$ success $[83.0, 85.8]$ over three seeds against
+$62.2\%$ for the corrected CP-SAT planner, while differing from that planner by
+$+0.2$ hours $[-3.1, +3.7]$ in paired fleet travel time on jointly solved
+scenarios. See Section~5.5 and Table~7.
+
+\comment{R1.2. The feasibility mask may explain most of GraphPPO's gain.}
+\reply This was the most consequential comment in the review, and the answer is
+not the one we expected. We implemented a mask-free training path in which the
+observation and candidate set are identical and only slots denoting no action at
+all are hidden, so the policy must learn feasibility from experience.
+
+Across three seeds per arm the masked and unmasked variants are
+indistinguishable: $0.760$ against $0.773$ mean success, with per-arm ranges of
+$0.107$ and $0.113$. The unmasked policy averages $0.1$ invalid actions per
+episode, i.e.\ it learns feasibility on its own. What proves necessary is the
+\emph{cost} of infeasibility: when an infeasible action is refused at a tenth of
+the failure penalty the policy never learns feasibility and success collapses to
+zero, while at the full failure penalty it recovers to $0.773$.
+
+We also compare, under equal information and identical budgets, a flat-state
+MaskPPO analogue, DeepSets-PPO, a state-GNN with independent action scoring, and
+a constructive attention model. The action head, not the state encoder, is what
+separates the family: every independent-head arm lands at $0.527$--$0.573$,
+while the attention encoder under a complete-GCN head reaches $0.773$, inside
+the graph encoder's seed band. We therefore no longer attribute our results to
+the graph state encoder either. Reported metrics are feasibility, conditional
+travel time and makespan, queue time, and per-decision runtime, never reward
+alone.
+
+\comment{R1.3. Notation and equation defects.}
+\reply All corrected, and the equations were regenerated from the tested
+implementation rather than edited in place.
+\begin{itemize}[leftmargin=*,nosep]
+\item Nominal and realized quantities now use distinct symbols consistently:
+$\tau_{uv}, b_{uv}$ against $\tilde{\tau}_{uv}, \tilde{b}_{uv}$.
+\item Clipping bounds are given numerically:
+$\tilde{b}_{uv}\in[0.90 b_{uv}, 1.20 b_{uv}]$ and
+$\tilde{\tau}_{uv}\in[0.85\tau_{uv}, 2.50\tau_{uv}]$, applied to the realized
+quantity only, so the nominal network read by the planners is unaffected.
+\item The charging constraint is rewritten with the state-of-charge trajectory
+$\mathrm{soc}_i(t+s)$ and elapsed-time integration variable $s$. We note why it
+matters: evaluating the power curve at the initial state overstates delivered
+energy by up to $55\%$ for a session crossing the taper.
+\item Equation~19 used the receiver embedding twice. Messages now condition on
+the sender embedding and the edge features, with the receiver entering at the
+update step.
+\item Equation~22 summed the node's own embedding over its neighbors. It now
+aggregates neighboring action embeddings, with self-influence carried by a
+separate term and the single-feasible-action case defined explicitly.
+\end{itemize}
+
+\comment{R1.4. The optimization benchmark does not establish near-optimality.}
+\reply Accepted, and the investigation prompted by this comment found a defect
+in our own baseline, reported in the preamble. The inherited per-truck models
+are now named for what they are in the source and are no longer presented as
+optimality references. The campaign baseline is a fleet-level CP-SAT model whose
+objective matches exhaustive enumeration on $30$ of $30$ tiny instances; an
+adaptive large neighbourhood search is included as an independent check and
+reaches the same optimum on all of them. Every episode now publishes solver
+status, objective, best bound, relative gap, wall time, solve count, and the
+number of times the executed plan fell back to the shared navigation layer.
+
+We have removed the term ``near-optimal'' where it was unsupported. A bounded
+optimality statement is available only on instances small enough to enumerate;
+at campaign scale we report the best-known plan and say so.
+
+\comment{R1.5. High reward is reported despite zero success rate.}
+\reply Accepted. Reward is no longer a headline metric anywhere. Evaluation is
+feasibility-first: success rate with Wilson intervals dominates, and cost
+metrics are reported with their conditioning stated. Every failed episode is
+retained in every non-conditioned aggregate and is now labelled with a cause;
+truncation was previously silent, which is where unlabelled failures came from.
+The inherited shaping has been replaced and every coefficient is published.
+
+\comment{R1.6. Baselines are weak and underspecified.}
+\reply Added: an ALNS metaheuristic with four destroy operators, greedy and
+regret-2 repair, adaptive operator weights and simulated-annealing acceptance,
+searching the same nominal costs as CP-SAT and executing through the same
+energy-safe layer; a constructive attention baseline; DeepSets-PPO; and a
+state-GNN with independent action scoring. All share the observation, mask,
+curriculum, reward, seed stream and interaction budget. The claim that PPO is
+``the most capable discrete-action RL algorithm'' has been removed.
+
+Two honest notes. ALNS matches CP-SAT closely, which we take as evidence that
+the nominal problem is solved rather than that either method is weak. And the
+attention baseline is competitive with our own encoder, which is why we no
+longer claim the graph encoder as a contribution.
+
+\comment{R1.7. Generalization evidence is too narrow.}
+\reply The former ``zero-shot'' study is renamed size transfer, because that is
+what it measures: only instance size varies. Genuine distribution shift is now
+studied separately across twenty regimes, each scoring every method on identical
+held-out scenarios and each labelled interpolation, size transfer, or
+out-of-distribution so that one kind of evidence is never quoted as another. The
+main setting is evaluated on $500$ paired test scenarios rather than $300$, and
+learned results carry seed ranges.
+
+The finding is bounded rather than uniformly favourable. Transfer holds across
+instance size and across shifts in charger power, efficiency, port availability,
+travel and energy variance, demand, and road-network speed, with our method
+leading thirteen of sixteen regimes. It fails where the resource budget itself
+moves: with a $300$~kWh battery we reach $0.34$ against CP-SAT's $0.43$, with
+$500$~kWh $0.87$ against $0.98$, and with doubled service times $0.46$ against
+$0.60$. Averaged over out-of-distribution regimes our success changes by
+$-0.110$ against $-0.006$ for ALNS. We state this in the conclusion as a
+deployment boundary.
+
+\section*{Reviewer 2}
+
+\comment{R2.1--R2.3. The problem definition is confusing; uncertainty and
+mandatory service should be stated early.}
+\reply The introduction now defines the joint problem in operational terms
+without the eTFRP/eVRP dichotomy, and enumerates the stochastic and endogenous
+quantities where the problem is introduced rather than later. Every-customer-once
+service, payload capacity, energy feasibility, the optional time-window variant,
+and depot return are stated as explicit constraints, and the outcome taxonomy
+(success, infeasibility, timeout, incomplete service) is defined.
+
+\comment{R2.4--R2.6. Language, reward coefficients, charging discretization.}
+\reply The phrase ``stochastic edge traversing'' is replaced by ``realized
+travel duration on the selected road-network transition''. Every training reward
+coefficient is published. On discretization, we now have evidence rather than a
+choice: refining the target state-of-charge grid from $10\%$ to $5\%$ leaves
+performance inside the seed band, whereas expressing charging as a $15/30/60$
+minute duration degrades it to $0.627$ success and $159.3$ travel hours. A fixed
+duration delivers different energy depending on position on the charging curve,
+so the same action denotes different outcomes in different states; a target
+state of charge does not.
+
+\comment{R2.7. The optimization model is unclear.}
+\reply A complete formulation is given with its queueing, uncertainty, horizon,
+information and fallback assumptions stated, together with which baselines are
+offline, rolling-horizon, deterministic or scenario-based. Tiny exact objectives
+are validated against exhaustive enumeration, which is how we found the defect
+described in the preamble.
+
+\comment{R2.8--R2.9. Heuristic and neural baselines; attention and transformer
+methods should be compared.}
+\reply A constructive attention baseline is included, adapted to this setting
+and with the adaptation stated rather than glossed: Kool et al.\ assume a single
+vehicle, no charging, and no exogenous uncertainty, so a literal port is
+impossible; what transfers is the architecture, and we give the typed edge
+features to it as an attention bias so that it reads exactly the same content as
+our encoder. Each implemented heuristic is linked to the closest cited variant
+with its adaptations disclosed.
+
+\comment{Minor comments.}
+\reply ``demonstrated'' is now ``demonstrates''; the missing comma in the
+objective equation is added; figure caption capitalization is standardized;
+Table~2 reports realized edge energy rather than only the coefficient $\xi$. The
+panel label ``c.\ Actor Network head'' is in the figure source asset and is
+corrected to ``(c) Actor Network Head'' in the regenerated figure.
+
+\section*{Additional comments}
+
+\comment{Unloading/service time as a model parameter; endogenous queue delay;
+sourcing and validating the charging equation; comparison with a three-segment
+piecewise formulation; an expanded random-variable table.}
+\reply Service time is defined as a model parameter, sampled once per service
+event, with its distribution and cap in Table~2. Queue delay is explained as
+endogenous under finite ports and FCFS admission, with the honest caveat under
+E2 that the evaluated fleet-to-station ratio does not exercise it.
+
+On the charging function we now report a quantitative comparison rather than an
+assertion. Against the integrated CCCV curve at $350$--$750$~kW, a constant-power
+model errs by $5.0\%$ on average and $28.7\%$ at worst; the classical
+three-segment piecewise-linear formulation of the Montoya type errs by $4.7\%$
+and $27.8\%$, i.e.\ it is barely better. The reason is structural and we state
+it: our curve ramps to peak power before tapering and is therefore not concave,
+while a Montoya-style approximation assumes concavity. Placing breakpoints
+inside both curved regions reduces the error to $0.6\%$ mean and $4.0\%$
+maximum. We also fixed a defect found during this comparison, in which the
+charge-time estimator failed to converge for a full charge and returned $10$
+hours for a session requiring $0.53$ hours.
+
+Table~2 is expanded to give, for each random variable, its distribution,
+parameters, clipping bounds, correlation structure, and whether it is exogenous
+or endogenous.
+
+\section*{Remaining limitations}
+
+We prefer to name these rather than leave them to be found.
+\begin{itemize}[leftmargin=*,nosep]
+\item Charger contention is modelled but not exercised by the evaluated
+instances, so no claim about queue-aware behaviour is supported by our results.
+\item Optimality is bounded only on instances small enough to enumerate.
+\item Out-of-distribution performance degrades where the energy or time budget
+moves, and in those regimes a re-solving planner is the better choice.
+\item Learned results use three training seeds. Given the measured variance we
+consider three sufficient for the final configuration, whose spread is $0.026$,
+but not for the intermediate training stages, whose spread is $0.120$ and whose
+rankings we therefore no longer interpret.
+\end{itemize}
+
+\end{document}

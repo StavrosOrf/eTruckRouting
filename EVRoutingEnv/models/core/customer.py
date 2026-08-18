@@ -29,6 +29,10 @@ class CustomerTask:
     latest_service: float = math.inf
     status: TaskStatus = TaskStatus.UNASSIGNED
     claimed_by: int | None = None
+    # Set only in the pre-assigned (eTFRP) variant: the single truck this
+    # customer belongs to. None means any truck may claim it, which is the
+    # fleet-owned joint formulation.
+    preassigned_to: int | None = None
     claimed_at: float | None = None
     service_started_at: float | None = None
     served_at: float | None = None

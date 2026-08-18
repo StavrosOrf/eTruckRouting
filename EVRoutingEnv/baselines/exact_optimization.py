@@ -183,6 +183,17 @@ def solve_nominal_plan(
     for index in range(1, size):
         model.AddExactlyOne(visit[(truck.truck_id, index)] for truck in trucks)
 
+    # eTFRP variant: a customer bound to one truck is not a decision variable of
+    # the assignment problem at all, so fix it rather than leaving the solver to
+    # rediscover it. Without this the planner would solve a strictly easier
+    # problem than the policy is given, and the comparison would be meaningless.
+    for index, task in enumerate(tasks, start=1):
+        owner = getattr(task, "preassigned_to", None)
+        if owner is None:
+            continue
+        for truck in trucks:
+            model.Add(visit[(truck.truck_id, index)] == int(truck.truck_id == owner))
+
     if parameters.objective == "total_time":
         model.Minimize(sum(leg_costs))
     else:

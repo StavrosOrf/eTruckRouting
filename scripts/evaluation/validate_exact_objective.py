@@ -82,10 +82,20 @@ def enumerate_optimum(
     best_cost = math.inf
     best_routes: dict[int, tuple[int, ...]] = {}
     truck_ids = [truck.truck_id for truck in trucks]
+    # eTFRP variant: a pre-assigned customer has exactly one legal owner, so the
+    # enumeration must not explore assignments the policy and the planner are
+    # both forbidden from making.
+    owner = {
+        int(task.node_id): getattr(task, "preassigned_to", None) for task in tasks
+    }
 
     # Every assignment of customers to trucks, then every ordering within each
     # truck. Exponential by construction, which is why this is tiny-only.
-    for assignment in itertools.product(truck_ids, repeat=len(customers)):
+    choices = [
+        truck_ids if owner.get(customer) is None else [owner[customer]]
+        for customer in customers
+    ]
+    for assignment in itertools.product(*choices):
         buckets: dict[int, list[int]] = {truck_id: [] for truck_id in truck_ids}
         for customer, truck_id in zip(customers, assignment, strict=True):
             buckets[truck_id].append(customer)
@@ -137,6 +147,10 @@ def _tiny_config(base: dict, customers: int, trucks: int) -> dict:
     )
     config["delivery"]["enable_stochastic_unloading"] = False
     return config
+
+
+def _describe(config: dict) -> str:
+    return config.get("problem", {}).get("assignment", "fleet")
 
 
 def main() -> None:

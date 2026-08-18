@@ -42,6 +42,7 @@ class FeasibilityReason(StrEnum):
     TIME_WINDOW_EXPIRED = "time_window_expired"
     MUST_LEAVE_CHARGER = "must_leave_charger"
     EMPTY_ACTION_SLOT = "empty_action_slot"
+    PREASSIGNED_TO_OTHER = "preassigned_to_other"
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,17 @@ def evaluate_joint_route(
 
     if action_kind is ActionKind.CUSTOMER:
         task = task_registry.task_for_node(target_node)
+        if (
+            task.preassigned_to is not None
+            and task.preassigned_to != truck.truck_id
+        ):
+            # eTFRP variant: this customer belongs to another truck, so it is
+            # not merely taken but was never this truck's to take.
+            return FeasibilityResult.reject(
+                FeasibilityReason.PREASSIGNED_TO_OTHER,
+                action_kind,
+                target_node=target_node,
+            )
         if not task.is_available:
             return FeasibilityResult.reject(
                 FeasibilityReason.TASK_UNAVAILABLE,

@@ -404,6 +404,16 @@ class EventDrivenTruckEnv(gym.Env):
         # action at all, so the policy must learn feasibility itself.  The
         # simulator's dynamics are the same either way; only the mask differs,
         # which is what makes this a clean ablation of the mask.
+        # eTFRP variant: customers belong to a specific truck from the start, so
+        # the policy decides sequencing, charging, and routing but not
+        # assignment. This is the operational case the main benchmark models,
+        # expressed inside the canonical stack so that the same architecture,
+        # mask, and artifact contract apply to both settings.
+        assignment = self.problem_config.get("assignment", "fleet")
+        if assignment not in {"fleet", "preassigned"}:
+            raise ValueError("problem.assignment must be 'fleet' or 'preassigned'")
+        self.preassigned_customers = assignment == "preassigned"
+
         self.policy_action_mask = env_config.get("policy_action_mask", "hard")
         if self.policy_action_mask not in {"hard", "structural"}:
             raise ValueError(
@@ -659,6 +669,7 @@ class EventDrivenTruckEnv(gym.Env):
                 )
             ),
             time_window_config=self.problem_config.get("time_windows"),
+            preassign=self.preassigned_customers,
         )
         self.task_registry = self.joint_instance.create_registry()
         shared_sequence = [self.joint_instance.depot_node] + [

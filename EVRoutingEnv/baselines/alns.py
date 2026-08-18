@@ -88,6 +88,13 @@ class _NominalProblem:
         self.trucks = [
             truck for truck in env.trucks if not truck.is_complete and not truck.failed
         ]
+        # eTFRP variant: the owner of each customer, or None when the fleet owns
+        # it. Insertion is restricted accordingly, so the search explores the
+        # same space the policy does.
+        self.owner = {
+            int(task.node_id): getattr(task, "preassigned_to", None)
+            for task in tasks
+        }
         self.capacity = {
             truck.truck_id: (
                 float(truck.remaining_payload)
@@ -161,7 +168,9 @@ def _greedy_initial(problem: _NominalProblem) -> dict[int, list[int]]:
         if best is None:
             # No truck can take it within capacity: park it on the emptiest
             # route so the plan stays complete and the executor can still try.
-            truck_id = min(routes, key=lambda key: problem.load(routes[key]))
+            truck_id = problem.owner.get(node)
+            if truck_id is None:
+                truck_id = min(routes, key=lambda key: problem.load(routes[key]))
             routes[truck_id].append(node)
             continue
         truck_id, position, _ = best
@@ -189,7 +198,10 @@ def _best_insertion(
 ) -> tuple[int, int, float] | None:
     """Cheapest feasible (truck, position) for one customer."""
     best: tuple[int, int, float] | None = None
+    owner = problem.owner.get(node)
     for truck_id, route in routes.items():
+        if owner is not None and truck_id != owner:
+            continue
         if not problem.fits(truck_id, route, extra=node):
             continue
         for position in range(len(route) + 1):
@@ -212,7 +224,9 @@ def _repair_greedy(
     for node in order:
         best = _best_insertion(problem, routes, node)
         if best is None:
-            truck_id = min(routes, key=lambda key: problem.load(routes[key]))
+            truck_id = problem.owner.get(node)
+            if truck_id is None:
+                truck_id = min(routes, key=lambda key: problem.load(routes[key]))
             routes[truck_id].append(node)
             continue
         truck_id, position, _ = best
@@ -233,7 +247,10 @@ def _repair_regret(
         best_move: tuple[int, int] | None = None
         for node in pending:
             deltas: list[tuple[float, int, int]] = []
+            owner = problem.owner.get(node)
             for truck_id, route in routes.items():
+                if owner is not None and truck_id != owner:
+                    continue
                 if not problem.fits(truck_id, route, extra=node):
                     continue
                 for position in range(len(route) + 1):

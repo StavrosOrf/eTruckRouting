@@ -27,6 +27,7 @@ class JointRoutingInstance:
                 base_service_time=task.base_service_time,
                 earliest_service=task.earliest_service,
                 latest_service=task.latest_service,
+                preassigned_to=task.preassigned_to,
             )
             for task in self.tasks
         )
@@ -45,6 +46,7 @@ def generate_joint_routing_instance(
     max_customer_demand: float,
     base_service_time: float,
     time_window_config: dict | None = None,
+    preassign: bool = False,
 ) -> JointRoutingInstance:
     """Generate one feasible-capacity joint-routing instance.
 
@@ -138,7 +140,45 @@ def generate_joint_routing_instance(
             zip(selected_customers, demands, time_windows, strict=True)
         )
     )
+    if preassign:
+        tasks = _preassign_to_trucks(
+            tasks, num_trucks=num_trucks, payload_capacity=payload_capacity
+        )
     return JointRoutingInstance(depot_node=selected_depot, tasks=tasks)
+
+
+def _preassign_to_trucks(
+    tasks: tuple[CustomerTask, ...],
+    *,
+    num_trucks: int,
+    payload_capacity: float,
+) -> tuple[CustomerTask, ...]:
+    """Bind every customer to exactly one truck, as the eTFRP setting does.
+
+    Customers are dealt largest-demand-first onto the truck with the most
+    remaining payload, which keeps every truck's assignment within its own
+    capacity whenever the fleet as a whole can carry the instance.  The result
+    is the operational case the eTFRP models: assignment is decided before the
+    episode begins, and the policy decides only sequencing, charging, and
+    routing.
+    """
+    remaining = [payload_capacity] * num_trucks
+    assigned: list[CustomerTask] = []
+    for task in sorted(tasks, key=lambda item: -float(item.demand)):
+        truck = max(range(num_trucks), key=lambda index: remaining[index])
+        remaining[truck] -= float(task.demand)
+        assigned.append(
+            CustomerTask(
+                task_id=task.task_id,
+                node_id=task.node_id,
+                demand=task.demand,
+                base_service_time=task.base_service_time,
+                earliest_service=task.earliest_service,
+                latest_service=task.latest_service,
+                preassigned_to=truck,
+            )
+        )
+    return tuple(sorted(assigned, key=lambda item: item.task_id))
 
 
 def _capacity_feasible_demands(

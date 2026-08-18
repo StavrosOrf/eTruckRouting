@@ -245,21 +245,38 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 | Manuscript revision | complete except the items below |
 | Response letter | complete (`latex/response_to_reviewers.tex`) |
 
-**Remaining, none of them computational except item 4, which needs a licence:**
+**Remaining: one author decision, no computation.**
 
-1. Compile the LaTeX. No toolchain exists on the machine this revision was
-   prepared on, so `main.tex` and the response letter were verified
-   structurally (60 labels, 33 references resolved, environments and columns
-   balanced) but never typeset.
-2. Regenerate the architecture figure with the panel label `(c) Actor Network
-   Head`; it lives in the figure asset, not the source.
-3. Write the E1 literature matrix, and settle how the introduction frames the
-   contribution now that neither the mask nor the graph encoder is claimed as
-   its source.
-4. Validate the per-truck Gurobi MILP against exhaustive enumeration, as the
-   fleet planner was validated. `gurobipy` is not installed here and the check
-   needs a licence. The fleet planner was wrong when it was finally checked, so
-   this is not a formality.
+1. Decide the target journal. Everything here is named for IEEE T-ITS, but
+   `latex/main.tex` uses Elsevier's `cas-sc` class and the compiled PDF reads
+   *Preprint submitted to Elsevier*. Switching document class reflows the paper
+   and changes the bibliography style, so it was left to whoever knows where
+   the paper is going --- but it must be settled before the final compile.
+
+**Closed since this list was written:**
+
+* The LaTeX compiles. Tectonic 0.17.0 builds `main.pdf` (27 pages) and
+  `response_to_reviewers.pdf` (7 pages) with no unresolved reference or
+  citation and no missing characters. The first compile found what no static
+  check could: two `enumitem` optional arguments used without the package being
+  loaded, which aborted the build outright, and a panel-naming sentence sitting
+  outside its `\caption{}` braces that also contradicted the figure. Both fixed.
+* The architecture figure is corrected in place. Panel c reads `c. Actor
+  Network Head`, matching panel b; the figure's convention is `a.`/`b.`/`c.`,
+  not `(a)`/`(b)`/`(c)`, so the capital `H` was the whole change. Verified by
+  text extraction, by rasterising the figure and comparing against the
+  original, and by recompiling the manuscript with it embedded.
+* The electric bus and ride-sharing citations are added, both verified against
+  Crossref: Jin et al., IEEE T-ITS 25(6):6212--6222, 2024, and Shi et al., IEEE
+  T-ITS 21(11):4822--4834, 2020.
+* The per-truck Gurobi MILP is validated against exhaustive enumeration.
+  Gurobi *is* reachable here --- the licence resolves against TU Delft's token
+  server. On 80 tiny scenarios, all 11 instances where the MILP returns an
+  executable plan match the enumerated optimum exactly, so the encoding is
+  sound. The same run shows 42 of 80 plans are unexecutable under the
+  simulator's nonlinear charging, 7 of them where a feasible plan existed ---
+  a limitation of the model's linear-charging approximation, not its encoding.
+  See doc 11 §11.5.
 5. Decide whether to recompute the published eTFRP tables, which carry
    single-seed comparisons and normalized-reward headlines. The findings *were*
    tested against an eTFRP-style setting -- the mask result replicates, and

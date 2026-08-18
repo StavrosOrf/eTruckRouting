@@ -832,3 +832,62 @@ Artifacts: `results/canonical/preassigned/`,
 `results/canonical/ablation_summary_preassigned.json`,
 `results/canonical/exact_validation/enumeration_preassigned_c5t2.json`.
 Reproduce with `scripts/runners/run_preassigned_campaign.sh`.
+
+### 11.5 The per-truck Gurobi encoding, now actually solved
+
+§11.4 closed what could be closed without a solver and left one gap: whether
+the *encoding* of the per-truck model returns what the model implies. That gap
+is now closed. Gurobi is reachable from this machine after all --- the licence
+resolves against TU Delft's token server --- so the model can be solved and
+compared against enumeration directly.
+
+`scripts/evaluation/validate_per_truck_gurobi.py` solves each instance with
+`OptimalVRPSingleTruckPolicy`, reads the delivery order and the charger chosen
+per leg out of the returned plan, and re-prices that structure with the
+simulator's own nonlinear integrator. It then enumerates every delivery order
+and every choice of at most one charger per leg --- the model's own documented
+restriction --- priced the same way. The candidate charger set is the nearest
+eight *plus every charger the MILP used*, so enumeration can always express the
+MILP's own plan and a ratio below 1.0 is impossible by construction rather than
+by luck.
+
+Eighty scenarios, three customers, deterministic travel and energy:
+
+| Outcome | Count |
+| --- | --- |
+| MILP plan executable, priced against enumeration | 11 |
+| MILP declared the instance infeasible | 27 |
+| MILP returned a plan the simulator cannot execute | 42 |
+| ...of those, a feasible plan demonstrably existed | 7 |
+| Instances infeasible even for enumeration under the restriction | 35 |
+
+**Every one of the eleven comparable plans matches the enumerated optimum
+exactly.** The ratio is 1.0 on all eleven, with no spread at all. So the
+encoding is sound: where the per-truck model produces an executable plan, that
+plan is the best plan reachable under its own restriction, and the defect found
+in the fleet planner has no analogue here.
+
+The rest of the table is the more interesting half. In 42 of 80 instances the
+MILP returns a plan the simulator then cannot execute, and in 7 of those a
+feasible plan existed under the model's own restriction. This is not a solver
+bug and not an encoding bug: it is the cost of the model's internal
+approximations, a linear charging curve and a flat 1.1 energy safety factor,
+meeting the simulator's nonlinear CCCV physics. The MILP is optimal for a
+problem that is not quite the one being simulated.
+
+Two caveats keep this honest. These are deliberately tiny and deliberately
+stressed instances --- three customers on a 25-charger network, chosen so
+enumeration terminates --- and the infeasibility rate here should not be read
+as the rate at the paper's twenty-stop scale. And eleven comparable cases is a
+small sample; it is enough to say the encoding is not broken, not enough to put
+a confidence interval on anything.
+
+Taken with §11.4, the position on the inherited per-truck baseline is now fully
+evidenced: its encoding is exact, its structural restriction demonstrably binds,
+and its energy approximation makes a majority of its plans unexecutable under
+the simulator at this scale. It belongs in the paper as an inherited benchmark
+with those qualifications, not as an optimality reference.
+
+Artifacts: `results/canonical/exact_validation/per_truck_gurobi.json`.
+Reproduce with
+`python -m scripts.evaluation.validate_per_truck_gurobi --scenarios 80 --chargers 8`.

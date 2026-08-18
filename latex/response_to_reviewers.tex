@@ -299,8 +299,9 @@ with its adaptations disclosed.
 \reply ``demonstrated'' is now ``demonstrates''; the missing comma in the
 objective equation is added; figure caption capitalization is standardized;
 Table~2 reports realized edge energy rather than only the coefficient $\xi$. The
-panel label ``c.\ Actor Network head'' is in the figure source asset and is
-corrected to ``(c) Actor Network Head'' in the regenerated figure.
+architecture figure's third panel read ``c.\ Actor Network head'' while its
+second read ``b.\ Value Network Head''; the third is now capitalized to match,
+so the three panels read ``a.'', ``b.'' and ``c.'' consistently.
 
 \section*{Additional comments}
 
@@ -355,23 +356,35 @@ The eTFRP does ask less of the method combinatorially, as the reviewer says,
 but it asks more of it operationally.
 
 We are explicit about what was \emph{not} done. The published eTFRP tables were
-not recomputed. Their optimization column is a per-truck Gurobi model and no
-Gurobi licence was available to us during this revision; their headline metric
-is normalized reward, which we now argue against; and their fleet sizes reach
-an order of magnitude beyond anything scored here. That per-truck model cannot
-suffer the specific defect we found in the fleet planner, since a fixed
-assignment leaves no idle-truck decision to get wrong. But the fleet defect was
-not a solver bug -- the model could not express the optimal plan -- and that
-class of defect is testable without a solver. The per-truck model documents the
-restriction ``at most one charger visit between consecutive deliveries''.
-Enumerating tiny deterministic instances, we find that this restriction binds on
-one of sixty plans, and in that case it turns a route that is feasible in $31.5$
-hours into one the model reports as infeasible. It is therefore a genuine
-expressiveness limit rather than a harmless modelling convenience; it is rare at
-the scale we can enumerate; and its frequency at the paper's own instance sizes
-is unmeasured. We describe that baseline with this qualification attached rather
-than as an optimality reference. What remains unchecked is only the Gurobi
-encoding of the model, not the model itself.
+not recomputed: their headline metric is normalized reward, which we now argue
+against, and their fleet sizes reach an order of magnitude beyond anything
+scored here. The per-truck Gurobi model behind their optimization column has,
+however, been examined directly, in two ways.
+
+First, its expressiveness. That model cannot suffer the specific defect we found
+in the fleet planner, since a fixed assignment leaves no idle-truck decision to
+get wrong. But the fleet defect was not a solver bug -- the model could not
+express the optimal plan -- and that class of defect is testable without a
+solver. The per-truck model documents the restriction ``at most one charger
+visit between consecutive deliveries''. Enumerating tiny deterministic
+instances, we find that this restriction binds on one of sixty plans, and in
+that case it turns a route that is feasible in $31.5$ hours into one the model
+reports as infeasible.
+
+Second, its encoding. We solved the model and compared it against exhaustive
+enumeration over every delivery order and every admissible charger choice,
+pricing both with the simulator's own nonlinear charging integrator. On every
+one of the $11$ instances (of $80$ attempted) where the model returns an
+executable plan, that plan matches the enumerated optimum exactly. The encoding
+is therefore sound. The same experiment shows that $42$ of $80$ of its plans
+cannot be executed under the simulator's charging physics at all, and that in
+$7$ of those a feasible plan existed under the model's own restriction --- the
+cost of its linear charging curve and flat energy safety factor meeting a
+nonlinear battery.
+
+The model is thus optimal for a problem slightly different from the one being
+simulated. We describe that baseline with these qualifications attached rather
+than as an optimality reference.
 
 \section*{Remaining limitations}
 

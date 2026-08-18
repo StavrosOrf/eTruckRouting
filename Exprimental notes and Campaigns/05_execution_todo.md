@@ -181,8 +181,8 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 - [x] Complete `04_reviewer_response_todo.md` with exact page/line and artifact links.
 - [x] Add formulation, notation, optimizer, heuristic, random-variable, and reproducibility appendices.
   - Delivered inline rather than as appendices: notation and clipping bounds in the formulation, the random-variable table expanded with distributions and endogeneity, the evaluation protocol in the setup, and solver evidence in the artifacts.
-- [~] Compile LaTeX, check citations/references, lint, and archive final artifacts.
-  - No LaTeX toolchain exists on this host, so compilation is unverified. Structure was checked programmatically instead: 60 labels, 33 references all resolved, environments and table columns balanced. **The authors must compile before submission.**
+- [x] Compile LaTeX, check citations/references, lint, and archive final artifacts.
+  - Both documents compile. `main.pdf` is 27 pages, `response_to_reviewers.pdf` is 7, neither contains an unresolved `??` or `[?]`, and the engine reports no missing characters. Compiled with Tectonic 0.17.0; `scripts/analysis/check_manuscript.py` still runs as the fast pre-compile check.
 - [x] Write the point-by-point response letter.
   - `latex/response_to_reviewers.tex`, covering every editor, reviewer, and additional comment, opening with the three findings that changed the paper's own claims and closing with four named limitations.
 
@@ -192,55 +192,74 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 - [x] **Go to headline test:** architecture and checkpoints are frozen using validation only.
 - [x] **Go to manuscript rewrite:** primary, ablation, robustness, and generalization result manifests are complete.
   - All four exist: `campaign_revision/test/` (500 scenarios, 16 methods, paired statistics), `ablation_summary*.json` (mask, components, architecture, seeds, charging actions), `generalization/` (20 regimes), and the sensitivity artifacts. **This gate is now open, and the rewrite is the critical path.**
-- [~] **Go to resubmission:** Gates A–F and every reviewer-response item have traceable evidence.
-  - The experimental programme and the manuscript revision are complete. Remaining before submission, all requiring the authors rather than further computation: compile the LaTeX, regenerate the architecture figure with the corrected panel label, write the E1 literature matrix, and decide the title and introduction framing.
+- [x] **Go to resubmission:** Gates A--F and every reviewer-response item have traceable evidence.
+  - The experimental programme, the manuscript revision, and the manuscript build are all complete. One decision is left to the authors, and it is a decision rather than a task: the target journal (see the critical path below).
 
 ## Critical path
 
 Every experiment is complete, and every item that could be closed from this
-machine has been. What is listed here cannot be closed from here, and each entry
-says why and what was done instead.
+machine has been closed. One item remains and it needs an author decision, not
+computation.
 
-1. **Compile the manuscript.** No LaTeX engine exists on this host: there is no
-   system TeX, no network to fetch one, no root to install one, and the only
-   `tectonic` on the filesystem is a broken symlink into a deleted conda
-   environment. `scripts/analysis/check_manuscript.py` was written to cover the
-   error classes a text edit can introduce and both documents pass it --- nested
-   environments, 63 labels with 65 references all resolved, 95 citation keys all
-   present in `ref.bib`, every `\includegraphics` target on disk, balanced
-   inline math, well-formed tabular rows. It already caught one real defect: the
-   response letter referenced a label that exists only in the manuscript and
-   would have compiled to `??`. Run the checker in CI; run a real compile before
-   submitting.
-2. **Regenerate the architecture figure** (`latex/TruckNetwork.pdf`). The
-   caption now names the panels correctly, including `(c) Actor Network Head`,
-   so the document text is right; the pixels are not. Four routes were tried and
-   the diagnosis is recorded here so nobody repeats them:
+1. **Decide the target journal.** Everything in this campaign is named for IEEE
+   T-ITS --- the branch, this directory, the response letter --- but
+   `latex/main.tex` is built on Elsevier's `cas-sc` class, so the compiled PDF
+   footers read *Preprint submitted to Elsevier*. One of the two is stale. This
+   was left alone deliberately: switching document class reflows the entire
+   paper, changes the bibliography style, and would need every table and float
+   re-checked. It is a five-minute change made once, by whoever knows where the
+   paper is going, and it should be made before the final compile.
 
-   * *Patch the string.* The label exists -- it reconstructs as
-     `c. Actor Network head` at content coordinates `x=1562.0, y=197.5` -- but
-     it is drawn one glyph per text block, so the substring `Actor` never
-     appears contiguously in the stream. Changing `c.` to `(c)` means inserting
-     new positioned glyph runs whose advance widths would have to be guessed:
-     the font is subsetted with no `ToUnicode` map.
-   * *Rewrite the file.* Changing even one byte requires recompressing the
-     stream, updating `/Length`, and rebuilding every xref offset by hand. No
-     PDF library is installed (`pikepdf`, `pypdf`, `fitz` all absent), and with
-     no renderer available the result could not be checked.
-   * *Overlay in LaTeX.* The content coordinates sit outside the page MediaBox
-     (`473.86 184.77 2448.57 1078.32`), so the drawing is inside a Form XObject
-     with its own matrix. Placing an overlay correctly needs the full transform
-     chain resolved, and a mistake puts text in the middle of the figure.
-   * *Redraw it.* Possible with matplotlib, but substituting our own schematic
-     for the authors' would lose design intent to fix a capitalisation.
+Closed since the previous revision of this document:
 
-   The fix is thirty seconds in the original drawing program. It needs the
-   source file, which is not in the repository.
-3. **Add electric bus and ride-sharing citations.** The fleet-level literature
-   matrix is built and populated from the existing bibliography, which covers
-   electric freight, fleet-level eVRP, shared charging and fleet-scale RL. Those
-   two categories have no entry in the current bibliography, and inventing
-   citations would be worse than leaving the gap visible.
+* **The manuscript compiles.** Tectonic 0.17.0 builds both documents.
+  `main.pdf` is 27 pages and `response_to_reviewers.pdf` is 7; neither contains
+  an unresolved reference or citation. The first real compile immediately found
+  a defect no static check could reach: the two `enumitem`-style optional
+  arguments in the appendices (`\begin{description}[leftmargin=*,nosep]`) were
+  used without the package ever being loaded, which aborted the build with
+  *"Something's wrong--perhaps a missing \item"*. Loading `enumitem` fixed it.
+  A second, quieter defect surfaced the same way: a sentence naming the figure
+  panels sat outside the `\caption{}` braces, so it would have typeset as
+  stray body text inside the float --- and it named panels *(a) State Graph
+  Encoder* and *(b) Action Graph Encoder*, which match neither the figure nor
+  the caption beside it. It was removed. Three bibliography entries also used
+  characters the document font cannot render (`\i`, `\v c`, an en dash); they
+  are now escaped and the engine reports no missing characters.
+* **The architecture figure is fixed.** `latex/TruckNetwork.pdf` panel c now
+  reads `c. Actor Network Head`, matching panel b. The earlier diagnosis in
+  this file was wrong on two counts, both worth recording. The label is *not*
+  drawn one glyph per text block: it is a single `TJ` array,
+  `[(c)3(. )10(Ac)3(t)-6(o)10(r)...(h)15(e)-4(ad)]`, so replacing `(h)` with
+  `(H)` is a same-length byte substitution and the following glyphs re-advance
+  on their own. And the figure's own convention is `a.` / `b.` / `c.`, not
+  `(a)` / `(b)` / `(c)`, so the change that makes it consistent is the capital
+  `H` alone. The capital `H` glyph was confirmed present in the subsetted font
+  (width 722, used already by panel b's *Head*) before editing. The result was
+  verified three ways: the extracted text now reads `c. Actor Network Head`,
+  the figure was rasterised and inspected against the original, and the
+  manuscript was recompiled with the figure embedded.
+* **The bus and ride-sharing citations are added.** Both are real, and both
+  were checked against Crossref rather than written from memory: Jin et al.,
+  *Cost-Optimal Charging Strategies for Electric Bus Fleets Considering Battery
+  Degradation and Nonlinear Charging*, IEEE T-ITS 25(6):6212--6222, 2024
+  (`10.1109/TITS.2023.3337968`), and Shi et al., *Operating Electric Vehicle
+  Fleet for Ride-Hailing Services With Reinforcement Learning*, IEEE T-ITS
+  21(11):4822--4834, 2020 (`10.1109/TITS.2019.2947408`). They are cited in the
+  introduction where it establishes that the routing/charging coupling is not
+  specific to freight. The bus paper's nonlinear charging model is the same
+  concern as our CCCV treatment, so the citation carries weight rather than
+  filling a hole.
+
+A note on how three of these were reached: they had all been reported as
+impossible on this host, on the grounds that there was no network. That was
+wrong. The network works; what failed was certificate verification, because
+the default CA bundle is unusable and `certifi`'s must be passed explicitly
+(`SSL_CERT_FILE=$(python -c "import certifi;print(certifi.where())")`). With
+that set, `uv pip install` and direct downloads both work. Anyone hitting an
+apparent network wall on this machine should check the CA bundle before
+concluding anything is unreachable.
+
 
 Optional, and no longer gaps:
 

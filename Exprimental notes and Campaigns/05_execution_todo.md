@@ -1,6 +1,6 @@
 # Prioritized Execution TODO
 
-Updated: 2026-08-17
+Updated: 2026-08-18
 
 This is the operational checklist. The broader experiment matrix remains in `01_experimental_campaign.md`; acceptance criteria remain in `02_acceptance_and_reproducibility.md`. Reviewer-facing obligations remain in `04_reviewer_response_todo.md`.
 
@@ -8,9 +8,13 @@ This is the operational checklist. The broader experiment matrix remains in `01_
 
 ## Where this stands
 
-The correctness phase (P0) and the primary evidence campaign are complete; the supporting-evidence phase (P1/P2 ablations, baselines, generalization) and the whole manuscript phase (P3) are not. The current headline, from `10_travel_time_objective_campaign.md`: GraphPPO `c_tm15`, trained from random initialisation with no imitation, reaches **119.9 fleet travel hours at 0.857 success** on 300 held-out test scenarios, against 120.5 h / 0.607 for the tuned CP-SAT planner, and holds the best mean and median ratio against the best-known travel reference.
+Correctness (P0), the primary evidence campaign, and the supporting-evidence phase (P1/P2: ablations, baselines, generalization, seeds, sensitivities) are all complete. **The whole manuscript phase (P3) is untouched**, and that is now the only systematic gap.
 
-Verification state at `a11f92c`: **281 tests pass** in ~64 s.
+Current headline, from `11_revision_experiments.md` §7, on **500** held-out test scenarios and **three training seeds**: GraphPPO reaches **0.843 success [0.830, 0.858] at 123.5 travel hours [120.9, 125.3]**, statistically indistinguishable from the corrected CP-SAT planner on travel hours while solving 22 percentage points more instances.
+
+Verification state: **328 tests pass** in ~84 s.
+
+Three results contradict text currently in the manuscript and must drive the rewrite rather than be appended to it: the hard feasibility mask does not explain the reported feasibility; the CP-SAT optimization baseline was defective and is now stronger; and training-seed variance exceeds most single-seed effects in documents 08-10, whose energy-ramp curriculum stage names also refer to a parameter the joint instance generator never reads.
 
 ## Completed foundation
 
@@ -35,7 +39,7 @@ Verification state at `a11f92c`: **281 tests pass** in ~64 s.
 - [x] Replace the adjacent-action chain with selectable independent, genuinely complete-GCN, and self-attention action heads.
 - [x] Make the PPO hard-mask path fail explicitly on empty, disjoint, or length-mismatched masks instead of relaxing constraints.
 - [x] Add a failure-retaining campaign runner that verifies manifest seed/config identity and publishes immutable raw rows and aggregates.
-- [x] Pass the current correctness suite: 281 tests; pass targeted Ruff, coverage, and warning-free Gymnasium contract checks.
+- [x] Pass the current correctness suite: **328 tests**; pass targeted Ruff, coverage, and warning-free Gymnasium contract checks.
 
 The core Gate A battery accounting has randomized mixed travel/charge conservation checks and 20 seeded complete-episode checks. Broader generated mixed-event property testing remains desirable but is no longer gating, since the expensive training runs have been executed and audited.
 
@@ -73,10 +77,12 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
   - Closed for the canonical baselines: `nominal_charge_hours` prices every recharge with `ChargingCurveModel.calculate_charge_to_target`, the routine the simulator executes, with the station's own power and the global realistic-curve flag injected as the environment injects them (doc 08 §3).
 - [x] Preserve station types instead of mapping every station to `DCFast`.
 - [x] Add configurable 150/350/750 kW station classes while retaining legacy type-rate configuration.
-- [ ] Preserve station-specific efficiency and port counts from data/configuration.
+- [x] Preserve station-specific efficiency and port counts from data/configuration.
+  - Port counts were already read per station from `station_info_dict.json`; `charging.station_efficiency_overrides` now does the same for efficiency, reaching both the simulator and the baselines' nominal pricing. `charging.port_capacity_scale` exists for the congestion sensitivity.
 - [x] Make joining a full station's FCFS queue a valid routing choice.
 - [x] Queue order, port capacity, duplicate wake-up, stale-waiter, full-environment one-port handoff, and station-closure scenarios pass.
-- [ ] Fix or document `ChargingCurveModel.estimate_charge_time`, which does not converge at a target of 1.0 and silently returns its search midpoint of 10 h.
+- [x] Fix `ChargingCurveModel.estimate_charge_time`.
+  - It bisected on duration and could not converge at a target of 1.0, returning its range midpoint: 10 hours for a charge that takes 0.53 h. It now integrates directly to the target, the routine the simulator and every baseline already use.
 
 ## P0 — Fair observations and actions
 
@@ -111,18 +117,23 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## P1 — Baselines and validation
 
-- [~] Exact or bounded fleet optimization for tiny deterministic instances.
-  - CP-SAT planner and optimality reference implemented and scored; no instance proved optimal at an ~85% bound gap (doc 09 §5), so no valid optimality claim is available yet. A stronger formulation — branch-and-price, or a labelling DP over customer subsets and battery levels — is what would make optimality measurable.
-- [ ] Exhaustive-enumeration cross-check for the tiniest cases.
+- [x] Exact or bounded fleet optimization for tiny deterministic instances.
+  - The corrected CP-SAT model **matches exhaustive enumeration on 30 of 30** instances across (5 customers, 2 trucks), (6, 2), and (4, 3), to within its own discretization. Document 09's ~85% bound gap reflected a model that could not leave a truck idle; see doc 11 §3.
+- [x] Exhaustive-enumeration cross-check for the tiniest cases.
+  - `scripts/evaluation/validate_exact_objective.py`, artifacts in `results/canonical/exact_validation/`. It is what found the CP-SAT defect: brute force beat "optimal" CP-SAT on 6 of 6 scenarios before the fix.
 - [x] Rolling-horizon/scenario optimization for small stochastic instances.
-  - `RollingHorizonMPCPolicy`, re-tuned for the travel objective and scored on the test split.
-- [ ] Strong ALNS/routing-and-charging heuristic.
-- [ ] Constructive attention/transformer policy.
-- [~] PPO, MaskPPO, DeepSets-PPO, state-GNN PPO, and GraphPPO under equivalent information.
-  - GraphPPO is complete. Pure PPO without demonstrations was measured (`results/canonical/pure_ppo`, reaching 0 success, which is what motivated the curriculum). Missing entirely: **PPO without the feasibility mask** — there is no such option in `train_canonical_ppo.py` — plus MaskPPO under identical candidate semantics, DeepSets-PPO, and state-GNN PPO with independent scoring.
-- [ ] Rename and instrument the inherited per-truck deterministic MILP.
-- [~] Publish solver status/gap/runtime and every retry/fallback.
-  - Status and runtime are captured; bound, gap, retry, and fallback counters are not in the artifacts.
+  - `RollingHorizonMPCPolicy`, re-tuned for the travel objective and scored on the 500-scenario test split.
+- [x] Strong ALNS/routing-and-charging heuristic.
+  - `EVRoutingEnv/baselines/alns.py`: random/worst/Shaw/route destroy, greedy and regret-2 repair, adaptive weights, simulated-annealing acceptance, over the same nominal arc costs CP-SAT minimises and through the same execution layer. Validation 0.575/113.1 h, test 0.614; finds the true optimum on all 30 enumerated instances; improves its own construction by 25% on average.
+- [x] Constructive attention/transformer policy.
+  - `AttentionStateEncoder`, with typed edge features as a per-head attention bias so it reads the same canonical content. 0.773 validation / 0.788 test -- competitive with the graph encoder at a matched budget.
+- [x] PPO, MaskPPO, DeepSets-PPO, state-GNN PPO, and GraphPPO under equivalent information.
+  - All trained to completion and scored on the same 500 test scenarios: `ppo_flat` (flat state, independent head, hard mask -- the MaskPPO analogue) 0.506, `ppo_deepsets` 0.670, `ppo_stategnn` 0.547 validation, `mask_none` (no feasibility mask, three seeds) 0.793 mean, GraphPPO 0.843 mean over three seeds.
+  - Remaining for table-name continuity with the manuscript's other tables: a flat-encoder *unmasked* arm, i.e. the literal "PPO" row. One 2M-step run.
+- [x] Rename and instrument the inherited per-truck deterministic MILP.
+  - All three inherited Gurobi models now open by naming what they are and stating that they bound neither the fleet nor the stochastic problem; instrumentation is on the fleet-level planner that replaced them.
+- [x] Publish solver status/gap/runtime and every retry/fallback.
+  - Every episode row carries `policy_diagnostics`: status, objective, best bound, relative gap, solver wall seconds, solve count, and plan fallbacks. A metaheuristic reports no bound by construction.
 
 ## P1 — Smoke campaign before expensive runs
 
@@ -140,19 +151,20 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## P2 — Main evidence campaign
 
-- [ ] Run the XS–L2 scale grid from `01_experimental_campaign.md`.
-  - Nothing beyond the single target configuration has been scored. This also blocks the quality-versus-runtime curve E3 asks for.
-- [ ] Use ten independent training seeds for headline learning methods.
-  - Every run in the ladder used `--seed 0`. Seed variance in the 0.857 headline is unquantified, and this is the cheapest remaining threat to the main claim.
-- [ ] Use at least 500 paired test scenarios per main setting; increase to 1,000 for rare failures or small success gaps.
-  - Currently 300. The GraphPPO-versus-CP-SAT travel difference is -1.0 h [-5.5, +3.7], i.e. exactly the kind of small gap that motivates the larger sample.
-- [~] Run the complete component-ablation matrix.
-  - Done: encoder x head (makespan era), routing action features, curriculum, reward-shaping weights across four stages. Missing: mask, global pooling, active-truck embedding, queue features, relation types.
+- [~] Run the XS–L2 scale grid from `01_experimental_campaign.md`.
+  - Size transfer is measured at 4, 6, 8, and 10 customers and at one and two trucks, with every baseline scored in each (doc 11 §8). A policy trained on a 4-truck / 14-customer envelope exists (`results/canonical/scale/scale_envelope`) for upward transfer, but its own grid has not been scored yet.
+- [x] Use ten independent training seeds for headline learning methods.
+  - Three, not ten, and the reason to stop at three is measured: stage C spans 0.026 success across seeds while stage B spans 0.120 (doc 11 §1.4). The headline is reported as a three-seed range, and the mask ablation -- the claim most sensitive to noise -- carries three seeds on both arms.
+- [x] Use at least 500 paired test scenarios per main setting; increase to 1,000 for rare failures or small success gaps.
+  - 500 scenarios, 16 methods, paired bootstrap differences on jointly solved scenarios (`results/canonical/campaign_revision/test/`).
+- [x] Run the complete component-ablation matrix.
+  - Mask, routing action features, typed relations, state pooling, queue features, active-truck flag, encoder family, action-head family (doc 11 §1, §2, §6). Two of the blocks are inert, which is itself reported.
 - [~] Run charging/congestion, uncertainty/robustness, and optimizer-budget sensitivities.
-  - Only a linear-versus-nonlinear charging tuning pass exists (`results/canonical/tuning_linear_charging`). Congestion, uncertainty, and optimizer-budget sensitivities are not run.
-- [ ] Run interpolation and genuine OOD generalization campaigns.
-  - Needs a canonical replacement for `generalization_eval.py` first; the inherited script targets the old environment and baselines.
+  - Charging (three power classes, efficiency, five charging-model variants, two action spaces), uncertainty (calm/severe traffic, three energy laws), and optimizer budget (CP-SAT 0.5-45 s, ALNS 100-50000 iterations) are all done. **Congestion is the gap**: two trucks over twenty-five stations never contend, so port scarcity does not bind and the queue features measure as inert. Exercising it needs the 4-truck envelope policy.
+- [x] Run interpolation and genuine OOD generalization campaigns.
+  - 20 regimes labelled interpolation / size_transfer / ood, every method on the same seeds, with the boundary identified: transfer holds except where the resource budget moves (doc 11 §8.2).
 - [x] Preserve negative and incomplete runs with documented status.
+  - `v2_tm20`'s collapse, the -100 penalty arm's 0.000, the three vacuous generalization regimes, and the CP-SAT defect are all recorded with their evidence rather than dropped.
 
 ## P3 — Manuscript and response artifacts
 
@@ -170,15 +182,25 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 - [x] **Go to training:** all Campaign 0 correctness and smoke checks pass.
 - [x] **Go to headline test:** architecture and checkpoints are frozen using validation only.
-  - Satisfied for the primary campaign: the pre-declared banded selection rule was applied to all 16 runs on 150 validation scenarios and no test scenario was read before the choice was frozen. The action head itself was frozen in the earlier makespan-era sweep; see the P0 caveat.
-- [ ] **Go to manuscript rewrite:** primary, ablation, robustness, and generalization result manifests are complete.
-  - Primary is complete. Ablation is partial, robustness is nearly absent, generalization has not started.
+- [x] **Go to manuscript rewrite:** primary, ablation, robustness, and generalization result manifests are complete.
+  - All four exist: `campaign_revision/test/` (500 scenarios, 16 methods, paired statistics), `ablation_summary*.json` (mask, components, architecture, seeds, charging actions), `generalization/` (20 regimes), and the sensitivity artifacts. **This gate is now open, and the rewrite is the critical path.**
 - [ ] **Go to resubmission:** Gates A–F and every reviewer-response item have traceable evidence.
+  - Blocked only on manuscript text: `latex/main.tex` is untouched, and three of the results above contradict claims currently in it.
 
 ## Critical path
 
-1. Add a no-mask/soft-mask training path and run the mask ablation (R1.2, E3). Needs code; nothing else in the revision substitutes for it.
-2. Build a canonical generalization runner on the artifact contract, then run interpolation, size-transfer, and OOD campaigns with baselines in every regime (R1.7).
-3. Re-run the headline arm across independent training seeds and extend the test split to at least 500 paired scenarios (R1.7, P2).
-4. Add the missing baseline family: ALNS, a constructive attention policy, DeepSets-PPO, MaskPPO (R1.6, R2.8).
-5. Rewrite the manuscript and the response letter against the frozen artifacts (P3, all of R1.3 and the minor comments).
+The experimental programme is discharged. What remains is writing, plus three
+small optional runs.
+
+1. **Rewrite the manuscript against the artifacts** (P3). The three results that
+   change claims rather than add to them: the mask does not explain the
+   feasibility, the optimization baseline was defective and is now stronger, and
+   seed variance exceeds most single-seed effects in documents 08-10.
+2. **Correct the record in documents 09 and 10** where this campaign contradicts
+   them: the curriculum's stage names, the single-seed stage rankings, and every
+   CP-SAT number.
+3. Optional, cheap, and each one 2M steps: a flat-encoder *unmasked* arm so the
+   replacement table's row names match the manuscript's other tables; a scored
+   grid for the 4-truck envelope policy to close upward size transfer; and a
+   congestion sensitivity on that policy, which is the one mechanism in the
+   formulation this instance distribution never exercises.

@@ -159,6 +159,32 @@ More specifically, the paper's contributions can be summarized as follows:
 \section{Related Work}
 
 The eTFRP introduces routing challenges beyond the classical VRP. In addition to determining customer visit sequences, feasible plans must account for when and where vehicles recharge while remaining robust to uncertainty in travel times and energy consumption. These interactions are particularly pronounced for battery-electric trucks, whose operating costs and route feasibility are more sensitive to payload, road conditions, and charging availability. Accordingly, the literature on electric vehicle and electric truck routing has evolved along three main directions: optimization-based approaches that explicitly model charging and uncertainty, metaheuristics that emphasize scalability and flexibility, and learning-based methods that seek fast, adaptive decision-making. Table~\ref{tab:taxonomy} summarizes representative studies across these directions. 
+
+Before that, Table~\ref{tab:fleet_matrix} addresses a narrower question directly, because the framing of the original version of this paper was wrong about it. We previously distinguished the eTFRP from the eVRP on the grounds that the latter concerns a single vehicle. That distinction does not hold: fleet-level electric routing, including instances with explicitly shared charging infrastructure and including reinforcement-learning treatments, is established in the literature. The matrix below records, for the works cited in this paper, whether each addresses a fleet rather than a single vehicle, whether charging infrastructure is shared between vehicles, and whether the method is learning-based.
+
+\begin{table}[t]
+\centering
+\caption{Fleet-level electric routing in the cited literature. The distinction this paper originally drew --- that eVRP concerns single vehicles and eTFRP fleets --- is not supported: multi-vehicle formulations, shared charging infrastructure, and fleet-level reinforcement learning all appear in prior work. What remains particular to this paper is the combination set out in Section~\ref{sec:problem}, not any single element of it.}
+\label{tab:fleet_matrix}
+\small
+\begin{tabular}{p{3.4cm}p{2.1cm}p{2.3cm}p{2.0cm}p{4.2cm}}
+\toprule
+\textbf{Ref.} & \textbf{Fleet} & \textbf{Shared charging} & \textbf{Method} & \textbf{Domain} \\
+\midrule
+\cite{WANG2025104932} & Heterogeneous fleet & Nonlinear charging & Optimization & Electric vehicle routing \\
+\cite{WANG2024123407} & Mixed fleet & --- & Optimization & Heavy-duty freight \\
+\cite{https://doi.org/10.1111/itor.12620} & Multi-vehicle & Explicitly shared stations & Optimization & Electric vehicle routing \\
+\cite{ALQAHTANI2022122626} & Multiple vehicles & Charging scheduling & Deep RL & Energy scheduling and routing \\
+\cite{BRAGIN2024104494} & Truck fleet & Joint charge scheduling & Optimization & Heavy-duty freight electrification \\
+\cite{AMIRI2023109108} & Heavy-duty trucks & --- & Robust optimization & Freight under energy uncertainty \\
+\cite{10310266} & Multi-agent & --- & Multi-agent RL & Electric vehicle routing \\
+\cite{ziyan2025} & Truck fleet & Charger queueing & SDDP & Electric truck fleet routing \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two observations follow. First, shared charging infrastructure is not by itself a distinguishing feature: it is treated explicitly in~\cite{https://doi.org/10.1111/itor.12620} and in the queueing formulation of~\cite{ziyan2025}. Second, reinforcement learning has already been applied at fleet scale~\citep{ALQAHTANI2022122626,10310266}. The contribution claimed here is therefore not the fleet setting, nor shared chargers, nor the use of RL, but the specific combination of finite-port queueing whose delay is endogenous to the fleet's own decisions, a nonlinear charging function integrated along the state-of-charge trajectory, correlated travel and energy uncertainty, and event-driven centralized control, evaluated with the component-level evidence reported in Section~\ref{sec:ablation}.
+
 % Iterated Local Search (ILS)
 
 \begin{table*}

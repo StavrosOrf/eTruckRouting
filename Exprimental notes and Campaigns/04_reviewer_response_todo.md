@@ -24,9 +24,10 @@ This matrix translates every item in `latex/reviewer_comments.txt` and `latex/mo
   - Conceded without reservation in the E1 response: the dichotomy was wrong as written.
 - [x] Replace the introduction's single-vehicle/fleet dichotomy.
   - The abstract, contributions and conclusion no longer contrast the two problems on fleet size; the distinguishing features are stated as the modelled combination.
-- [ ] Build a literature matrix covering electric freight, bus, ride-sharing, shared charging, and fleet-level RL.
-  - Requires a literature survey, which is an author task.
-- [ ] Cite fleet-level eVRP and electric-fleet scheduling work from primary sources.
+- [~] Build a literature matrix covering electric freight, bus, ride-sharing, shared charging, and fleet-level RL.
+  - Table 2 of the manuscript classifies every already-cited work by fleet scope, shared charging, and method family, built from bibliographic metadata rather than from interpretation. It covers electric freight, fleet-level eVRP, shared charging, and fleet-scale RL. **Electric bus and ride-sharing exemplars are absent from the current bibliography** and need primary sources the authors must select.
+- [x] Cite fleet-level eVRP and electric-fleet scheduling work from primary sources.
+  - Already present and now surfaced: a heterogeneous-fleet eVRP with nonlinear charging, an eVRP with explicitly shared charging stations, fleet-scale deep RL, multi-agent RL, and joint truck charge scheduling. The original claim was contradicted by work the paper already cited.
 - [x] State that novelty is not the existence of multiple EVs or shared chargers alone.
   - Stated in the E1 response and reflected in the contribution list.
 
@@ -40,7 +41,8 @@ Evidence required: completed literature matrix, revised related-work taxonomy, a
   - Stated in the E1/E2 responses and in the abstract as the modelled combination rather than as any single novel ingredient.
 - [x] Separate exogenous travel/energy/service draws from endogenous queue delays in the formulation and random-variable table.
   - Table 2 now marks each quantity as exogenous or endogenous and gives distributions, parameters, clipping bounds and correlation; the formulation defines nominal versus realized symbols. The E2 response adds the measured evidence: under one port per station and four trucks, queue time rises from 0.23 h to 1.92 h, and the learned policy waits 32% less than the planner.
-- [ ] Compare against stochastic/robust/rolling-horizon literature rather than claiming an unfilled uncertainty gap.
+- [~] Compare against stochastic/robust/rolling-horizon literature rather than claiming an unfilled uncertainty gap.
+  - The uncertainty gap claim is withdrawn and the contribution is restated as the modelled combination. A row-by-row comparison against the stochastic and robust literature needs reading those papers, which is an author task.
 
 Evidence required: taxonomy table plus formulation and experiment table that enumerate every stochastic and endogenous quantity.
 
@@ -162,7 +164,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 
 ### R2.1–R2.3 — Definition, uncertainty, and mandatory service
 
-- [ ] Define the joint problem on page 1 without inventing an eTFRP/eVRP dichotomy.
+- [~] Define the problem on page 1 without inventing an eTFRP/eVRP dichotomy.
+  - The dichotomy is gone from the abstract, contributions, related work and conclusion, and Table 2 documents why it was wrong. The introduction still leads with the eTFRP, which is deliberate: it is the operational case. Whether to restructure page 1 around the joint formulation is an author decision, not an evidence question.
 - [x] Enumerate demand, travel-time, energy, service-time, and queue uncertainty/endogeneity early.
   - Table 2 lists each with its distribution, parameters, bounds, correlation, and exogenous/endogenous status.
 - [~] Add explicit every-customer-once, capacity, energy, time-window-variant, and depot-return constraints.
@@ -205,8 +208,8 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 - [x] Add the missing comma in the objective equation.
 - [x] Standardize all figure-caption capitalization.
   - Audited: every caption is sentence-cased and begins with a capital.
-- [ ] Change `c. Actor Network head` to `(c) Actor Network Head` in the figure asset.
-  - The label is inside the figure PDF, not the LaTeX source, so it needs the figure regenerated. Flagged in the response letter.
+- [~] Change `c. Actor Network head` to `(c) Actor Network Head`.
+  - Done everywhere it can be: the caption now names the panels, including `(c) Actor Network Head`, so the document text is correct. The label inside the asset is glyph-indexed against a subsetted font with no ToUnicode map, so it cannot be located or replaced without corrupting the figure; regenerating it needs the authors' source file.
 - [x] Correct Table 2 so realized energy is shown.
   - The row now gives $\tilde{b}_{uv}=b_{uv}\xi_{uv}$ with its range, not only the coefficient.
 

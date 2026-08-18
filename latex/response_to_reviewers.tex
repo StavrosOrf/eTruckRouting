@@ -60,12 +60,31 @@ addresses fleets is incorrect; there is extensive fleet-level eVRP literature,
 including RL methods.}
 \reply We accept this without reservation; the dichotomy was wrong as written.
 The introduction no longer contrasts eTFRP with eVRP on the basis of fleet size.
-The distinguishing features of our setting are now stated as the specific
-combination we model, namely finite-port charging stations with endogenous
-queueing, a nonlinear charging function integrated along the state-of-charge
-trajectory, correlated travel and energy uncertainty, and event-driven
-centralized control. We no longer claim that the existence of multiple vehicles
-or shared chargers is itself novel.
+
+We have added a matrix (Table~2 of the revised manuscript) recording, for the
+works this paper already cites, whether each addresses a fleet rather than a
+single vehicle, whether charging infrastructure is shared, and whether the
+method is learning-based. Compiling it made the editor's point sharper than we
+had appreciated: our own bibliography already contained a paper titled ``The
+electric vehicle routing problem with shared charging stations'', a
+heterogeneous-fleet eVRP with nonlinear charging, and two fleet-scale
+reinforcement-learning treatments. The claim we made was contradicted by work we
+were citing.
+
+The revised text therefore states that neither the fleet setting, nor shared
+chargers, nor the use of reinforcement learning is claimed as novel. What is
+claimed is the specific combination: finite-port queueing whose delay is
+endogenous to the fleet's own decisions, a nonlinear charging function
+integrated along the state-of-charge trajectory, correlated travel and energy
+uncertainty, and event-driven centralized control --- supported by the
+component-level evidence rather than by assertion.
+
+One gap remains and we flag it rather than paper over it. The matrix is built
+from the works already cited here, which cover electric freight, fleet-level
+eVRP, shared charging, and fleet-scale RL, but contain no electric bus or
+ride-sharing exemplars. Those are the two categories the editor names that we
+cannot populate from our current bibliography, and we will add primary sources
+for them in the final version.
 
 \comment{E2. Operational uncertainty is well studied and the paper presents it
 as an unfilled gap.}
@@ -77,7 +96,7 @@ uncertainty per se. Table~2 now records for each quantity whether it is drawn
 exogenously or arises endogenously.
 
 We also report what this analysis exposed about our own evaluation. In the
-joint fleet setting of Section~\ref{sec:joint_evrp} only two trucks are
+joint fleet setting of the revised manuscript only two trucks are
 distributed over twenty-five stations, so charger contention rarely binds, and
 an ablation that blanks the entire charging-queue state leaves performance
 inside the seed band. We therefore make no queue-related claim from that

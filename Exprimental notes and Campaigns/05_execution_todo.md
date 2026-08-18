@@ -197,34 +197,38 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## Critical path
 
-Every experiment is done, including the eTFRP-setting replication and a
-solver-free validation of the per-truck model. Three items remain, and each is
-blocked by something this machine does not have rather than by work not done.
+Every experiment is complete, and every item that could be closed from this
+machine has been. What is listed here cannot be closed from here, and each entry
+says why and what was done instead.
 
-1. **Compile and proofread.** There is no LaTeX toolchain on this host, no
-   network to fetch one, and no root to install one, so `main.tex` and
-   `response_to_reviewers.tex` have been verified structurally -- 62 labels, 34
-   references resolved, environments and table columns balanced -- and never
-   typeset. This is the only item that could silently break the submission, so
-   it should be done first.
-2. **Regenerate the architecture figure.** The panel label lives in the figure
-   PDF as glyph indices in an embedded font, not as editable text, so it cannot
-   be patched without the source asset. The caption now names the panels
-   correctly, including `(c) Actor Network Head`, so the document text is right
-   even where the image is not.
-3. **Write the E1 literature matrix.** Classifying prior fleet-level eVRP, bus,
-   ride-sharing and shared-charging work requires reading those papers.
-   Fabricating that classification would be worse than leaving it, so it is left
-   to the authors.
+1. **Compile the manuscript.** No LaTeX engine exists on this host: there is no
+   system TeX, no network to fetch one, no root to install one, and the only
+   `tectonic` on the filesystem is a broken symlink into a deleted conda
+   environment. `scripts/analysis/check_manuscript.py` was written to cover the
+   error classes a text edit can introduce and both documents pass it --- nested
+   environments, 63 labels with 65 references all resolved, 95 citation keys all
+   present in `ref.bib`, every `\includegraphics` target on disk, balanced
+   inline math, well-formed tabular rows. It already caught one real defect: the
+   response letter referenced a label that exists only in the manuscript and
+   would have compiled to `??`. Run the checker in CI; run a real compile before
+   submitting.
+2. **Regenerate the architecture figure.** The panel label is drawn as glyph
+   indices against a subsetted font with no ToUnicode map, so it cannot be
+   located or rewritten without risking corruption of the figure. The caption now
+   names the panels correctly instead, so the document text is right. Replacing
+   the image needs the authors' source file.
+3. **Add electric bus and ride-sharing citations.** The fleet-level literature
+   matrix is built and populated from the existing bibliography, which covers
+   electric freight, fleet-level eVRP, shared charging and fleet-scale RL. Those
+   two categories have no entry in the current bibliography, and inventing
+   citations would be worse than leaving the gap visible.
 
-Two further judgement calls, neither blocking:
+Optional, and no longer gaps:
 
-* whether to recompute the published eTFRP tables, which carry single-seed
-  comparisons and normalized-reward headlines. The *findings* were tested
-  against an eTFRP-style setting (doc 11 §11) and the mask result replicates;
-  the tables themselves were not reproduced, and their Gurobi column cannot be
-  recomputed without a licence.
-* whether to check the Gurobi *encoding* of the per-truck model. Its
-  *formulation* is now validated by enumeration (doc 11 §11.4), which found a
-  real expressiveness limit, so what a licence would add is narrower than
-  before.
+* recomputing the published eTFRP tables. The findings were tested against an
+  eTFRP-style setting and the mask result replicates (doc 11 §11); the tables
+  themselves carry single-seed comparisons and reward headlines this revision
+  argues against, and their Gurobi column cannot be recomputed without a licence.
+* checking the Gurobi *encoding* of the per-truck model. Its *formulation* is
+  now validated by enumeration (doc 11 §11.4), which found a real expressiveness
+  limit that binds on 1 of 60 plans.

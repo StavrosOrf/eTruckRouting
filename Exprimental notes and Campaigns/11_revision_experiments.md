@@ -121,6 +121,29 @@ at this budget. That threshold is what licenses the rest of the ablation table
 in §2 and §6: the component ablations and the independent-head family clear it,
 the attention encoder does not.
 
+### 1.4 Seed variance across the full ladder
+
+The full A -> B -> C ladder was replicated at seeds 1 and 2 with the stage
+hyperparameters seed 0 selected, so this measures the reproducibility of the
+*pipeline*, not of a re-run search. On the 150-scenario validation re-score:
+
+| Stage | seed 0 | seed 1 | seed 2 | Range |
+| --- | --- | --- | --- | --- |
+| A (`v2_base`) | 0.767 / 149.3 | 0.793 / 163.0 | 0.833 / 161.1 | 0.066 |
+| B (`b_tm20`) | 0.773 / 121.1 | 0.707 / 136.5 | 0.827 / 128.5 | 0.120 |
+| C (`c_tm15`) | **0.853 / 119.7** | **0.827 / 127.4** | **0.827 / 123.3** | **0.026** |
+
+**The final configuration is markedly more reproducible than the stages that
+produce it.** Stage C spans 0.026 success and 7.7 travel hours across seeds,
+against 0.120 and 15.4 at stage B. So the headline is stable even though the
+ladder that reaches it is not: the intermediate rankings that document 10 §6.3
+drew conclusions from are inside the noise, while the endpoint is not.
+
+One consequence worth stating plainly: the ladder is **not monotone per seed**.
+Seed 1 goes 0.793 -> 0.707 -> 0.827, i.e. stage B made it worse before stage C
+made it better. Any narrative describing the stages as successive improvements
+is describing seed 0 only.
+
 Artifacts: `results/canonical/mask_ablation/`, `results/canonical/rescore_batch1.json`.
 Reproduce with `scripts/runners/run_mask_ablation.sh`.
 
@@ -587,8 +610,21 @@ otherwise identical settings.
 | --- | --- | --- | --- |
 | `v2_tm10` (proposed, 3 seeds) | 6 target SoCs at 10% | 0.700-0.807 | 131-145 |
 | `soc5` | 11 target SoCs at 5% | 0.740 | 135.0 |
-| `duration` | 15/30/60-minute durations | training (batch 5) | -- |
+| `duration` | 15/30/60-minute durations | **0.627** | **159.3** |
 
 **Finer granularity buys nothing measurable.** Doubling the resolution of the
 charging decision lands inside the proposed model's seed band on both axes, so
-the 10% grid is not a binding approximation and the choice made in D6 stands.
+the 10% grid is not a binding approximation.
+
+**The action *semantics* matter more than its resolution.** Expressing the
+charging decision as a duration rather than a target state of charge costs
+0.073 success against the proposed model's worst seed and 14 travel hours
+against its worst -- the only charging variant to fall outside the band on both
+axes. The reason is mechanical: a fixed duration buys a different amount of
+energy depending on where the truck sits on the taper, so the same action means
+different things in different states, while a target SoC is state-independent by
+construction.
+
+Together these close R2.6 and vindicate D6: target-SoC actions at 10%
+granularity are the right choice, and both alternatives the reviewer asked
+about have now been measured rather than argued.

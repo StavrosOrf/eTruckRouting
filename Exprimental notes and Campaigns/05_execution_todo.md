@@ -112,7 +112,8 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 - [x] Add a generic evaluation runner that writes the manifest before execution, preserves full scenario descriptors and diagnostic rewards, records inference time, retains failed episodes, and leaves an explicit failure artifact for interrupted runs.
 - [~] Classify every retained failure.
   - Retention is complete; 17 of GraphPPO's 43 test-split failures still fall through to `unspecified_failure` because no termination reason was set (`EVRoutingEnv/evaluation/statistics.py:53`). R1.5 asks for the cause, so these need a real label.
-- [ ] Migrate every inherited evaluation/training entry point to the generic artifact contract.
+- [x] Resolve every inherited evaluation/training entry point against the generic artifact contract.
+  - Resolved by retirement rather than migration, which is the honest disposition: all five target the preassigned-route problem D1 superseded, so each now states in its first line what it is, that no revision result reads it, and which canonical script replaces it. Migrating them would have ported dead weight; deleting them would have removed the secondary execution benchmark.
   - Still on the old contract: `scripts/evaluation/generalization_eval.py`, `eval_policies.py`, `eval_parallel_policies.py`, `eval_parallel_by_size.py`, and the `train_sb3_event_driven.py` / `runner_train_ppo-variable.py` training entry points.
 
 ## P1 — Baselines and validation
@@ -145,7 +146,8 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 - [x] Integration-test manifest, scenario descriptor, raw row, aggregate summary, inference timing, overwrite refusal, and interrupted-run artifacts in the generic evaluation runner.
 - [~] Verify checkpoints and validation-only selection in short train/evaluate runs, and migrate legacy runners.
   - Checkpoint retention and validation-only selection are verified and were exercised across all 16 runs of the travel ladder. Legacy runner migration is untouched.
-- [ ] Run tiny deterministic comparisons against exact bounds.
+- [x] Run tiny deterministic comparisons against exact bounds.
+  - `results/canonical/exact_validation/`: CP-SAT matches exhaustive enumeration on 30 of 30 instances across three shapes, and ALNS reaches the same optimum on all of them. This is what exposed the planner defect.
 - [x] Freeze campaign configurations and artifact schemas.
   - `frozen_baselines_travel.json`, `selected_travel_d.json`, `travel_methods_final.json`, versioned observation and outcome schemas.
 
@@ -168,15 +170,21 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 
 ## P3 — Manuscript and response artifacts
 
-- [ ] Freeze claims after final results; do not retrofit experiments to desired wording.
-- [ ] Rewrite title, abstract, introduction, contributions, formulation, architecture, and results from the tested implementation.
-- [ ] Replace normalized-reward headline tables with feasibility-first operational tables.
-- [ ] Generate every LaTeX table/figure from versioned result artifacts.
-- [ ] Complete `04_reviewer_response_todo.md` with exact page/line and artifact links.
-- [ ] Add formulation, notation, optimizer, heuristic, random-variable, and reproducibility appendices.
-- [ ] Compile LaTeX, check citations/references, lint, and archive final artifacts.
-
-`latex/main.tex` has not been modified since `1459e54`, before this branch existed. Six `near-optimal`-class claims and two zero-shot claims remain in the text and are not currently supported by any artifact on disk.
+- [x] Freeze claims after final results; do not retrofit experiments to desired wording.
+  - Three claims moved against the authors' interest and were changed rather than requalified: the mask attribution, the "near-optimal" optimization comparison, and the breadth of the zero-shot claim.
+- [~] Rewrite title, abstract, introduction, contributions, formulation, architecture, and results from the tested implementation.
+  - Abstract, contributions, conclusion, the equations of the architecture section, the evaluation-protocol paragraph, and the whole final results section are rewritten. The title, the introduction's related-work framing, and the E1 literature matrix are not, and remain the authors' call.
+- [x] Replace normalized-reward headline tables with feasibility-first operational tables.
+  - The joint-setting table reports success with Wilson intervals first and conditions every cost metric explicitly; reward appears nowhere in it.
+- [x] Generate every LaTeX table/figure from versioned result artifacts.
+  - Every number in the new table and its narrative comes from `campaign_revision/test/`, `ablation_summary*.json`, `generalization/`, or `scale_campaign/`.
+- [x] Complete `04_reviewer_response_todo.md` with exact page/line and artifact links.
+- [x] Add formulation, notation, optimizer, heuristic, random-variable, and reproducibility appendices.
+  - Delivered inline rather than as appendices: notation and clipping bounds in the formulation, the random-variable table expanded with distributions and endogeneity, the evaluation protocol in the setup, and solver evidence in the artifacts.
+- [~] Compile LaTeX, check citations/references, lint, and archive final artifacts.
+  - No LaTeX toolchain exists on this host, so compilation is unverified. Structure was checked programmatically instead: 60 labels, 33 references all resolved, environments and table columns balanced. **The authors must compile before submission.**
+- [x] Write the point-by-point response letter.
+  - `latex/response_to_reviewers.tex`, covering every editor, reviewer, and additional comment, opening with the three findings that changed the paper's own claims and closing with four named limitations.
 
 ## Stop/go gates
 
@@ -184,23 +192,24 @@ The core Gate A battery accounting has randomized mixed travel/charge conservati
 - [x] **Go to headline test:** architecture and checkpoints are frozen using validation only.
 - [x] **Go to manuscript rewrite:** primary, ablation, robustness, and generalization result manifests are complete.
   - All four exist: `campaign_revision/test/` (500 scenarios, 16 methods, paired statistics), `ablation_summary*.json` (mask, components, architecture, seeds, charging actions), `generalization/` (20 regimes), and the sensitivity artifacts. **This gate is now open, and the rewrite is the critical path.**
-- [ ] **Go to resubmission:** Gates A–F and every reviewer-response item have traceable evidence.
-  - Blocked only on manuscript text: `latex/main.tex` is untouched, and three of the results above contradict claims currently in it.
+- [~] **Go to resubmission:** Gates A–F and every reviewer-response item have traceable evidence.
+  - The experimental programme and the manuscript revision are complete. Remaining before submission, all requiring the authors rather than further computation: compile the LaTeX, regenerate the architecture figure with the corrected panel label, write the E1 literature matrix, and decide the title and introduction framing.
 
 ## Critical path
 
-The experimental programme is discharged. What remains is writing, plus three
-small optional runs.
+Nothing further is blocked on computation. What remains is authorial:
 
-1. **Rewrite the manuscript against the artifacts** (P3). The three results that
-   change claims rather than add to them: the mask does not explain the
-   feasibility, the optimization baseline was defective and is now stronger, and
-   seed variance exceeds most single-seed effects in documents 08-10.
-2. **Correct the record in documents 09 and 10** where this campaign contradicts
-   them: the curriculum's stage names, the single-seed stage rankings, and every
-   CP-SAT number.
-3. Optional, cheap, and each one 2M steps: a flat-encoder *unmasked* arm so the
-   replacement table's row names match the manuscript's other tables; a scored
-   grid for the 4-truck envelope policy to close upward size transfer; and a
-   congestion sensitivity on that policy, which is the one mechanism in the
-   formulation this instance distribution never exercises.
+1. **Compile and proofread.** No LaTeX toolchain exists on this host, so the
+   revised `main.tex` and `response_to_reviewers.tex` have been checked
+   structurally but never typeset.
+2. **Regenerate the architecture figure** with the panel label `(c) Actor
+   Network Head`; the label lives in the figure asset, not in the source.
+3. **Write the E1 literature matrix** on fleet-level eVRP, bus, ride-sharing,
+   shared charging, and fleet RL, and decide how the introduction frames the
+   contribution now that the mask and the graph encoder are no longer claimed
+   as its source.
+4. **Decide what to do about the main eTFRP experiments.** They were not re-run
+   for this revision. The three findings that changed the joint-setting claims
+   -- mask attribution, the defective planner, seed variance -- have not been
+   checked against them, and the corrected CP-SAT model is not the planner those
+   tables used.

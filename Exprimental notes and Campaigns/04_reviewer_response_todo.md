@@ -1,6 +1,6 @@
 # Point-by-Point Reviewer Response TODO
 
-Updated: 2026-08-18
+Updated: 2026-08-18 (final)
 
 This matrix translates every item in `latex/reviewer_comments.txt` and `latex/more_comments_and_suggestions.txt` into a code, experiment, and manuscript obligation. Responses remain open until they cite a tested implementation, saved result, or exact revised manuscript location.
 
@@ -202,20 +202,44 @@ All six are pure manuscript work and all six are unstarted. The implementations 
 
 | Block | State |
 | --- | --- |
-| Simulator, feasibility, queues, charging semantics | complete and regression-tested (320 tests) |
+| Simulator, feasibility, queues, charging semantics | complete, 328 tests pass |
 | Canonical observation, encoders, action heads, artifact contract | complete |
-| Headline campaign, now 500 scenarios against a corrected planner | complete (doc 11 §7) |
-| Mask ablation, three seeds plus penalty sweep | complete (doc 11 §1) |
-| ALNS, attention, DeepSets, state-GNN, flat MaskPPO | complete (doc 11 §2, §4) |
-| Optimality validation against exhaustive enumeration | complete (doc 11 §3) |
-| Charging-model comparison and curve defect | complete (doc 11 §5) |
-| Generalization, 20 regimes, every method | complete (doc 11 §8) |
-| Component ablations | pooling and relations done; queue and active-truck training |
-| Charging action-space granularity | training (batches 4-5) |
-| Seed replication of the full ladder | training (batches 4-5) |
-| Manuscript and response letter | **not started** |
+| Headline campaign: 500 scenarios, 16 methods, three seeds | complete |
+| Mask ablation: three seeds per arm plus penalty sweep | complete |
+| Baseline family: ALNS, attention, DeepSets, state-GNN, PPO, MaskPPO | complete |
+| Optimality validated against exhaustive enumeration | complete |
+| Charging: model comparison, granularity, action semantics, curve defect | complete |
+| Generalization: 20 regimes, plus scale grid and congestion | complete |
+| Component ablations | complete |
+| Manuscript revision | complete except the items below |
+| Response letter | complete (`latex/response_to_reviewers.tex`) |
 
-The experimental programme is essentially discharged. What gates resubmission now is writing: `latex/main.tex` has not been touched, and three of the results above contradict claims currently in it.
+**Remaining, all authorial rather than computational:**
+
+1. Compile the LaTeX. No toolchain exists on the machine this revision was
+   prepared on, so `main.tex` and the response letter were verified
+   structurally (60 labels, 33 references resolved, environments and columns
+   balanced) but never typeset.
+2. Regenerate the architecture figure with the panel label `(c) Actor Network
+   Head`; it lives in the figure asset, not the source.
+3. Write the E1 literature matrix, and settle how the introduction frames the
+   contribution now that neither the mask nor the graph encoder is claimed as
+   its source.
+4. Decide what to do about the main eTFRP experiments, which were not re-run.
+   The three findings that changed the joint-setting claims have not been
+   checked against them, and the corrected CP-SAT model is not the planner
+   those tables used.
+
+**The three findings the response letter leads with**, because they change
+claims rather than adding to them:
+
+1. the hard feasibility mask does not explain the reported feasibility;
+2. the CP-SAT optimization baseline was defective and is now stronger;
+3. training-seed variance exceeds most single-seed effects in documents 08-10.
+
+Two further results are reported against interest and should not be quietly
+dropped in redrafting: upward size transfer fails when the training envelope is
+widened, and the attention baseline is competitive with the proposed encoder.
 
 ## Response-letter completion rule
 

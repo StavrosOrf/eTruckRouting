@@ -14,7 +14,8 @@ Where the work stands, in one table — `05_execution_todo.md` carries the item-
 | Canonical observation, encoders, action heads, artifact contract | complete |
 | Primary campaign under the travel-time objective | complete (doc 10) |
 | Mask, pooling, active-truck ablations | not started, needs code |
-| ALNS, attention/transformer, learned-baseline family | not started |
+| ALNS baseline | **done** — tuned and scored on the test split, doc 10 section 7.5 |
+| Attention/transformer, learned-baseline family | not started |
 | Generalization, multi-seed, scale grid | not started |
 | Manuscript and response letter | not started |
 
@@ -30,7 +31,7 @@ Where the work stands, in one table — `05_execution_todo.md` carries the item-
 - `07_implementation_handoff.md`: exact branch/worktree snapshot, completed code, dependency state, restart commands, critical information-parity gap, and ordered resumption steps.
 - `08_canonical_learning_and_baselines.md`: the canonical observation, the encoder/head sweep, the tuned baselines, and the warm-started learning results.
 - `09_graphppo_from_scratch_campaign.md`: GraphPPO trained from random initialisation with no imitation, the curriculum that made it work, and the makespan-era headline result.
-- `10_travel_time_objective_campaign.md`: **complete.** The objective moves from fleet makespan to **total fleet travel time**. Diagnosis of where GraphPPO lost, the three misalignments fixed (measurement, reward, per-action features), the re-tuned baselines, the four-stage campaign, and the final test-split result: GraphPPO at 119.9 fleet hours and 0.857 success, level with the CP-SAT planner on paired travel hours while solving 25 points more instances, and best on every column of the best-known travel reference.
+- `10_travel_time_objective_campaign.md`: **complete.** The objective moves from fleet makespan to **total fleet travel time**. Diagnosis of where GraphPPO lost, the three misalignments fixed (measurement, reward, per-action features), the re-tuned baselines, the four-stage campaign, and the final test-split result: GraphPPO at 119.9 fleet hours and 0.857 success, level with the CP-SAT planner on paired travel hours while solving 25 points more instances, and best on every column of the best-known travel reference. Re-verified 2026-08-20 against the ALNS metaheuristic added for R1.6: ALNS is the strongest nominal planner (119.9 h, and it takes over ownership of the best-known plans among planners) yet still ties GraphPPO on paired travel hours while solving 24 points fewer instances.
 
 ## Current branch baseline
 

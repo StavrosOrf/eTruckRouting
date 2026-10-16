@@ -1,8 +1,10 @@
 # Fleet Travel Time: Objective Change, Diagnosis, and Campaign
 
-Updated: 2026-08-14
-Status: **complete.** GraphPPO is the best method on the campaign objective;
-see section 7 for the test-split result and section 8 for what it does not show.
+Updated: 2026-08-20
+Status: **complete, and re-verified against the ALNS metaheuristic added for
+R1.6.** GraphPPO is the best method on the campaign objective; see section 7 for
+the test-split result, section 7.5 for the ALNS re-run, and section 8 for what
+it does not show.
 
 Documents 08 and 09 optimised and reported **fleet makespan**. This campaign
 changes the primary objective to **total travel time of all trucks on a plan
@@ -138,7 +140,9 @@ route times is an easier CP-SAT objective than a min-max, and the resulting
 plans happen to survive execution more often. The bar this campaign has to clear
 is therefore higher than the one document 09 reported against.
 
-Frozen in `results/canonical/frozen_baselines_travel.json`.
+Frozen in `results/canonical/frozen_baselines_travel.json` (deleted in the
+2026-08-18 restructure; the live equivalent, with ALNS added, is
+`results/canonical/travel_methods_v3.json` — see section 7.5).
 
 ## 4. Reward shaping alone is not enough (measured)
 
@@ -325,7 +329,9 @@ Pre-declared rule, applied to all 16 runs:
 
 `d_tm10_sb6000` led on feasibility at 0.880; `c_tm15` at 0.853 is inside the band
 and 4.4 hours shorter, so the objective decided. Frozen as
-`results/canonical/selected_travel_d.json`. **No test scenario was read before
+`results/canonical/selected_travel_d.json` (since deleted; the selected
+checkpoint itself survives at `results/canonical/graphppo_v2_stagec/c_tm15`).
+**No test scenario was read before
 this point.**
 
 Two selection defects were found and fixed during the campaign, both worth
@@ -347,6 +353,11 @@ learning**, curriculum to the target configuration, then three refinement stages
 against fleet travel hours.
 
 ### 7.1 Feasibility and cost
+
+> **Superseded by 7.5.** The artifacts behind this subsection were deleted in the
+> 2026-08-18 restructure and the baselines have since been re-tuned with ALNS
+> added. The numbers below are retained as recorded; 7.5 is the reproducible
+> version, and it scores the same checkpoint at 0.843 rather than 0.857.
 
 | Method | Success | Wilson 95% | Completed | Travel h* | Makespan h* | Operating h | s/decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -423,6 +434,78 @@ kilometres almost exactly. The makespan-era policy drove **27% further** with
 planner's distance to within 0.6%. The diagnosis in section 1 — that this was a
 routing-and-detour problem, not a scheduling one — is confirmed by the fix.
 
+### 7.5 Re-verification against ALNS (2026-08-20)
+
+Two things happened after section 7 was written. `EVRoutingEnv/baselines/alns.py`
+was added for reviewer point R1.6 — adaptive large neighbourhood search over the
+same nominal problem CP-SAT minimises, executed open-loop through the same
+energy-safe repair layer — and the `results/` restructure of 2026-08-18 deleted
+the campaign artifacts section 7 was measured from. The frozen `c_tm15`
+checkpoint survived and still loads.
+
+Both were addressed by re-tuning all four baselines on 40 validation scenarios
+under `--objective travel_time` and re-scoring the identical checkpoint on the
+identical 300 test seeds, now against ALNS as well.
+
+| Method | Success | Travel h* | Operating h | s/decision |
+| --- | --- | --- | --- | --- |
+| **GraphPPO** (`c_tm15`) | **0.843** | 121.5 | **132.7** | 0.0076 |
+| `cpsat_plan` | 0.607 | 121.1 | 188.7 | 0.0051 |
+| `alns` | 0.603 | **119.9** | 189.3 | 0.0042 |
+| `greedy_heuristic` | 0.543 | 142.7 | 225.2 | 0.0011 |
+| `rolling_horizon_mpc` | 0.520 | 142.2 | 220.6 | 0.0022 |
+| `random_feasible` | 0.000 | n/a | 246.9 | 0.0009 |
+
+Paired on jointly solved scenarios:
+
+| vs | n | Travel hours | Success |
+| --- | --- | --- | --- |
+| `alns` | 164 | **+1.4 [-3.4, +6.7]** | **+0.240 [+0.177, +0.303]** |
+| `cpsat` | 165 | **+0.2 [-4.7, +5.4]** | +0.237 [+0.173, +0.300] |
+| `mpc` | 145 | **-22.5 [-28.2, -16.7]** | +0.323 [+0.260, +0.383] |
+| `heuristic` | 147 | **-20.0 [-25.2, -14.6]** | +0.300 [+0.237, +0.363] |
+
+Best-known travel reference (29 of 300 solved by no method):
+
+| Method | Solves | Mean ratio | Median | >=99.9% of best | Owns best |
+| --- | --- | --- | --- | --- | --- |
+| **GraphPPO** | **253** | **0.9437** | **1.0000** | **0.644** | **163** |
+| `alns` | 181 | 0.9260 | 0.9704 | 0.436 | 79 |
+| `cpsat_plan` | 182 | 0.9196 | 0.9622 | 0.407 | 4 |
+| `greedy_heuristic` | 163 | 0.7942 | 0.7802 | 0.080 | 13 |
+| `rolling_horizon_mpc` | 156 | 0.7846 | 0.7848 | 0.077 | 12 |
+
+**ALNS is the strongest nominal planner and it does not displace GraphPPO.** It
+beats CP-SAT on travel (119.9 vs 121.1 h), on makespan (74.4 vs 75.0 h), and it
+takes over ownership of the best-known plans among planners (79 against CP-SAT's
+4). It also lands within 1.2 h and 0.004 success of CP-SAT overall — two
+independent searches converging on the same nominal optimum, which is what
+should happen at 10 customers. Its tuning selected the **smallest** iteration
+budget offered (2000 of 2000/10000/30000), and 2000 vs 10000 iterations returned
+byte-identical plans on a validation probe: the search saturates far below its
+smallest budget at this instance size.
+
+That sharpens the finding rather than weakening it. The gap between the planners
+and GraphPPO is **not search quality** — ALNS demonstrates the nominal problem is
+essentially solved — it is that a plan optimised for the nominal realisation
+strands on ~40% of instances, while a closed-loop policy commits after
+observing. GraphPPO ties the best nominal planner on route quality and solves
+24 percentage points more of the distribution.
+
+Two caveats to keep attached to this table:
+
+* Against ALNS, GraphPPO is nominally **+1.4 h**, not negative. The interval
+  spans zero, so the correct word is *tied*, not *beats*.
+* This run scores GraphPPO at **0.843** where section 7 reported 0.857 — same
+  checkpoint, same seeds. The baselines were re-tuned, which changes which
+  scenarios enter the best-known reference, and stochastic execution differs
+  between runs. 0.843 is the figure backed by artifacts on disk; treat 0.857 as
+  superseded.
+
+Artifacts: `results/canonical/campaign_travel_v3/test/`,
+`results/canonical/tuning_travel_v3/`,
+`results/canonical/travel_methods_v3.json`.
+
 ## 8. Honest limits
 
 **The 0.863 feasibility target was not strictly cleared.** GraphPPO reaches
@@ -471,9 +554,34 @@ INIT_FROM=results/canonical/graphppo_v2_stagec/c_tm15  bash scripts/runners/run_
 TRAINING_ROOT=results/canonical/graphppo_travel_all3 \
   RESCORE_TOP=16 RESCORE_SCENARIOS=150 WORKERS=16 \
   bash scripts/runners/run_travel_final_campaign.sh
+
+# re-verification against ALNS (section 7.5), from the frozen c_tm15 checkpoint
+.venv/bin/python scripts/evaluation/tune_heuristics.py \
+    --scenarios 40 --methods heuristic mpc cpsat alns --objective travel_time \
+    --workers 14 --shards 8 --output results/canonical/tuning_travel_v3
+.venv/bin/python scripts/evaluation/run_canonical_campaign.py \
+    --split test --scenarios 300 \
+    --methods results/canonical/travel_methods_v3.json \
+    --output results/canonical/campaign_travel_v3
+for ref in alns cpsat mpc heuristic; do
+  .venv/bin/python scripts/evaluation/compare_campaign.py \
+      --campaign results/canonical/campaign_travel_v3/test \
+      --reference $ref --candidate graphppo
+done
+.venv/bin/python scripts/evaluation/build_best_known.py \
+    --campaign results/canonical/campaign_travel_v3/test --objective travel_time
 ```
 
-Artifacts: `results/canonical/campaign_travel_final/test/` (episode rows,
-summaries, paired comparisons, best-known reference),
-`results/canonical/selected_travel_d.json` (frozen selection),
-`results/canonical/frozen_baselines_travel.json` (tuned baselines).
+**Artifact note.** The `results/` restructure of 2026-08-18 deleted the
+directories section 7 was measured from — `campaign_travel_final/`,
+`selected_travel_d.json`, `frozen_baselines_travel.json`, `tuning_travel/`, and
+the whole of stage D (`graphppo_v2_staged/`). The stage A/B/C checkpoints
+survived, including the selected `graphppo_v2_stagec/c_tm15/best.pt`, which
+still loads under the current `algo/` code.
+
+Live artifacts are therefore the **v3** set, produced by the commands above:
+`results/canonical/campaign_travel_v3/test/` (episode rows, summaries, four
+paired comparisons, best-known reference), `results/canonical/tuning_travel_v3/`
+(baseline grids), `results/canonical/travel_methods_v3.json` (frozen methods).
+Section 7's numbers are retained as recorded; section 7.5 is the reproducible
+version.

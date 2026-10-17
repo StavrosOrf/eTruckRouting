@@ -40,8 +40,10 @@ def draw(env, seed):
     }
 
 
-def play(env, policy, seed, max_steps=600):
-    env.reset(seed=seed)
+def play(env, policy, max_steps=600, seed=None):
+    """Play the scenario the last reset drew (pass ``seed`` to reset first)."""
+    if seed is not None:
+        env.reset(seed=seed)
     steps, done, info = 0, False, {}
     while not done and steps < max_steps:
         _, _, terminated, truncated, info = env.step(policy.get_action(env))
@@ -70,7 +72,8 @@ def main():
 
     config = load_config(a.config)
     data_dir = Path(resolve_network_data_dir(config["network"]))
-    name = data_dir.name if "case_studies" in str(data_dir) else "california"
+    in_case_folder = "case_studies" in str(data_dir)
+    name = data_dir.name if in_case_folder else "california_original_folder"
     t0 = time.time()
     env = EventDrivenTruckEnv(a.config, verbose=False, enable_plotting=False)
     load_s = time.time() - t0
@@ -94,12 +97,15 @@ def main():
         t1 = time.time()
         try:
             d = draw(env, seed)
-            m = play(env, policy, seed, a.max_steps)
+            t_draw = time.time() - t1
+            m = play(env, policy, a.max_steps)
         except Exception as e:  # noqa: BLE001 - record why a scenario could not be built or played
             failures.append({"seed": seed, "error": f"{type(e).__name__}: {str(e)[:200]}"})
             print(f"  seed {seed}: FAILED {type(e).__name__}: {str(e)[:120]}", flush=True)
             continue
         d["seconds"] = round(time.time() - t1, 1)
+        d["seconds_to_generate"] = round(t_draw, 1)
+        d["result"] = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}
         draws.append(d); rows.append(m)
         print(f"  seed {seed}: depot={roles.get(d['depot'], {}).get('depot_code') or roles.get(d['depot'], {}).get('zone_id') or d['depot']}"
               f" success={m['success']} steps={m['steps']} distance={m['total_distance']:.0f}km "
@@ -123,9 +129,10 @@ def main():
             "total_distance", "total_energy_consumed", "total_energy_charged", "charging_sessions", "total_charging_time",
             "total_queue_time", "fleet_makespan", "total_operating_time", "minimum_terminal_soc", "steps")},
         "seconds_per_scenario_median": round(st.median([d["seconds"] for d in draws]), 1) if draws else None,
+        "seconds_to_generate_median": round(st.median([d["seconds_to_generate"] for d in draws]), 1) if draws else None,
         "scenarios": draws,
     }
-    out = data_dir / "scenario_check.json" if name != "california" else Path("scenario_check_california.json")
+    out = data_dir / "scenario_check.json" if in_case_folder else Path("scenario_check_" + name + ".json")
     json.dump(summary, open(out, "w"), indent=1)
     print(json.dumps({k: v for k, v in summary.items() if k != "scenarios"}, indent=1), flush=True)
 
@@ -133,7 +140,7 @@ def main():
     if a.plot_episodes:
         penv = EventDrivenTruckEnv(a.config, verbose=False, enable_plotting=True, run_id=f"scenario_check_{name}")
         for k in range(a.plot_episodes):
-            play(penv, policy, a.seed + k, a.max_steps)
+            play(penv, policy, a.max_steps, seed=a.seed + k)
         penv.close()
         print("episode figures in EVRoutingEnv/results/scenario_check_" + name, flush=True)
     return 0 if not failures and rows else 1

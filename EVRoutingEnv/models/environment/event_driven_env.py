@@ -10,9 +10,12 @@ The environment steps forward when events finish. Only one truck is active at a 
 
 import copy
 import datetime
+import hashlib
 import heapq
+import json
 import math
 import os
+import pickle
 import sys
 from numbers import Integral, Real
 
@@ -301,17 +304,14 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Initialize charging station manager
         # Go up two levels from models/environment/ to EVRoutingEnv/
+        # The charger queue model ships with the case study (EVRoutingEnv/data/case_studies/<case>/).
         waiting_time_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "data",
-            "waiting_time_lookup.json",
-        )
-        # A case study may ship its own queue model next to its network data.
-        case_waiting_path = os.path.join(
             resolve_network_data_dir(self.config["network"]), "waiting_time_lookup.json"
         )
-        if os.path.exists(case_waiting_path):
-            waiting_time_path = case_waiting_path
+        if not os.path.exists(waiting_time_path):
+            raise FileNotFoundError(
+                f"{waiting_time_path} not found: every case study folder needs a waiting_time_lookup.json"
+            )
         station_charging_config = dict(self.charging_config)
         station_charging_config.setdefault(
             "station_power_classes_kw",
@@ -681,40 +681,100 @@ class EventDrivenTruckEnv(gym.Env):
         battery_capacity = float(truck_config["battery_capacity"])
         initial_batteries = [self._initial_battery(battery_capacity) for _ in range(self.num_trucks)]
         self.feasibility_witness = ()
-        self.joint_instance = generate_joint_routing_instance(
-            transport_graph=self.transport_graph,
-            charging_nodes=self.charging_nodes,
-            rng=self.instance_rng,
-            num_customers=self.num_stops,
-            num_trucks=self.num_trucks,
-            battery_capacity=battery_capacity,
-            payload_capacity=payload_capacity,
-            min_customer_demand=float(
-                self.problem_config.get("min_customer_demand", 1.0)
-            ),
-            max_customer_demand=float(
-                self.problem_config.get("max_customer_demand", payload_capacity)
-            ),
-            base_service_time=float(
-                self.problem_config.get(
-                    "base_service_time",
-                    self.delivery_config["base_unloading_time"],
+        def generate():
+            return generate_joint_routing_instance(
+                transport_graph=self.transport_graph,
+                charging_nodes=self.charging_nodes,
+                rng=self.instance_rng,
+                num_customers=self.num_stops,
+                num_trucks=self.num_trucks,
+                battery_capacity=battery_capacity,
+                payload_capacity=payload_capacity,
+                min_customer_demand=float(
+                    self.problem_config.get("min_customer_demand", 1.0)
+                ),
+                max_customer_demand=float(
+                    self.problem_config.get("max_customer_demand", payload_capacity)
+                ),
+                base_service_time=float(
+                    self.problem_config.get(
+                        "base_service_time",
+                        self.delivery_config["base_unloading_time"],
+                    )
+                ),
+                time_window_config=self.problem_config.get("time_windows"),
+                preassign=self.preassigned_customers,
+                sequential=self.sequential_routing,
+                energy_multiplier=(max(1.0, float(self.traffic_config["max_energy_multiplier"]))
+                    if self.traffic_config["enable_traffic"] and self.traffic_config["enable_energy_uncertainty"]
+                    else 1.0),
+                initial_batteries=initial_batteries,
+                charge_transition=self._certificate_charge_transition,
+                min_hop_energy_kwh=self.min_hop_energy_kwh,
+                max_hop_energy_kwh=self.max_hop_energy_kwh,
+                generation_attempts=self.generation_attempts,
+                certify=lambda instance: self._certify_instance(instance, initial_batteries),
+            )
+
+        cache_path = self._scenario_cache_path(initial_batteries)
+        cached = None
+        if cache_path is not None and os.path.exists(cache_path):
+            try:
+                with open(cache_path, "rb") as file:
+                    cached = pickle.load(file)
+            except (OSError, EOFError, pickle.PickleError):
+                cached = None
+        if cached is not None:
+            # the certificate replay's action trace is part of what certification produces
+            self.joint_instance, self.feasibility_witness = cached["instance"], cached["trace"]
+        else:
+            self.joint_instance = generate()
+            if cache_path is not None:
+                self._write_scenario_cache(
+                    cache_path, {"instance": self.joint_instance, "trace": self.feasibility_witness}
                 )
-            ),
-            time_window_config=self.problem_config.get("time_windows"),
-            preassign=self.preassigned_customers,
-            sequential=self.sequential_routing,
-            energy_multiplier=(max(1.0, float(self.traffic_config["max_energy_multiplier"]))
-                if self.traffic_config["enable_traffic"] and self.traffic_config["enable_energy_uncertainty"]
-                else 1.0),
-            initial_batteries=initial_batteries,
-            charge_transition=self._certificate_charge_transition,
-            min_hop_energy_kwh=self.min_hop_energy_kwh,
-            max_hop_energy_kwh=self.max_hop_energy_kwh,
-            generation_attempts=self.generation_attempts,
-            certify=lambda instance: self._certify_instance(instance, initial_batteries),
-        )
         self._install_joint_instance(self.joint_instance, initial_batteries)
+
+    SCENARIO_CACHE_VERSION = 1  # bump when generation or certification semantics change
+
+    def _scenario_cache_path(self, initial_batteries) -> str | None:
+        """Disk path of this scenario's certified instance, or None when caching is off.
+
+        Instance generation is a pure function of the scenario seed (its own named RNG stream),
+        the configuration and the network, so a certified instance can be stored once and reused
+        across resets, runs and workers. Enable it with ``environment.scenario_cache_dir`` or the
+        ``EVRP_SCENARIO_CACHE`` environment variable; leave both unset to generate on every reset.
+        """
+        directory = self.config["environment"].get("scenario_cache_dir") or os.environ.get("EVRP_SCENARIO_CACHE")
+        if not directory:
+            return None
+        graph = self.transport_graph
+        matrices = graph.cost_matrices()
+        digest = getattr(self, "_scenario_graph_digest", None)
+        if digest is None or digest[0] is not matrices:
+            node_ids = [int(graph.graph.nodes[n].get("original_id", n)) for n in sorted(graph.graph.nodes())]
+            digest = (matrices, hashlib.sha1(
+                matrices[1].tobytes() + matrices[2].tobytes() + json.dumps(node_ids).encode()
+                + json.dumps(sorted(int(c) for c in self.charging_nodes)).encode()
+            ).hexdigest())
+            self._scenario_graph_digest = digest
+        key = hashlib.sha1(json.dumps({
+            "version": self.SCENARIO_CACHE_VERSION, "graph": digest[1], "seed": self.scenario_seed,
+            "stops": self.num_stops, "initial_batteries": [float(b) for b in initial_batteries],
+            "config": self.config, "mode": [self.sequential_routing, self.preassigned_customers],
+        }, sort_keys=True, default=str).encode()).hexdigest()
+        return os.path.join(directory, key[:2], key + ".pkl")
+
+    @staticmethod
+    def _write_scenario_cache(path: str, payload) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temporary = f"{path}.{os.getpid()}.tmp"
+            with open(temporary, "wb") as file:
+                pickle.dump(payload, file)
+            os.replace(temporary, path)
+        except (OSError, pickle.PickleError):
+            pass  # caching is an optimisation only
 
     def _install_joint_instance(self, instance, initial_batteries) -> None:
         """Install static inputs without sampling or changing their seed."""
@@ -779,6 +839,20 @@ class EventDrivenTruckEnv(gym.Env):
             settings["taper_power_min"] = min(
                 float(settings["taper_power_min"]), float(settings["charge_rate"]),
             )
+        if (
+            self.charging_action_mode == "target_soc"
+            and kind == "DCFast"
+            and settings["use_realistic_curve"]
+            and value > soc + 1e-12
+        ):
+            # Certification only orders candidate routes by charging time, so it uses the fast
+            # fixed-order integral (agrees with the adaptive one to ~3e-9 relative). The energy
+            # delivered is the same closed form the adaptive routine returns.
+            hours = self.charging_curve_model.charge_hours_to_target_fast(
+                soc, value, capacity, float(settings["charge_rate"]), float(settings["efficiency"]),
+                float(settings["taper_start_soc"]), float(settings["taper_power_min"]),
+            )
+            return min(capacity, battery + (value - soc) * capacity), hours, value
         if self.charging_action_mode == "target_soc":
             amount, details = self.charging_curve_model.calculate_charge_to_target(
                 soc, value, capacity, settings, kind,

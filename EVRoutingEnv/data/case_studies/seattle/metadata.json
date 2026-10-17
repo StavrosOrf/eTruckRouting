@@ -1,7 +1,7 @@
 {
  "name": "seattle",
  "title": "Puget Sound (Seattle, WA)",
- "generated_utc": "2026-10-17T17:13:33Z",
+ "generated_utc": "2026-10-17T22:13:34Z",
  "preset": {
   "name": "seattle",
   "title": "Puget Sound (Seattle, WA)",
@@ -19,10 +19,12 @@
   "bbox_margin_deg": 0.03,
   "n_customers": 230,
   "max_chargers": 0,
-  "charger_merge_m": 1000,
+  "charger_merge_m": 5000,
+  "charger_merge_linkage": "complete",
   "max_snap_m": 400,
   "vehicle_profile": "heavy_truck",
-  "seed": 0
+  "seed": 0,
+  "workers": 32
  },
  "units": {
   "energy": "kWh (battery)",
@@ -31,12 +33,12 @@
  },
  "scale_km": 118.0,
  "counts": {
-  "nodes": 329,
-  "chargers": 96,
+  "nodes": 283,
+  "chargers": 50,
   "depots": 3,
   "customers": 230,
   "dcfast_ports_in_nodes": 952,
-  "dcfast_sites_available": 100,
+  "dcfast_sites_available": 54,
   "dcfast_stations_raw": 213
  },
  "study_bbox_min_lat_lon_max_lat_lon": [
@@ -74,53 +76,53 @@
  },
  "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
  "leg_energy_floor_kwh": 0.02,
- "legs_floored": 282,
+ "legs_floored": 219,
  "od_stats": {
   "reduced_cost_min": 0.0003463081235267002,
   "n_negative_reduced": 0,
-  "max_energy_consistency_error_kwh": 3.6109996699451585e-06,
+  "max_energy_consistency_error_kwh": 3.592999632928695e-06,
   "unreachable_pairs": 0
  },
  "ranges": {
   "energy_kwh_p5_p50_p95_max": [
-   11.12,
-   57.25,
-   131.47,
-   202.75
+   11.16,
+   57.58,
+   130.59,
+   201.01
   ],
   "time_h_p5_p50_p95_max": [
-   0.285,
-   1.174,
-   2.505,
-   3.891
+   0.28,
+   1.187,
+   2.495,
+   3.863
   ],
   "dist_km_p5_p50_p95_max": [
-   7.9,
+   7.6,
    38.4,
-   90.7,
-   139.4
+   89.8,
+   138.5
   ],
-  "kwh_per_km_median": 1.472
+  "kwh_per_km_median": 1.477
  },
  "asymmetry": {
   "energy": {
-   "pairs": 53441,
-   "median_rel_diff": 0.1453,
-   "p90_rel_diff": 0.4285,
-   "frac_over_5pct": 0.8062,
-   "frac_over_20pct": 0.3758
+   "pairs": 39503,
+   "median_rel_diff": 0.1349,
+   "p90_rel_diff": 0.4041,
+   "frac_over_5pct": 0.794,
+   "frac_over_20pct": 0.3451
   },
   "time": {
-   "pairs": 53837,
-   "median_rel_diff": 0.0577,
-   "p90_rel_diff": 0.1757,
-   "frac_over_5pct": 0.5383,
-   "frac_over_20pct": 0.0633
+   "pairs": 39800,
+   "median_rel_diff": 0.0539,
+   "p90_rel_diff": 0.1703,
+   "frac_over_5pct": 0.5223,
+   "frac_over_20pct": 0.0529
   }
  },
  "charger_clusters": {
-  "max_diameter_m": 2033.6,
-  "merged_nodes_with_multiple_stations": 51
+  "max_diameter_m": 4949.5,
+  "merged_nodes_with_multiple_stations": 40
  },
  "sources": {
   "delivery_and_depot_locations": "Amazon Last Mile Routing Research Challenge 2021 (training routes), CC BY-NC 4.0",

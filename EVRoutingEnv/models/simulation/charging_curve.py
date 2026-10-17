@@ -9,6 +9,8 @@ Implements realistic charging behavior including:
 import math
 from itertools import pairwise
 
+import numpy as np
+
 from scipy.integrate import quad
 
 
@@ -239,6 +241,103 @@ class ChargingCurveModel:
             "power_curve": power_curve,
         }
         return delivered, details
+
+    def charge_hours_to_target_fast(
+        self,
+        initial_soc: float,
+        target_soc: float,
+        battery_capacity: float,
+        peak_power: float,
+        efficiency: float,
+        taper_start_soc: float,
+        taper_power_min: float,
+    ) -> float:
+        """Hours of the realistic CCCV curve from ``initial_soc`` to ``target_soc``.
+
+        Same integral as :meth:`calculate_charge_to_target` (the time is
+        capacity / (peak * efficiency) * integral of peak / P(soc) d soc), evaluated with a fixed
+        Gauss-Legendre rule on the smooth pieces of the curve instead of repeated adaptive
+        quadrature, so it costs microseconds. It agrees with the adaptive integral to about 1e-9
+        relative; the simulator keeps using the adaptive one. Used where only the duration is
+        needed in bulk, e.g. instance certification.
+        """
+        if target_soc <= initial_soc + 1e-12:
+            raise ValueError("target_soc must be above initial_soc")
+        edges, cumulative = self._curve_table(peak_power, taper_start_soc, taper_power_min)
+        integral = (
+            self._cumulative_integral(target_soc, edges, cumulative, peak_power, taper_start_soc, taper_power_min)
+            - self._cumulative_integral(initial_soc, edges, cumulative, peak_power, taper_start_soc, taper_power_min)
+        )
+        return (battery_capacity / peak_power) * integral / efficiency
+
+    def _curve_table(self, peak_power, taper_start_soc, taper_power_min):
+        """Integral of peak/P(soc) from 0 to each smooth-piece boundary (cached per charger class)."""
+        key = (peak_power, taper_start_soc, taper_power_min)
+        table = self.__dict__.setdefault("_curve_tables", {}).get(key)
+        if table is None:
+            kinks = [0.0, 0.1, 0.5, taper_start_soc, 1.0]
+            ratio = taper_power_min / peak_power
+            if ratio < 1.0:  # the taper floor is reached where 1 - 0.6 * progress**1.5 = ratio
+                progress = ((1.0 - ratio) / 0.6) ** (1.0 / 1.5)
+                if progress < 1.0:
+                    kinks.append(taper_start_soc + progress * (1.0 - taper_start_soc))
+            edges = np.array(sorted(set(kinks)))
+            cumulative = [0.0]
+            for lower, upper in pairwise(edges):
+                cumulative.append(
+                    cumulative[-1]
+                    + self._piece_integral(lower, upper, peak_power, taper_start_soc, taper_power_min)
+                )
+            table = (edges, np.array(cumulative))
+            self._curve_tables[key] = table
+        return table
+
+    def _piece_integral(self, lower, upper, peak_power, taper_start_soc, taper_power_min):
+        """Integral of peak/P over [lower, upper] inside one smooth piece of the curve (Gauss-Legendre)."""
+        if upper <= lower:
+            return 0.0
+        mid = 0.5 * (upper + lower)
+        if mid >= 0.5 and mid < taper_start_soc:
+            return (upper - lower)  # plateau: P = peak, so peak/P = 1
+        # the taper pieces have an x**1.5 start, so they get a higher order than the ramps
+        nodes, weights = self._gauss_legendre(48 if mid >= taper_start_soc else 16)
+        half = 0.5 * (upper - lower)
+        soc = half * nodes + mid
+        if mid < 0.1:
+            power = 0.6 + 0.3 * (soc / 0.1)
+        elif mid < 0.5:
+            power = 0.9 + 0.1 * ((soc - 0.1) / 0.4)
+        else:
+            progress = np.maximum(soc - taper_start_soc, 0.0) / (1.0 - taper_start_soc)
+            power = np.maximum(1.0 - 0.6 * progress ** 1.5, taper_power_min / peak_power)
+        return half * float(np.dot(weights, 1.0 / power))
+
+    def _cumulative_integral(self, soc, edges, cumulative, peak_power, taper_start_soc, taper_power_min):
+        piece = max(0, int(np.searchsorted(edges, soc, side="right")) - 1)
+        if piece >= len(edges) - 1 or soc == edges[piece]:
+            return float(cumulative[min(piece, len(edges) - 1)])
+        return float(cumulative[piece]) + self._piece_integral(
+            float(edges[piece]), soc, peak_power, taper_start_soc, taper_power_min
+        )
+
+    @staticmethod
+    def _gauss_legendre(order: int):
+        cache = ChargingCurveModel.__dict__.get("_gl_cache")
+        if cache is None:
+            cache = {}
+            ChargingCurveModel._gl_cache = cache
+        if order not in cache:
+            cache[order] = np.polynomial.legendre.leggauss(order)
+        return cache[order]
+
+    @staticmethod
+    def _cccv_power_array(soc, peak_power, taper_start_soc, taper_power_min):
+        """Vectorised twin of :meth:`cccv_power_at_soc` (same piecewise curve)."""
+        ramp1 = peak_power * (0.6 + 0.3 * (soc / 0.1))
+        ramp2 = peak_power * (0.9 + 0.1 * ((soc - 0.1) / 0.4))
+        progress = np.clip((soc - taper_start_soc) / (1.0 - taper_start_soc), 0.0, None)
+        taper = np.maximum(peak_power * (1.0 - (1.0 - 0.4) * progress ** 1.5), taper_power_min)
+        return np.where(soc < 0.1, ramp1, np.where(soc < 0.5, ramp2, np.where(soc < taper_start_soc, peak_power, taper)))
 
     def _linear_charge(
         self,

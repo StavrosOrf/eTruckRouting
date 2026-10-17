@@ -42,12 +42,14 @@ def rel_asym(M, floor):
 
 
 def main():
-    sets = {"California (heavy truck, 400 kWh)": matrix_from_dicts(DATA / "shortest_path_energy_dict.json", DATA / "shortest_path_time_dict.json")}
+    sets = {}
     meta = {}
-    for p in sorted((DATA / "case_studies").glob("*/metadata.json")):
+    folders = sorted((DATA / "case_studies").glob("*/metadata.json"), key=lambda q: (q.parent.name != "california", q.parent.name))
+    for p in folders:  # California first
         m = json.load(open(p))
         meta[m["name"]] = m
-        sets[f"{m['title']} ({m['vehicle_profile'].replace('_', ' ')}, {m['battery_kwh']:.0f} kWh)"] = matrix_from_dicts(
+        who = "original data" if not m.get("generated", True) else m["vehicle_profile"].replace("_", " ")
+        sets[f"{m['title']} ({who}, {m['battery_kwh']:.0f} kWh)"] = matrix_from_dicts(
             p.parent / "shortest_path_energy_dict.json", p.parent / "shortest_path_time_dict.json")
     cols = ["#444444", "#d95f02", "#1b9e77", "#7570b3", "#e7298a", "#66a61e"]
     fig, axs = plt.subplots(1, 3, figsize=(17, 4.8), layout="constrained")

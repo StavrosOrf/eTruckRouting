@@ -294,7 +294,8 @@ def edge_costs(net: RoadNetwork, vehicle: dict | None = None):
     L = net.length
     dh = net.elev[net.ev] - net.elev[net.eu]
     Ls = np.sqrt(L * L + dh * dh)
-    v = net.kph * SPEED_FACTOR[net.hwclass] / 3.6                      # m/s
+    kph = np.minimum(net.kph, p["max_speed_kph"]) if p.get("max_speed_kph") else net.kph  # speed-limited trucks
+    v = kph * SPEED_FACTOR[net.hwclass] / 3.6                          # m/s
     ctrl = net.ctrl[net.ev]
     delay = np.where(ctrl == 1, p["signal_delay_s"], np.where(ctrl == 2, p["stop_delay_s"], 0.0))
     pstop = np.where(ctrl == 1, p["signal_stop_prob"], np.where(ctrl == 2, p["stop_stop_prob"], 0.0))

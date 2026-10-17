@@ -4,7 +4,7 @@ Layout of the cache (``--raw-dir``, default ``<repo>/.casestudy_raw``)::
 
     amazon/route_data.json      Amazon Last Mile Routing Research Challenge (CC BY-NC 4.0)
     osm/<region>-latest.osm.pbf Geofabrik OpenStreetMap extract (ODbL)
-    afdc/<ST>.json              NREL/NLR Alternative Fuels Data Center, public DC-fast chargers
+    afdc/<ST>.json              NREL/NLR Alternative Fuels Data Center, public DC-fast chargers (US presets)
     terrain/<z>/<x>/<y>.png     AWS terrain tiles (Terrarium encoding; 3DEP/NED over the US)
 
 Everything is fetched only when missing, so re-running is cheap.
@@ -116,7 +116,11 @@ if __name__ == "__main__":
 
     preset = yaml.safe_load(open(sys.argv[1]))
     raw = Path(sys.argv[2]) if len(sys.argv) > 2 else default_raw_dir()
-    ensure_amazon(raw)
-    ensure_osm(raw, preset["geofabrik"])
-    ensure_afdc(raw, preset["state"])
+    if preset.get("delivery_source", "amazon") == "amazon":
+        ensure_amazon(raw)
+    for region in preset["geofabrik"] if isinstance(preset["geofabrik"], list) else [preset["geofabrik"]]:
+        ensure_osm(raw, region)
+    if preset.get("chargers_source", "afdc") == "afdc":
+        for st in preset["state"] if isinstance(preset["state"], list) else [preset["state"]]:
+            ensure_afdc(raw, st)
     print("raw cache ready at", raw)

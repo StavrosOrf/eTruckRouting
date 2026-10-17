@@ -10,6 +10,8 @@ import heapq
 import math
 from itertools import count
 
+import numpy as np
+
 
 class NoFeasibleCertificate(ValueError):
     """A candidate has no certificate from the bounded constructive search."""
@@ -38,22 +40,59 @@ def construct_energy_routes(
     """
     depot = instance.depot_node
     chargers = tuple(sorted(charging_nodes))
+    charger_set = frozenset(chargers)
     owners = instance.witness_owners
     if len(owners) != len(instance.tasks):
         raise NoFeasibleCertificate("missing feasible payload partition")
 
-    def energy(a, b):
-        return graph.get_path_energy(a, b) * energy_multiplier
+    # Vectorised lookups when the graph can provide float64 all-pairs matrices: the scan over every
+    # charger below is the dominant cost of generating an instance on networks with hundreds of
+    # chargers, and per-pair dictionary lookups made it take tens of seconds. The values are the
+    # same numbers get_path_energy / get_time_distance return, so the witness is unchanged.
+    matrices = graph.cost_matrices() if hasattr(graph, "cost_matrices") else None
+    if matrices is not None:
+        index, energy_matrix, hours_matrix = matrices
+        charger_index = np.array([index[c] for c in chargers], dtype=np.int64)
+
+        def energy(a, b):
+            return float(energy_matrix[index[a], index[b]]) * energy_multiplier
+    else:
+
+        def energy(a, b):
+            return graph.get_path_energy(a, b) * energy_multiplier
+
+    charge_memo = {}
 
     def charge(node, battery):
         if charge_transition is None:
             return battery_capacity, 0.0, 1.0
-        return charge_transition(node, battery)
+        key = (node, battery)
+        if key not in charge_memo:
+            charge_memo[key] = charge_transition(node, battery)
+        return charge_memo[key]
+
+    charger_position = {c: i for i, c in enumerate(chargers)}
+
+    def reachable_chargers(node, available):
+        """Fallback scan for graphs without cost matrices, in sorted-charger order."""
+        for target in chargers:
+            if target == node:
+                continue
+            required = energy(node, target)
+            if not math.isfinite(required) or required > available + 1e-9:
+                continue
+            hours = graph.get_time_distance(node, target) if hasattr(graph, "get_time_distance") else 0.0
+            yield target, required, hours
 
     def path(origin, battery, destination, reserve):
         serial = count()
         pending = [(0.0, next(serial), origin, battery, ())]
         labels = {}
+        # Pareto labels (battery, cost) per charger for the vectorised branch, as padded arrays.
+        # An empty slot holds battery=-inf so it can never dominate anything.
+        label_battery = np.full((len(chargers), 8), -np.inf)
+        label_cost = np.full((len(chargers), 8), np.inf)
+        label_count = np.zeros(len(chargers), dtype=np.int64)
         expansions = 0
         # Target-SoC search has at most one post-charge level per station.
         # Duration actions can need revisits; bound those explicitly as well.
@@ -61,55 +100,84 @@ def construct_energy_routes(
         while pending and expansions < limit:
             cost, _, node, available, actions = heapq.heappop(pending)
             expansions += 1
-            if energy(node, destination) + reserve <= available + 1e-9:
-                remaining = max(0.0, available - energy(node, destination))
+            to_destination = energy(node, destination)
+            if to_destination + reserve <= available + 1e-9:
+                remaining = max(0.0, available - to_destination)
                 return (*actions, (destination, 0.0, False)), remaining
             departures = [(available, cost, actions)]
-            if node in chargers and (not actions or not actions[-1][2]):
+            if node in charger_set and (not actions or not actions[-1][2]):
                 charged, hours, value = charge(node, available)
                 if charged > available + 1e-9:
                     departures.append(
                         (charged, cost + hours, (*actions, (node, value, True)))
                     )
+            if matrices is not None:
+                row = energy_matrix[index[node]][charger_index] * energy_multiplier
+                row_hours = hours_matrix[index[node]][charger_index]
+                node_position = charger_position.get(node)
             for departure_battery, departure_cost, prefix in departures:
-                if energy(node, destination) + reserve <= departure_battery + 1e-9:
+                if to_destination + reserve <= departure_battery + 1e-9:
                     return (*prefix, (destination, 0.0, False)), max(
-                        0.0, departure_battery - energy(node, destination)
+                        0.0, departure_battery - to_destination
                     )
-                for target in chargers:
-                    if target == node:
-                        continue
-                    required = energy(node, target)
-                    if (
-                        not math.isfinite(required)
-                        or required > departure_battery + 1e-9
-                    ):
-                        continue
-                    remaining = max(0.0, departure_battery - required)
-                    hours = (
-                        graph.get_time_distance(node, target)
-                        if hasattr(graph, "get_time_distance")
-                        else 0.0
+                if matrices is None:
+                    for target, required, hours in reachable_chargers(node, departure_battery):
+                        remaining = max(0.0, departure_battery - required)
+                        new_cost = departure_cost + hours + 1e-6
+                        prior = labels.setdefault(target, [])
+                        if any(b >= remaining - 1e-9 and c <= new_cost for b, c in prior):
+                            continue
+                        prior[:] = [
+                            (b, c)
+                            for b, c in prior
+                            if not (remaining >= b - 1e-9 and new_cost <= c)
+                        ]
+                        prior.append((remaining, new_cost))
+                        heapq.heappush(
+                            pending,
+                            (new_cost, next(serial), target, remaining, (*prefix, (target, 0.0, False))),
+                        )
+                    continue
+                # Vectorised candidate generation and dominance test. Every target appears at most
+                # once per departure, so testing all candidates against the labels held before this
+                # departure is the same as testing them one by one in charger order.
+                ok = np.isfinite(row) & (row <= departure_battery + 1e-9)
+                if node_position is not None:
+                    ok[node_position] = False
+                ks = np.nonzero(ok)[0]
+                if ks.size == 0:
+                    continue
+                remaining_all = np.maximum(0.0, departure_battery - row[ks])
+                cost_all = departure_cost + row_hours[ks] + 1e-6
+                dominated = (
+                    (label_battery[ks] >= (remaining_all - 1e-9)[:, None])
+                    & (label_cost[ks] <= cost_all[:, None])
+                ).any(axis=1)
+                for j in np.nonzero(~dominated)[0]:
+                    k = int(ks[j])
+                    remaining = float(remaining_all[j])
+                    new_cost = float(cost_all[j])
+                    n = int(label_count[k])
+                    keep = ~(
+                        (remaining >= label_battery[k, :n] - 1e-9)
+                        & (new_cost <= label_cost[k, :n])
                     )
-                    new_cost = departure_cost + hours + 1e-6
-                    prior = labels.setdefault(target, [])
-                    if any(b >= remaining - 1e-9 and c <= new_cost for b, c in prior):
-                        continue
-                    prior[:] = [
-                        (b, c)
-                        for b, c in prior
-                        if not (remaining >= b - 1e-9 and new_cost <= c)
-                    ]
-                    prior.append((remaining, new_cost))
+                    kept = int(keep.sum())
+                    if kept < n:
+                        label_battery[k, :kept] = label_battery[k, :n][keep]
+                        label_cost[k, :kept] = label_cost[k, :n][keep]
+                        label_battery[k, kept:n] = -np.inf
+                        label_cost[k, kept:n] = np.inf
+                    if kept >= label_battery.shape[1]:
+                        pad = np.full((len(chargers), label_battery.shape[1]), -np.inf)
+                        label_battery = np.concatenate([label_battery, pad], axis=1)
+                        label_cost = np.concatenate([label_cost, np.full_like(pad, np.inf)], axis=1)
+                    label_battery[k, kept] = remaining
+                    label_cost[k, kept] = new_cost
+                    label_count[k] = kept + 1
                     heapq.heappush(
                         pending,
-                        (
-                            new_cost,
-                            next(serial),
-                            target,
-                            remaining,
-                            (*prefix, (target, 0.0, False)),
-                        ),
+                        (new_cost, next(serial), chargers[k], remaining, (*prefix, (chargers[k], 0.0, False))),
                     )
         raise NoFeasibleCertificate(
             "no complete battery-feasible customer/charger path"

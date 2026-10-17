@@ -93,15 +93,22 @@ def fig_overview(case: Path, d: dict):
         style = dict(ROLE_STYLE[role]); style["s"] = style["s"] * (2.2 if big and role == "customer" else 0.8 if big else 1)
         ax.scatter([p["lon"] for p in pts], [p["lat"] for p in pts], **style)
     ports = np.array([s["ports"] for s in st], float)
-    sc = ax.scatter([s["lon"] for s in st], [s["lat"] for s in st], s=(30 + 7 * np.minimum(ports, 40)) * k, c=ports, cmap="YlOrRd", vmin=0,
-                    vmax=max(ports.max(), 1), marker="^", edgecolors="black", lw=0.5 if big else 0.8, zorder=6)
+    kinds = np.array([s.get("station_type", "DCFast") for s in st])
+    sc = None
+    for kind, marker in (("DCFast", "^"), ("Level2", "s")):
+        m = kinds == kind
+        if m.any():
+            sc = ax.scatter(np.array([s["lon"] for s in st])[m], np.array([s["lat"] for s in st])[m],
+                            s=(30 + 7 * np.minimum(ports[m], 40)) * k, c=ports[m], cmap="YlOrRd", vmin=0,
+                            vmax=max(ports.max(), 1), marker=marker, edgecolors="black", lw=0.5 if big else 0.8, zorder=6)
     cb = fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.015)
-    cb.set_label("DC-fast ports at charger node")
+    cb.set_label("ports at charger node" if (kinds != "DCFast").any() else "DC-fast ports at charger node")
     c = meta["counts"]
     ax.legend(handles=[
         Line2D([], [], marker="o", ls="", c="#2c7fb8", ms=5, label=f"Delivery stops ({c['customers']})"),
         Line2D([], [], marker="*", ls="", c="#d95f02", mec="black", ms=14, label=f"Depots ({c['depots']})"),
-        Line2D([], [], marker="^", ls="", c="#fdae61", mec="black", ms=9, label=f"Charger nodes ({c['chargers']}, {c['dcfast_ports_in_nodes']} ports)"),
+        Line2D([], [], marker="^", ls="", c="#fdae61", mec="black", ms=9, label=f"Charger nodes ({c['chargers']}, {c.get('charger_ports_total', c['dcfast_ports_in_nodes'])} ports"
+                                                                                   + (", squares = Level 2" if (kinds != "DCFast").any() else "") + ")"),
     ] + ([Line2D([], [], marker="^", ls="", mfc="none", mec="#c28e8e", ms=6, label="DC-fast sites not used")] if other else []),
         loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=2, fontsize=8, framealpha=0.9)
     ax.set_title(f"{meta['title']}\ndelivery stops, depots, DC-fast charger nodes", fontsize=11)
@@ -147,6 +154,13 @@ def fig_asymmetry(case: Path, d: dict):
     od, meta = d["od"], d["meta"]
     E, T, K = od["energy_net_kwh"].astype(float), od["time_h"].astype(float), od["dist_km"].astype(float)
     n = len(E)
+    dist_label = "route length (km)"
+    if np.isfinite(K[~np.eye(n, dtype=bool)]).mean() < 0.5:  # road length unknown for most pairs (California)
+        pos = {nd["node"]: nd for nd in d["nodes"]}
+        la = np.radians([pos[int(i)]["lat"] for i in od["node_ids"]]); lo = np.radians([pos[int(i)]["lon"] for i in od["node_ids"]])
+        a = np.sin((la[None] - la[:, None]) / 2) ** 2 + np.cos(la)[:, None] * np.cos(la)[None] * np.sin((lo[None] - lo[:, None]) / 2) ** 2
+        K = 12742.0 * np.arcsin(np.sqrt(a)); dist_label = "straight-line distance (km)"
+    E = np.where(np.isfinite(E), E, 0.0); T = np.where(np.isfinite(T), T, 0.0)
     iu = np.triu_indices(n, 1)
     fig, axs = plt.subplots(2, 3, figsize=(16, 9))
     ax = axs[0, 0]
@@ -177,16 +191,16 @@ def fig_asymmetry(case: Path, d: dict):
     h = np.array([el[int(i)] for i in od["node_ids"]])
     climb = (h[None, :] - h[:, None])[iu]
     diff = (E - E.T)[iu]
-    ok = K[iu] > 1
+    ok = (K[iu] > 1) & (E[iu] > 0) & (E.T[iu] > 0)
     ax.scatter(climb[ok], diff[ok], s=2, alpha=0.15, c="#7570b3", rasterized=True)
     xs = np.linspace(climb.min(), climb.max(), 10)
     ax.plot(xs, np.polyval(np.polyfit(climb[ok], diff[ok], 1), xs), "k-", lw=1)
     ax.set_xlabel("elevation of j minus i (m)"); ax.set_ylabel("E(i→j) − E(j→i)  (kWh)")
     ax.set_title("Energy asymmetry follows net climb")
     ax = axs[1, 1]
-    ok = K > 1
+    ok = (K > 1) & (E > 0)
     ax.hexbin(K[ok], (E / np.maximum(K, 0.1))[ok] * 1000, gridsize=60, bins="log", cmap="plasma", mincnt=1, extent=(0, np.percentile(K[ok], 99.5), 0, 900))
-    ax.set_xlabel("route length (km)"); ax.set_ylabel("Wh per km"); ax.set_title("Consumption per route (directed pairs)")
+    ax.set_xlabel(dist_label); ax.set_ylabel("Wh per km"); ax.set_title("Consumption per directed pair")
     ax = axs[1, 2]
     ax.hist(E[~np.eye(n, dtype=bool)], bins=60, color="#7570b3")
     ax.set_xlabel("directed leg energy (kWh)"); ax.set_ylabel("directed pairs")
@@ -196,10 +210,63 @@ def fig_asymmetry(case: Path, d: dict):
     fig.tight_layout(); fig.savefig(case / "figures" / "asymmetry.png", dpi=140); plt.close(fig)
 
 
+def fig_scenarios(case: Path, d: dict):
+    """Coverage and outcomes of the scenarios drawn by check_scenarios.py."""
+    chk = json.load(open(case / "scenario_check.json"))
+    sc = [x for x in chk["scenarios"] if "result" in x]
+    if not sc:
+        return
+    meta, nodes = d["meta"], {n["node"]: n for n in d["nodes"]}
+    use = {}
+    for x in sc:
+        for c in x["customers"]:
+            use[c] = use.get(c, 0) + 1
+    dep = {}
+    for x in sc:
+        dep[x["depot"]] = dep.get(x["depot"], 0) + 1
+    w = 8.0
+    fig = plt.figure(figsize=(15.5, max(_map_height(d["terrain"], w, 8.5) + 0.8, 6.0)), layout="constrained")
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.25, 1])
+    ax = fig.add_subplot(gs[:, 0])
+    _hillshade(ax, d["terrain"], alpha=0.8)
+    major = d["roads"]["cls"] <= 3
+    ax.add_collection(LineCollection(_segments(d["roads"], major), colors="#777777", linewidths=0.4, alpha=0.7, zorder=1))
+    free = [n for n in d["nodes"] if n["role"] != "charger" and n["node"] not in use and n["node"] not in dep]
+    ax.scatter([n["lon"] for n in free], [n["lat"] for n in free], s=6, c="#bbbbbb", zorder=2, label="never drawn")
+    ids = list(use)
+    sca = ax.scatter([nodes[i]["lon"] for i in ids], [nodes[i]["lat"] for i in ids], s=14, c=[use[i] for i in ids],
+                     cmap="viridis", zorder=3, label="customers (colour = times drawn)")
+    fig.colorbar(sca, ax=ax, fraction=0.04, pad=0.01).set_label(f"times drawn in {len(sc)} scenarios")
+    ids = list(dep)
+    ax.scatter([nodes[i]["lon"] for i in ids], [nodes[i]["lat"] for i in ids], s=[60 + 25 * dep[i] for i in ids], marker="*",
+               c="#d95f02", edgecolors="black", lw=0.6, zorder=4, label="depots drawn")
+    ax.legend(loc="lower left", fontsize=8, framealpha=0.9)
+    ax.set_title(f"{len(sc)} scenarios: {chk['distinct_depots']} distinct depots, {chk['distinct_customers_used']} distinct customers")
+    _aspect(ax, np.mean(ax.get_ylim())); ax.set_xlabel("longitude"); ax.set_ylabel("latitude")
+    r = [x["result"] for x in sc]
+    ok = np.array([bool(q["success"]) for q in r])
+    dist = np.array([q["total_distance"] for q in r]); ch = np.array([q["charging_sessions"] for q in r])
+    en = np.array([q["total_energy_consumed"] for q in r]); trucks = chk["trucks"]; batt = chk["battery_kwh"]
+    ax = fig.add_subplot(gs[0, 1])
+    ax.scatter(dist[ok], ch[ok], c="#1b9e77", label=f"success ({ok.sum()})", s=40)
+    ax.scatter(dist[~ok], ch[~ok], c="#d95f02", marker="x", label=f"failed ({(~ok).sum()})", s=50)
+    ax.set_xlabel("total distance driven (km)"); ax.set_ylabel("charging sessions"); ax.legend(fontsize=8)
+    ax.set_title("Outcome of a heuristic policy per scenario")
+    ax = fig.add_subplot(gs[1, 1])
+    ax.hist(en / (trucks * batt), bins=15, color="#7570b3")
+    ax.axvline(1.0, color="k", ls="--", lw=1)
+    ax.set_xlabel(f"energy consumed per truck / battery ({batt:g} kWh)"); ax.set_ylabel("scenarios")
+    ax.set_title(f"{chk['episodes_needing_charge']}/{len(sc)} scenarios needed charging (dashed: one full battery)")
+    fig.suptitle(f"{meta['title']}: scenario generation check", fontsize=12)
+    fig.savefig(case / "figures" / "scenarios.png", dpi=140); plt.close(fig)
+
+
 def main(case: Path):
     (case / "figures").mkdir(exist_ok=True)
     d = load_case(case)
     fig_overview(case, d); fig_terrain(case, d); fig_asymmetry(case, d)
+    if (case / "scenario_check.json").exists():
+        fig_scenarios(case, d)
     print("figures ->", case / "figures")
 
 

@@ -1,0 +1,604 @@
+[
+ {
+  "node": 3543829505,
+  "lat": 35.2521117725,
+  "lon": -120.6859746944,
+  "site_lat": 35.2521117725,
+  "site_lon": -120.6859746944,
+  "ports": 6,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Target"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   48368
+  ]
+ },
+ {
+  "node": 2476817600,
+  "lat": 35.210277,
+  "lon": -118.832618,
+  "site_lat": 35.210277,
+  "site_lon": -118.832618,
+  "ports": 10,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "City of Arvin"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   131662
+  ]
+ },
+ {
+  "node": 9761577985,
+  "lat": 33.928312,
+  "lon": -117.558425,
+  "site_lat": 33.928312,
+  "site_lon": -117.558425,
+  "ports": 2,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "76 - Norco"
+  ],
+  "networks": [
+   "EVGATEWAY"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   166807
+  ]
+ },
+ {
+  "node": 1455468229,
+  "lat": 33.7822,
+  "lon": -118.2108,
+  "site_lat": 33.7822,
+  "site_lon": -118.2108,
+  "ports": 2,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Terminal Access Center"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   254340
+  ]
+ },
+ {
+  "node": 3886039812,
+  "lat": 37.44836,
+  "lon": -122.11823,
+  "site_lat": 37.44836,
+  "site_lon": -122.11823,
+  "ports": 20,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "GWIN Property Inc"
+  ],
+  "networks": [
+   "EVGATEWAY"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   302844
+  ]
+ },
+ {
+  "node": 165627608,
+  "lat": 34.56089,
+  "lon": -120.14103,
+  "site_lat": 34.56089,
+  "site_lon": -120.14103,
+  "ports": 8,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Alisal Ranch"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320950
+  ]
+ },
+ {
+  "node": 165380332,
+  "lat": 34.81936,
+  "lon": -120.23188,
+  "site_lat": 34.81936,
+  "site_lon": -120.23188,
+  "ports": 6,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Foxen Vineyard & Winery"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320959
+  ]
+ },
+ {
+  "node": 345571918,
+  "lat": 38.05056,
+  "lon": -122.5332,
+  "site_lat": 38.05056,
+  "site_lon": -122.5332,
+  "ports": 4,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Best Western Novato Oaks Inn"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320968
+  ]
+ },
+ {
+  "node": 94752369,
+  "lat": 37.98506,
+  "lon": -120.36808,
+  "site_lat": 37.98506,
+  "site_lon": -120.36808,
+  "ports": 4,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Sunrise Hills Commercial Association"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320969
+  ]
+ },
+ {
+  "node": 123048547,
+  "lat": 34.12744,
+  "lon": -118.44347,
+  "site_lat": 34.12744,
+  "site_lon": -118.44347,
+  "ports": 5,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "The Glen Centre"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320971
+  ]
+ },
+ {
+  "node": 122865508,
+  "lat": 33.86032,
+  "lon": -118.2766,
+  "site_lat": 33.86032,
+  "site_lon": -118.2766,
+  "ports": 2,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Los Angeles - Page One Automotive"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320987
+  ]
+ },
+ {
+  "node": 65487414,
+  "lat": 37.69209,
+  "lon": -122.42348,
+  "site_lat": 37.69209,
+  "site_lon": -122.42348,
+  "ports": 1,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "San Francisco - Page One Automotive"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320992
+  ]
+ },
+ {
+  "node": 95046975,
+  "lat": 37.95417,
+  "lon": -120.41887,
+  "site_lat": 37.95417,
+  "site_lon": -120.41887,
+  "ports": 1,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "PH Electric, Inc."
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320994
+  ]
+ },
+ {
+  "node": 7314110204,
+  "lat": 40.58083,
+  "lon": -122.35826,
+  "site_lat": 40.58083,
+  "site_lon": -122.35826,
+  "ports": 4,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Red Lion Hotel Redding"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   320996
+  ]
+ },
+ {
+  "node": 49542164,
+  "lat": 33.02008,
+  "lon": -117.28097,
+  "site_lat": 33.02008,
+  "site_lon": -117.28097,
+  "ports": 1,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Cardiff by the Sea"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   328427
+  ]
+ },
+ {
+  "node": 54545564,
+  "lat": 33.83835,
+  "lon": -116.54484,
+  "site_lat": 33.83835,
+  "site_lon": -116.54484,
+  "ports": 2,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Desert Regional Medical Center"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   328430
+  ]
+ },
+ {
+  "node": 165078816,
+  "lat": 34.61812,
+  "lon": -120.18705,
+  "site_lat": 34.61812,
+  "site_lon": -120.18705,
+  "ports": 4,
+  "station_type": "Level2",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "Hampton Inn & Suites Buellton/Santa Ynez Valley"
+  ],
+  "networks": [
+   "TURNONGREEN"
+  ],
+  "connectors": [
+   "J1772"
+  ],
+  "afdc_ids": [
+   328432
+  ]
+ },
+ {
+  "node": 165551154,
+  "lat": 34.65054,
+  "lon": -120.4583,
+  "site_lat": 34.65054,
+  "site_lon": -120.4583,
+  "ports": 4,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "UnionBank - Modesto, CA #2"
+  ],
+  "networks": [
+   "LOOP"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   346617
+  ]
+ },
+ {
+  "node": 91030007,
+  "lat": 36.97874,
+  "lon": -121.9536,
+  "site_lat": 36.97874,
+  "site_lon": -121.9536,
+  "ports": 2,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "UnionBank - Capitola, CA #2"
+  ],
+  "networks": [
+   "LOOP"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   346618
+  ]
+ },
+ {
+  "node": 53096071,
+  "lat": 37.86697,
+  "lon": -122.26723,
+  "site_lat": 37.86697,
+  "site_lon": -122.26723,
+  "ports": 4,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "UnionBank - Berkeley #2"
+  ],
+  "networks": [
+   "LOOP"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   346619
+  ]
+ },
+ {
+  "node": 88807771,
+  "lat": 35.46767,
+  "lon": -119.07412,
+  "site_lat": 35.46767,
+  "site_lon": -119.07412,
+  "ports": 50,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "WattEV - Bakersfield (HWY65)"
+  ],
+  "networks": [
+   "WATT_EV"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347218
+  ]
+ },
+ {
+  "node": 5549429405,
+  "lat": 33.89859,
+  "lon": -118.27977,
+  "site_lat": 33.89859,
+  "site_lon": -118.27977,
+  "ports": 12,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "WattEV - Gardena"
+  ],
+  "networks": [
+   "WATT_EV"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347220
+  ]
+ },
+ {
+  "node": 1715354784,
+  "lat": 33.7746,
+  "lon": -118.22848,
+  "site_lat": 33.7746,
+  "site_lon": -118.22848,
+  "ports": 26,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "WattEV - Port of Long Beach (Pier A)"
+  ],
+  "networks": [
+   "WATT_EV"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347225
+  ]
+ },
+ {
+  "node": 101903601,
+  "lat": 34.07523,
+  "lon": -117.29432,
+  "site_lat": 34.07523,
+  "site_lon": -117.29432,
+  "ports": 24,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "WattEV - San Bernardino"
+  ],
+  "networks": [
+   "WATT_EV"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347227
+  ]
+ },
+ {
+  "node": 6380332247,
+  "lat": 34.0032,
+  "lon": -118.18745,
+  "site_lat": 34.0032,
+  "site_lon": -118.18745,
+  "ports": 5,
+  "station_type": "DCFast",
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.0,
+  "names": [
+   "WattEV - Vernon (Bandini Blvd)"
+  ],
+  "networks": [
+   "WATT_EV"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347229
+  ]
+ }
+]

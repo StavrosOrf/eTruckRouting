@@ -32,9 +32,9 @@ class EnvironmentPlotter:
             output_dir: Directory to save plots
             verbose: Print verbose messages
             use_osm: Whether to include OSM basemap in plots
-            vis_data_dir: Folder with the case study's plotting data. Defaults to the
-                California ``EVRoutingEnv/data/vis_data``. Case studies built by
-                ``scripts/casestudies`` provide ``nodes.json``/``stations.json``/``roads.npz``.
+            vis_data_dir: Folder with the case study's plotting data (``nodes.json``,
+                ``stations.json``, ``roads.npz``). Defaults to the California case study,
+                ``EVRoutingEnv/data/case_studies/california/vis_data``.
         """
         self.output_dir = output_dir
         self.verbose = verbose
@@ -42,136 +42,47 @@ class EnvironmentPlotter:
         self.vis_data_dir = (
             Path(vis_data_dir)
             if vis_data_dir is not None
-            else Path(__file__).parent.parent / "data" / "vis_data"
+            else Path(__file__).parent.parent / "data" / "case_studies" / "california" / "vis_data"
         )
         self.node_coords = {}
         self.charger_coords = {}
-        self.road_segments = []
-        self.road_lines = None  # (k, 2, 2) lon/lat segments for case-study road backdrops
+        self.road_lines = None  # (k, 2, 2) lon/lat segments of the road backdrop
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         self._load_visualization_data()
 
     def _load_visualization_data(self):
-        """Load visualization data from JSON files."""
+        """Load nodes, stations and road backdrop of the case study from ``vis_data_dir``."""
         try:
             data_dir = self.vis_data_dir
-            if (data_dir / "nodes.json").exists():
-                self._load_case_study_data(data_dir)
-                return
-
-            with open(data_dir / "node_CA_df.json", "r") as f:
-                route_data = json.load(f)
-
-            with open(data_dir / "station_CA_df.json", "r") as f:
-                station_data = json.load(f)
-
-            self.node_coords = self._create_node_coordinate_map_from_routes(route_data)
-            self.charger_coords = self._create_charger_coordinate_map(station_data)
-            self.road_segments = self._extract_road_segments_from_routes(route_data)
-
+            with open(data_dir / "nodes.json", "r") as f:
+                nodes = json.load(f)
+            with open(data_dir / "stations.json", "r") as f:
+                stations = json.load(f)
+            self.node_coords = {int(n["node"]): (float(n["lat"]), float(n["lon"])) for n in nodes}
+            self.charger_coords = {int(s["node"]): (float(s["lat"]), float(s["lon"])) for s in stations}
+            roads_file = data_dir / "roads.npz"
+            if roads_file.exists():
+                r = np.load(roads_file)
+                lat0, lon0, lat1, lon1 = (r[k].astype(float) / 1e5 for k in ("lat0", "lon0", "lat1", "lon1"))
+                major = r["cls"] <= 9  # drop residential detail so episode plots stay readable
+                self.road_lines = np.stack(
+                    [np.stack([lon0, lat0], 1), np.stack([lon1, lat1], 1)], 1
+                )[major]
             if self.verbose:
-                print(f"  ✓ Loaded {len(self.node_coords)} OSM nodes")
-                print(f"  ✓ Loaded {len(self.charger_coords)} charger stations")
-                print(f"  ✓ Loaded {len(self.road_segments)} road segments")
+                print(f"  ✓ Loaded case study: {len(self.node_coords)} nodes, "
+                      f"{len(self.charger_coords)} chargers, "
+                      f"{0 if self.road_lines is None else len(self.road_lines)} road segments")
         except Exception as e:
             if self.verbose:
                 print(f"  ⚠ Warning: Could not load visualization data: {e}")
 
-    def _load_case_study_data(self, data_dir: Path):
-        """Load nodes/stations/roads written by scripts/casestudies/build_case_study.py."""
-        with open(data_dir / "nodes.json", "r") as f:
-            nodes = json.load(f)
-        with open(data_dir / "stations.json", "r") as f:
-            stations = json.load(f)
-        self.node_coords = {int(n["node"]): (float(n["lat"]), float(n["lon"])) for n in nodes}
-        self.charger_coords = {int(s["node"]): (float(s["lat"]), float(s["lon"])) for s in stations}
-        roads_file = data_dir / "roads.npz"
-        if roads_file.exists():
-            r = np.load(roads_file)
-            lat0, lon0, lat1, lon1 = (r[k].astype(float) / 1e5 for k in ("lat0", "lon0", "lat1", "lon1"))
-            major = r["cls"] <= 9  # drop residential detail so episode plots stay readable
-            self.road_lines = np.stack(
-                [np.stack([lon0, lat0], 1), np.stack([lon1, lat1], 1)], 1
-            )[major]
-        if self.verbose:
-            print(f"  ✓ Loaded case study: {len(self.node_coords)} nodes, "
-                  f"{len(self.charger_coords)} chargers, "
-                  f"{0 if self.road_lines is None else len(self.road_lines)} road segments")
-
     def _draw_roads(self, ax):
-        """Draw the road backdrop (case-study roads, or California OD segments)."""
+        """Draw the road backdrop of the case study."""
         if self.road_lines is not None:
             ax.add_collection(
                 LineCollection(self.road_lines, colors="#bbbbbb", linewidths=0.4, alpha=0.6, zorder=2)
             )
-        elif self.road_segments:
-            lines = [
-                [(s["start_lon"], s["start_lat"]), (s["end_lon"], s["end_lat"])]
-                for s in self.road_segments
-            ]
-            ax.add_collection(
-                LineCollection(lines, colors="#cccccc", linewidths=0.5, alpha=0.4, zorder=2)
-            )
-
-    def _extract_road_segments_from_routes(self, route_data):
-        """Extract road segments from route data."""
-        segments = []
-        for route in route_data:
-            if all(
-                key in route
-                for key in [
-                    "Start_Latitude",
-                    "Start_Longitude",
-                    "End_Latitude",
-                    "End_Longitude",
-                ]
-            ):
-                segment = {
-                    "start_lat": float(route["Start_Latitude"]),
-                    "start_lon": float(route["Start_Longitude"]),
-                    "end_lat": float(route["End_Latitude"]),
-                    "end_lon": float(route["End_Longitude"]),
-                }
-                segments.append(segment)
-        return segments
-
-    def _create_node_coordinate_map_from_routes(self, route_data):
-        """Create a mapping from OSM node ID to (latitude, longitude)."""
-        node_coords = {}
-        for route in route_data:
-            if (
-                "origin_node" in route
-                and "Start_Latitude" in route
-                and "Start_Longitude" in route
-            ):
-                node_id = int(route["origin_node"])
-                lat = float(route["Start_Latitude"])
-                lon = float(route["Start_Longitude"])
-                if node_id not in node_coords:
-                    node_coords[node_id] = (lat, lon)
-
-            if (
-                "destination_node" in route
-                and "End_Latitude" in route
-                and "End_Longitude" in route
-            ):
-                node_id = int(route["destination_node"])
-                lat = float(route["End_Latitude"])
-                lon = float(route["End_Longitude"])
-                if node_id not in node_coords:
-                    node_coords[node_id] = (lat, lon)
-        return node_coords
-
-    def _create_charger_coordinate_map(self, station_data):
-        """Create a mapping from charger node ID to (latitude, longitude)."""
-        charger_coords = {}
-        for station in station_data:
-            node_id = int(station["node"])
-            lat = float(station["Latitude"])
-            lon = float(station["Longitude"])
-            charger_coords[node_id] = (lat, lon)
-        return charger_coords
 
     def _create_node_id_to_osm_map(self, transport_graph):
         """Create mapping from graph node indices to OSM coordinates."""

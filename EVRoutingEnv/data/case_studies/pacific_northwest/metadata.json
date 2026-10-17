@@ -1,7 +1,7 @@
 {
  "name": "pacific_northwest",
  "title": "Pacific Northwest (WA + OR)",
- "generated_utc": "2026-10-17T18:02:55Z",
+ "generated_utc": "2026-10-17T22:18:59Z",
  "preset": {
   "name": "pacific_northwest",
   "title": "Pacific Northwest (WA + OR)",
@@ -29,7 +29,8 @@
   "smooth_length_m": 150,
   "vis_max_class": "secondary",
   "max_chargers": 0,
-  "charger_merge_m": 1000,
+  "charger_merge_m": 5000,
+  "charger_merge_linkage": "complete",
   "max_snap_m": 5000,
   "vehicle_profile": "heavy_truck",
   "seed": 0,
@@ -42,12 +43,12 @@
  },
  "scale_km": 788.0,
  "counts": {
-  "nodes": 726,
-  "chargers": 492,
+  "nodes": 557,
+  "chargers": 323,
   "depots": 4,
   "customers": 230,
   "dcfast_ports_in_nodes": 3772,
-  "dcfast_sites_available": 494,
+  "dcfast_sites_available": 325,
   "dcfast_stations_raw": 876
  },
  "study_bbox_min_lat_lon_max_lat_lon": [
@@ -86,7 +87,7 @@
  },
  "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
  "leg_energy_floor_kwh": 0.02,
- "legs_floored": 71,
+ "legs_floored": 31,
  "od_stats": {
   "reduced_cost_min": 0.00034290356039131645,
   "n_negative_reduced": 0,
@@ -95,43 +96,43 @@
  },
  "ranges": {
   "energy_kwh_p5_p50_p95_max": [
-   63.84,
-   470.41,
-   1005.39,
+   75.84,
+   485.89,
+   1024.72,
    1729.44
   ],
   "time_h_p5_p50_p95_max": [
-   1.211,
-   8.304,
-   18.308,
+   1.415,
+   8.549,
+   18.62,
    30.074
   ],
   "dist_km_p5_p50_p95_max": [
-   46.4,
-   349.2,
-   752.7,
+   56.1,
+   360.8,
+   766.3,
    1248.0
   ],
-  "kwh_per_km_median": 1.328
+  "kwh_per_km_median": 1.329
  },
  "asymmetry": {
   "energy": {
-   "pairs": 263005,
-   "median_rel_diff": 0.0766,
-   "p90_rel_diff": 0.2461,
-   "frac_over_5pct": 0.6193,
-   "frac_over_20pct": 0.1525
+   "pairs": 154770,
+   "median_rel_diff": 0.0777,
+   "p90_rel_diff": 0.2395,
+   "frac_over_5pct": 0.6275,
+   "frac_over_20pct": 0.1451
   },
   "time": {
-   "pairs": 263102,
-   "median_rel_diff": 0.0222,
-   "p90_rel_diff": 0.093,
-   "frac_over_5pct": 0.2539,
-   "frac_over_20pct": 0.02
+   "pairs": 154807,
+   "median_rel_diff": 0.0215,
+   "p90_rel_diff": 0.089,
+   "frac_over_5pct": 0.2399,
+   "frac_over_20pct": 0.0177
   }
  },
  "charger_clusters": {
-  "max_diameter_m": 2584.5,
+  "max_diameter_m": 4987.3,
   "merged_nodes_with_multiple_stations": 186
  },
  "sources": {

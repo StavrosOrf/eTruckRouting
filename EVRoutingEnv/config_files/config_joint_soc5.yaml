@@ -68,7 +68,7 @@ rewards:
   enable_leftover_battery_penalty: false
   leftover_battery_penalty_coef: 1.0
 network:
-  data_path: EVRoutingEnv/data/
+  data_path: EVRoutingEnv/data/case_studies/california/
   shortest_path_energy_file: shortest_path_energy_dict.json
   shortest_path_time_file: shortest_path_time_dict.json
   station_info_file: station_info_dict.json

@@ -16,11 +16,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import networkx as nx
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.environment import event_driven_env as event_driven_module
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.utils.utils import load_config
@@ -39,6 +41,90 @@ GRID = [
     for trucks in TRUCK_COUNTS
     for per_truck in DELIVERIES_PER_TRUCK
 ]
+
+
+class SyntheticHubSpokeTransportationGraph(TransportationGraph):
+    """Exact O(1)-per-pair backend for the study's symmetric hub-and-spoke graph.
+
+    The general graph cache materializes millions of Python path tuples for the
+    2,026-node synthetic instances. On this star, the exact shortest path is
+    known: a leaf-to-leaf leg traverses the hub; all other distinct legs are a
+    single edge. Keeping the same costs and path tie-breaking avoids that
+    prohibitively large cache without changing the simulated network.
+    """
+
+    def __init__(self, graph: nx.DiGraph):
+        if 0 not in graph or any(
+            not graph.has_edge(0, node) or not graph.has_edge(node, 0)
+            for node in graph
+            if node != 0
+        ):
+            raise ValueError("fast synthetic backend requires a bidirectional star")
+        for _source, _target, data in graph.edges(data=True):
+            if float(data.get("distance", math.nan)) != 40.0 or float(
+                data.get("time", math.nan)
+            ) != 0.25:
+                raise ValueError("fast synthetic backend requires 40 kWh / 0.25 h arcs")
+        super().__init__(graph, precompute_distances=False)
+        self._synthetic_energy_scale = 1.0
+        self._synthetic_time_scale = 1.0
+
+    def scale_network(self, time_scale: float = 1.0, energy_scale: float = 1.0) -> None:
+        super().scale_network(time_scale, energy_scale)
+        self._synthetic_time_scale *= float(time_scale)
+        self._synthetic_energy_scale *= float(energy_scale)
+        self._cost_matrices = None
+        self._dense_node_index = None
+        self._dense_transport = None
+
+    def get_leg_costs(self, from_node: int, to_node: int) -> tuple[float, float]:
+        source, target = int(from_node), int(to_node)
+        if source not in self.graph or target not in self.graph:
+            return math.inf, math.inf
+        if source == target:
+            return 0.0, 0.0
+        hops = 1 if source == 0 or target == 0 else 2
+        return (
+            40.0 * hops * self._synthetic_energy_scale,
+            0.25 * hops * self._synthetic_time_scale,
+        )
+
+    def get_shortest_path(self, from_node: int, to_node: int) -> list[int]:
+        source, target = int(from_node), int(to_node)
+        if source not in self.graph or target not in self.graph:
+            return []
+        if source == target:
+            return [source]
+        if source == 0 or target == 0:
+            return [source, target]
+        return [source, 0, target]
+
+    def cost_matrices(self) -> tuple[dict[int, int], np.ndarray, np.ndarray]:
+        if self._cost_matrices is None:
+            nodes = sorted(int(node) for node in self.graph)
+            index = {node: position for position, node in enumerate(nodes)}
+            node_values = np.asarray(nodes, dtype=np.int64)
+            hub = node_values == 0
+            hops = np.where(
+                node_values[:, None] == node_values[None, :],
+                0.0,
+                np.where(hub[:, None] | hub[None, :], 1.0, 2.0),
+            )
+            energy = hops * 40.0 * self._synthetic_energy_scale
+            hours = hops * 0.25 * self._synthetic_time_scale
+            self._cost_matrices = (index, energy, hours)
+        return self._cost_matrices
+
+    def dense_transport_matrix(self) -> tuple[dict[int, int], np.ndarray]:
+        if self._dense_transport is None:
+            index, energy, hours = self.cost_matrices()
+            values = np.empty((*energy.shape, 3), dtype=np.float32)
+            values[:, :, 0] = energy
+            values[:, :, 1] = hours
+            values[:, :, 2] = 1.0
+            self._dense_transport = values
+            self._dense_node_index = index
+        return self._dense_node_index, self._dense_transport
 METRICS = (
     "graph_node_count",
     "synthetic_customer_nodes",
@@ -380,12 +466,28 @@ def main() -> None:
     if args.seed_start < 0 or args.seed_count < 1:
         parser.error("seed-start must be non-negative and seed-count positive")
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    output.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = output / "scenario_records.checkpoint.csv"
     seeds = list(range(args.seed_start, args.seed_start + args.seed_count))
     rows: list[dict] = []
+    if checkpoint_path.exists():
+        with checkpoint_path.open(newline="", encoding="utf-8") as stream:
+            for row in csv.DictReader(stream):
+                row["certified"] = row.get("certified", "").lower() == "true"
+                rows.append(row)
+    recorded_seeds = {
+        (
+            row.get("mode"),
+            int(row.get("num_trucks", -1)),
+            int(row.get("deliveries_per_truck", -1)),
+            int(row.get("seed", -1)),
+        )
+        for row in rows
+    }
     resolved_settings = {}
 
     original_get_graph = event_driven_module.get_graph
+    original_transport_graph = event_driven_module.TransportationGraph
     for trucks, deliveries_per_truck in GRID:
         total_deliveries = trucks * deliveries_per_truck
         template = load_config("EVRoutingEnv/config_files/config_joint.yaml")
@@ -394,8 +496,24 @@ def main() -> None:
             source_graph, total_deliveries
         )
         event_driven_module.get_graph = lambda _config, graph=graph: graph.copy()
+        event_driven_module.TransportationGraph = (
+            SyntheticHubSpokeTransportationGraph
+            if network_variant == "synthetic_hub_spoke"
+            else original_transport_graph
+        )
         try:
             for mode, (problem_mode, assignment) in MODES.items():
+                batch_key = (mode, trucks, deliveries_per_truck)
+                existing_seed_count = sum(
+                    key[:3] == batch_key for key in recorded_seeds
+                )
+                if existing_seed_count >= len(seeds):
+                    print(
+                        f"skipping completed mode={mode}, trucks={trucks}, "
+                        f"deliveries_per_truck={deliveries_per_truck}",
+                        flush=True,
+                    )
+                    continue
                 config = load_config("EVRoutingEnv/config_files/config_joint.yaml")
                 config["problem"]["mode"] = problem_mode
                 config["problem"]["assignment"] = assignment
@@ -414,30 +532,51 @@ def main() -> None:
                 env = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
                 try:
                     for seed in seeds:
+                        seed_key = (mode, trucks, deliveries_per_truck, seed)
+                        if seed_key in recorded_seeds:
+                            continue
                         try:
                             env.reset(seed=seed)
-                            rows.append(
-                                scenario_row(
-                                    env,
-                                    seed,
-                                    mode,
-                                    deliveries_per_truck,
-                                    synthetic_nodes,
-                                    network_variant,
-                                )
+                            row = scenario_row(
+                                env,
+                                seed,
+                                mode,
+                                deliveries_per_truck,
+                                synthetic_nodes,
+                                network_variant,
                             )
                         except (ValueError, RuntimeError, KeyError, AttributeError) as error:
-                            rows.append(
-                                {
-                                    "mode": mode,
-                                    "seed": seed,
-                                    "num_trucks": trucks,
-                                    "deliveries_per_truck": deliveries_per_truck,
-                                    "num_deliveries_total": total_deliveries,
-                                    "certified": False,
-                                    "certificate_method": "seeded_event_replay",
-                                    "error": f"{type(error).__name__}: {error}",
-                                }
+                            row = {
+                                "mode": mode,
+                                "seed": seed,
+                                "num_trucks": trucks,
+                                "deliveries_per_truck": deliveries_per_truck,
+                                "num_deliveries_total": total_deliveries,
+                                "certified": False,
+                                "certificate_method": "seeded_event_replay",
+                                "error": f"{type(error).__name__}: {error}",
+                            }
+                        rows.append(row)
+                        recorded_seeds.add(seed_key)
+                        if len(rows) % 10 == 0 or seed == seeds[-1]:
+                            checkpoint_columns = list(
+                                dict.fromkeys(key for saved in rows for key in saved)
+                            )
+                            with checkpoint_path.open(
+                                "w", newline="", encoding="utf-8"
+                            ) as stream:
+                                checkpoint_writer = csv.DictWriter(
+                                    stream,
+                                    fieldnames=checkpoint_columns,
+                                    extrasaction="ignore",
+                                )
+                                checkpoint_writer.writeheader()
+                                checkpoint_writer.writerows(rows)
+                            print(
+                                f"progress mode={mode}, trucks={trucks}, "
+                                f"deliveries_per_truck={deliveries_per_truck}, "
+                                f"seed={seed}, batch={sum(key[:3] == batch_key for key in recorded_seeds)}/{len(seeds)}",
+                                flush=True,
                             )
                     print(
                         f"completed mode={mode}, trucks={trucks}, "
@@ -448,6 +587,7 @@ def main() -> None:
                     env.close()
         finally:
             event_driven_module.get_graph = original_get_graph
+            event_driven_module.TransportationGraph = original_transport_graph
 
     summaries = summarize(rows)
     raw_path = output / "scenario_records.csv"

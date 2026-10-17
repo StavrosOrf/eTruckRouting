@@ -1,0 +1,26 @@
+# Germany + Netherlands + Belgium: a European-scale case (about 950 km across, roughly Texas-sized) on a dense
+# motorway network. Heavy trucks are speed-limited (EU limiter 90 km/h) and the Alps are outside the area, so
+# energy depends on distance and traffic more than on slope (Harz, Eifel, Black Forest, Bavarian Forest, Alpine foothills).
+name: de_nl_be
+title: "Germany + Netherlands + Belgium"
+geofabrik: [europe/germany, europe/netherlands, europe/belgium]
+delivery_source: places                # real towns and cities (OpenStreetMap place nodes with population)
+bbox: [47.2, 2.5, 55.15, 15.1]         # min_lat, min_lon, max_lat, max_lon
+n_customers: 230
+n_depots: 4                            # the four largest selected places (Berlin, Hamburg, Munich, Cologne)
+min_population: 1000
+min_place_spacing_m: 5000
+chargers_source: osm                   # no AFDC outside the US: DC sockets of amenity=charging_station
+min_charger_kw: 50
+max_chargers: 650                      # about Texas' 648; all ~3000+ DC sites would give a ~10M-pair matrix
+charger_merge_m: 1000
+max_snap_m: 5000
+max_road_class: unclassified           # motorway .. unclassified; residential streets are left out
+terrain_zoom: 11                       # about 48 m per pixel at this latitude
+terrain_source: "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)"
+smooth_length_m: 150
+vis_max_class: secondary
+vehicle_profile: heavy_truck
+vehicle:
+  max_speed_kph: 90                    # speed limiter of N3 trucks; posted limits above this are capped
+seed: 0

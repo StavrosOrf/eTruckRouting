@@ -1,7 +1,7 @@
 {
  "name": "chicago",
  "title": "Chicagoland (IL)",
- "generated_utc": "2026-10-17T17:16:39Z",
+ "generated_utc": "2026-10-17T22:13:19Z",
  "preset": {
   "name": "chicago",
   "title": "Chicagoland (IL)",
@@ -20,10 +20,12 @@
   "bbox_margin_deg": 0.03,
   "n_customers": 230,
   "max_chargers": 0,
-  "charger_merge_m": 1000,
+  "charger_merge_m": 5000,
+  "charger_merge_linkage": "complete",
   "max_snap_m": 400,
   "vehicle_profile": "heavy_truck",
-  "seed": 0
+  "seed": 0,
+  "workers": 32
  },
  "units": {
   "energy": "kWh (battery)",
@@ -32,12 +34,12 @@
  },
  "scale_km": 107.0,
  "counts": {
-  "nodes": 444,
-  "chargers": 210,
+  "nodes": 340,
+  "chargers": 106,
   "depots": 4,
   "customers": 230,
   "dcfast_ports_in_nodes": 1644,
-  "dcfast_sites_available": 210,
+  "dcfast_sites_available": 106,
   "dcfast_stations_raw": 315
  },
  "study_bbox_min_lat_lon_max_lat_lon": [
@@ -79,49 +81,49 @@
  "od_stats": {
   "reduced_cost_min": 0.0003460322491110197,
   "n_negative_reduced": 0,
-  "max_energy_consistency_error_kwh": 3.2890000909446826e-06,
+  "max_energy_consistency_error_kwh": 3.2700000360819104e-06,
   "unreachable_pairs": 0
  },
  "ranges": {
   "energy_kwh_p5_p50_p95_max": [
-   13.53,
-   51.83,
-   103.12,
+   13.47,
+   52.41,
+   102.97,
    168.22
   ],
   "time_h_p5_p50_p95_max": [
-   0.372,
-   1.37,
-   2.672,
+   0.37,
+   1.382,
+   2.66,
    4.49
   ],
   "dist_km_p5_p50_p95_max": [
    10.9,
-   41.7,
-   82.1,
+   42.2,
+   81.8,
    135.6
   ],
-  "kwh_per_km_median": 1.245
+  "kwh_per_km_median": 1.248
  },
  "asymmetry": {
   "energy": {
-   "pairs": 98302,
-   "median_rel_diff": 0.0982,
-   "p90_rel_diff": 0.2009,
-   "frac_over_5pct": 0.7556,
-   "frac_over_20pct": 0.102
+   "pairs": 57597,
+   "median_rel_diff": 0.1013,
+   "p90_rel_diff": 0.2047,
+   "frac_over_5pct": 0.7663,
+   "frac_over_20pct": 0.1104
   },
   "time": {
-   "pairs": 98268,
-   "median_rel_diff": 0.0219,
-   "p90_rel_diff": 0.0848,
-   "frac_over_5pct": 0.2093,
-   "frac_over_20pct": 0.0181
+   "pairs": 57570,
+   "median_rel_diff": 0.021,
+   "p90_rel_diff": 0.0804,
+   "frac_over_5pct": 0.1966,
+   "frac_over_20pct": 0.0153
   }
  },
  "charger_clusters": {
-  "max_diameter_m": 1670.8,
-  "merged_nodes_with_multiple_stations": 57
+  "max_diameter_m": 4964.9,
+  "merged_nodes_with_multiple_stations": 82
  },
  "sources": {
   "delivery_and_depot_locations": "Amazon Last Mile Routing Research Challenge 2021 (training routes), CC BY-NC 4.0",

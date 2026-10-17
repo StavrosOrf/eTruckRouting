@@ -1,0 +1,105 @@
+{
+ "name": "california",
+ "title": "California (default scenario)",
+ "generated": false,
+ "generated_utc": "2026-10-17T21:46:07Z",
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 975.0,
+ "preset": {
+  "note": "original data of the paper (Li et al., HPEC 2025), imported once by scripts/casestudies/import_california.py; chargers are the original 25 stations, not merged"
+ },
+ "counts": {
+  "nodes": 258,
+  "chargers": 25,
+  "depots": 0,
+  "customers": 233,
+  "charger_ports_total": 209,
+  "chargers_by_type": {
+   "DCFast": 10,
+   "Level2": 15
+  },
+  "dcfast_ports_in_nodes": 131
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  32.30708,
+  -124.44956,
+  41.09508,
+  -115.30103
+ ],
+ "road_network": {
+  "source": "OpenStreetMap (Geofabrik California extract), motorway..primary, for plotting only; the shipped california_hgv_mw-tr-pr-se.osm is truncated GraphML",
+  "nodes": 1933584,
+  "directed_edges": 2882501,
+  "plotted_segments": 1089580,
+  "terrain_zoom": 10,
+  "dem_rms_change_m": 2.9631756171857635,
+  "n_span_nodes_interpolated": 31282,
+  "elevation_range_m": [
+   -73.06938564383351,
+   3037.4392816853774
+  ],
+  "dem_nodes_reset_to_sea_level": 104
+ },
+ "vehicle_profile": "not stated (Li et al. 2025 data)",
+ "vehicle_model": {
+  "note": "energy model of the original data is not documented in the repository",
+  "implied_kwh_per_km_median_on_freight_lanes": 1.569
+ },
+ "route_policy": "minimum battery energy on the original network; negative-energy pairs are excluded by the environment",
+ "legs_negative": 18,
+ "missing_pairs": 257,
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   25.85,
+   326.12,
+   802.93,
+   1411.8
+  ],
+  "time_h_p5_p50_p95_max": [
+   1.586,
+   14.312,
+   32.182,
+   66.033
+  ],
+  "dist_km_p5_p50_p95_max": [
+   9.9,
+   74.5,
+   425.9,
+   574.8
+  ],
+  "kwh_per_km_median": 1.569
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 32866,
+   "median_rel_diff": 0.0645,
+   "p90_rel_diff": 0.4569,
+   "frac_over_5pct": 0.5685,
+   "frac_over_20pct": 0.2386
+  },
+  "time": {
+   "pairs": 32896,
+   "median_rel_diff": 0.0169,
+   "p90_rel_diff": 0.1081,
+   "frac_over_5pct": 0.2122,
+   "frac_over_20pct": 0.0257
+  }
+ },
+ "sources": {
+  "energy_time_network_stations": "Li et al. (HPEC 2025) California logistics network as shipped in EVRoutingEnv/data",
+  "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED), only for node elevation and plotted road grade"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint.yaml",
+ "nodes_outside_largest_strong_component": [
+  {
+   "node": 310981005,
+   "in_degree": 257,
+   "out_degree": 0
+  }
+ ]
+}

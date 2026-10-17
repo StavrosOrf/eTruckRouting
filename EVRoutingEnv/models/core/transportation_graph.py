@@ -69,6 +69,8 @@ class TransportationGraph:
         # Lazily built dense all-pairs view used by the canonical state encoders.
         self._dense_node_index: dict[int, int] | None = None
         self._dense_transport: np.ndarray | None = None
+        # Full-precision energy/time matrices for the instance certificate (see below).
+        self._cost_matrices: tuple[dict[int, int], np.ndarray, np.ndarray] | None = None
 
     def scale_network(self, time_scale: float = 1.0, energy_scale: float = 1.0) -> None:
         """Scale every travel time and energy on this network.
@@ -97,6 +99,7 @@ class TransportationGraph:
         # The dense view is derived from the above, so it has to be rebuilt.
         self._dense_node_index = None
         self._dense_transport = None
+        self._cost_matrices = None
         # A scaled network must never be written back over the shared cache file.
         self._cache_file = None
 
@@ -129,6 +132,24 @@ class TransportationGraph:
         self._dense_node_index = index
         self._dense_transport = values
         return index, values
+
+    def cost_matrices(self) -> tuple[dict[int, int], np.ndarray, np.ndarray]:
+        """Return ``(node index, energy, hours)`` as float64 all-pairs matrices.
+
+        Entries are exactly what :meth:`get_leg_costs` returns (``inf`` when a pair is
+        unreachable), so vectorised planners make the same decisions as per-pair lookups.
+        Built once per graph; ``dense_transport_matrix`` is float32 and is not used for this.
+        """
+        if self._cost_matrices is None:
+            nodes = sorted(int(n) for n in self.graph.nodes())
+            index = {node: position for position, node in enumerate(nodes)}
+            energy = np.full((len(nodes), len(nodes)), np.inf)
+            hours = np.full((len(nodes), len(nodes)), np.inf)
+            for i, source in enumerate(nodes):
+                for j, target in enumerate(nodes):
+                    energy[i, j], hours[i, j] = self.get_leg_costs(source, target)
+            self._cost_matrices = (index, energy, hours)
+        return self._cost_matrices
 
     @staticmethod
     def _finite_path_value(function, source: int, target: int) -> float | None:
@@ -558,6 +579,7 @@ class TransportationGraph:
             self._populated_sources = populated_sources
             self._dense_node_index = None
             self._dense_transport = None
+            self._cost_matrices = None
             return True
         except (OSError, EOFError, pickle.PickleError):
             return False

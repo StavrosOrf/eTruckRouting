@@ -3,8 +3,8 @@
     python scripts/casestudies/build_case_study.py scripts/casestudies/presets/seattle.yaml \
         --raw-dir .casestudy_raw
 
-Inputs (see fetch_data.py): Amazon Last Mile stops (delivery/depot locations), OpenStreetMap
-road network, terrain tiles (slope), AFDC public DC-fast chargers.
+Inputs (see fetch_data.py): Amazon Last Mile stops or OSM places (delivery/depot locations), OpenStreetMap
+road network, terrain tiles (slope), public DC-fast chargers (AFDC in the US, OpenStreetMap elsewhere).
 
 Output: EVRoutingEnv/data/case_studies/<name>/
     shortest_path_energy_dict.json   '(u, v)' -> kWh of the minimum-energy route u->v   (asymmetric)
@@ -37,7 +37,7 @@ import fetch_data  # noqa: E402
 import road_graph as rg  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-CA_DATA = REPO / "EVRoutingEnv" / "data"
+CA_DATA = REPO / "EVRoutingEnv" / "data" / "case_studies" / "california"  # default scenario; holds the shared charger queue model
 MIN_LEG_KWH = 0.02  # legs never return energy: a net-downhill leg costs at least this
 
 
@@ -338,9 +338,20 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
 
     # --- chargers: every public DC-fast site, merged within charger_merge_m (single linkage)
     sites = []
-    for st in _as_list(preset["state"]):
-        sites += chg.load_dcfast(fetch_data.ensure_afdc(raw, st), bbox, preset.get("exclude_tesla_only", False))
-    merged = chg.merge_sites(sites, preset["charger_merge_m"])
+    charger_source = preset.get("chargers_source", "afdc")
+    if charger_source == "afdc":
+        for st in _as_list(preset["state"]):
+            sites += chg.load_dcfast(fetch_data.ensure_afdc(raw, st), bbox, preset.get("exclude_tesla_only", False))
+        charger_src = "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
+    elif charger_source == "osm":
+        # outside the US there is no AFDC: DC sockets of amenity=charging_station in the same Geofabrik extracts
+        sites = chg.load_dcfast_osm([fetch_data.ensure_osm(raw, r) for r in _as_list(preset["geofabrik"])], bbox,
+                                    float(preset.get("min_charger_kw", 50.0)), preset.get("exclude_tesla_only", False))
+        charger_src = (f"OpenStreetMap amenity=charging_station (CCS/CHAdeMO/NACS sockets, tagged output >= "
+                       f"{float(preset.get('min_charger_kw', 50.0)):g} kW), ODbL")
+    else:
+        raise SystemExit(f"unknown chargers_source {charger_source!r} (afdc or osm)")
+    merged = chg.merge_sites(sites, preset["charger_merge_m"], preset.get("charger_merge_linkage", "single"))
     # sites that snap to the same road node are one charger node; sites far from any road are dropped
     by_node: dict[int, list[dict]] = {}
     for c in merged:
@@ -498,8 +509,8 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         "sources": {
             "delivery_and_depot_locations": delivery_src,
             "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
-            "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)",
-            "chargers": "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only",
+            "terrain": preset.get("terrain_source", "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)"),
+            "chargers": charger_src,
         },
     }
     cfg = make_config(name, preset["title"], preset)
@@ -515,7 +526,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("preset")
     ap.add_argument("--raw-dir", type=Path, default=fetch_data.default_raw_dir())
-    ap.add_argument("--out-root", type=Path, default=CA_DATA / "case_studies")
+    ap.add_argument("--out-root", type=Path, default=REPO / "EVRoutingEnv" / "data" / "case_studies")
     ap.add_argument("--n-customers", type=int)
     ap.add_argument("--max-chargers", type=int)
     ap.add_argument("--seed", type=int)

@@ -1,9 +1,9 @@
 {
  "case": "seattle",
  "config": "EVRoutingEnv/config_files/config_joint_seattle.yaml",
- "env_load_seconds": 30,
- "nodes": 329,
- "charger_nodes": 96,
+ "env_load_seconds": 22,
+ "nodes": 283,
+ "charger_nodes": 50,
  "battery_kwh": 400.0,
  "trucks": 2,
  "stops": 10,
@@ -21,16 +21,16 @@
  "episodes_needing_charge": 0,
  "metrics": {
   "total_distance": {
-   "mean": 455.134,
-   "median": 468.639,
+   "mean": 453.921,
+   "median": 461.699,
    "min": 315.568,
-   "max": 539.955
+   "max": 545.003
   },
   "total_energy_consumed": {
-   "mean": 561.126,
-   "median": 570.243,
-   "min": 353.194,
-   "max": 667.986
+   "mean": 566.663,
+   "median": 574.052,
+   "min": 368.802,
+   "max": 684.039
   },
   "total_energy_charged": {
    "mean": 0.0,
@@ -57,22 +57,22 @@
    "max": 0.0
   },
   "fleet_makespan": {
-   "mean": 7.141,
-   "median": 7.225,
-   "min": 5.149,
-   "max": 8.699
+   "mean": 7.146,
+   "median": 7.244,
+   "min": 5.207,
+   "max": 9.048
   },
   "total_operating_time": {
-   "mean": 13.402,
-   "median": 13.596,
-   "min": 9.907,
-   "max": 16.319
+   "mean": 13.427,
+   "median": 13.573,
+   "min": 10.338,
+   "max": 15.703
   },
   "minimum_terminal_soc": {
-   "mean": 0.252,
-   "median": 0.227,
-   "min": 0.127,
-   "max": 0.552
+   "mean": 0.242,
+   "median": 0.221,
+   "min": 0.102,
+   "max": 0.493
   },
   "steps": {
    "mean": 12.0,
@@ -81,7 +81,8 @@
    "max": 12.0
   }
  },
- "seconds_per_scenario_median": 0.2,
+ "seconds_per_scenario_median": 0.1,
+ "seconds_to_generate_median": 0.0,
  "scenarios": [
   {
    "seed": 1000,
@@ -99,7 +100,32 @@
     10794204809
    ],
    "demand_total": 25.83105816519784,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 5.978,
+    "total_operating_time": 11.95,
+    "total_travel_time": 9.991,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.959,
+    "total_distance": 362.725,
+    "total_energy_consumed": 520.597,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.349,
+    "minimum_terminal_soc": 0.336,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1001,
@@ -117,7 +143,32 @@
     11833812690
    ],
    "demand_total": 26.36328299226075,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.858,
+    "total_operating_time": 14.672,
+    "total_travel_time": 12.532,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.14,
+    "total_distance": 499.232,
+    "total_energy_consumed": 603.48,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.246,
+    "minimum_terminal_soc": 0.224,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1002,
@@ -135,7 +186,32 @@
     11833812690
    ],
    "demand_total": 22.892475741588733,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.685,
+    "total_operating_time": 14.879,
+    "total_travel_time": 12.891,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.988,
+    "total_distance": 539.955,
+    "total_energy_consumed": 621.809,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.223,
+    "minimum_terminal_soc": 0.151,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1003,
@@ -153,7 +229,32 @@
     13058483785
    ],
    "demand_total": 26.648761950229886,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.187,
+    "total_operating_time": 13.136,
+    "total_travel_time": 11.147,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.989,
+    "total_distance": 461.087,
+    "total_energy_consumed": 604.133,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.245,
+    "minimum_terminal_soc": 0.17,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1004,
@@ -171,7 +272,32 @@
     10936249176
    ],
    "demand_total": 23.205715449658033,
-   "seconds": 0.2
+   "seconds": 0.0,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.3,
+    "total_operating_time": 13.537,
+    "total_travel_time": 11.455,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.082,
+    "total_distance": 481.81,
+    "total_energy_consumed": 608.436,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.239,
+    "minimum_terminal_soc": 0.185,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1005,
@@ -189,7 +315,32 @@
     9026532323
    ],
    "demand_total": 24.03131037927668,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.314,
+    "total_operating_time": 13.849,
+    "total_travel_time": 11.962,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.887,
+    "total_distance": 524.243,
+    "total_energy_consumed": 684.039,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.145,
+    "minimum_terminal_soc": 0.102,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1006,
@@ -207,7 +358,32 @@
     11803499828
    ],
    "demand_total": 31.33376599563144,
-   "seconds": 0.2
+   "seconds": 0.0,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 5.482,
+    "total_operating_time": 10.41,
+    "total_travel_time": 8.396,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.014,
+    "total_distance": 327.983,
+    "total_energy_consumed": 382.407,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.522,
+    "minimum_terminal_soc": 0.488,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1007,
@@ -225,7 +401,32 @@
     10794204809
    ],
    "demand_total": 27.229348939707243,
-   "seconds": 0.2
+   "seconds": 0.0,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 5.207,
+    "total_operating_time": 10.338,
+    "total_travel_time": 8.447,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.891,
+    "total_distance": 315.568,
+    "total_energy_consumed": 368.802,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.539,
+    "minimum_terminal_soc": 0.493,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1008,
@@ -243,7 +444,32 @@
     9996752011
    ],
    "demand_total": 27.52947361978122,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 8.652,
+    "total_operating_time": 15.703,
+    "total_travel_time": 13.637,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.066,
+    "total_distance": 545.003,
+    "total_energy_consumed": 630.357,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.212,
+    "minimum_terminal_soc": 0.199,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1009,
@@ -261,7 +487,32 @@
     12078251807
    ],
    "demand_total": 25.27831724667159,
-   "seconds": 0.2
+   "seconds": 0.0,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.86,
+    "total_operating_time": 13.232,
+    "total_travel_time": 11.193,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.039,
+    "total_distance": 449.607,
+    "total_energy_consumed": 531.999,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.335,
+    "minimum_terminal_soc": 0.129,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1010,
@@ -279,7 +530,32 @@
     5462210362
    ],
    "demand_total": 14.589024695369929,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 6.783,
+    "total_operating_time": 12.581,
+    "total_travel_time": 10.771,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.81,
+    "total_distance": 418.277,
+    "total_energy_consumed": 553.22,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.308,
+    "minimum_terminal_soc": 0.195,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1011,
@@ -297,7 +573,32 @@
     9892309072
    ],
    "demand_total": 25.37739641342481,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.344,
+    "total_operating_time": 14.207,
+    "total_travel_time": 12.202,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.005,
+    "total_distance": 489.414,
+    "total_energy_consumed": 628.175,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.215,
+    "minimum_terminal_soc": 0.194,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1012,
@@ -315,7 +616,32 @@
     13095278615
    ],
    "demand_total": 24.22852001391722,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 6.321,
+    "total_operating_time": 12.252,
+    "total_travel_time": 10.347,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.905,
+    "total_distance": 414.057,
+    "total_energy_consumed": 546.497,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.317,
+    "minimum_terminal_soc": 0.281,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1013,
@@ -333,7 +659,32 @@
     13058483785
    ],
    "demand_total": 21.27451883373472,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 6.627,
+    "total_operating_time": 12.907,
+    "total_travel_time": 10.8,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.106,
+    "total_distance": 413.264,
+    "total_energy_consumed": 573.978,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.283,
+    "minimum_terminal_soc": 0.263,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1014,
@@ -351,7 +702,32 @@
     2712958302
    ],
    "demand_total": 30.91099260679068,
-   "seconds": 0.2
+   "seconds": 0.0,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 6.998,
+    "total_operating_time": 13.814,
+    "total_travel_time": 11.879,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.935,
+    "total_distance": 462.311,
+    "total_energy_consumed": 626.142,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.217,
+    "minimum_terminal_soc": 0.178,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1015,
@@ -369,7 +745,32 @@
     11989552783
    ],
    "demand_total": 27.976299793100118,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.765,
+    "total_operating_time": 14.621,
+    "total_travel_time": 12.805,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.816,
+    "total_distance": 494.988,
+    "total_energy_consumed": 563.283,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.296,
+    "minimum_terminal_soc": 0.27,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1016,
@@ -387,7 +788,32 @@
     3626018317
    ],
    "demand_total": 20.786769018418212,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 6.686,
+    "total_operating_time": 13.315,
+    "total_travel_time": 11.113,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.202,
+    "total_distance": 448.777,
+    "total_energy_consumed": 574.126,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.282,
+    "minimum_terminal_soc": 0.218,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1017,
@@ -405,7 +831,32 @@
     9482622344
    ],
    "demand_total": 23.882219178828024,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.685,
+    "total_operating_time": 13.873,
+    "total_travel_time": 11.485,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.389,
+    "total_distance": 450.712,
+    "total_energy_consumed": 553.95,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.308,
+    "minimum_terminal_soc": 0.262,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1018,
@@ -423,7 +874,32 @@
     10936249176
    ],
    "demand_total": 23.337429210411578,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 7.13,
+    "total_operating_time": 13.609,
+    "total_travel_time": 11.399,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 2.21,
+    "total_distance": 465.586,
+    "total_energy_consumed": 560.949,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.299,
+    "minimum_terminal_soc": 0.271,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   },
   {
    "seed": 1019,
@@ -441,7 +917,32 @@
     9851558548
    ],
    "demand_total": 21.633674729530576,
-   "seconds": 0.2
+   "seconds": 0.1,
+   "seconds_to_generate": 0.0,
+   "result": {
+    "success": true,
+    "termination_reason": "success",
+    "customers_total": 10,
+    "customers_served": 10,
+    "completed_fraction": 1.0,
+    "fleet_makespan": 9.048,
+    "total_operating_time": 15.662,
+    "total_travel_time": 13.785,
+    "total_charging_time": 0.0,
+    "total_queue_time": 0.0,
+    "total_time_window_waiting": 0.0,
+    "total_service_time": 1.877,
+    "total_distance": 513.81,
+    "total_energy_consumed": 596.882,
+    "total_energy_charged": 0.0,
+    "mean_terminal_soc": 0.254,
+    "minimum_terminal_soc": 0.226,
+    "vehicles_used": 2,
+    "charging_sessions": 0,
+    "invalid_actions": 0,
+    "steps": 12,
+    "finished": true
+   }
   }
  ]
 }

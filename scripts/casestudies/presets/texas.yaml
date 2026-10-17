@@ -14,7 +14,8 @@ terrain_zoom: 10                       # about 100 m per pixel
 smooth_length_m: 300
 vis_max_class: primary
 max_chargers: 0
-charger_merge_m: 1000
+charger_merge_m: 5000                  # DC-fast stations within 5 km become one node (ports add up)
+charger_merge_linkage: complete        # every pair inside a node is within the radius; single linkage chains towns together
 max_snap_m: 5000
 vehicle_profile: heavy_truck
 seed: 0

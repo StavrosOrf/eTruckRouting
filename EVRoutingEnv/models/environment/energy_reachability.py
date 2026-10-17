@@ -23,9 +23,15 @@ class EnergyReachability:
         if not math.isfinite(energy_multiplier) or energy_multiplier < 1.0:
             raise ValueError("energy_multiplier must be finite and at least 1")
         nodes = tuple(int(node) for node in graph.get_all_nodes())
-        energy = np.asarray(
-            [[graph.get_path_energy(a, b) for b in nodes] for a in nodes]
-        )
+        if hasattr(graph, "cost_matrices"):
+            # same numbers as the per-pair lookups below, from the graph's cached float64 matrices
+            index, matrix, _ = graph.cost_matrices()
+            order = [index[node] for node in nodes]
+            energy = matrix[np.ix_(order, order)]
+        else:
+            energy = np.asarray(
+                [[graph.get_path_energy(a, b) for b in nodes] for a in nodes]
+            )
         # The execution model rejects net-negative energy legs; they cannot
         # be counted as free energy or as usable charging exits by generation.
         energy = np.where(np.isfinite(energy) & (energy >= 0.0), energy, np.inf)

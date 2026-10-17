@@ -1,0 +1,538 @@
+{
+ "chicago": {
+  "stations": 315,
+  "ports": 1644,
+  "single": {
+   "0": {
+    "nodes": 315,
+    "reduction_pct": 0.0,
+    "median_ports": 4.0,
+    "max_ports": 52,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 283,
+    "reduction_pct": 10.2,
+    "median_ports": 4.0,
+    "max_ports": 52,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 24
+   },
+   "500": {
+    "nodes": 245,
+    "reduction_pct": 22.2,
+    "median_ports": 4.0,
+    "max_ports": 114,
+    "max_diameter_km": 0.6,
+    "max_displacement_km": 0.4,
+    "merged_nodes": 45
+   },
+   "1000": {
+    "nodes": 210,
+    "reduction_pct": 33.3,
+    "median_ports": 4.0,
+    "max_ports": 114,
+    "max_diameter_km": 1.7,
+    "max_displacement_km": 1.2,
+    "merged_nodes": 57
+   },
+   "2000": {
+    "nodes": 158,
+    "reduction_pct": 49.8,
+    "median_ports": 6.0,
+    "max_ports": 158,
+    "max_diameter_km": 10.0,
+    "max_displacement_km": 5.4,
+    "merged_nodes": 66
+   },
+   "5000": {
+    "nodes": 31,
+    "reduction_pct": 90.2,
+    "median_ports": 14.0,
+    "max_ports": 968,
+    "max_diameter_km": 63.2,
+    "max_displacement_km": 33.3,
+    "merged_nodes": 20
+   },
+   "10000": {
+    "nodes": 2,
+    "reduction_pct": 99.4,
+    "median_ports": 822.0,
+    "max_ports": 1640,
+    "max_diameter_km": 108.3,
+    "max_displacement_km": 62.4,
+    "merged_nodes": 1
+   }
+  },
+  "complete": {
+   "0": {
+    "nodes": 315,
+    "reduction_pct": 0.0,
+    "median_ports": 4.0,
+    "max_ports": 52,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 284,
+    "reduction_pct": 9.8,
+    "median_ports": 4.0,
+    "max_ports": 52,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 24
+   },
+   "500": {
+    "nodes": 248,
+    "reduction_pct": 21.3,
+    "median_ports": 4.0,
+    "max_ports": 114,
+    "max_diameter_km": 0.5,
+    "max_displacement_km": 0.4,
+    "merged_nodes": 46
+   },
+   "1000": {
+    "nodes": 220,
+    "reduction_pct": 30.2,
+    "median_ports": 4.0,
+    "max_ports": 114,
+    "max_diameter_km": 0.9,
+    "max_displacement_km": 0.7,
+    "merged_nodes": 62
+   },
+   "2000": {
+    "nodes": 176,
+    "reduction_pct": 44.1,
+    "median_ports": 6.0,
+    "max_ports": 114,
+    "max_diameter_km": 2.0,
+    "max_displacement_km": 1.5,
+    "merged_nodes": 77
+   },
+   "5000": {
+    "nodes": 106,
+    "reduction_pct": 66.3,
+    "median_ports": 12.0,
+    "max_ports": 122,
+    "max_diameter_km": 5.0,
+    "max_displacement_km": 4.6,
+    "merged_nodes": 82
+   },
+   "10000": {
+    "nodes": 53,
+    "reduction_pct": 83.2,
+    "median_ports": 27.0,
+    "max_ports": 122,
+    "max_diameter_km": 9.9,
+    "max_displacement_km": 8.6,
+    "merged_nodes": 48
+   }
+  }
+ },
+ "pacific_northwest": {
+  "stations": 876,
+  "ports": 3776,
+  "single": {
+   "0": {
+    "nodes": 876,
+    "reduction_pct": 0.0,
+    "median_ports": 3.0,
+    "max_ports": 51,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 708,
+    "reduction_pct": 19.2,
+    "median_ports": 4.0,
+    "max_ports": 51,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 104
+   },
+   "500": {
+    "nodes": 583,
+    "reduction_pct": 33.4,
+    "median_ports": 4.0,
+    "max_ports": 55,
+    "max_diameter_km": 0.8,
+    "max_displacement_km": 0.7,
+    "merged_nodes": 170
+   },
+   "1000": {
+    "nodes": 494,
+    "reduction_pct": 43.6,
+    "median_ports": 5.5,
+    "max_ports": 55,
+    "max_diameter_km": 2.6,
+    "max_displacement_km": 1.7,
+    "merged_nodes": 187
+   },
+   "2000": {
+    "nodes": 389,
+    "reduction_pct": 55.6,
+    "median_ports": 6.0,
+    "max_ports": 55,
+    "max_diameter_km": 5.6,
+    "max_displacement_km": 3.3,
+    "merged_nodes": 175
+   },
+   "5000": {
+    "nodes": 234,
+    "reduction_pct": 73.3,
+    "median_ports": 7.0,
+    "max_ports": 360,
+    "max_diameter_km": 43.9,
+    "max_displacement_km": 22.6,
+    "merged_nodes": 118
+   },
+   "10000": {
+    "nodes": 161,
+    "reduction_pct": 81.6,
+    "median_ports": 7.0,
+    "max_ports": 1004,
+    "max_diameter_km": 123.8,
+    "max_displacement_km": 67.7,
+    "merged_nodes": 86
+   }
+  },
+  "complete": {
+   "0": {
+    "nodes": 876,
+    "reduction_pct": 0.0,
+    "median_ports": 3.0,
+    "max_ports": 51,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 709,
+    "reduction_pct": 19.1,
+    "median_ports": 4.0,
+    "max_ports": 51,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 104
+   },
+   "500": {
+    "nodes": 600,
+    "reduction_pct": 31.5,
+    "median_ports": 4.0,
+    "max_ports": 55,
+    "max_diameter_km": 0.5,
+    "max_displacement_km": 0.4,
+    "merged_nodes": 176
+   },
+   "1000": {
+    "nodes": 522,
+    "reduction_pct": 40.4,
+    "median_ports": 5.0,
+    "max_ports": 55,
+    "max_diameter_km": 1.0,
+    "max_displacement_km": 0.8,
+    "merged_nodes": 200
+   },
+   "2000": {
+    "nodes": 440,
+    "reduction_pct": 49.8,
+    "median_ports": 6.0,
+    "max_ports": 55,
+    "max_diameter_km": 2.0,
+    "max_displacement_km": 1.8,
+    "merged_nodes": 207
+   },
+   "5000": {
+    "nodes": 325,
+    "reduction_pct": 62.9,
+    "median_ports": 8.0,
+    "max_ports": 63,
+    "max_diameter_km": 5.0,
+    "max_displacement_km": 3.4,
+    "merged_nodes": 187
+   },
+   "10000": {
+    "nodes": 229,
+    "reduction_pct": 73.9,
+    "median_ports": 9.0,
+    "max_ports": 88,
+    "max_diameter_km": 10.0,
+    "max_displacement_km": 8.9,
+    "merged_nodes": 144
+   }
+  }
+ },
+ "seattle": {
+  "stations": 213,
+  "ports": 982,
+  "single": {
+   "0": {
+    "nodes": 213,
+    "reduction_pct": 0.0,
+    "median_ports": 3.0,
+    "max_ports": 16,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 167,
+    "reduction_pct": 21.6,
+    "median_ports": 4.0,
+    "max_ports": 22,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 29
+   },
+   "500": {
+    "nodes": 134,
+    "reduction_pct": 37.1,
+    "median_ports": 4.5,
+    "max_ports": 32,
+    "max_diameter_km": 0.7,
+    "max_displacement_km": 0.5,
+    "merged_nodes": 43
+   },
+   "1000": {
+    "nodes": 100,
+    "reduction_pct": 53.1,
+    "median_ports": 6.0,
+    "max_ports": 40,
+    "max_diameter_km": 2.0,
+    "max_displacement_km": 1.4,
+    "merged_nodes": 51
+   },
+   "2000": {
+    "nodes": 68,
+    "reduction_pct": 68.1,
+    "median_ports": 10.0,
+    "max_ports": 45,
+    "max_diameter_km": 5.3,
+    "max_displacement_km": 3.1,
+    "merged_nodes": 40
+   },
+   "5000": {
+    "nodes": 24,
+    "reduction_pct": 88.7,
+    "median_ports": 12.0,
+    "max_ports": 306,
+    "max_diameter_km": 32.1,
+    "max_displacement_km": 18.8,
+    "merged_nodes": 13
+   },
+   "10000": {
+    "nodes": 6,
+    "reduction_pct": 97.2,
+    "median_ports": 10.0,
+    "max_ports": 937,
+    "max_diameter_km": 111.1,
+    "max_displacement_km": 58.2,
+    "merged_nodes": 2
+   }
+  },
+  "complete": {
+   "0": {
+    "nodes": 213,
+    "reduction_pct": 0.0,
+    "median_ports": 3.0,
+    "max_ports": 16,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 168,
+    "reduction_pct": 21.1,
+    "median_ports": 4.0,
+    "max_ports": 22,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 29
+   },
+   "500": {
+    "nodes": 139,
+    "reduction_pct": 34.7,
+    "median_ports": 5.0,
+    "max_ports": 22,
+    "max_diameter_km": 0.5,
+    "max_displacement_km": 0.4,
+    "merged_nodes": 45
+   },
+   "1000": {
+    "nodes": 112,
+    "reduction_pct": 47.4,
+    "median_ports": 6.0,
+    "max_ports": 32,
+    "max_diameter_km": 0.9,
+    "max_displacement_km": 0.7,
+    "merged_nodes": 54
+   },
+   "2000": {
+    "nodes": 87,
+    "reduction_pct": 59.2,
+    "median_ports": 8.0,
+    "max_ports": 40,
+    "max_diameter_km": 1.9,
+    "max_displacement_km": 1.5,
+    "merged_nodes": 53
+   },
+   "5000": {
+    "nodes": 54,
+    "reduction_pct": 74.6,
+    "median_ports": 13.0,
+    "max_ports": 63,
+    "max_diameter_km": 4.9,
+    "max_displacement_km": 4.0,
+    "merged_nodes": 40
+   },
+   "10000": {
+    "nodes": 31,
+    "reduction_pct": 85.4,
+    "median_ports": 23.0,
+    "max_ports": 88,
+    "max_diameter_km": 9.3,
+    "max_displacement_km": 6.7,
+    "merged_nodes": 24
+   }
+  }
+ },
+ "texas": {
+  "stations": 907,
+  "ports": 5665,
+  "single": {
+   "0": {
+    "nodes": 907,
+    "reduction_pct": 0.0,
+    "median_ports": 4.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 830,
+    "reduction_pct": 8.5,
+    "median_ports": 4.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 59
+   },
+   "500": {
+    "nodes": 721,
+    "reduction_pct": 20.5,
+    "median_ports": 6.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.8,
+    "max_displacement_km": 0.5,
+    "merged_nodes": 138
+   },
+   "1000": {
+    "nodes": 648,
+    "reduction_pct": 28.6,
+    "median_ports": 7.0,
+    "max_ports": 68,
+    "max_diameter_km": 2.0,
+    "max_displacement_km": 1.1,
+    "merged_nodes": 178
+   },
+   "2000": {
+    "nodes": 560,
+    "reduction_pct": 38.3,
+    "median_ports": 8.0,
+    "max_ports": 71,
+    "max_diameter_km": 6.6,
+    "max_displacement_km": 4.0,
+    "merged_nodes": 191
+   },
+   "5000": {
+    "nodes": 331,
+    "reduction_pct": 63.5,
+    "median_ports": 9.0,
+    "max_ports": 533,
+    "max_diameter_km": 46.6,
+    "max_displacement_km": 28.8,
+    "merged_nodes": 159
+   },
+   "10000": {
+    "nodes": 179,
+    "reduction_pct": 80.3,
+    "median_ports": 10.0,
+    "max_ports": 1216,
+    "max_diameter_km": 117.2,
+    "max_displacement_km": 64.2,
+    "merged_nodes": 96
+   }
+  },
+  "complete": {
+   "0": {
+    "nodes": 907,
+    "reduction_pct": 0.0,
+    "median_ports": 4.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.0,
+    "max_displacement_km": 0.0,
+    "merged_nodes": 0
+   },
+   "100": {
+    "nodes": 831,
+    "reduction_pct": 8.4,
+    "median_ports": 4.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.1,
+    "max_displacement_km": 0.1,
+    "merged_nodes": 59
+   },
+   "500": {
+    "nodes": 727,
+    "reduction_pct": 19.8,
+    "median_ports": 6.0,
+    "max_ports": 68,
+    "max_diameter_km": 0.5,
+    "max_displacement_km": 0.4,
+    "merged_nodes": 140
+   },
+   "1000": {
+    "nodes": 658,
+    "reduction_pct": 27.5,
+    "median_ports": 6.0,
+    "max_ports": 68,
+    "max_diameter_km": 1.0,
+    "max_displacement_km": 0.8,
+    "merged_nodes": 181
+   },
+   "2000": {
+    "nodes": 598,
+    "reduction_pct": 34.1,
+    "median_ports": 8.0,
+    "max_ports": 68,
+    "max_diameter_km": 2.0,
+    "max_displacement_km": 1.7,
+    "merged_nodes": 210
+   },
+   "5000": {
+    "nodes": 432,
+    "reduction_pct": 52.4,
+    "median_ports": 9.0,
+    "max_ports": 85,
+    "max_diameter_km": 4.9,
+    "max_displacement_km": 4.3,
+    "merged_nodes": 232
+   },
+   "10000": {
+    "nodes": 303,
+    "reduction_pct": 66.6,
+    "median_ports": 13.0,
+    "max_ports": 143,
+    "max_diameter_km": 10.0,
+    "max_displacement_km": 8.1,
+    "merged_nodes": 202
+   }
+  }
+ }
+}

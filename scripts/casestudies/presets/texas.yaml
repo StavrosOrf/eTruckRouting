@@ -1,0 +1,20 @@
+# Texas: about 1.6x the area of California and flatter, so distances rather than slope dominate.
+name: texas
+title: "Texas"
+state: TX
+geofabrik: north-america/us/texas
+delivery_source: places
+bbox: [25.8, -106.7, 36.55, -93.45]
+n_customers: 230
+n_depots: 4
+min_population: 1000
+min_place_spacing_m: 5000
+max_road_class: unclassified
+terrain_zoom: 10                       # about 100 m per pixel
+smooth_length_m: 300
+vis_max_class: primary
+max_chargers: 0
+charger_merge_m: 1000
+max_snap_m: 5000
+vehicle_profile: heavy_truck
+seed: 0

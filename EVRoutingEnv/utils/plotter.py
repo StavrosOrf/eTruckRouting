@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 
 
 class EnvironmentPlotter:
@@ -17,7 +18,13 @@ class EnvironmentPlotter:
     Handles all plotting and visualization for the truck routing environment using OSM coordinates.
     """
 
-    def __init__(self, output_dir: str, verbose: bool = False, use_osm: bool = True):
+    def __init__(
+        self,
+        output_dir: str,
+        verbose: bool = False,
+        use_osm: bool = True,
+        vis_data_dir: str | Path | None = None,
+    ):
         """
         Initialize the plotter.
 
@@ -25,13 +32,22 @@ class EnvironmentPlotter:
             output_dir: Directory to save plots
             verbose: Print verbose messages
             use_osm: Whether to include OSM basemap in plots
+            vis_data_dir: Folder with the case study's plotting data. Defaults to the
+                California ``EVRoutingEnv/data/vis_data``. Case studies built by
+                ``scripts/casestudies`` provide ``nodes.json``/``stations.json``/``roads.npz``.
         """
         self.output_dir = output_dir
         self.verbose = verbose
         self.use_osm = use_osm
+        self.vis_data_dir = (
+            Path(vis_data_dir)
+            if vis_data_dir is not None
+            else Path(__file__).parent.parent / "data" / "vis_data"
+        )
         self.node_coords = {}
         self.charger_coords = {}
         self.road_segments = []
+        self.road_lines = None  # (k, 2, 2) lon/lat segments for case-study road backdrops
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         self._load_visualization_data()
@@ -39,7 +55,10 @@ class EnvironmentPlotter:
     def _load_visualization_data(self):
         """Load visualization data from JSON files."""
         try:
-            data_dir = Path(__file__).parent.parent / "data" / "vis_data"
+            data_dir = self.vis_data_dir
+            if (data_dir / "nodes.json").exists():
+                self._load_case_study_data(data_dir)
+                return
 
             with open(data_dir / "node_CA_df.json", "r") as f:
                 route_data = json.load(f)
@@ -58,6 +77,42 @@ class EnvironmentPlotter:
         except Exception as e:
             if self.verbose:
                 print(f"  ⚠ Warning: Could not load visualization data: {e}")
+
+    def _load_case_study_data(self, data_dir: Path):
+        """Load nodes/stations/roads written by scripts/casestudies/build_case_study.py."""
+        with open(data_dir / "nodes.json", "r") as f:
+            nodes = json.load(f)
+        with open(data_dir / "stations.json", "r") as f:
+            stations = json.load(f)
+        self.node_coords = {int(n["node"]): (float(n["lat"]), float(n["lon"])) for n in nodes}
+        self.charger_coords = {int(s["node"]): (float(s["lat"]), float(s["lon"])) for s in stations}
+        roads_file = data_dir / "roads.npz"
+        if roads_file.exists():
+            r = np.load(roads_file)
+            lat0, lon0, lat1, lon1 = (r[k].astype(float) / 1e5 for k in ("lat0", "lon0", "lat1", "lon1"))
+            major = r["cls"] <= 9  # drop residential detail so episode plots stay readable
+            self.road_lines = np.stack(
+                [np.stack([lon0, lat0], 1), np.stack([lon1, lat1], 1)], 1
+            )[major]
+        if self.verbose:
+            print(f"  ✓ Loaded case study: {len(self.node_coords)} nodes, "
+                  f"{len(self.charger_coords)} chargers, "
+                  f"{0 if self.road_lines is None else len(self.road_lines)} road segments")
+
+    def _draw_roads(self, ax):
+        """Draw the road backdrop (case-study roads, or California OD segments)."""
+        if self.road_lines is not None:
+            ax.add_collection(
+                LineCollection(self.road_lines, colors="#bbbbbb", linewidths=0.4, alpha=0.6, zorder=2)
+            )
+        elif self.road_segments:
+            lines = [
+                [(s["start_lon"], s["start_lat"]), (s["end_lon"], s["end_lat"])]
+                for s in self.road_segments
+            ]
+            ax.add_collection(
+                LineCollection(lines, colors="#cccccc", linewidths=0.5, alpha=0.4, zorder=2)
+            )
 
     def _extract_road_segments_from_routes(self, route_data):
         """Extract road segments from route data."""
@@ -189,16 +244,7 @@ class EnvironmentPlotter:
 
             self._add_osm_background(ax, node_coords)
 
-            if self.road_segments:
-                for segment in self.road_segments:
-                    ax.plot(
-                        [segment["start_lon"], segment["end_lon"]],
-                        [segment["start_lat"], segment["end_lat"]],
-                        c="#cccccc",
-                        linewidth=0.5,
-                        alpha=0.4,
-                        zorder=2,
-                    )
+            self._draw_roads(ax)
 
             if node_coords:
                 all_lats = [coord[0] for coord in node_coords.values()]
@@ -352,16 +398,7 @@ class EnvironmentPlotter:
 
         charger_coords = self._create_charger_id_to_osm_map(transport_graph)
 
-        if self.road_segments:
-            for segment in self.road_segments:
-                ax.plot(
-                    [segment["start_lon"], segment["end_lon"]],
-                    [segment["start_lat"], segment["end_lat"]],
-                    c="#cccccc",
-                    linewidth=0.5,
-                    alpha=0.4,
-                    zorder=2,
-                )
+        self._draw_roads(ax)
 
         if node_coords:
             all_lats = [coord[0] for coord in node_coords.values()]

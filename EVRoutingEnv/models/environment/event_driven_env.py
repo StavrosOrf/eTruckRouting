@@ -65,7 +65,7 @@ from EVRoutingEnv.state.state_space import StateSpace
 from EVRoutingEnv.utils.charging_logger import ChargingLogger
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
 from EVRoutingEnv.utils.statistics import EnvironmentStatistics
-from EVRoutingEnv.utils.utils import get_graph, load_config
+from EVRoutingEnv.utils.utils import get_graph, load_config, resolve_network_data_dir
 
 
 class EventDrivenTruckEnv(gym.Env):
@@ -180,7 +180,12 @@ class EventDrivenTruckEnv(gym.Env):
 
             # Initialize plotter and statistics collector
             self.plotter = EnvironmentPlotter(
-                self.output_dir, self.verbose, use_osm=False
+                self.output_dir,
+                self.verbose,
+                use_osm=False,
+                vis_data_dir=os.path.join(
+                    resolve_network_data_dir(self.config["network"]), "vis_data"
+                ),
             )
             self.stats_collector = EnvironmentStatistics(self.output_dir, self.verbose)
 
@@ -301,6 +306,12 @@ class EventDrivenTruckEnv(gym.Env):
             "data",
             "waiting_time_lookup.json",
         )
+        # A case study may ship its own queue model next to its network data.
+        case_waiting_path = os.path.join(
+            resolve_network_data_dir(self.config["network"]), "waiting_time_lookup.json"
+        )
+        if os.path.exists(case_waiting_path):
+            waiting_time_path = case_waiting_path
         station_charging_config = dict(self.charging_config)
         station_charging_config.setdefault(
             "station_power_classes_kw",

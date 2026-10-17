@@ -1,0 +1,139 @@
+{
+ "name": "texas",
+ "title": "Texas",
+ "generated_utc": "2026-10-17T18:02:42Z",
+ "preset": {
+  "name": "texas",
+  "title": "Texas",
+  "state": "TX",
+  "geofabrik": "north-america/us/texas",
+  "delivery_source": "places",
+  "bbox": [
+   25.8,
+   -106.7,
+   36.55,
+   -93.45
+  ],
+  "n_customers": 230,
+  "n_depots": 4,
+  "min_population": 1000,
+  "min_place_spacing_m": 5000,
+  "max_road_class": "unclassified",
+  "terrain_zoom": 10,
+  "smooth_length_m": 300,
+  "vis_max_class": "primary",
+  "max_chargers": 0,
+  "charger_merge_m": 1000,
+  "max_snap_m": 5000,
+  "vehicle_profile": "heavy_truck",
+  "seed": 0,
+  "workers": 32
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 1258.0,
+ "counts": {
+  "nodes": 882,
+  "chargers": 648,
+  "depots": 4,
+  "customers": 230,
+  "dcfast_ports_in_nodes": 5665,
+  "dcfast_sites_available": 648,
+  "dcfast_stations_raw": 907
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  25.8,
+  -106.7,
+  36.55,
+  -93.45
+ ],
+ "road_network": {
+  "nodes": 3465995,
+  "directed_edges": 5815397,
+  "plotted_segments": 805092,
+  "excluded": "service roads, private/no-motor-vehicle ways, road classes below unclassified",
+  "terrain_zoom": 10,
+  "dem_rms_change_m": 1.8500657646208163,
+  "n_span_nodes_interpolated": 39326,
+  "elevation_range_m": [
+   -11.22713575100938,
+   2038.030429389041
+  ],
+  "dem_nodes_reset_to_sea_level": 55
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 1,
+ "od_stats": {
+  "reduced_cost_min": 0.00034233881948410273,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 1.48010096836515e-05,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   58.54,
+   448.75,
+   1099.14,
+   1863.29
+  ],
+  "time_h_p5_p50_p95_max": [
+   1.278,
+   9.71,
+   22.578,
+   36.858
+  ],
+  "dist_km_p5_p50_p95_max": [
+   46.0,
+   386.9,
+   931.2,
+   1479.6
+  ],
+  "kwh_per_km_median": 1.183
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 388503,
+   "median_rel_diff": 0.0822,
+   "p90_rel_diff": 0.1864,
+   "frac_over_5pct": 0.7078,
+   "frac_over_20pct": 0.0719
+  },
+  "time": {
+   "pairs": 388482,
+   "median_rel_diff": 0.0125,
+   "p90_rel_diff": 0.0631,
+   "frac_over_5pct": 0.1377,
+   "frac_over_20pct": 0.0085
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 2012.0,
+  "merged_nodes_with_multiple_stations": 178
+ },
+ "sources": {
+  "delivery_and_depot_locations": "OpenStreetMap place nodes (city/town/village with population tag), ODbL",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)",
+  "chargers": "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_texas.yaml"
+}

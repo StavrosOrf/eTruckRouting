@@ -227,3 +227,6 @@ latex/*.out
 latex/*.log
 latex/*.blg
 
+
+# Raw downloads for case-study generation (reproducible via scripts/casestudies/fetch_data.py)
+.casestudy_raw/

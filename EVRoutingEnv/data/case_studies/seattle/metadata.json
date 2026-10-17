@@ -1,0 +1,133 @@
+{
+ "name": "seattle",
+ "title": "Puget Sound (Seattle, WA)",
+ "generated_utc": "2026-10-17T17:13:33Z",
+ "preset": {
+  "name": "seattle",
+  "title": "Puget Sound (Seattle, WA)",
+  "state": "WA",
+  "geofabrik": "north-america/us/washington",
+  "amazon_stations": [
+   "DSE2",
+   "DSE4",
+   "DSE5"
+  ],
+  "stop_percentiles": [
+   0.5,
+   99.5
+  ],
+  "bbox_margin_deg": 0.03,
+  "n_customers": 230,
+  "max_chargers": 0,
+  "charger_merge_m": 1000,
+  "max_snap_m": 400,
+  "vehicle_profile": "heavy_truck",
+  "seed": 0
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 118.0,
+ "counts": {
+  "nodes": 329,
+  "chargers": 96,
+  "depots": 3,
+  "customers": 230,
+  "dcfast_ports_in_nodes": 952,
+  "dcfast_sites_available": 100,
+  "dcfast_stations_raw": 213
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  47.05735,
+  -122.58609,
+  48.12175,
+  -121.96384
+ ],
+ "road_network": {
+  "nodes": 802197,
+  "directed_edges": 1555045,
+  "plotted_segments": 257594,
+  "excluded": "service roads, private/no-motor-vehicle ways",
+  "terrain_zoom": 13,
+  "dem_rms_change_m": 1.123019767105427,
+  "n_span_nodes_interpolated": 5023,
+  "elevation_range_m": [
+   -3.0080107299276255,
+   588.1623119228844
+  ]
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 282,
+ "od_stats": {
+  "reduced_cost_min": 0.0003463081235267002,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 3.6109996699451585e-06,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   11.12,
+   57.25,
+   131.47,
+   202.75
+  ],
+  "time_h_p5_p50_p95_max": [
+   0.285,
+   1.174,
+   2.505,
+   3.891
+  ],
+  "dist_km_p5_p50_p95_max": [
+   7.9,
+   38.4,
+   90.7,
+   139.4
+  ],
+  "kwh_per_km_median": 1.472
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 53441,
+   "median_rel_diff": 0.1453,
+   "p90_rel_diff": 0.4285,
+   "frac_over_5pct": 0.8062,
+   "frac_over_20pct": 0.3758
+  },
+  "time": {
+   "pairs": 53837,
+   "median_rel_diff": 0.0577,
+   "p90_rel_diff": 0.1757,
+   "frac_over_5pct": 0.5383,
+   "frac_over_20pct": 0.0633
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 2033.6,
+  "merged_nodes_with_multiple_stations": 51
+ },
+ "sources": {
+  "delivery_and_depot_locations": "Amazon Last Mile Routing Research Challenge 2021 (training routes), CC BY-NC 4.0",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)",
+  "chargers": "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_seattle.yaml"
+}

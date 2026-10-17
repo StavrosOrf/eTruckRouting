@@ -1,0 +1,145 @@
+{
+ "name": "pacific_northwest",
+ "title": "Pacific Northwest (WA + OR)",
+ "generated_utc": "2026-10-17T18:02:55Z",
+ "preset": {
+  "name": "pacific_northwest",
+  "title": "Pacific Northwest (WA + OR)",
+  "state": [
+   "WA",
+   "OR"
+  ],
+  "geofabrik": [
+   "north-america/us/washington",
+   "north-america/us/oregon"
+  ],
+  "delivery_source": "places",
+  "bbox": [
+   41.95,
+   -124.8,
+   49.05,
+   -116.4
+  ],
+  "n_customers": 230,
+  "n_depots": 4,
+  "min_population": 1000,
+  "min_place_spacing_m": 5000,
+  "max_road_class": "unclassified",
+  "terrain_zoom": 11,
+  "smooth_length_m": 150,
+  "vis_max_class": "secondary",
+  "max_chargers": 0,
+  "charger_merge_m": 1000,
+  "max_snap_m": 5000,
+  "vehicle_profile": "heavy_truck",
+  "seed": 0,
+  "workers": 32
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 788.0,
+ "counts": {
+  "nodes": 726,
+  "chargers": 492,
+  "depots": 4,
+  "customers": 230,
+  "dcfast_ports_in_nodes": 3772,
+  "dcfast_sites_available": 494,
+  "dcfast_stations_raw": 876
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  41.95,
+  -124.8,
+  49.05,
+  -116.4
+ ],
+ "road_network": {
+  "nodes": 3519493,
+  "directed_edges": 6795890,
+  "plotted_segments": 872211,
+  "excluded": "service roads, private/no-motor-vehicle ways, road classes below unclassified",
+  "terrain_zoom": 11,
+  "dem_rms_change_m": 2.9837780127129516,
+  "n_span_nodes_interpolated": 12684,
+  "elevation_range_m": [
+   -7.453397634218279,
+   2950.1252826773
+  ],
+  "dem_nodes_reset_to_sea_level": 100
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 71,
+ "od_stats": {
+  "reduced_cost_min": 0.00034290356039131645,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 2.0853001842624508e-05,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   63.84,
+   470.41,
+   1005.39,
+   1729.44
+  ],
+  "time_h_p5_p50_p95_max": [
+   1.211,
+   8.304,
+   18.308,
+   30.074
+  ],
+  "dist_km_p5_p50_p95_max": [
+   46.4,
+   349.2,
+   752.7,
+   1248.0
+  ],
+  "kwh_per_km_median": 1.328
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 263005,
+   "median_rel_diff": 0.0766,
+   "p90_rel_diff": 0.2461,
+   "frac_over_5pct": 0.6193,
+   "frac_over_20pct": 0.1525
+  },
+  "time": {
+   "pairs": 263102,
+   "median_rel_diff": 0.0222,
+   "p90_rel_diff": 0.093,
+   "frac_over_5pct": 0.2539,
+   "frac_over_20pct": 0.02
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 2584.5,
+  "merged_nodes_with_multiple_stations": 186
+ },
+ "sources": {
+  "delivery_and_depot_locations": "OpenStreetMap place nodes (city/town/village with population tag), ODbL",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)",
+  "chargers": "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_pacific_northwest.yaml"
+}

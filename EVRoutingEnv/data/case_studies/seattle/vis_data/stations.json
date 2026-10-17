@@ -1,0 +1,2606 @@
+[
+ {
+  "node": 6822949749,
+  "lat": 47.213906,
+  "lon": -122.465149,
+  "site_lat": 47.215064,
+  "site_lon": -122.465262,
+  "ports": 40,
+  "n_stations": 3,
+  "diameter_m": 1343.7,
+  "snap_m": 129.1,
+  "names": [
+   "Tacoma, WA - S 40th Street - Tesla Supercharger",
+   "Tacoma, WA - South Steele Street - Tesla Supercharger",
+   "Tacoma, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   256577,
+   326167,
+   353794
+  ]
+ },
+ {
+  "node": 11285084088,
+  "lat": 47.611305,
+  "lon": -122.331412,
+  "site_lat": 47.611398,
+  "site_lon": -122.331523,
+  "ports": 35,
+  "n_stations": 12,
+  "diameter_m": 2033.6,
+  "snap_m": 13.3,
+  "names": [
+   "1301 2ND AVE",
+   "CITY LIGHT WATERFRONT 1",
+   "CITY LIGHT WATERFRONT 2",
+   "Central Library - Fast Chargers",
+   "EVROADWAY WA-C-COLLEGE01",
+   "Madison Pike WA3-141 ( Seattle, WA)",
+   "REI",
+   "SMT Garage - 700 5th Ave Seattle- DC Fast Charger",
+   "Seattle, WA - 1201 2nd Avenue - Tesla Supercharger",
+   "Seattle, WA - Union Street - Tesla Supercharger",
+   "Whole Foods Madison Broadway",
+   "Whole Foods Seattle (Westlake)"
+  ],
+  "networks": [
+   "ABM",
+   "ChargePoint Network",
+   "Electrify America",
+   "FLO",
+   "OpConnect",
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   149358,
+   170078,
+   187906,
+   193456,
+   227931,
+   320377,
+   333102,
+   373069,
+   384141,
+   387923,
+   416922,
+   462535
+  ]
+ },
+ {
+  "node": 1778657883,
+  "lat": 47.706834,
+  "lon": -122.328601,
+  "site_lat": 47.706762,
+  "site_lon": -122.329001,
+  "ports": 34,
+  "n_stations": 5,
+  "diameter_m": 1775.4,
+  "snap_m": 31.1,
+  "names": [
+   "EVROADWAY WA-N-COLLEGE01",
+   "Northgate Mall (Seattle, WA)",
+   "Northgate QFC",
+   "Seattle, WA - Meridian Avenue North - Tesla Supercharger",
+   "Seattle, WA - NE Northgate Way - Tesla Supercharger"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America",
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   146948,
+   186871,
+   373073,
+   384082,
+   390518
+  ]
+ },
+ {
+  "node": 4271811276,
+  "lat": 47.315211,
+  "lon": -122.312001,
+  "site_lat": 47.316174,
+  "site_lon": -122.311632,
+  "ports": 32,
+  "n_stations": 3,
+  "diameter_m": 639.9,
+  "snap_m": 110.7,
+  "names": [
+   "Federal Way",
+   "Federal Way, WA - South 320th Street - Tesla Supercharger",
+   "Federal Way, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "RED_E",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   187166,
+   360295,
+   466512
+  ]
+ },
+ {
+  "node": 2253517035,
+  "lat": 47.543794,
+  "lon": -122.048391,
+  "site_lat": 47.544673,
+  "site_lon": -122.048051,
+  "ports": 31,
+  "n_stations": 7,
+  "diameter_m": 1514.1,
+  "snap_m": 101.1,
+  "names": [
+   "Issaquah Commons - Tesla Supercharger",
+   "Issaquah, WA - Tesla Supercharger",
+   "Target T0996 (Issaquah, WA)",
+   "VOLVO CAR USA ISSAQUAH DC1",
+   "VOLVO CAR USA ISSAQUAH DC2",
+   "VOLVO CAR USA ISSAQUAH DC3",
+   "VOLVO CAR USA ISSAQUAH DC4"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   104446,
+   147227,
+   341913,
+   341914,
+   346022,
+   346023,
+   463776
+  ]
+ },
+ {
+  "node": 12875587046,
+  "lat": 47.81062,
+  "lon": -122.207551,
+  "site_lat": 47.810885,
+  "site_lon": -122.206603,
+  "ports": 27,
+  "n_stations": 3,
+  "diameter_m": 678.6,
+  "snap_m": 77.0,
+  "names": [
+   "Bothell, WA - 201st Place Southeast - Tesla Supercharger",
+   "Bothell, WA - Bothell Everett Highway - Tesla Supercharger",
+   "Fred Meyer 457 (Bothell, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   149281,
+   331345,
+   440463
+  ]
+ },
+ {
+  "node": 3626312338,
+  "lat": 47.661438,
+  "lon": -122.372095,
+  "site_lat": 47.661453,
+  "site_lon": -122.372061,
+  "ports": 25,
+  "n_stations": 4,
+  "diameter_m": 544.6,
+  "snap_m": 3.1,
+  "names": [
+   "Ballard Blocks",
+   "FRED MEYER 608 (Ballard, WA)",
+   "Seattle, WA - NW Ballard Way - Tesla Supercharger",
+   "Seattle, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   170432,
+   201474,
+   390323,
+   416920
+  ]
+ },
+ {
+  "node": 53246214,
+  "lat": 47.709132,
+  "lon": -122.179084,
+  "site_lat": 47.708812,
+  "site_lon": -122.179226,
+  "ports": 25,
+  "n_stations": 5,
+  "diameter_m": 1822.9,
+  "snap_m": 37.1,
+  "names": [
+   "Ford of Kirkland",
+   "Kirkland, WA - Tesla Supercharger",
+   "Lake Washington Institute of Technology",
+   "QFC 828 (Kirkland, WA)",
+   "RAG - Alfa Romeo Kirkland"
+  ],
+  "networks": [
+   "Blink Network",
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   186859,
+   322833,
+   360777,
+   397982,
+   459653
+  ]
+ },
+ {
+  "node": 4642763456,
+  "lat": 47.615072,
+  "lon": -122.196306,
+  "site_lat": 47.614975,
+  "site_lon": -122.197467,
+  "ports": 24,
+  "n_stations": 4,
+  "diameter_m": 1595.9,
+  "snap_m": 87.8,
+  "names": [
+   "Bellevue, WA - Northeast 8th Street - Tesla Supercharger",
+   "Bellevue, WA - Tesla Supercharger",
+   "Safeway #1600 (Bellevue, WA)",
+   "Whole Foods Bellevue (BLV)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   184914,
+   186869,
+   390249,
+   416947
+  ]
+ },
+ {
+  "node": 3598876669,
+  "lat": 47.44386,
+  "lon": -122.224772,
+  "site_lat": 47.443131,
+  "site_lon": -122.22508,
+  "ports": 22,
+  "n_stations": 2,
+  "diameter_m": 20.9,
+  "snap_m": 84.3,
+  "names": [
+   "IKEA Store 488 (Seattle, WA)",
+   "Renton, WA - Southwest 41st Street - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   261466,
+   279393
+  ]
+ },
+ {
+  "node": 998636305,
+  "lat": 47.298682,
+  "lon": -122.249942,
+  "site_lat": 47.298698,
+  "site_lon": -122.24696,
+  "ports": 21,
+  "n_stations": 3,
+  "diameter_m": 753.8,
+  "snap_m": 223.9,
+  "names": [
+   "Auburn, WA - Tesla Supercharger",
+   "The Outlet Collection ( Auburn, WA)",
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla",
+   "WALMART"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   150184,
+   189391,
+   469481
+  ]
+ },
+ {
+  "node": 1747654488,
+  "lat": 47.455841,
+  "lon": -122.257061,
+  "site_lat": 47.455482,
+  "site_lon": -122.25637,
+  "ports": 21,
+  "n_stations": 2,
+  "diameter_m": 104.7,
+  "snap_m": 65.4,
+  "names": [
+   "Target T0627 (Tukwila, WA)",
+   "Tukwila, WA - Strander Boulevard - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   147131,
+   237639
+  ]
+ },
+ {
+  "node": 6606624244,
+  "lat": 47.757619,
+  "lon": -122.155005,
+  "site_lat": 47.758009,
+  "site_lon": -122.154513,
+  "ports": 20,
+  "n_stations": 2,
+  "diameter_m": 623.3,
+  "snap_m": 56.9,
+  "names": [
+   "Target - Tesla Supercharger",
+   "Woodinville WA4-151 (Woodinville, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   170316,
+   457773
+  ]
+ },
+ {
+  "node": 316877295,
+  "lat": 48.095901,
+  "lon": -122.18867,
+  "site_lat": 48.096325,
+  "site_lon": -122.188067,
+  "ports": 20,
+  "n_stations": 6,
+  "diameter_m": 459.7,
+  "snap_m": 65.4,
+  "names": [
+   "DONNA'S STATION 1",
+   "DONNA'S STATION 2",
+   "DONNA'S STATION 3",
+   "DONNA'S STATION 4",
+   "Seattle Premium Outlets (Tulalip, WA)",
+   "Tulalip Bay, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   124683,
+   310494,
+   310495,
+   310496,
+   310497,
+   322835
+  ]
+ },
+ {
+  "node": 716384126,
+  "lat": 47.188308,
+  "lon": -122.460984,
+  "site_lat": 47.188823,
+  "site_lon": -122.460761,
+  "ports": 18,
+  "n_stations": 2,
+  "diameter_m": 483.7,
+  "snap_m": 59.6,
+  "names": [
+   "Tacoma South",
+   "Tacoma, WA - South Hosmer Street - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   261825,
+   333707
+  ]
+ },
+ {
+  "node": 53219121,
+  "lat": 47.316044,
+  "lon": -122.223773,
+  "site_lat": 47.315845,
+  "site_lon": -122.224179,
+  "ports": 18,
+  "n_stations": 3,
+  "diameter_m": 1223.1,
+  "snap_m": 37.7,
+  "names": [
+   "Auburn Chevrolet",
+   "Auburn, WA - Auburn Way North - Tesla Supercharger",
+   "Scarff Ford"
+  ],
+  "networks": [
+   "EV Connect",
+   "FORD_CHARGE",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   358430,
+   391810,
+   430837
+  ]
+ },
+ {
+  "node": 12829633350,
+  "lat": 47.158052,
+  "lon": -122.292998,
+  "site_lat": 47.158038,
+  "site_lon": -122.294606,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 425.3,
+  "snap_m": 120.7,
+  "names": [
+   "Cafaro SOUTH HILL MALL (PUYALLUP, WA)",
+   "Puyallup, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   170297,
+   421304
+  ]
+ },
+ {
+  "node": 12475268120,
+  "lat": 47.447487,
+  "lon": -122.262435,
+  "site_lat": 47.447379,
+  "site_lon": -122.263665,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 93.2,
+  "names": [
+   "Tukwila, WA - Southcenter Parkway - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   324019
+  ]
+ },
+ {
+  "node": 4272143176,
+  "lat": 47.629391,
+  "lon": -122.142996,
+  "site_lat": 47.629306,
+  "site_lon": -122.142096,
+  "ports": 16,
+  "n_stations": 3,
+  "diameter_m": 430.9,
+  "snap_m": 68.2,
+  "names": [
+   "BofA Overlake Park WA3-152 (Redmond, WA)",
+   "Fred Meyer Bellevue #23",
+   "Overlake Fashion Plaza - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   206453,
+   373093,
+   468052
+  ]
+ },
+ {
+  "node": 4284707081,
+  "lat": 47.757096,
+  "lon": -122.34467,
+  "site_lat": 47.75708,
+  "site_lon": -122.344453,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 622.9,
+  "snap_m": 16.4,
+  "names": [
+   "Kroger Fred Meyer 13 (Shoreline, WA)",
+   "Shoreline, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   279403,
+   353791
+  ]
+ },
+ {
+  "node": 7202666247,
+  "lat": 47.878187,
+  "lon": -122.212891,
+  "site_lat": 47.877624,
+  "site_lon": -122.212891,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 62.6,
+  "names": [
+   "Mill Creek, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   390493
+  ]
+ },
+ {
+  "node": 497479286,
+  "lat": 47.862955,
+  "lon": -121.976299,
+  "site_lat": 47.863069,
+  "site_lon": -121.975938,
+  "ports": 15,
+  "n_stations": 2,
+  "diameter_m": 389.0,
+  "snap_m": 29.9,
+  "names": [
+   "Monroe, WA - Tesla Supercharger",
+   "Walmart 5628 (Monroe, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   122266,
+   147648
+  ]
+ },
+ {
+  "node": 50742670,
+  "lat": 47.8907,
+  "lon": -122.257217,
+  "site_lat": 47.891558,
+  "site_lon": -122.257362,
+  "ports": 15,
+  "n_stations": 2,
+  "diameter_m": 298.6,
+  "snap_m": 96.0,
+  "names": [
+   "Everett, WA Rechargery Relay - Evergreen Way",
+   "Walmart 5195 (Everett, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "IONNA"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   165647,
+   460092
+  ]
+ },
+ {
+  "node": 50722902,
+  "lat": 47.908261,
+  "lon": -122.228233,
+  "site_lat": 47.908235,
+  "site_lon": -122.229421,
+  "ports": 15,
+  "n_stations": 4,
+  "diameter_m": 1738.8,
+  "snap_m": 89.3,
+  "names": [
+   "Everett, WA - Tesla Supercharger",
+   "KIA OF EVERETT KIA OF EVERETT",
+   "NISSAN-EVERETT DC STATION 1",
+   "NISSAN-EVERETT DC STATION 2"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   171755,
+   236777,
+   256046,
+   332471
+  ]
+ },
+ {
+  "node": 5416795826,
+  "lat": 47.969805,
+  "lon": -122.201193,
+  "site_lat": 47.969686,
+  "site_lon": -122.200853,
+  "ports": 15,
+  "n_stations": 2,
+  "diameter_m": 421.8,
+  "snap_m": 28.8,
+  "names": [
+   "Everett, WA Rechargery Relay - Broadway",
+   "HOPEWORKS HOPEWORKS 3"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "IONNA"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   235956,
+   456282
+  ]
+ },
+ {
+  "node": 2559400530,
+  "lat": 47.198985,
+  "lon": -122.294783,
+  "site_lat": 47.198881,
+  "site_lon": -122.295089,
+  "ports": 14,
+  "n_stations": 6,
+  "diameter_m": 1047.5,
+  "snap_m": 25.7,
+  "names": [
+   "KOP FAST CHARGE KOP FASTCHARGER",
+   "KORUM HYUNDAI PC 1",
+   "KORUM HYUNDAI PC 2",
+   "Korum Ford",
+   "Korum Lincoln",
+   "SUBARU PUYALLUP LEVEL 3 CHARGER"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "FORD_CHARGE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   214875,
+   214876,
+   350620,
+   358431,
+   398131,
+   416767
+  ]
+ },
+ {
+  "node": 1483927547,
+  "lat": 47.302638,
+  "lon": -122.579215,
+  "site_lat": 47.302937,
+  "site_lon": -122.579945,
+  "ports": 12,
+  "n_stations": 2,
+  "diameter_m": 624.8,
+  "snap_m": 64.1,
+  "names": [
+   "Kitsap Bank - 4714 Point",
+   "Kroger Fred Meyer 691 (Gig Harbor, WA)"
+  ],
+  "networks": [
+   "EVCS",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   201423,
+   354804
+  ]
+ },
+ {
+  "node": 13958821175,
+  "lat": 47.480801,
+  "lon": -122.217157,
+  "site_lat": 47.481005,
+  "site_lon": -122.21677,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 36.9,
+  "names": [
+   "Renton, WA Rechargery Relay -  S 2nd Street"
+  ],
+  "networks": [
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   470603
+  ]
+ },
+ {
+  "node": 53087804,
+  "lat": 47.564337,
+  "lon": -122.002359,
+  "site_lat": 47.564893,
+  "site_lon": -122.002979,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 77.5,
+  "names": [
+   "Klahanie Shopping Center - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   465325
+  ]
+ },
+ {
+  "node": 7071544591,
+  "lat": 47.829321,
+  "lon": -122.276869,
+  "site_lat": 47.829368,
+  "site_lon": -122.275014,
+  "ports": 12,
+  "n_stations": 2,
+  "diameter_m": 860.8,
+  "snap_m": 139.4,
+  "names": [
+   "Lynnwood, WA",
+   "Target T0338 (Lynnwood, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "RIVIAN_ADVENTURE"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   123446,
+   391283
+  ]
+ },
+ {
+  "node": 6944476548,
+  "lat": 47.86601,
+  "lon": -122.283798,
+  "site_lat": 47.865452,
+  "site_lon": -122.283052,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 83.6,
+  "names": [
+   "Lynnwood, WA - 148th Street Southwest - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   311232
+  ]
+ },
+ {
+  "node": 3474499903,
+  "lat": 47.873051,
+  "lon": -122.274028,
+  "site_lat": 47.874018,
+  "site_lon": -122.273706,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 110.2,
+  "names": [
+   "Mukilteo Speedway Center - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   458091
+  ]
+ },
+ {
+  "node": 5693118928,
+  "lat": 47.671045,
+  "lon": -122.111981,
+  "site_lat": 47.670827,
+  "site_lon": -122.112077,
+  "ports": 11,
+  "n_stations": 3,
+  "diameter_m": 787.6,
+  "snap_m": 25.3,
+  "names": [
+   "Red Robin at Redmond Town Center Shopping",
+   "Redmond Town Center - Tesla Supercharger",
+   "Target T0995 (Redmond, WA)"
+  ],
+  "networks": [
+   "Electrify America",
+   "FLO",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   167562,
+   313071,
+   471138
+  ]
+ },
+ {
+  "node": 5421963086,
+  "lat": 47.716863,
+  "lon": -122.297991,
+  "site_lat": 47.716989,
+  "site_lon": -122.298025,
+  "ports": 11,
+  "n_stations": 3,
+  "diameter_m": 931.8,
+  "snap_m": 14.2,
+  "names": [
+   "11501 Lake City (Level 3)",
+   "DC CORRIDOR SEATTLE MINI",
+   "Pierre Ford of Seattle \u2013 Parts and Service"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   104285,
+   448180,
+   457778
+  ]
+ },
+ {
+  "node": 5476062690,
+  "lat": 47.241856,
+  "lon": -122.34697,
+  "site_lat": 47.242083,
+  "site_lon": -122.347914,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 75.2,
+  "names": [
+   "Tahoma Market"
+  ],
+  "networks": [
+   "EVCS"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   361045
+  ]
+ },
+ {
+  "node": 4272371388,
+  "lat": 47.767597,
+  "lon": -122.191049,
+  "site_lat": 47.767486,
+  "site_lon": -122.19157,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.0,
+  "names": [
+   "Bothell, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   164168
+  ]
+ },
+ {
+  "node": 13105148098,
+  "lat": 47.846671,
+  "lon": -122.271128,
+  "site_lat": 47.846731,
+  "site_lon": -122.271406,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 21.9,
+  "names": [
+   "Lynnwood, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102489
+  ]
+ },
+ {
+  "node": 6006855632,
+  "lat": 47.913747,
+  "lon": -122.216724,
+  "site_lat": 47.91349,
+  "site_lon": -122.21331,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 257.9,
+  "names": [
+   "Walmart 3053 (Everett, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   143970
+  ]
+ },
+ {
+  "node": 53247576,
+  "lat": 47.381443,
+  "lon": -122.243068,
+  "site_lat": 47.381373,
+  "site_lon": -122.24308,
+  "ports": 9,
+  "n_stations": 2,
+  "diameter_m": 839.7,
+  "snap_m": 7.8,
+  "names": [
+   "BOA Kent WA5-119 (Kent, WA)",
+   "Langston Landing"
+  ],
+  "networks": [
+   "Electrify America",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   155325,
+   397974
+  ]
+ },
+ {
+  "node": 110478428,
+  "lat": 47.114609,
+  "lon": -122.430882,
+  "site_lat": 47.114379,
+  "site_lon": -122.432412,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 117.7,
+  "names": [
+   "LA Fitness - Tacoma Pacific"
+  ],
+  "networks": [
+   "EVCS"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   465380
+  ]
+ },
+ {
+  "node": 6598397415,
+  "lat": 47.16796,
+  "lon": -122.174856,
+  "site_lat": 47.167742,
+  "site_lon": -122.171843,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 227.5,
+  "names": [
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "WALMART"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   466565
+  ]
+ },
+ {
+  "node": 4273573377,
+  "lat": 47.581818,
+  "lon": -122.033673,
+  "site_lat": 47.582014,
+  "site_lon": -122.033598,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 22.5,
+  "names": [
+   "Sammamish, WA - Issaquah-Pine Lake Road Southeast - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   445754
+  ]
+ },
+ {
+  "node": 3329397711,
+  "lat": 47.616627,
+  "lon": -122.03305,
+  "site_lat": 47.616484,
+  "site_lon": -122.033251,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 21.9,
+  "names": [
+   "Sammamish, WA - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   330569
+  ]
+ },
+ {
+  "node": 152360551,
+  "lat": 47.779159,
+  "lon": -122.344906,
+  "site_lat": 47.778908,
+  "site_lon": -122.345158,
+  "ports": 8,
+  "n_stations": 4,
+  "diameter_m": 350.8,
+  "snap_m": 33.7,
+  "names": [
+   "Campbell Nissan - Edmonds",
+   "Campbell Nissan/Edmonds",
+   "EDMONDSNISSAN CAMPBELL NORTH",
+   "EDMONDSNISSAN COMMERCIAL 2"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "NAYAX_ENERGY",
+   "VIALYNK"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   235425,
+   422429,
+   448689,
+   466013
+  ]
+ },
+ {
+  "node": 5296797249,
+  "lat": 48.055031,
+  "lon": -122.114316,
+  "site_lat": 48.055651,
+  "site_lon": -122.112572,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 148.0,
+  "names": [
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "WALMART"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   463931
+  ]
+ },
+ {
+  "node": 1905096001,
+  "lat": 47.758153,
+  "lon": -122.24779,
+  "site_lat": 47.758326,
+  "site_lon": -122.247987,
+  "ports": 7,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.3,
+  "names": [
+   "Albertsons Kenmore #3500 - 6850 N E Bothell Way"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446299
+  ]
+ },
+ {
+  "node": 2340690362,
+  "lat": 47.196335,
+  "lon": -122.208152,
+  "site_lat": 47.196706,
+  "site_lon": -122.206916,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 101.6,
+  "names": [
+   "WinCo Foods - Sumner #74"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   257755
+  ]
+ },
+ {
+  "node": 7330920740,
+  "lat": 47.235424,
+  "lon": -122.527359,
+  "site_lat": 47.235496,
+  "site_lon": -122.527305,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 9.0,
+  "names": [
+   "University Place, WA Rechargery Relay - Regents Boulevard"
+  ],
+  "networks": [
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   471432
+  ]
+ },
+ {
+  "node": 251095095,
+  "lat": 47.241482,
+  "lon": -122.482394,
+  "site_lat": 47.241446,
+  "site_lon": -122.481349,
+  "ports": 6,
+  "n_stations": 4,
+  "diameter_m": 474.8,
+  "snap_m": 78.6,
+  "names": [
+   "CSG EV AAA TACOMA - #1",
+   "CSG EV AAA TACOMA - #2",
+   "CSG EV AAA TACOMA - #4",
+   "Walmart 4137 (Tacoma, WA)"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   135872,
+   384532,
+   384627,
+   384631
+  ]
+ },
+ {
+  "node": 7513623493,
+  "lat": 47.301955,
+  "lon": -122.226226,
+  "site_lat": 47.302054,
+  "site_lon": -122.226369,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 15.4,
+  "names": [
+   "Dennys Auburn"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   465665
+  ]
+ },
+ {
+  "node": 3618096727,
+  "lat": 47.386955,
+  "lon": -122.203525,
+  "site_lat": 47.386376,
+  "site_lon": -122.203322,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.1,
+  "names": [
+   "Kent, WA Rechargery Relay - 104th Ave SE"
+  ],
+  "networks": [
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   471502
+  ]
+ },
+ {
+  "node": 8863156513,
+  "lat": 47.476151,
+  "lon": -122.333793,
+  "site_lat": 47.476251,
+  "site_lon": -122.332159,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 123.2,
+  "names": [
+   "Fred Meyer WBN Burien #28"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   373100
+  ]
+ },
+ {
+  "node": 4042909193,
+  "lat": 47.505412,
+  "lon": -122.15754,
+  "site_lat": 47.505542,
+  "site_lon": -122.157571,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 14.7,
+  "names": [
+   "Central Highlands Plaza"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   373082
+  ]
+ },
+ {
+  "node": 9896690499,
+  "lat": 47.700137,
+  "lon": -122.02562,
+  "site_lat": 47.69951,
+  "site_lon": -122.02569,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 69.9,
+  "names": [
+   "Kroger QFC 878 (Redmond, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   316269
+  ]
+ },
+ {
+  "node": 1810739304,
+  "lat": 47.825448,
+  "lon": -122.292403,
+  "site_lat": 47.825323,
+  "site_lon": -122.292877,
+  "ports": 6,
+  "n_stations": 3,
+  "diameter_m": 31.2,
+  "snap_m": 38.2,
+  "names": [
+   "LYNNWOOD DCFC CH NORTH",
+   "LYNNWOOD DCFC CH NORTH.",
+   "LYNNWOOD DCFC CH SOUTH"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   395899,
+   395900,
+   395901
+  ]
+ },
+ {
+  "node": 4640176538,
+  "lat": 47.435905,
+  "lon": -122.295686,
+  "site_lat": 47.435922,
+  "site_lon": -122.296432,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 49.6,
+  "snap_m": 56.0,
+  "names": [
+   "DC CORRIDOR WALLYPARKDC2",
+   "Dennys SeaTac"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "RED_E"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   172882,
+   469413
+  ]
+ },
+ {
+  "node": 10018971712,
+  "lat": 47.546986,
+  "lon": -122.32024,
+  "site_lat": 47.546822,
+  "site_lon": -122.3196,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 778.4,
+  "snap_m": 51.4,
+  "names": [
+   "BoA Georgetown WA3-129 (Seattle, WA)",
+   "EVROADWAY WA-G-COLLEGE01"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   188130,
+   384144
+  ]
+ },
+ {
+  "node": 110527270,
+  "lat": 47.138601,
+  "lon": -122.526109,
+  "site_lat": 47.138557,
+  "site_lon": -122.525614,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 37.5,
+  "names": [
+   "Electric Era Charging Station"
+  ],
+  "networks": [
+   "ELECTRIC_ERA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   446574
+  ]
+ },
+ {
+  "node": 7308976333,
+  "lat": 47.187591,
+  "lon": -122.483684,
+  "site_lat": 47.187521,
+  "site_lon": -122.483984,
+  "ports": 4,
+  "n_stations": 3,
+  "diameter_m": 206.2,
+  "snap_m": 23.8,
+  "names": [
+   "HYSHOP CUSTOMER ST",
+   "HYSHOP INVENTORY",
+   "South Tacoma Honda"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   316998,
+   327544,
+   327545
+  ]
+ },
+ {
+  "node": 10772725912,
+  "lat": 47.245993,
+  "lon": -122.38494,
+  "site_lat": 47.24574,
+  "site_lon": -122.385112,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 9.2,
+  "snap_m": 30.9,
+  "names": [
+   "LOVE'S 448 - WA #448 DC1",
+   "LOVE'S 448 - WA #448 DC2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   461121,
+   461122
+  ]
+ },
+ {
+  "node": 7419904025,
+  "lat": 47.253231,
+  "lon": -122.440025,
+  "site_lat": 47.253287,
+  "site_lon": -122.44,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 811.9,
+  "snap_m": 6.5,
+  "names": [
+   "14th & Pacific Parking Lot Fast Charger",
+   "Municipal Lot Fast Charger"
+  ],
+  "networks": [
+   "FLO"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   375743,
+   446232
+  ]
+ },
+ {
+  "node": 4270685502,
+  "lat": 47.386917,
+  "lon": -122.186125,
+  "site_lat": 47.386743,
+  "site_lon": -122.186063,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 19.9,
+  "names": [
+   "ARCO 116th Avenue SE, Kent, WA"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   355540
+  ]
+ },
+ {
+  "node": 3682820042,
+  "lat": 47.395668,
+  "lon": -122.228017,
+  "site_lat": 47.395551,
+  "site_lon": -122.228888,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.7,
+  "names": [
+   "Bowen Scarff Ford"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   312149
+  ]
+ },
+ {
+  "node": 5453894032,
+  "lat": 47.469707,
+  "lon": -122.219296,
+  "site_lat": 47.469462,
+  "site_lon": -122.219564,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 64.8,
+  "snap_m": 33.9,
+  "names": [
+   "Brotherton Cadillac Buick GMC.",
+   "SOUNDFORDELEC25 SOUND FORD LINK"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   389951,
+   447021
+  ]
+ },
+ {
+  "node": 53183461,
+  "lat": 47.484921,
+  "lon": -122.272734,
+  "site_lat": 47.48506,
+  "site_lon": -122.272602,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 12.0,
+  "snap_m": 18.4,
+  "names": [
+   "CITY LIGHT TUKWILA 1",
+   "CITY LIGHT TUKWILA 2",
+   "CITY LIGHT TUKWILA 3",
+   "CITY LIGHT TUKWILA 4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   171349,
+   389081,
+   389084,
+   390807
+  ]
+ },
+ {
+  "node": 4580665849,
+  "lat": 47.523319,
+  "lon": -122.270695,
+  "site_lat": 47.52289,
+  "site_lon": -122.27066,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 47.8,
+  "names": [
+   "Rainier Beach WA3-155 ( Seattle, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   170404
+  ]
+ },
+ {
+  "node": 3629413341,
+  "lat": 47.581908,
+  "lon": -122.334878,
+  "site_lat": 47.581599,
+  "site_lon": -122.33483,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 8.0,
+  "snap_m": 34.5,
+  "names": [
+   "VOLVO CAR USA SEATTLE DC1",
+   "VOLVO CAR USA SEATTLE DC2",
+   "VOLVO CAR USA SEATTLE DC3",
+   "VOLVO CAR USA SEATTLE DC4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   236752,
+   236753,
+   236754,
+   236755
+  ]
+ },
+ {
+  "node": 10548375505,
+  "lat": 47.623378,
+  "lon": -122.356716,
+  "site_lat": 47.623378,
+  "site_lon": -122.35684,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 774.7,
+  "snap_m": 9.4,
+  "names": [
+   "BoA Queen Anne WA3-154 (Seattle, WA)",
+   "EVROADWAY WA-PACSCI01"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   191264,
+   384081
+  ]
+ },
+ {
+  "node": 10239690092,
+  "lat": 47.639362,
+  "lon": -122.378476,
+  "site_lat": 47.63986,
+  "site_lon": -122.377668,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 82.1,
+  "names": [
+   "Interbay Business Center"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228647
+  ]
+ },
+ {
+  "node": 4915520494,
+  "lat": 47.66122,
+  "lon": -122.296542,
+  "site_lat": 47.66149,
+  "site_lon": -122.29641,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 31.6,
+  "names": [
+   "QFC 807 (Seattle, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   199190
+  ]
+ },
+ {
+  "node": 771801451,
+  "lat": 47.741613,
+  "lon": -122.347902,
+  "site_lat": 47.742648,
+  "site_lon": -122.349496,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 92.3,
+  "snap_m": 166.1,
+  "names": [
+   "CITY LIGHT SHORELINE 1",
+   "CITY LIGHT SHORELINE 2",
+   "CITY LIGHT SHORELINE 3",
+   "CITY LIGHT SHORELINE 4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   452265,
+   452266,
+   456399,
+   456400
+  ]
+ },
+ {
+  "node": 471279531,
+  "lat": 47.761663,
+  "lon": -122.175639,
+  "site_lat": 47.761303,
+  "site_lon": -122.175434,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 42.9,
+  "names": [
+   "Bothell Public Foods: 18404 120th Ave NE"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   416497
+  ]
+ },
+ {
+  "node": 1803219029,
+  "lat": 47.761604,
+  "lon": -122.132727,
+  "site_lat": 47.761812,
+  "site_lon": -122.132757,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 23.2,
+  "names": [
+   "ARCO NE Woodinville Duvall Road, Woodinville, WA"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   357182
+  ]
+ },
+ {
+  "node": 50726590,
+  "lat": 47.799626,
+  "lon": -122.331852,
+  "site_lat": 47.800342,
+  "site_lon": -122.33173,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 80.2,
+  "names": [
+   "WinCo Foods - Edmonds #136"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   261824
+  ]
+ },
+ {
+  "node": 3474253518,
+  "lat": 47.817611,
+  "lon": -122.319516,
+  "site_lat": 47.817014,
+  "site_lon": -122.319482,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.4,
+  "names": [
+   "Pierre Ford of Lynnwood"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446310
+  ]
+ },
+ {
+  "node": 5419887348,
+  "lat": 47.929293,
+  "lon": -122.221255,
+  "site_lat": 47.929458,
+  "site_lon": -122.221944,
+  "ports": 4,
+  "n_stations": 3,
+  "diameter_m": 599.6,
+  "snap_m": 54.9,
+  "names": [
+   "Chevrolet of Everett",
+   "LJ HYUNDAI CP NORTH",
+   "LJ HYUNDAI CP SOUTH"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "EV Connect"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   326741,
+   327210,
+   350721
+  ]
+ },
+ {
+  "node": 6905111918,
+  "lat": 48.055423,
+  "lon": -122.272964,
+  "site_lat": 48.055364,
+  "site_lon": -122.272845,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 14.0,
+  "snap_m": 11.1,
+  "names": [
+   "TULALIP 6710-4906DC",
+   "TULALIP DC-YOUTH-6A",
+   "TULALIP DC-YOUTH-6B",
+   "TULALIP DC-YOUTH-7B"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462374,
+   462376,
+   462377,
+   462379
+  ]
+ },
+ {
+  "node": 50610821,
+  "lat": 48.052054,
+  "lon": -122.25869,
+  "site_lat": 48.055419,
+  "site_lon": -122.257504,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 11.0,
+  "snap_m": 384.7,
+  "names": [
+   "TULALIP AD-DC1",
+   "TULALIP AD-DC2",
+   "TULALIP AD-DC3",
+   "TULALIP AD-DC4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   459773,
+   459774,
+   459775,
+   459776
+  ]
+ },
+ {
+  "node": 7059724835,
+  "lat": 48.064447,
+  "lon": -122.281264,
+  "site_lat": 48.064361,
+  "site_lon": -122.280566,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 140.1,
+  "snap_m": 53.3,
+  "names": [
+   "TULALIP L3-GATHER-2",
+   "TULALIP L3-GATHER-3",
+   "TULALIP L3-GATHER-4",
+   "TULALIP L3-GATHER-5"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462380,
+   462381,
+   462424,
+   462425
+  ]
+ },
+ {
+  "node": 252847568,
+  "lat": 47.290472,
+  "lon": -122.310436,
+  "site_lat": 47.29149,
+  "site_lon": -122.30889,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 162.1,
+  "names": [
+   "Walmart 3794 (Federal Way, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   185190
+  ]
+ },
+ {
+  "node": 53077696,
+  "lat": 47.360497,
+  "lon": -122.106711,
+  "site_lat": 47.36029,
+  "site_lon": -122.10773,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 79.9,
+  "names": [
+   "Walmart 5073 (Covington, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   124057
+  ]
+ },
+ {
+  "node": 4294826530,
+  "lat": 47.497159,
+  "lon": -122.199039,
+  "site_lat": 47.49721,
+  "site_lon": -122.19924,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 16.1,
+  "names": [
+   "Target T2290 (Renton Landing, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   123050
+  ]
+ },
+ {
+  "node": 53144797,
+  "lat": 47.532042,
+  "lon": -122.337573,
+  "site_lat": 47.532029,
+  "site_lon": -122.337534,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 3.3,
+  "names": [
+   "MTR - Seattle"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420915
+  ]
+ },
+ {
+  "node": 4270649897,
+  "lat": 47.571267,
+  "lon": -122.328962,
+  "site_lat": 47.571179,
+  "site_lon": -122.328685,
+  "ports": 3,
+  "n_stations": 2,
+  "diameter_m": 8.6,
+  "snap_m": 23.0,
+  "names": [
+   "CITY LIGHT SOUTH SERVICE 1",
+   "CITY LIGHT SOUTH SERVICE 2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   462640,
+   462641
+  ]
+ },
+ {
+  "node": 434938891,
+  "lat": 47.99714,
+  "lon": -122.102196,
+  "site_lat": 47.99823,
+  "site_lon": -122.10064,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 168.3,
+  "names": [
+   "Target T1331 (Lake Stevens, WA)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   145684
+  ]
+ },
+ {
+  "node": 9214959766,
+  "lat": 47.527296,
+  "lon": -122.315379,
+  "site_lat": 47.527387,
+  "site_lon": -122.315418,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 14.6,
+  "snap_m": 10.5,
+  "names": [
+   "CITY LIGHT SOUTH PARK 1",
+   "CITY LIGHT SOUTH PARK 2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   353509,
+   353542
+  ]
+ },
+ {
+  "node": 7278615963,
+  "lat": 47.562038,
+  "lon": -122.381475,
+  "site_lat": 47.56232,
+  "site_lon": -122.381632,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 13.9,
+  "snap_m": 33.5,
+  "names": [
+   "CITY LIGHT WEST SEATTLE 1",
+   "CITY LIGHT WEST SEATTLE 2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   451643,
+   451644
+  ]
+ },
+ {
+  "node": 11462392679,
+  "lat": 47.579628,
+  "lon": -122.312125,
+  "site_lat": 47.579665,
+  "site_lon": -122.312227,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 6.6,
+  "snap_m": 8.7,
+  "names": [
+   "CITY LIGHT N BEACON HILL 1",
+   "CITY LIGHT N BEACON HILL 2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   353541,
+   353546
+  ]
+ },
+ {
+  "node": 1345983616,
+  "lat": 47.580629,
+  "lon": -122.142703,
+  "site_lat": 47.58065,
+  "site_lon": -122.14343,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 54.6,
+  "names": [
+   "Bellevue Nissan"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772"
+  ],
+  "afdc_ids": [
+   86025
+  ]
+ },
+ {
+  "node": 6047605163,
+  "lat": 47.647935,
+  "lon": -122.137506,
+  "site_lat": 47.6491,
+  "site_lon": -122.13828,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 141.9,
+  "names": [
+   "Building 125"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   334160
+  ]
+ },
+ {
+  "node": 5416167610,
+  "lat": 48.052761,
+  "lon": -122.178162,
+  "site_lat": 48.05265,
+  "site_lon": -122.178388,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 9.7,
+  "snap_m": 21.0,
+  "names": [
+   "MCC CHARGERS CPE250-1",
+   "MCC CHARGERS CPE250-2"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   238844,
+   238845
+  ]
+ },
+ {
+  "node": 12032651587,
+  "lat": 47.219476,
+  "lon": -122.484845,
+  "site_lat": 47.21973,
+  "site_lon": -122.485672,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 68.2,
+  "names": [
+   "Tacoma Nissan"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   39797
+  ]
+ },
+ {
+  "node": 5374423202,
+  "lat": 47.458243,
+  "lon": -122.333927,
+  "site_lat": 47.458152,
+  "site_lon": -122.333513,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 32.7,
+  "names": [
+   "Burien Nissan"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772"
+  ],
+  "afdc_ids": [
+   39780
+  ]
+ },
+ {
+  "node": 3705835339,
+  "lat": 47.467394,
+  "lon": -122.339131,
+  "site_lat": 47.467371,
+  "site_lon": -122.33941,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 21.1,
+  "names": [
+   "CITY LIGHT BURIEN 1"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   199383
+  ]
+ },
+ {
+  "node": 6287677050,
+  "lat": 47.546554,
+  "lon": -122.354884,
+  "site_lat": 47.546315,
+  "site_lon": -122.351959,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 221.2,
+  "names": [
+   "EVROADWAY WA-S-COLLEGE01"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   384150
+  ]
+ },
+ {
+  "node": 5974166527,
+  "lat": 47.82021,
+  "lon": -122.271037,
+  "site_lat": 47.820256,
+  "site_lon": -122.271361,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.8,
+  "names": [
+   "Whole Foods Lynnwood"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   470497
+  ]
+ }
+]

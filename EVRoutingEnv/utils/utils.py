@@ -145,6 +145,23 @@ def check_navigation_feasibility(
     return False
 
 
+def resolve_network_data_dir(network_config: Dict[str, Any]) -> str:
+    """Absolute folder of the road-network case study named by ``network.data_path``.
+
+    ``EVRoutingEnv/...`` paths are relative to the project root; any other relative path is
+    relative to the ``EVRoutingEnv`` package (e.g. ``data/case_studies/seattle``).
+    """
+    data_path = network_config["data_path"]
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    EVRoutingEnv_dir = os.path.dirname(current_dir)
+    if os.path.isabs(data_path):
+        return data_path.rstrip("/")
+    if data_path.startswith("EVRoutingEnv/"):
+        project_root = os.path.dirname(EVRoutingEnv_dir)
+        return os.path.join(project_root, data_path.rstrip("/"))
+    return os.path.join(EVRoutingEnv_dir, data_path.rstrip("/"))
+
+
 def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     """
     Load and build the road network graph from JSON files.
@@ -161,25 +178,11 @@ def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     
     # Get network configuration
     network_config = config["network"]
-    data_path = network_config["data_path"]
     energy_file = network_config["shortest_path_energy_file"]
     time_file = network_config["shortest_path_time_file"]
     station_file = network_config["station_info_file"]
 
-    # Get the directory where this file is located (EVRoutingEnv/utils)
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Navigate up from utils to EVRoutingEnv
-    EVRoutingEnv_dir = os.path.dirname(current_dir)
-    
-    # Construct data directory path
-    # If data_path starts with "EVRoutingEnv/", use it as-is relative to project root
-    if data_path.startswith("EVRoutingEnv/"):
-        # Relative to project root
-        project_root = os.path.dirname(EVRoutingEnv_dir)
-        data_dir = os.path.join(project_root, data_path.rstrip('/'))
-    else:
-        # Relative to EVRoutingEnv directory
-        data_dir = os.path.join(EVRoutingEnv_dir, data_path.rstrip('/'))
+    data_dir = resolve_network_data_dir(network_config)
 
     edge_distance_file = os.path.join(data_dir, energy_file)
     edge_time_file = os.path.join(data_dir, time_file)

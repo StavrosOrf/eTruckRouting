@@ -1,0 +1,15 @@
+# Chicagoland case study: flat terrain, dense grid, one-way and speed asymmetry rather than slope.
+name: chicago
+title: "Chicagoland (IL)"
+state: IL
+geofabrik: north-america/us/illinois
+amazon_stations: [DCH1, DCH2, DCH3, DCH4]
+stop_percentiles: [0.5, 99.5]
+bbox_margin_deg: 0.03
+n_customers: 230
+max_chargers: 0                        # 0 = keep every DC-fast site in the study area
+charger_merge_m: 1000
+max_snap_m: 400
+vehicle_profile: heavy_truck           # 36 t class-8 BEV calibrated to the California consumption
+# battery_kwh: 400                      # default: the 400 kWh of config_joint.yaml
+seed: 0

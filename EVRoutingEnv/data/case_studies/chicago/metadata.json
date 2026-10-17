@@ -1,0 +1,134 @@
+{
+ "name": "chicago",
+ "title": "Chicagoland (IL)",
+ "generated_utc": "2026-10-17T17:16:39Z",
+ "preset": {
+  "name": "chicago",
+  "title": "Chicagoland (IL)",
+  "state": "IL",
+  "geofabrik": "north-america/us/illinois",
+  "amazon_stations": [
+   "DCH1",
+   "DCH2",
+   "DCH3",
+   "DCH4"
+  ],
+  "stop_percentiles": [
+   0.5,
+   99.5
+  ],
+  "bbox_margin_deg": 0.03,
+  "n_customers": 230,
+  "max_chargers": 0,
+  "charger_merge_m": 1000,
+  "max_snap_m": 400,
+  "vehicle_profile": "heavy_truck",
+  "seed": 0
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 107.0,
+ "counts": {
+  "nodes": 444,
+  "chargers": 210,
+  "depots": 4,
+  "customers": 230,
+  "dcfast_ports_in_nodes": 1644,
+  "dcfast_sites_available": 210,
+  "dcfast_stations_raw": 315
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  41.54099,
+  -88.43399,
+  42.50944,
+  -87.56377
+ ],
+ "road_network": {
+  "nodes": 1255886,
+  "directed_edges": 2401294,
+  "plotted_segments": 325515,
+  "excluded": "service roads, private/no-motor-vehicle ways",
+  "terrain_zoom": 13,
+  "dem_rms_change_m": 0.4133628183576379,
+  "n_span_nodes_interpolated": 3790,
+  "elevation_range_m": [
+   164.98539520663937,
+   306.4984773210091
+  ]
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 1,
+ "od_stats": {
+  "reduced_cost_min": 0.0003460322491110197,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 3.2890000909446826e-06,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   13.53,
+   51.83,
+   103.12,
+   168.22
+  ],
+  "time_h_p5_p50_p95_max": [
+   0.372,
+   1.37,
+   2.672,
+   4.49
+  ],
+  "dist_km_p5_p50_p95_max": [
+   10.9,
+   41.7,
+   82.1,
+   135.6
+  ],
+  "kwh_per_km_median": 1.245
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 98302,
+   "median_rel_diff": 0.0982,
+   "p90_rel_diff": 0.2009,
+   "frac_over_5pct": 0.7556,
+   "frac_over_20pct": 0.102
+  },
+  "time": {
+   "pairs": 98268,
+   "median_rel_diff": 0.0219,
+   "p90_rel_diff": 0.0848,
+   "frac_over_5pct": 0.2093,
+   "frac_over_20pct": 0.0181
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 1670.8,
+  "merged_nodes_with_multiple_stations": 57
+ },
+ "sources": {
+  "delivery_and_depot_locations": "Amazon Last Mile Routing Research Challenge 2021 (training routes), CC BY-NC 4.0",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; USGS 3DEP/NED over the US)",
+  "chargers": "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_chicago.yaml"
+}

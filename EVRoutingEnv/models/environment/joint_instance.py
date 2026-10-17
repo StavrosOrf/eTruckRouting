@@ -23,6 +23,7 @@ class JointRoutingInstance:
     tasks: tuple[CustomerTask, ...]
     witness_owners: tuple[int, ...] = ()
     witness_routes: tuple = ()
+    generation_attempts_used: int = 0
 
     def create_registry(self, *, sequential: bool = False) -> FleetTaskRegistry:
         # Tasks are mutable during an episode, so return fresh copies.
@@ -80,7 +81,7 @@ def generate_joint_routing_instance(
         transport_graph, charging_nodes, battery_capacity, energy_multiplier,
     )
     last_error = "no candidate"
-    for _ in range(generation_attempts):
+    for attempt in range(1, generation_attempts + 1):
         instance = _sample_joint_routing_instance(
             transport_graph, charging_nodes, rng, num_customers=num_customers,
             num_trucks=num_trucks, battery_capacity=battery_capacity,
@@ -98,7 +99,11 @@ def generate_joint_routing_instance(
                 min_hop_energy_kwh=min_hop_energy_kwh,
                 max_hop_energy_kwh=max_hop_energy_kwh,
             )
-            instance = replace(instance, witness_routes=routes)
+            instance = replace(
+                instance,
+                witness_routes=routes,
+                generation_attempts_used=attempt,
+            )
             if certify is not None:
                 certify(instance)
             return instance

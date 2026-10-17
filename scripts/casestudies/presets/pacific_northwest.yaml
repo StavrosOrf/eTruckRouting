@@ -1,0 +1,21 @@
+# Washington + Oregon: about the area of California; Cascades and Coast Range passes make
+# energy strongly direction dependent, and distances reach about 1000 km.
+name: pacific_northwest
+title: "Pacific Northwest (WA + OR)"
+state: [WA, OR]
+geofabrik: [north-america/us/washington, north-america/us/oregon]
+delivery_source: places                # real towns and cities (OpenStreetMap place nodes with population)
+bbox: [41.95, -124.80, 49.05, -116.40] # min_lat, min_lon, max_lat, max_lon
+n_customers: 230
+n_depots: 4                            # the four largest selected places
+min_population: 1000
+min_place_spacing_m: 5000
+max_road_class: unclassified           # motorway .. unclassified; residential streets are left out
+terrain_zoom: 11                       # about 52 m per pixel at this latitude
+smooth_length_m: 150
+vis_max_class: secondary
+max_chargers: 0                        # keep every DC-fast site
+charger_merge_m: 1000
+max_snap_m: 5000
+vehicle_profile: heavy_truck
+seed: 0

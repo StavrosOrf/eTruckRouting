@@ -1,0 +1,15 @@
+# Puget Sound (Seattle) case study: hilly, water-constrained, strongly asymmetric terrain.
+name: seattle
+title: "Puget Sound (Seattle, WA)"
+state: WA
+geofabrik: north-america/us/washington
+amazon_stations: [DSE2, DSE4, DSE5]   # Amazon last-mile depots (real stop locations)
+stop_percentiles: [0.5, 99.5]          # trim outlier stops when deriving the study area
+bbox_margin_deg: 0.03
+n_customers: 230
+max_chargers: 0                        # 0 = keep every DC-fast site in the study area
+charger_merge_m: 1000                  # DC-fast stations closer than this (m) become one node
+max_snap_m: 400                        # drop stops/chargers farther than this from a road
+vehicle_profile: heavy_truck           # 36 t class-8 BEV calibrated to the California consumption
+# battery_kwh: 400                      # default: the 400 kWh of config_joint.yaml
+seed: 0

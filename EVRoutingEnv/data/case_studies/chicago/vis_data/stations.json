@@ -1,0 +1,5214 @@
+[
+ {
+  "node": 12103144750,
+  "lat": 41.999398,
+  "lon": -87.884451,
+  "site_lat": 41.999386,
+  "site_lon": -87.884351,
+  "ports": 114,
+  "n_stations": 4,
+  "diameter_m": 451.8,
+  "snap_m": 8.4,
+  "names": [
+   "Chicago, IL - O'Hare - Tesla Supercharger",
+   "Des Plaines, IL - Tesla Supercharger",
+   "Gigahub ORD Mannheim Road, Des Plaines, IL",
+   "Holiday Inn Chicago O'Hare"
+  ],
+  "networks": [
+   "BP_PULSE",
+   "NAYAX_ENERGY",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   164167,
+   372600,
+   446867,
+   448701
+  ]
+ },
+ {
+  "node": 10020061271,
+  "lat": 41.941134,
+  "lon": -87.705223,
+  "site_lat": 41.941837,
+  "site_lon": -87.705509,
+  "ports": 35,
+  "n_stations": 5,
+  "diameter_m": 1593.6,
+  "snap_m": 81.6,
+  "names": [
+   "BOA Logan Square IL4-313 (Chicago, IL)",
+   "Berman Nissan - Chicago",
+   "Chicago, IL - West Addison Street - Tesla Supercharger",
+   "Kennedy Plaza",
+   "Shell N Kimball Ave"
+  ],
+  "networks": [
+   "Electrify America",
+   "NOODOE",
+   "Non-Networked",
+   "RED_E",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   98760,
+   191563,
+   429744,
+   448405,
+   448461
+  ]
+ },
+ {
+  "node": 739148738,
+  "lat": 41.724069,
+  "lon": -88.037338,
+  "site_lat": 41.723853,
+  "site_lon": -88.036908,
+  "ports": 30,
+  "n_stations": 4,
+  "diameter_m": 1074.3,
+  "snap_m": 42.9,
+  "names": [
+   "2010 87th St",
+   "Bolingbrook, IL - Tesla Supercharger",
+   "Caseys 6547 Bolingbrook IL",
+   "IKEA Store 170 (Bolingbrook, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "RED_E",
+   "SHELL_RECHARGE",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102153,
+   279411,
+   447865,
+   459802
+  ]
+ },
+ {
+  "node": 5929233163,
+  "lat": 41.801943,
+  "lon": -88.371104,
+  "site_lat": 41.801439,
+  "site_lon": -88.371302,
+  "ports": 28,
+  "n_stations": 7,
+  "diameter_m": 566.2,
+  "snap_m": 58.4,
+  "names": [
+   "CHARGEPOINT01 DC FAST",
+   "Genesis of North Aurora",
+   "Gerald Ford",
+   "Gerald Nissan - North Aurora",
+   "Gerald Nissan North Aurora Inc",
+   "North Aurora, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network",
+   "IN_CHARGE",
+   "NAYAX_ENERGY",
+   "Tesla",
+   "VIALYNK"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   46832,
+   102152,
+   328642,
+   349812,
+   378945,
+   448698,
+   465463
+  ]
+ },
+ {
+  "node": 5053742387,
+  "lat": 42.169995,
+  "lon": -88.335173,
+  "site_lat": 42.170345,
+  "site_lon": -88.33501,
+  "ports": 28,
+  "n_stations": 7,
+  "diameter_m": 1472.8,
+  "snap_m": 41.2,
+  "names": [
+   "Algonquin, IL - Tesla Supercharger",
+   "Meijer Algonquin #206 (Algonquin, IL)",
+   "ROSEN GROUP CPE250 2",
+   "ROSEN GROUP CPE250 ST 1",
+   "ROSEN GROUP IL PARKING LOT",
+   "ROSEN GROUP IL PARKING LOT2",
+   "Thorntons W Algonquin Road, Lake in the Hills, IL"
+  ],
+  "networks": [
+   "BP_PULSE",
+   "ChargePoint Network",
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   224563,
+   279378,
+   302291,
+   302297,
+   346401,
+   346402,
+   374805
+  ]
+ },
+ {
+  "node": 13660069409,
+  "lat": 41.871388,
+  "lon": -87.639344,
+  "site_lat": 41.871452,
+  "site_lon": -87.639348,
+  "ports": 22,
+  "n_stations": 3,
+  "diameter_m": 843.6,
+  "snap_m": 7.1,
+  "names": [
+   "433 W Van Buren St",
+   "Chicago, IL - South Canal Street - Tesla Supercharger",
+   "Old Post Office"
+  ],
+  "networks": [
+   "EVIUM",
+   "Tesla",
+   "VIALYNK"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102156,
+   451616,
+   466730
+  ]
+ },
+ {
+  "node": 10308901614,
+  "lat": 41.880531,
+  "lon": -87.730563,
+  "site_lat": 41.880487,
+  "site_lon": -87.730436,
+  "ports": 22,
+  "n_stations": 2,
+  "diameter_m": 686.6,
+  "snap_m": 11.6,
+  "names": [
+   "Buddy Bear - 3940 W. Washington Blvd",
+   "Power Up Plaza"
+  ],
+  "networks": [
+   "Blink Network",
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   417793,
+   420713
+  ]
+ },
+ {
+  "node": 2345130243,
+  "lat": 41.928245,
+  "lon": -87.682119,
+  "site_lat": 41.928798,
+  "site_lon": -87.681395,
+  "ports": 22,
+  "n_stations": 2,
+  "diameter_m": 841.6,
+  "snap_m": 85.8,
+  "names": [
+   "Chicago, IL - Elston Avenue - Tesla Supercharger",
+   "Costco Lincoln Park (Chicago, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   190810,
+   421384
+  ]
+ },
+ {
+  "node": 1142310561,
+  "lat": 42.050893,
+  "lon": -87.993284,
+  "site_lat": 42.049459,
+  "site_lon": -87.994743,
+  "ports": 22,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 200.0,
+  "names": [
+   "Rolling Meadows, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102166
+  ]
+ },
+ {
+  "node": 8689396554,
+  "lat": 41.700748,
+  "lon": -88.12465,
+  "site_lat": 41.700767,
+  "site_lon": -88.125846,
+  "ports": 20,
+  "n_stations": 2,
+  "diameter_m": 237.9,
+  "snap_m": 99.0,
+  "names": [
+   "255 N Weber Rd",
+   "Bolingbrook, IL - North Weber Road - Tesla Supercharger"
+  ],
+  "networks": [
+   "SHELL_RECHARGE",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   361247,
+   449601
+  ]
+ },
+ {
+  "node": 8347452511,
+  "lat": 41.715057,
+  "lon": -88.20611,
+  "site_lat": 41.714799,
+  "site_lon": -88.206381,
+  "ports": 20,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 36.4,
+  "names": [
+   "Naperville, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   390245
+  ]
+ },
+ {
+  "node": 286473907,
+  "lat": 41.906415,
+  "lon": -87.835037,
+  "site_lat": 41.906431,
+  "site_lon": -87.834992,
+  "ports": 20,
+  "n_stations": 3,
+  "diameter_m": 621.7,
+  "snap_m": 4.2,
+  "names": [
+   "GFCS LLC Melrose Park",
+   "REYA CPE250-1",
+   "REYA CPE250-2"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "IN_CHARGE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   421630,
+   421644,
+   450778
+  ]
+ },
+ {
+  "node": 10223969728,
+  "lat": 42.00786,
+  "lon": -87.763714,
+  "site_lat": 42.009044,
+  "site_lon": -87.7634,
+  "ports": 20,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 134.2,
+  "names": [
+   "Skokie, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102167
+  ]
+ },
+ {
+  "node": 4606544077,
+  "lat": 42.009404,
+  "lon": -88.145548,
+  "site_lat": 42.009682,
+  "site_lon": -88.145867,
+  "ports": 20,
+  "n_stations": 3,
+  "diameter_m": 1170.0,
+  "snap_m": 40.7,
+  "names": [
+   "Hanover Park",
+   "Hanover Park, IL Rechargery Relay - Barrington Rd",
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "IONNA",
+   "WALMART",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   257387,
+   448468,
+   466552
+  ]
+ },
+ {
+  "node": 618404993,
+  "lat": 42.343797,
+  "lon": -87.900046,
+  "site_lat": 42.343432,
+  "site_lon": -87.900357,
+  "ports": 20,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.0,
+  "names": [
+   "Waukegan, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   254098
+  ]
+ },
+ {
+  "node": 13124354253,
+  "lat": 41.912598,
+  "lon": -87.664371,
+  "site_lat": 41.912109,
+  "site_lon": -87.66482,
+  "ports": 18,
+  "n_stations": 3,
+  "diameter_m": 1273.8,
+  "snap_m": 65.8,
+  "names": [
+   "Hyatt Place Chicago and Wicker Park",
+   "Nortown Auto",
+   "Shell Armitage"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446875,
+   448406,
+   463298
+  ]
+ },
+ {
+  "node": 8588130150,
+  "lat": 41.70103,
+  "lon": -88.313612,
+  "site_lat": 41.700013,
+  "site_lon": -88.312442,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 117.9,
+  "snap_m": 148.8,
+  "names": [
+   "Meijer Oswego (Oswego, IL)",
+   "Oswego, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   170320,
+   220691
+  ]
+ },
+ {
+  "node": 6091353908,
+  "lat": 41.752027,
+  "lon": -87.914429,
+  "site_lat": 41.752223,
+  "site_lon": -87.913929,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 46.7,
+  "names": [
+   "Burr Ridge, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   220202
+  ]
+ },
+ {
+  "node": 8247243407,
+  "lat": 41.769937,
+  "lon": -88.208109,
+  "site_lat": 41.769127,
+  "site_lon": -88.207982,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 26.9,
+  "snap_m": 90.7,
+  "names": [
+   "Aurora, IL - IL-59 - Tesla Supercharger",
+   "Meijer Aurora (Aurora, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   168276,
+   170301
+  ]
+ },
+ {
+  "node": 261223173,
+  "lat": 41.811597,
+  "lon": -87.720055,
+  "site_lat": 41.811797,
+  "site_lon": -87.720333,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 819.4,
+  "snap_m": 32.0,
+  "names": [
+   "Buddy Bear - 4750 S. Archer Avenue",
+   "Chicago, IL - South Pulaski Road - Tesla Supercharger"
+  ],
+  "networks": [
+   "NOODOE",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   237628,
+   420718
+  ]
+ },
+ {
+  "node": 4321241017,
+  "lat": 41.845911,
+  "lon": -88.002872,
+  "site_lat": 41.843646,
+  "site_lon": -88.002955,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 252.0,
+  "names": [
+   "Lombard, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   420631
+  ]
+ },
+ {
+  "node": 237755221,
+  "lat": 41.906404,
+  "lon": -87.978445,
+  "site_lat": 41.906463,
+  "site_lon": -87.97822,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 19.8,
+  "names": [
+   "Villa Park, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   261469
+  ]
+ },
+ {
+  "node": 263984970,
+  "lat": 41.906929,
+  "lon": -87.646314,
+  "site_lat": 41.906483,
+  "site_lon": -87.645333,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 470.2,
+  "snap_m": 95.1,
+  "names": [
+   "Chicago, IL - North Halsted - Tesla Supercharger",
+   "Target T2613 (Chicago, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   122296,
+   149766
+  ]
+ },
+ {
+  "node": 235193154,
+  "lat": 41.915361,
+  "lon": -88.29217,
+  "site_lat": 41.91525,
+  "site_lon": -88.29141,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 835.0,
+  "snap_m": 64.1,
+  "names": [
+   "Clarke Mosquito Control Products Inc -A",
+   "St Charles, IL Rechargery Relay - E Main St"
+  ],
+  "networks": [
+   "Blink Network",
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   395518,
+   465126
+  ]
+ },
+ {
+  "node": 9961701367,
+  "lat": 41.949818,
+  "lon": -88.119375,
+  "site_lat": 41.949773,
+  "site_lon": -88.119194,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 700.6,
+  "snap_m": 15.8,
+  "names": [
+   "Bloomingdale, IL - Tesla Supercharger",
+   "Meijer Bloomingdale (Bloomingdale, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   166802,
+   356455
+  ]
+ },
+ {
+  "node": 3717734950,
+  "lat": 41.975244,
+  "lon": -87.865757,
+  "site_lat": 41.97531,
+  "site_lon": -87.865943,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 32.1,
+  "snap_m": 17.1,
+  "names": [
+   "Macerich Fashion Outlets of Chicago (Rosemont, IL)",
+   "Rosemont, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   116801,
+   190382
+  ]
+ },
+ {
+  "node": 261118414,
+  "lat": 41.991847,
+  "lon": -87.682311,
+  "site_lat": 41.991477,
+  "site_lon": -87.68226,
+  "ports": 16,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.4,
+  "names": [
+   "Target - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   471137
+  ]
+ },
+ {
+  "node": 12440276679,
+  "lat": 42.074246,
+  "lon": -88.188521,
+  "site_lat": 42.075052,
+  "site_lon": -88.1881,
+  "ports": 16,
+  "n_stations": 2,
+  "diameter_m": 520.8,
+  "snap_m": 96.2,
+  "names": [
+   "Chase Bank - 4653 W Higgins Road",
+   "South Barrington, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   231690,
+   316919
+  ]
+ },
+ {
+  "node": 5532579882,
+  "lat": 41.765864,
+  "lon": -88.186399,
+  "site_lat": 41.765853,
+  "site_lon": -88.188063,
+  "ports": 15,
+  "n_stations": 8,
+  "diameter_m": 1670.8,
+  "snap_m": 137.7,
+  "names": [
+   "BAY 13 CHARGER CPE250",
+   "Cadillac Of Naperville",
+   "Fair Oak Ford - DCFC",
+   "Gerald Kia of Naperville",
+   "Gerald Nissan",
+   "Gerald Nissan - Naperville",
+   "Gerald Nissan, Inc"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network",
+   "EV Connect",
+   "IN_CHARGE",
+   "NAYAX_ENERGY",
+   "Non-Networked",
+   "VIALYNK"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   47213,
+   260644,
+   313711,
+   384708,
+   422876,
+   448699,
+   449382,
+   466012
+  ]
+ },
+ {
+  "node": 261295854,
+  "lat": 41.725279,
+  "lon": -87.68228,
+  "site_lat": 41.725261,
+  "site_lon": -87.683571,
+  "ports": 14,
+  "n_stations": 2,
+  "diameter_m": 34.6,
+  "snap_m": 106.8,
+  "names": [
+   "Evergreen Park, IL - Tesla Supercharger",
+   "Meijer Evergreen Park (Evergreen Park, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   149308,
+   168035
+  ]
+ },
+ {
+  "node": 5701213099,
+  "lat": 42.041812,
+  "lon": -88.282663,
+  "site_lat": 42.04185,
+  "site_lon": -88.282642,
+  "ports": 14,
+  "n_stations": 3,
+  "diameter_m": 1000.3,
+  "snap_m": 4.5,
+  "names": [
+   "Gail Borden Main Branch DCFC's - Heartland Charging Services",
+   "HCS, Holy Trinity Elgin  DCFC's",
+   "Shell Elgin"
+  ],
+  "networks": [
+   "Blink Network",
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448708,
+   461025,
+   470435
+  ]
+ },
+ {
+  "node": 6047117858,
+  "lat": 42.053357,
+  "lon": -88.050122,
+  "site_lat": 42.052896,
+  "site_lon": -88.050033,
+  "ports": 14,
+  "n_stations": 5,
+  "diameter_m": 1309.4,
+  "snap_m": 51.7,
+  "names": [
+   "Meacham DCFC\u2019s -HCS",
+   "PATRICK HYUNDAI ISLAND DC",
+   "SCHAUMBURG FORD CL1 PL1",
+   "SCHAUMBURG FORD CL2 PL2",
+   "Woodfield Village Green (Schaumburg, IL)"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   170362,
+   371389,
+   422653,
+   422654,
+   452304
+  ]
+ },
+ {
+  "node": 3731798757,
+  "lat": 42.012165,
+  "lon": -87.717515,
+  "site_lat": 42.012125,
+  "site_lon": -87.717452,
+  "ports": 13,
+  "n_stations": 2,
+  "diameter_m": 696.6,
+  "snap_m": 6.9,
+  "names": [
+   "Lincolnwood Town Center (Lincolnwood, IL)",
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "Electrify America",
+   "WALMART"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   128501,
+   466555
+  ]
+ },
+ {
+  "node": 9832372494,
+  "lat": 41.571038,
+  "lon": -87.636307,
+  "site_lat": 41.57095,
+  "site_lon": -87.63581,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 42.3,
+  "names": [
+   "Menards Homewood 3345 (Homewood, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   460131
+  ]
+ },
+ {
+  "node": 497317658,
+  "lat": 41.576116,
+  "lon": -88.153301,
+  "site_lat": 41.576102,
+  "site_lon": -88.153844,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 44.9,
+  "names": [
+   "Joliet, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   328883
+  ]
+ },
+ {
+  "node": 1491062931,
+  "lat": 41.593296,
+  "lon": -88.022107,
+  "site_lat": 41.592808,
+  "site_lon": -88.022422,
+  "ports": 12,
+  "n_stations": 2,
+  "diameter_m": 456.4,
+  "snap_m": 60.2,
+  "names": [
+   "Bettenhausen CJDR Lockport IL",
+   "Walmart EV Charging"
+  ],
+  "networks": [
+   "RED_E",
+   "WALMART"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   353822,
+   469487
+  ]
+ },
+ {
+  "node": 3583535420,
+  "lat": 41.622988,
+  "lon": -87.582634,
+  "site_lat": 41.62338,
+  "site_lon": -87.58269,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 43.9,
+  "names": [
+   "Menards Dolton 3120 (Dolton, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448737
+  ]
+ },
+ {
+  "node": 261215438,
+  "lat": 41.628019,
+  "lon": -87.605111,
+  "site_lat": 41.628077,
+  "site_lon": -87.604106,
+  "ports": 12,
+  "n_stations": 2,
+  "diameter_m": 0.0,
+  "snap_m": 83.3,
+  "names": [
+   "Dolton Park District 1",
+   "Dolton Park District 2"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   471010,
+   471011
+  ]
+ },
+ {
+  "node": 2698568374,
+  "lat": 41.632555,
+  "lon": -87.852161,
+  "site_lat": 41.632306,
+  "site_lon": -87.85205,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 29.2,
+  "names": [
+   "Orland Park, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   241144
+  ]
+ },
+ {
+  "node": 5532510303,
+  "lat": 41.749167,
+  "lon": -87.974762,
+  "site_lat": 41.749359,
+  "site_lon": -87.97481,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 21.7,
+  "names": [
+   "Brookhaven Plaza"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448372
+  ]
+ },
+ {
+  "node": 276565036,
+  "lat": 41.834962,
+  "lon": -88.025819,
+  "site_lat": 41.835144,
+  "site_lon": -88.026266,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 42.1,
+  "names": [
+   "Downers Grove, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   446143
+  ]
+ },
+ {
+  "node": 2379770942,
+  "lat": 41.947019,
+  "lon": -88.023916,
+  "site_lat": 41.946236,
+  "site_lon": -88.024376,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 95.0,
+  "names": [
+   "Centennial Plaza - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   462746
+  ]
+ },
+ {
+  "node": 7150835496,
+  "lat": 41.96354,
+  "lon": -88.097513,
+  "site_lat": 41.96377,
+  "site_lon": -88.09723,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 34.6,
+  "names": [
+   "Montrose Market"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   463297
+  ]
+ },
+ {
+  "node": 5575935708,
+  "lat": 41.998797,
+  "lon": -88.060083,
+  "site_lat": 41.99842,
+  "site_lon": -88.060065,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.9,
+  "names": [
+   "Cross Creek Commons"
+  ],
+  "networks": [
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448702
+  ]
+ },
+ {
+  "node": 13991081829,
+  "lat": 42.012161,
+  "lon": -88.336188,
+  "site_lat": 42.012498,
+  "site_lon": -88.335636,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 59.1,
+  "names": [
+   "Elgin, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   237623
+  ]
+ },
+ {
+  "node": 261258567,
+  "lat": 42.050351,
+  "lon": -87.686458,
+  "site_lat": 42.050399,
+  "site_lon": -87.685721,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 61.1,
+  "names": [
+   "Evanston, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   205811
+  ]
+ },
+ {
+  "node": 11837129062,
+  "lat": 42.1693,
+  "lon": -87.92236,
+  "site_lat": 42.169017,
+  "site_lon": -87.922735,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 44.2,
+  "names": [
+   "Buffalo Grove, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   169302
+  ]
+ },
+ {
+  "node": 4198265713,
+  "lat": 42.190828,
+  "lon": -87.826115,
+  "site_lat": 42.191179,
+  "site_lon": -87.82635,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 43.6,
+  "names": [
+   "Highland Park, IL - Skokie Valley Road - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   195696
+  ]
+ },
+ {
+  "node": 9589023781,
+  "lat": 42.322602,
+  "lon": -88.169664,
+  "site_lat": 42.321495,
+  "site_lon": -88.169698,
+  "ports": 12,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 123.1,
+  "names": [
+   "Lakemoor, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   296742
+  ]
+ },
+ {
+  "node": 5498353369,
+  "lat": 41.806604,
+  "lon": -88.036765,
+  "site_lat": 41.806722,
+  "site_lon": -88.03645,
+  "ports": 11,
+  "n_stations": 4,
+  "diameter_m": 1625.2,
+  "snap_m": 29.2,
+  "names": [
+   "Bill Kay's Nissan - Downers Grove",
+   "Genesis of Downers Grove",
+   "Packey Webb Ford",
+   "Zeigler CDJR Downers Grove"
+  ],
+  "networks": [
+   "Blink Network",
+   "FORD_CHARGE",
+   "IN_CHARGE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   46817,
+   390325,
+   395514,
+   449815
+  ]
+ },
+ {
+  "node": 12777492314,
+  "lat": 41.639769,
+  "lon": -88.115379,
+  "site_lat": 41.639415,
+  "site_lon": -88.115393,
+  "ports": 10,
+  "n_stations": 2,
+  "diameter_m": 573.2,
+  "snap_m": 39.4,
+  "names": [
+   "Romeoville Campus",
+   "Village Hall"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   457287,
+   469698
+  ]
+ },
+ {
+  "node": 2237542849,
+  "lat": 41.683484,
+  "lon": -87.662676,
+  "site_lat": 41.68394,
+  "site_lon": -87.66289,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 53.7,
+  "names": [
+   "Marshfield Plaza (Chicago, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   460036
+  ]
+ },
+ {
+  "node": 9861561171,
+  "lat": 41.750968,
+  "lon": -88.015615,
+  "site_lat": 41.750353,
+  "site_lon": -88.015727,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 69.1,
+  "names": [
+   "Woodridge Festival Shopping Mall"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   253746
+  ]
+ },
+ {
+  "node": 1582290841,
+  "lat": 41.886486,
+  "lon": -87.619134,
+  "site_lat": 41.886675,
+  "site_lon": -87.619684,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 50.2,
+  "names": [
+   "Chicago, IL - North Columbus Drive - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102157
+  ]
+ },
+ {
+  "node": 11689067816,
+  "lat": 42.052393,
+  "lon": -87.836126,
+  "site_lat": 42.052242,
+  "site_lon": -87.836708,
+  "ports": 10,
+  "n_stations": 2,
+  "diameter_m": 615.4,
+  "snap_m": 51.0,
+  "names": [
+   "Golf Mill Chevrolet",
+   "Golf Mill Ford"
+  ],
+  "networks": [
+   "EVXY"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420292,
+   420293
+  ]
+ },
+ {
+  "node": 2394194336,
+  "lat": 42.077315,
+  "lon": -87.860445,
+  "site_lat": 42.077195,
+  "site_lon": -87.860869,
+  "ports": 10,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 37.5,
+  "names": [
+   "Glenview, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102161
+  ]
+ },
+ {
+  "node": 2072460645,
+  "lat": 42.107736,
+  "lon": -87.80271,
+  "site_lat": 42.107484,
+  "site_lon": -87.802236,
+  "ports": 9,
+  "n_stations": 2,
+  "diameter_m": 147.0,
+  "snap_m": 48.2,
+  "names": [
+   "Northbrook, IL - Tesla Supercharger",
+   "Whole Foods Market"
+  ],
+  "networks": [
+   "Tesla",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   154658,
+   228134
+  ]
+ },
+ {
+  "node": 8113135009,
+  "lat": 41.586236,
+  "lon": -87.720871,
+  "site_lat": 41.585217,
+  "site_lon": -87.721264,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 117.9,
+  "names": [
+   "Country Club Hills, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102159
+  ]
+ },
+ {
+  "node": 7211579905,
+  "lat": 41.693664,
+  "lon": -87.600689,
+  "site_lat": 41.693582,
+  "site_lon": -87.601221,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 44.9,
+  "names": [
+   "Chicago, IL - South Doty Avenue West - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   404786
+  ]
+ },
+ {
+  "node": 5114902984,
+  "lat": 41.720226,
+  "lon": -87.701829,
+  "site_lat": 41.720157,
+  "site_lon": -87.701394,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 36.7,
+  "names": [
+   "Culvers Evergreen Park IL"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   459545
+  ]
+ },
+ {
+  "node": 261258311,
+  "lat": 41.772715,
+  "lon": -87.75548,
+  "site_lat": 41.772524,
+  "site_lon": -87.757286,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 150.9,
+  "names": [
+   "Wintrust"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   451893
+  ]
+ },
+ {
+  "node": 2383815323,
+  "lat": 41.793089,
+  "lon": -87.736736,
+  "site_lat": 41.793281,
+  "site_lon": -87.736819,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 22.4,
+  "names": [
+   "Little Miss Lightning - 4532 W 55th St, Chicago, IL"
+  ],
+  "networks": [
+   "FLO"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462437
+  ]
+ },
+ {
+  "node": 235078039,
+  "lat": 41.794002,
+  "lon": -88.327718,
+  "site_lat": 41.793969,
+  "site_lon": -88.327815,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 265.5,
+  "snap_m": 8.8,
+  "names": [
+   "Comfort Inn",
+   "HomeTowne Studios & Conference Center Chicago \u2013 N Aurora/ Naperville"
+  ],
+  "networks": [
+   "UNIVERSAL"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   416758,
+   422777
+  ]
+ },
+ {
+  "node": 5533363870,
+  "lat": 41.813044,
+  "lon": -87.97232,
+  "site_lat": 41.81189,
+  "site_lon": -87.972399,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 608.7,
+  "snap_m": 128.5,
+  "names": [
+   "609 N Cass Ave",
+   "Ty Warner Park"
+  ],
+  "networks": [
+   "NOODOE",
+   "SHELL_RECHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   418155,
+   449470
+  ]
+ },
+ {
+  "node": 2076220905,
+  "lat": 41.847003,
+  "lon": -87.972397,
+  "site_lat": 41.846912,
+  "site_lon": -87.972052,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 127.3,
+  "snap_m": 30.3,
+  "names": [
+   "2210 W 22nd St",
+   "Chase Bank - 2122 W 22nd St"
+  ],
+  "networks": [
+   "SHELL_RECHARGE",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228034,
+   449649
+  ]
+ },
+ {
+  "node": 5528082602,
+  "lat": 41.850337,
+  "lon": -87.854928,
+  "site_lat": 41.850512,
+  "site_lon": -87.855322,
+  "ports": 8,
+  "n_stations": 3,
+  "diameter_m": 326.6,
+  "snap_m": 37.9,
+  "names": [
+   "Buddy Bear - 1901 W Cermak Rd",
+   "CHARGEPOINT PMC PRINCIPAL MFG1S",
+   "CHARGEPOINT PMC PRINCIPAL MFG2N"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   310757,
+   310758,
+   420712
+  ]
+ },
+ {
+  "node": 2988224182,
+  "lat": 41.853946,
+  "lon": -87.958983,
+  "site_lat": 41.854438,
+  "site_lon": -87.95848,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 68.7,
+  "names": [
+   "Oak Brook, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   201929
+  ]
+ },
+ {
+  "node": 6782273163,
+  "lat": 41.863281,
+  "lon": -88.198222,
+  "site_lat": 41.863364,
+  "site_lon": -88.198054,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 357.6,
+  "snap_m": 16.7,
+  "names": [
+   "Haggerty Ford - 2",
+   "Thorntons S Neltnor Boulevard, West Chicago, IL"
+  ],
+  "networks": [
+   "BP_PULSE",
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   328899,
+   374653
+  ]
+ },
+ {
+  "node": 5493250314,
+  "lat": 41.865256,
+  "lon": -87.788075,
+  "site_lat": 41.865195,
+  "site_lon": -87.788138,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 571.8,
+  "snap_m": 8.6,
+  "names": [
+   "6405 Roosevelt Rd",
+   "BofA Oak Park (Oak Park, IL)"
+  ],
+  "networks": [
+   "Electrify America",
+   "SHELL_RECHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   168238,
+   447261
+  ]
+ },
+ {
+  "node": 10597834221,
+  "lat": 41.905289,
+  "lon": -88.032433,
+  "site_lat": 41.905204,
+  "site_lon": -88.032096,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 165.8,
+  "snap_m": 29.4,
+  "names": [
+   "600 W North Ave",
+   "Comfort Suites Lombard - Addison"
+  ],
+  "networks": [
+   "SHELL_RECHARGE",
+   "UNIVERSAL"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   422778,
+   437633
+  ]
+ },
+ {
+  "node": 259380653,
+  "lat": 41.937657,
+  "lon": -87.644314,
+  "site_lat": 41.937567,
+  "site_lon": -87.644893,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.9,
+  "names": [
+   "Chicago, IL - North Broadway - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "TESLA"
+  ],
+  "afdc_ids": [
+   102158
+  ]
+ },
+ {
+  "node": 7397086124,
+  "lat": 41.986197,
+  "lon": -88.102496,
+  "site_lat": 41.98614,
+  "site_lon": -88.101376,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 92.8,
+  "names": [
+   "Clarke - Roselle - DCFC"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   429583
+  ]
+ },
+ {
+  "node": 7675829655,
+  "lat": 41.989604,
+  "lon": -88.1844,
+  "site_lat": 41.98961,
+  "site_lon": -88.18498,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.0,
+  "names": [
+   "The Boss's Signature"
+  ],
+  "networks": [
+   "VIALYNK"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   466210
+  ]
+ },
+ {
+  "node": 1448243709,
+  "lat": 42.139216,
+  "lon": -88.030946,
+  "site_lat": 42.13837,
+  "site_lon": -88.03073,
+  "ports": 8,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 95.8,
+  "names": [
+   "RPT Realty Deer Grove Centre (Palatine, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   423043
+  ]
+ },
+ {
+  "node": 8064623688,
+  "lat": 42.271946,
+  "lon": -88.003313,
+  "site_lat": 42.272065,
+  "site_lon": -88.003105,
+  "ports": 8,
+  "n_stations": 2,
+  "diameter_m": 142.2,
+  "snap_m": 21.7,
+  "names": [
+   "Village of Mundelein EV Lot 1",
+   "Village of Mundelein EV Lot 2"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   466791,
+   466792
+  ]
+ },
+ {
+  "node": 9311474218,
+  "lat": 41.56374,
+  "lon": -88.200248,
+  "site_lat": 41.563343,
+  "site_lon": -88.199912,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 52.1,
+  "names": [
+   "Caton Crossing"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   404763
+  ]
+ },
+ {
+  "node": 5532925777,
+  "lat": 41.640102,
+  "lon": -88.081661,
+  "site_lat": 41.64075,
+  "site_lon": -88.081524,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 73.0,
+  "names": [
+   "Thorntons Independence Boulevard, Romeoville, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   434776
+  ]
+ },
+ {
+  "node": 9961742047,
+  "lat": 41.662459,
+  "lon": -88.126079,
+  "site_lat": 41.662829,
+  "site_lon": -88.126046,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.2,
+  "names": [
+   "Thorntons S Weber Road, Bolingbrook, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448529
+  ]
+ },
+ {
+  "node": 261196755,
+  "lat": 41.69728,
+  "lon": -87.681327,
+  "site_lat": 41.697266,
+  "site_lon": -87.681409,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 6.9,
+  "names": [
+   "County Fair Foods"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   434998
+  ]
+ },
+ {
+  "node": 261235904,
+  "lat": 41.712434,
+  "lon": -87.785769,
+  "site_lat": 41.712315,
+  "site_lon": -87.786327,
+  "ports": 6,
+  "n_stations": 3,
+  "diameter_m": 754.1,
+  "snap_m": 48.0,
+  "names": [
+   "CL SUPER CITY LIGHTS 1",
+   "CL SUPER CITY LIGHTS 2",
+   "Chicago Ridge Mall"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   206170,
+   355508,
+   355509
+  ]
+ },
+ {
+  "node": 261346987,
+  "lat": 41.783734,
+  "lon": -87.863751,
+  "site_lat": 41.782817,
+  "site_lon": -87.864176,
+  "ports": 6,
+  "n_stations": 4,
+  "diameter_m": 1084.8,
+  "snap_m": 107.9,
+  "names": [
+   "Advantage Buick GMC Cadillac",
+   "HYUNDAI COUNTRY GERALD HY 1",
+   "HYUNDAI COUNTRY GERALD HY 2",
+   "Target T0843 (Hodgkins, IL)"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "EV Connect",
+   "Electrify America"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   123051,
+   218956,
+   303623,
+   446287
+  ]
+ },
+ {
+  "node": 261140362,
+  "lat": 41.852225,
+  "lon": -87.803769,
+  "site_lat": 41.852293,
+  "site_lon": -87.804263,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.5,
+  "names": [
+   "Zeigler Ford of North Riverside"
+  ],
+  "networks": [
+   "FORD_CHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   390324
+  ]
+ },
+ {
+  "node": 13960993502,
+  "lat": 41.865069,
+  "lon": -87.667574,
+  "site_lat": 41.865293,
+  "site_lon": -87.667669,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 26.1,
+  "names": [
+   "Ashland & Roosevelt"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   323878
+  ]
+ },
+ {
+  "node": 5529921058,
+  "lat": 41.928624,
+  "lon": -87.86273,
+  "site_lat": 41.92872,
+  "site_lon": -87.86376,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 85.9,
+  "names": [
+   "Culvers Franklin Park IL"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   459633
+  ]
+ },
+ {
+  "node": 5533651407,
+  "lat": 41.970211,
+  "lon": -88.113694,
+  "site_lat": 41.970401,
+  "site_lon": -88.114149,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 43.1,
+  "names": [
+   "Thorntons Lake Street, Roselle, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   416430
+  ]
+ },
+ {
+  "node": 235250276,
+  "lat": 42.006901,
+  "lon": -88.345173,
+  "site_lat": 42.00662,
+  "site_lon": -88.345314,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 33.3,
+  "names": [
+   "Gail Borden Rakow-HCS"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   463530
+  ]
+ },
+ {
+  "node": 4332555121,
+  "lat": 42.061784,
+  "lon": -87.746598,
+  "site_lat": 42.06173,
+  "site_lon": -87.74697,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 31.3,
+  "names": [
+   "Westfield Old Orchard (Skokie, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   199185
+  ]
+ },
+ {
+  "node": 235204651,
+  "lat": 42.082019,
+  "lon": -88.332541,
+  "site_lat": 42.08256,
+  "site_lon": -88.331902,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 80.2,
+  "names": [
+   "Randall Point"
+  ],
+  "networks": [
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448706
+  ]
+ },
+ {
+  "node": 5898395498,
+  "lat": 42.104644,
+  "lon": -88.256758,
+  "site_lat": 42.104253,
+  "site_lon": -88.257099,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 51.8,
+  "names": [
+   "Thorntons Dundee Avenue, East Dundee, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   451906
+  ]
+ },
+ {
+  "node": 3533723400,
+  "lat": 42.15455,
+  "lon": -88.432421,
+  "site_lat": 42.154757,
+  "site_lon": -88.433378,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 82.4,
+  "names": [
+   "Thorntons IL-47, Huntley, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   377472
+  ]
+ },
+ {
+  "node": 5053983174,
+  "lat": 42.240375,
+  "lon": -87.955808,
+  "site_lat": 42.240743,
+  "site_lon": -87.955774,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.0,
+  "names": [
+   "Vernon Hills, IL Rechargery Relay @ Casey's - E Townline Rd"
+  ],
+  "networks": [
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   447809
+  ]
+ },
+ {
+  "node": 3915106832,
+  "lat": 42.271762,
+  "lon": -87.950983,
+  "site_lat": 42.271644,
+  "site_lon": -87.951308,
+  "ports": 6,
+  "n_stations": 6,
+  "diameter_m": 381.3,
+  "snap_m": 29.9,
+  "names": [
+   "LVCH CHEVRO FRONT L3",
+   "LVHY CPE250 A",
+   "LVHY CPE250 B",
+   "LVHY CPE250 NORTH",
+   "Liberty Nissan",
+   "Napleton Cadillac Of Libertyville"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "EV Connect"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   47199,
+   254047,
+   254048,
+   346880,
+   346881,
+   355873
+  ]
+ },
+ {
+  "node": 10968588937,
+  "lat": 42.325159,
+  "lon": -87.836517,
+  "site_lat": 42.32513,
+  "site_lon": -87.837009,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 40.8,
+  "names": [
+   "Foss Park Beach"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462608
+  ]
+ },
+ {
+  "node": 235579486,
+  "lat": 42.327137,
+  "lon": -87.856001,
+  "site_lat": 42.327359,
+  "site_lon": -87.856621,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 56.9,
+  "names": [
+   "Foss Park Community Center"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   454178
+  ]
+ },
+ {
+  "node": 2393028517,
+  "lat": 42.3552,
+  "lon": -88.267312,
+  "site_lat": 42.355242,
+  "site_lon": -88.267719,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 34.0,
+  "names": [
+   "McHenry, IL Rechargery Relay @ Casey's - N Richmond Rd"
+  ],
+  "networks": [
+   "IONNA"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   448466
+  ]
+ },
+ {
+  "node": 8460385707,
+  "lat": 42.364598,
+  "lon": -87.963515,
+  "site_lat": 42.364678,
+  "site_lon": -87.964286,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 64.4,
+  "names": [
+   "BP Gurnee"
+  ],
+  "networks": [
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448707
+  ]
+ },
+ {
+  "node": 235568966,
+  "lat": 42.378829,
+  "lon": -88.078695,
+  "site_lat": 42.379256,
+  "site_lon": -88.078795,
+  "ports": 6,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.2,
+  "names": [
+   "Thorntons E Rollins Road, Round Lake Beach, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   434777
+  ]
+ },
+ {
+  "node": 2450208179,
+  "lat": 41.599496,
+  "lon": -87.587815,
+  "site_lat": 41.599889,
+  "site_lon": -87.58743,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 546.2,
+  "snap_m": 54.1,
+  "names": [
+   "Nissan - South Holland",
+   "Thorntons E 162nd Street, South Holland, IL"
+  ],
+  "networks": [
+   "BP_PULSE",
+   "IN_CHARGE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   449364,
+   452285
+  ]
+ },
+ {
+  "node": 6782509466,
+  "lat": 41.601887,
+  "lon": -87.820299,
+  "site_lat": 41.601732,
+  "site_lon": -87.820442,
+  "ports": 5,
+  "n_stations": 4,
+  "diameter_m": 478.3,
+  "snap_m": 20.9,
+  "names": [
+   "Bettenhausen CJDR Tinley Park IL",
+   "Community Honda of Orland Park",
+   "FAMILY HYUNDAI STATION 1",
+   "FAMILY HYUNDAI STATION 2"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network",
+   "RED_E"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   213596,
+   213597,
+   332679,
+   351263
+  ]
+ },
+ {
+  "node": 345115222,
+  "lat": 41.917141,
+  "lon": -87.946867,
+  "site_lat": 41.917829,
+  "site_lon": -87.946779,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 862.3,
+  "snap_m": 76.8,
+  "names": [
+   "Citgo Elmhurst",
+   "WILKINS HYUNDAI FRONT STATION"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   367635,
+   448705
+  ]
+ },
+ {
+  "node": 10957461474,
+  "lat": 41.947315,
+  "lon": -87.649957,
+  "site_lat": 41.947466,
+  "site_lon": -87.649854,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 137.3,
+  "snap_m": 18.8,
+  "names": [
+   "801 W Addison St",
+   "Whole Foods Market"
+  ],
+  "networks": [
+   "SHELL_RECHARGE",
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228136,
+   449925
+  ]
+ },
+ {
+  "node": 11336855818,
+  "lat": 42.385993,
+  "lon": -87.978738,
+  "site_lat": 42.386209,
+  "site_lon": -87.978866,
+  "ports": 5,
+  "n_stations": 2,
+  "diameter_m": 698.8,
+  "snap_m": 26.3,
+  "names": [
+   "GCDJ POWER LINK 1",
+   "Muller Honda of Gurnee - Series DCFC"
+  ],
+  "networks": [
+   "Blink Network",
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   374027,
+   449685
+  ]
+ },
+ {
+  "node": 493891696,
+  "lat": 41.544967,
+  "lon": -88.147119,
+  "site_lat": 41.545154,
+  "site_lon": -88.147076,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 21.1,
+  "names": [
+   "Cedarwood Dr"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   434119
+  ]
+ },
+ {
+  "node": 235158184,
+  "lat": 41.563808,
+  "lon": -88.29458,
+  "site_lat": 41.563794,
+  "site_lon": -88.294542,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 3.5,
+  "names": [
+   "Westside Maintenance"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   434118
+  ]
+ },
+ {
+  "node": 10744327576,
+  "lat": 41.616954,
+  "lon": -87.848361,
+  "site_lat": 41.61708,
+  "site_lon": -87.84833,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 14.2,
+  "names": [
+   "Simon Orland Square (Orland Park, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   170666
+  ]
+ },
+ {
+  "node": 261158585,
+  "lat": 41.640186,
+  "lon": -87.71831,
+  "site_lat": 41.640285,
+  "site_lon": -87.718049,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.3,
+  "names": [
+   "Buddy Bear - 14455 S Pulaski Rd"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420719
+  ]
+ },
+ {
+  "node": 4332957014,
+  "lat": 41.663073,
+  "lon": -87.699792,
+  "site_lat": 41.663071,
+  "site_lon": -87.700044,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 20.9,
+  "names": [
+   "Pilot Travel Center 1030"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   468111
+  ]
+ },
+ {
+  "node": 567716016,
+  "lat": 41.683397,
+  "lon": -88.070532,
+  "site_lat": 41.68252,
+  "site_lon": -88.069914,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 110.0,
+  "names": [
+   "Advantage Chevrolet of Bolingbrook"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446286
+  ]
+ },
+ {
+  "node": 4598722962,
+  "lat": 41.690935,
+  "lon": -87.769043,
+  "site_lat": 41.690855,
+  "site_lon": -87.769502,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 39.0,
+  "names": [
+   "Buddy Bear - 6000 W. 111th Street"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   429719
+  ]
+ },
+ {
+  "node": 14138352447,
+  "lat": 41.716474,
+  "lon": -87.81789,
+  "site_lat": 41.716721,
+  "site_lon": -87.818475,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 55.6,
+  "names": [
+   "Chase Bank - 9540 S Roberts Rd"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   319568
+  ]
+ },
+ {
+  "node": 4332885719,
+  "lat": 41.722341,
+  "lon": -87.585778,
+  "site_lat": 41.72234,
+  "site_lon": -87.585779,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 0.1,
+  "names": [
+   "Buddy Bear - 1538 E 95th St"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448460
+  ]
+ },
+ {
+  "node": 13447480460,
+  "lat": 41.723599,
+  "lon": -87.740824,
+  "site_lat": 41.723552,
+  "site_lon": -87.740866,
+  "ports": 4,
+  "n_stations": 3,
+  "diameter_m": 625.5,
+  "snap_m": 6.3,
+  "names": [
+   "CASTLE CHARGING FAST CHARGE 2",
+   "CASTLE CHARGING FAST CHARGER 1",
+   "Oak Lawn"
+  ],
+  "networks": [
+   "ChargePoint Network",
+   "EV Connect"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   220336,
+   220337,
+   310861
+  ]
+ },
+ {
+  "node": 4106677360,
+  "lat": 41.735251,
+  "lon": -87.702603,
+  "site_lat": 41.735719,
+  "site_lon": -87.702784,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 54.1,
+  "names": [
+   "Buddy Bear - 8644 S. Kedzie Ave"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   428470
+  ]
+ },
+ {
+  "node": 1977427608,
+  "lat": 41.739852,
+  "lon": -88.343362,
+  "site_lat": 41.739555,
+  "site_lon": -88.342462,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 81.4,
+  "names": [
+   "Coffman GMC"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   452286
+  ]
+ },
+ {
+  "node": 2350137502,
+  "lat": 41.743557,
+  "lon": -87.631086,
+  "site_lat": 41.74314,
+  "site_lon": -87.630869,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 49.7,
+  "names": [
+   "Buddy Bear - 243 W. 83rd Street"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420721
+  ]
+ },
+ {
+  "node": 5829079166,
+  "lat": 41.754696,
+  "lon": -87.799905,
+  "site_lat": 41.75469,
+  "site_lon": -87.79958,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 26.9,
+  "names": [
+   "Pilot Travel Center 1042"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462387
+  ]
+ },
+ {
+  "node": 4334518383,
+  "lat": 41.766271,
+  "lon": -87.606122,
+  "site_lat": 41.766269,
+  "site_lon": -87.606443,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 26.6,
+  "names": [
+   "Buddy Bear - 7068 South Chicago Ave"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420716
+  ]
+ },
+ {
+  "node": 5498378171,
+  "lat": 41.770282,
+  "lon": -87.81855,
+  "site_lat": 41.769966,
+  "site_lon": -87.817759,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 74.2,
+  "names": [
+   "Village Hall"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   450488
+  ]
+ },
+ {
+  "node": 10607163249,
+  "lat": 41.770799,
+  "lon": -88.306745,
+  "site_lat": 41.770487,
+  "site_lon": -88.306713,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 34.7,
+  "names": [
+   "BP Gas Station Aurora"
+  ],
+  "networks": [
+   "POWERPUMP"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   461541
+  ]
+ },
+ {
+  "node": 2483561325,
+  "lat": 41.779662,
+  "lon": -88.24077,
+  "site_lat": 41.779649,
+  "site_lon": -88.240424,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 28.6,
+  "names": [
+   "1127 N Eola Rd"
+  ],
+  "networks": [
+   "SHELL_RECHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   439488
+  ]
+ },
+ {
+  "node": 5495470478,
+  "lat": 41.783987,
+  "lon": -87.801186,
+  "site_lat": 41.783974,
+  "site_lon": -87.801826,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 52.9,
+  "names": [
+   "Thorntons Harlem Avenue, Summit, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   372726
+  ]
+ },
+ {
+  "node": 5498184905,
+  "lat": 41.80663,
+  "lon": -88.280358,
+  "site_lat": 41.806916,
+  "site_lon": -88.28044,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 32.5,
+  "names": [
+   "Thorntons N Farnsworth Avenue, Aurora, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   374933
+  ]
+ },
+ {
+  "node": 7505486482,
+  "lat": 41.817823,
+  "lon": -87.824485,
+  "site_lat": 41.817909,
+  "site_lon": -87.824384,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 12.8,
+  "names": [
+   "Buddy Bear - 8136 W. Ogden Avenue"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420714
+  ]
+ },
+ {
+  "node": 8372229369,
+  "lat": 41.832527,
+  "lon": -87.778113,
+  "site_lat": 41.832561,
+  "site_lon": -87.778645,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 44.2,
+  "names": [
+   "Buddy Bear - 6201 W. Ogden Avenue"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420715
+  ]
+ },
+ {
+  "node": 4078575686,
+  "lat": 41.835637,
+  "lon": -87.672982,
+  "site_lat": 41.83555,
+  "site_lon": -87.67318,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 19.0,
+  "names": [
+   "Target T2078 (Chicago, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   201004
+  ]
+ },
+ {
+  "node": 1932715687,
+  "lat": 41.846838,
+  "lon": -88.332168,
+  "site_lat": 41.84713,
+  "site_lon": -88.33226,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 33.4,
+  "names": [
+   "Batavia High School"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   461008
+  ]
+ },
+ {
+  "node": 7144168590,
+  "lat": 41.848379,
+  "lon": -88.311652,
+  "site_lat": 41.84846,
+  "site_lon": -88.31165,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 9.0,
+  "names": [
+   "Batavia Library"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   459634
+  ]
+ },
+ {
+  "node": 9837792214,
+  "lat": 41.859394,
+  "lon": -88.050933,
+  "site_lat": 41.859696,
+  "site_lon": -88.050915,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 33.6,
+  "names": [
+   "Baker Hill"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   373074
+  ]
+ },
+ {
+  "node": 13136808243,
+  "lat": 41.872877,
+  "lon": -87.861986,
+  "site_lat": 41.872405,
+  "site_lon": -87.86239,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 62.2,
+  "names": [
+   "Thorntons 25th Avenue, Bellwood, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   420910
+  ]
+ },
+ {
+  "node": 2112919397,
+  "lat": 41.872315,
+  "lon": -87.961688,
+  "site_lat": 41.87287,
+  "site_lon": -87.96243,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 87.0,
+  "names": [
+   "Walmart 1737 (Villa Park, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   167894
+  ]
+ },
+ {
+  "node": 4210460350,
+  "lat": 41.878317,
+  "lon": -87.883152,
+  "site_lat": 41.878261,
+  "site_lon": -87.883656,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 42.2,
+  "names": [
+   "Citgo Hillside"
+  ],
+  "networks": [
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448704
+  ]
+ },
+ {
+  "node": 3097599781,
+  "lat": 41.88756,
+  "lon": -88.106828,
+  "site_lat": 41.887451,
+  "site_lon": -88.107283,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 39.5,
+  "names": [
+   "100 W Geneva Rd"
+  ],
+  "networks": [
+   "SHELL_RECHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446022
+  ]
+ },
+ {
+  "node": 5498004596,
+  "lat": 41.887793,
+  "lon": -87.817768,
+  "site_lat": 41.887744,
+  "site_lon": -87.818287,
+  "ports": 4,
+  "n_stations": 4,
+  "diameter_m": 15.8,
+  "snap_m": 43.3,
+  "names": [
+   "RIVER FOREST PAIRED 1",
+   "RIVER FOREST PAIRED 2",
+   "RIVER FOREST PAIRED 3",
+   "RIVER FOREST PAIRED 4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   452684,
+   452686,
+   452687,
+   452688
+  ]
+ },
+ {
+  "node": 5532683663,
+  "lat": 41.890158,
+  "lon": -87.98883,
+  "site_lat": 41.890049,
+  "site_lon": -87.98866,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 18.6,
+  "names": [
+   "Exxon Heroes Food and Liquor"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   459803
+  ]
+ },
+ {
+  "node": 4334615883,
+  "lat": 41.896332,
+  "lon": -87.628197,
+  "site_lat": 41.896272,
+  "site_lon": -87.628367,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 15.6,
+  "names": [
+   "Whole Foods Chicago & State"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   416932
+  ]
+ },
+ {
+  "node": 12777626106,
+  "lat": 41.901575,
+  "lon": -87.737989,
+  "site_lat": 41.901322,
+  "site_lon": -87.738068,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 28.8,
+  "names": [
+   "Haddon Hub"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   469753
+  ]
+ },
+ {
+  "node": 735965231,
+  "lat": 41.907234,
+  "lon": -87.886828,
+  "site_lat": 41.906966,
+  "site_lon": -87.887007,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 33.3,
+  "names": [
+   "KNB Motors"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   438010
+  ]
+ },
+ {
+  "node": 4296546062,
+  "lat": 41.907411,
+  "lon": -87.874017,
+  "site_lat": 41.907275,
+  "site_lon": -87.874106,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 16.8,
+  "names": [
+   "Market Place Stone Park"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   457882
+  ]
+ },
+ {
+  "node": 4332497525,
+  "lat": 41.916897,
+  "lon": -87.755484,
+  "site_lat": 41.917086,
+  "site_lon": -87.755391,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 22.3,
+  "names": [
+   "Amoco N Laramie Ave"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448407
+  ]
+ },
+ {
+  "node": 8763538678,
+  "lat": 41.932725,
+  "lon": -87.658719,
+  "site_lat": 41.93282,
+  "site_lon": -87.65852,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 19.6,
+  "names": [
+   "1160 W Diversey Pkwy"
+  ],
+  "networks": [
+   "SHELL_RECHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   452622
+  ]
+ },
+ {
+  "node": 9996607219,
+  "lat": 41.9397,
+  "lon": -87.668391,
+  "site_lat": 41.939834,
+  "site_lon": -87.66812,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 26.9,
+  "names": [
+   "Whole Foods Lakeview"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   416886
+  ]
+ },
+ {
+  "node": 237735399,
+  "lat": 41.941158,
+  "lon": -88.009838,
+  "site_lat": 41.941421,
+  "site_lon": -88.009768,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 29.8,
+  "names": [
+   "Thorntons W Lake Street, Addison, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   374661
+  ]
+ },
+ {
+  "node": 237657558,
+  "lat": 41.946215,
+  "lon": -87.927655,
+  "site_lat": 41.946383,
+  "site_lon": -87.927213,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 41.1,
+  "names": [
+   "Village of Bensenville - Public Works"
+  ],
+  "networks": [
+   "EVXY"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446490
+  ]
+ },
+ {
+  "node": 5495348101,
+  "lat": 41.954165,
+  "lon": -87.861029,
+  "site_lat": 41.954428,
+  "site_lon": -87.861012,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 29.3,
+  "names": [
+   "Phillips 66"
+  ],
+  "networks": [
+   "NAYAX_ENERGY"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448703
+  ]
+ },
+ {
+  "node": 5530337058,
+  "lat": 41.956372,
+  "lon": -87.942566,
+  "site_lat": 41.956418,
+  "site_lon": -87.942385,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 15.8,
+  "names": [
+   "Village of Bensenville - Village Hall"
+  ],
+  "networks": [
+   "EVXY"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   446489
+  ]
+ },
+ {
+  "node": 4288692684,
+  "lat": 41.95677,
+  "lon": -87.807189,
+  "site_lat": 41.95698,
+  "site_lon": -87.80683,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 37.8,
+  "names": [
+   "Chase Bank - 4223 N Harlem Ave"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   253948
+  ]
+ },
+ {
+  "node": 5529952282,
+  "lat": 41.963266,
+  "lon": -87.978244,
+  "site_lat": 41.963099,
+  "site_lon": -87.978379,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 0.3,
+  "snap_m": 21.7,
+  "names": [
+   "Shell Wood Dale",
+   "Wood Dale Shell"
+  ],
+  "networks": [
+   "NAYAX_ENERGY",
+   "VIALYNK"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448700,
+   466212
+  ]
+ },
+ {
+  "node": 237947056,
+  "lat": 41.983652,
+  "lon": -88.071591,
+  "site_lat": 41.98334,
+  "site_lon": -88.071805,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 38.9,
+  "names": [
+   "Friendly Ford"
+  ],
+  "networks": [
+   "FORD_CHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   358386
+  ]
+ },
+ {
+  "node": 5797694079,
+  "lat": 41.988505,
+  "lon": -87.960418,
+  "site_lat": 41.98805,
+  "site_lon": -87.96038,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 50.7,
+  "names": [
+   "Pilot Travel Center 1114"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   470700
+  ]
+ },
+ {
+  "node": 9297379949,
+  "lat": 41.991492,
+  "lon": -87.748334,
+  "site_lat": 41.99146,
+  "site_lon": -87.749262,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 76.8,
+  "names": [
+   "Whole Foods Sauganash (CIC)"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   373052
+  ]
+ },
+ {
+  "node": 5529894919,
+  "lat": 41.992827,
+  "lon": -87.939915,
+  "site_lat": 41.992748,
+  "site_lon": -87.940707,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.1,
+  "names": [
+   "Thorntons York Road, Elk Grove Village, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   371475
+  ]
+ },
+ {
+  "node": 11628047293,
+  "lat": 42.012126,
+  "lon": -87.788833,
+  "site_lat": 42.0124,
+  "site_lon": -87.78844,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 44.5,
+  "names": [
+   "Crosby's Kitchen Niles (GFCS LLC)"
+  ],
+  "networks": [
+   "IN_CHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   449940
+  ]
+ },
+ {
+  "node": 4335673109,
+  "lat": 42.023561,
+  "lon": -87.940585,
+  "site_lat": 42.023508,
+  "site_lon": -87.940939,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 29.9,
+  "names": [
+   "Colony Square"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228791
+  ]
+ },
+ {
+  "node": 4334222182,
+  "lat": 42.025312,
+  "lon": -87.877338,
+  "site_lat": 42.025579,
+  "site_lon": -87.876873,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.6,
+  "names": [
+   "2138 AutoNation Honda O'Hare"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   321410
+  ]
+ },
+ {
+  "node": 4275996999,
+  "lat": 42.030142,
+  "lon": -87.986358,
+  "site_lat": 42.03004,
+  "site_lon": -87.985956,
+  "ports": 4,
+  "n_stations": 2,
+  "diameter_m": 11.7,
+  "snap_m": 35.1,
+  "names": [
+   "Castle Chevrolet N",
+   "Castle Chevrolet North"
+  ],
+  "networks": [
+   "Blink Network",
+   "Non-Networked"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   261447,
+   316920
+  ]
+ },
+ {
+  "node": 8130417124,
+  "lat": 42.032364,
+  "lon": -88.328478,
+  "site_lat": 42.032716,
+  "site_lon": -88.328377,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 40.0,
+  "names": [
+   "MTW"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   406094
+  ]
+ },
+ {
+  "node": 4275852291,
+  "lat": 42.038361,
+  "lon": -87.940702,
+  "site_lat": 42.03866,
+  "site_lon": -87.941411,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 67.4,
+  "names": [
+   "Kohl's - Tesla Supercharger (BA Solutions)"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   451715
+  ]
+ },
+ {
+  "node": 10792130384,
+  "lat": 42.043515,
+  "lon": -87.884766,
+  "site_lat": 42.043248,
+  "site_lon": -87.884897,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 31.6,
+  "names": [
+   "Metropolitan Square"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228311
+  ]
+ },
+ {
+  "node": 4276204089,
+  "lat": 42.073827,
+  "lon": -87.92862,
+  "site_lat": 42.073975,
+  "site_lon": -87.928398,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.6,
+  "names": [
+   "NorthWest Electric"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   421133
+  ]
+ },
+ {
+  "node": 5352784205,
+  "lat": 42.075332,
+  "lon": -88.288724,
+  "site_lat": 42.07478,
+  "site_lon": -88.28852,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 63.7,
+  "names": [
+   "Best Western Plus Elgin - Chicago"
+  ],
+  "networks": [
+   "UNIVERSAL"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   429934
+  ]
+ },
+ {
+  "node": 7155638132,
+  "lat": 42.138429,
+  "lon": -87.991416,
+  "site_lat": 42.138343,
+  "site_lon": -87.991599,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 17.9,
+  "names": [
+   "801 W Dundee Rd"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   349205
+  ]
+ },
+ {
+  "node": 6776302475,
+  "lat": 42.139087,
+  "lon": -88.013212,
+  "site_lat": 42.138491,
+  "site_lon": -88.013076,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 67.2,
+  "names": [
+   "Arlington Acura of Palatine - Front Parking"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   353504
+  ]
+ },
+ {
+  "node": 235347717,
+  "lat": 42.165067,
+  "lon": -88.150901,
+  "site_lat": 42.164747,
+  "site_lon": -88.151924,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 91.8,
+  "names": [
+   "Wickstrom Auto Group - DCFC"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   391603
+  ]
+ },
+ {
+  "node": 5270745305,
+  "lat": 42.187401,
+  "lon": -87.798592,
+  "site_lat": 42.18758,
+  "site_lon": -87.79876,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.3,
+  "names": [
+   "BOA Highland Park IL4-245 (Highland Park, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   279321
+  ]
+ },
+ {
+  "node": 7241286591,
+  "lat": 42.190392,
+  "lon": -88.109543,
+  "site_lat": 42.19072,
+  "site_lon": -88.1094,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 38.4,
+  "names": [
+   "BofA Lake Zurich Commons IL4-844 (Lake Zurich, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   170473
+  ]
+ },
+ {
+  "node": 3676675066,
+  "lat": 42.214847,
+  "lon": -88.286552,
+  "site_lat": 42.214842,
+  "site_lon": -88.287352,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.1,
+  "names": [
+   "Thorntons Tek Drive, Crystal Lake, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   374859
+  ]
+ },
+ {
+  "node": 235280278,
+  "lat": 42.282318,
+  "lon": -88.154163,
+  "site_lat": 42.282085,
+  "site_lon": -88.154983,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 72.6,
+  "names": [
+   "Victor Ford"
+  ],
+  "networks": [
+   "FORD_CHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   358385
+  ]
+ },
+ {
+  "node": 4416940877,
+  "lat": 42.306891,
+  "lon": -88.282018,
+  "site_lat": 42.307413,
+  "site_lon": -88.283284,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 119.7,
+  "names": [
+   "Hampton Inn McHenry"
+  ],
+  "networks": [
+   "UNIVERSAL"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   422782
+  ]
+ },
+ {
+  "node": 4097940047,
+  "lat": 42.326211,
+  "lon": -88.275261,
+  "site_lat": 42.326537,
+  "site_lon": -88.275696,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 51.0,
+  "names": [
+   "Buss Ford"
+  ],
+  "networks": [
+   "RED_E"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   396986
+  ]
+ },
+ {
+  "node": 7880380504,
+  "lat": 42.357735,
+  "lon": -88.068023,
+  "site_lat": 42.357693,
+  "site_lon": -88.068369,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 29.0,
+  "names": [
+   "Thorntons E Washington Street, Round Lake Park, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   384504
+  ]
+ },
+ {
+  "node": 5602192239,
+  "lat": 42.359834,
+  "lon": -88.000469,
+  "site_lat": 42.360019,
+  "site_lon": -88.000628,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 24.4,
+  "names": [
+   "Thorntons US-45, Third Lake, IL"
+  ],
+  "networks": [
+   "BP_PULSE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   387737
+  ]
+ },
+ {
+  "node": 11027232555,
+  "lat": 42.429282,
+  "lon": -87.824427,
+  "site_lat": 42.429165,
+  "site_lon": -87.824971,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 46.8,
+  "names": [
+   "Casey's #3923 - Beach Park"
+  ],
+  "networks": [
+   "FCN"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   330024
+  ]
+ },
+ {
+  "node": 236267577,
+  "lat": 42.434338,
+  "lon": -88.240887,
+  "site_lat": 42.434635,
+  "site_lon": -88.241153,
+  "ports": 4,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 39.7,
+  "names": [
+   "(BA Solutions) - Spring Grove, IL - Tesla Supercharger"
+  ],
+  "networks": [
+   "Tesla"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   448761
+  ]
+ },
+ {
+  "node": 576838069,
+  "lat": 41.558846,
+  "lon": -88.161439,
+  "site_lat": 41.558823,
+  "site_lon": -88.160419,
+  "ports": 3,
+  "n_stations": 3,
+  "diameter_m": 136.5,
+  "snap_m": 84.4,
+  "names": [
+   "D'ARCY HYUNDAI D'ARCY-DC-2",
+   "D'ARCY HYUNDAI HY LOT 3",
+   "D'ARCY HYUNDAI HY LOT 4"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   322765,
+   397868,
+   397878
+  ]
+ },
+ {
+  "node": 261161172,
+  "lat": 41.742618,
+  "lon": -87.799567,
+  "site_lat": 41.742789,
+  "site_lon": -87.800415,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 72.7,
+  "names": [
+   "Advantage Chevrolet of Bridgeview"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   448916
+  ]
+ },
+ {
+  "node": 5258115964,
+  "lat": 41.772324,
+  "lon": -88.038168,
+  "site_lat": 41.7715,
+  "site_lon": -88.03804,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 92.3,
+  "names": [
+   "Target T0866 (Woodridge, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   121731
+  ]
+ },
+ {
+  "node": 5813229917,
+  "lat": 41.87781,
+  "lon": -87.655717,
+  "site_lat": 41.87757,
+  "site_lon": -87.65601,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 36.1,
+  "names": [
+   "Target T2781 (Chicago, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   146617
+  ]
+ },
+ {
+  "node": 311469082,
+  "lat": 41.923634,
+  "lon": -87.790398,
+  "site_lat": 41.923554,
+  "site_lon": -87.790454,
+  "ports": 3,
+  "n_stations": 3,
+  "diameter_m": 16.4,
+  "snap_m": 10.0,
+  "names": [
+   "MCGRATH HONDA STATION 1",
+   "MCGRATH HONDA STATION 2",
+   "MCGRATH HONDA STATION 3"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   450300,
+   450301,
+   450302
+  ]
+ },
+ {
+  "node": 5498688799,
+  "lat": 42.032975,
+  "lon": -88.251405,
+  "site_lat": 42.03259,
+  "site_lon": -88.251865,
+  "ports": 3,
+  "n_stations": 2,
+  "diameter_m": 463.8,
+  "snap_m": 57.3,
+  "names": [
+   "Hopkins Ford of Elgin",
+   "McGrath Nissan"
+  ],
+  "networks": [
+   "Blink Network",
+   "IN_CHARGE"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   46819,
+   371966
+  ]
+ },
+ {
+  "node": 8064489077,
+  "lat": 42.102977,
+  "lon": -87.814797,
+  "site_lat": 42.10326,
+  "site_lon": -87.81453,
+  "ports": 3,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 38.4,
+  "names": [
+   "Target T1167 (Glenview, IL)"
+  ],
+  "networks": [
+   "Electrify America"
+  ],
+  "connectors": [
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   121729
+  ]
+ },
+ {
+  "node": 261174627,
+  "lat": 41.599072,
+  "lon": -87.790136,
+  "site_lat": 41.599166,
+  "site_lon": -87.790811,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 56.8,
+  "names": [
+   "Centennial Lanes 2.0 EV Charging"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   406074
+  ]
+ },
+ {
+  "node": 5530412761,
+  "lat": 41.708111,
+  "lon": -87.740368,
+  "site_lat": 41.708026,
+  "site_lon": -87.740002,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 31.7,
+  "names": [
+   "Napleton Cadillac"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   428723
+  ]
+ },
+ {
+  "node": 8840412970,
+  "lat": 41.71925,
+  "lon": -88.31316,
+  "site_lat": 41.718929,
+  "site_lon": -88.313526,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 46.8,
+  "names": [
+   "Public Charger East - DCFC"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   400623
+  ]
+ },
+ {
+  "node": 2876586213,
+  "lat": 41.721318,
+  "lon": -87.650282,
+  "site_lat": 41.721081,
+  "site_lon": -87.649984,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 36.0,
+  "names": [
+   "Buddy Bear - 1045 W. 95th St."
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   450842
+  ]
+ },
+ {
+  "node": 5532507792,
+  "lat": 41.751346,
+  "lon": -88.209384,
+  "site_lat": 41.751194,
+  "site_lon": -88.210291,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 5.5,
+  "snap_m": 77.0,
+  "names": [
+   "VALLEY HYUNDAI EXPRESS LEFT",
+   "VALLEY HYUNDAI EXPRESS RIGHT"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   233313,
+   234714
+  ]
+ },
+ {
+  "node": 4335664510,
+  "lat": 41.806956,
+  "lon": -88.076525,
+  "site_lat": 41.806864,
+  "site_lon": -88.075956,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 48.2,
+  "names": [
+   "Volvo Cars Lisle - Public DCFC"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   354755
+  ]
+ },
+ {
+  "node": 5493346634,
+  "lat": 41.825241,
+  "lon": -87.68488,
+  "site_lat": 41.82512,
+  "site_lon": -87.68524,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 32.7,
+  "names": [
+   "7Charge - Chicago 41961"
+  ],
+  "networks": [
+   "7CHARGE"
+  ],
+  "connectors": [
+   "J1772COMBO",
+   "TESLA"
+  ],
+  "afdc_ids": [
+   326331
+  ]
+ },
+ {
+  "node": 5811641579,
+  "lat": 41.859237,
+  "lon": -88.077422,
+  "site_lat": 41.859836,
+  "site_lon": -88.077503,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 67.0,
+  "names": [
+   "Haggerty Chevrolet"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   357254
+  ]
+ },
+ {
+  "node": 8396959189,
+  "lat": 41.876487,
+  "lon": -87.833901,
+  "site_lat": 41.876593,
+  "site_lon": -87.833558,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 30.7,
+  "names": [
+   "Buddy Bear - 1209 S 1st Ave"
+  ],
+  "networks": [
+   "NOODOE"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   450843
+  ]
+ },
+ {
+  "node": 5448498714,
+  "lat": 42.010152,
+  "lon": -88.214796,
+  "site_lat": 42.011454,
+  "site_lon": -88.213631,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 37.3,
+  "snap_m": 173.9,
+  "names": [
+   "ELGIN HYUNDAI EAST LEVEL 3",
+   "ELGIN HYUNDAI WEST LEVEL 3"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   327351,
+   327352
+  ]
+ },
+ {
+  "node": 3893722243,
+  "lat": 42.12906,
+  "lon": -88.136231,
+  "site_lat": 42.129205,
+  "site_lon": -88.135385,
+  "ports": 2,
+  "n_stations": 2,
+  "diameter_m": 86.6,
+  "snap_m": 71.8,
+  "names": [
+   "MOTORWERKS1475 DC FAST 02",
+   "MOTORWERKS1475 DC FAST 04"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   212964,
+   212966
+  ]
+ },
+ {
+  "node": 235356119,
+  "lat": 42.270021,
+  "lon": -87.867192,
+  "site_lat": 42.269216,
+  "site_lon": -87.866128,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 125.5,
+  "names": [
+   "K53 Kunes Lakes Chevrolet"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   451818
+  ]
+ },
+ {
+  "node": 235379727,
+  "lat": 42.466303,
+  "lon": -88.073095,
+  "site_lat": 42.467001,
+  "site_lon": -88.073657,
+  "ports": 2,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 90.5,
+  "names": [
+   "Raymond Chevrolet Kia"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   372867
+  ]
+ },
+ {
+  "node": 237535560,
+  "lat": 41.589684,
+  "lon": -88.182259,
+  "site_lat": 41.58929,
+  "site_lon": -88.182869,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.9,
+  "names": [
+   "Plainfield"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   310858
+  ]
+ },
+ {
+  "node": 5596380475,
+  "lat": 41.797512,
+  "lon": -88.10201,
+  "site_lat": 41.796803,
+  "site_lon": -88.101944,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 79.0,
+  "names": [
+   "OLE #1 DCFAST HOG"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   213931
+  ]
+ },
+ {
+  "node": 7428814627,
+  "lat": 41.831646,
+  "lon": -87.793988,
+  "site_lat": 41.831528,
+  "site_lon": -87.794338,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 31.9,
+  "names": [
+   "Berwyn Public Parking Garage"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228125
+  ]
+ },
+ {
+  "node": 261219083,
+  "lat": 41.836284,
+  "lon": -87.86651,
+  "site_lat": 41.83648,
+  "site_lon": -87.865893,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 55.5,
+  "names": [
+   "Dubak Electrical Group LLC"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   450767
+  ]
+ },
+ {
+  "node": 10799127222,
+  "lat": 41.865922,
+  "lon": -88.143347,
+  "site_lat": 41.8658,
+  "site_lon": -88.144179,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 70.2,
+  "names": [
+   "DUPAGE CO DUPAGE CARE 1"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   458371
+  ]
+ },
+ {
+  "node": 6605425891,
+  "lat": 41.903089,
+  "lon": -88.070363,
+  "site_lat": 41.902144,
+  "site_lon": -88.070588,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 106.7,
+  "names": [
+   "DDCJ EXPRESS PLUS PL"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   466241
+  ]
+ },
+ {
+  "node": 5530373285,
+  "lat": 41.907484,
+  "lon": -87.854693,
+  "site_lat": 41.907303,
+  "site_lon": -87.854477,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 26.9,
+  "names": [
+   "Al Piemonte Nissan"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   47209
+  ]
+ },
+ {
+  "node": 5606994273,
+  "lat": 41.911702,
+  "lon": -88.314357,
+  "site_lat": 41.911832,
+  "site_lon": -88.314422,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 15.4,
+  "names": [
+   "FIRST STREET 1 ST GARAGE 250"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   462862
+  ]
+ },
+ {
+  "node": 1269608241,
+  "lat": 41.921256,
+  "lon": -88.254688,
+  "site_lat": 41.91991,
+  "site_lon": -88.25418,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 155.5,
+  "names": [
+   "McGrath Honda"
+  ],
+  "networks": [
+   "Blink Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   469322
+  ]
+ },
+ {
+  "node": 12235816084,
+  "lat": 41.943097,
+  "lon": -87.689279,
+  "site_lat": 41.943222,
+  "site_lon": -87.689259,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 14.0,
+  "names": [
+   "Jewel-Osco"
+  ],
+  "networks": [
+   "eVgo Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   228123
+  ]
+ },
+ {
+  "node": 6385645276,
+  "lat": 42.01478,
+  "lon": -87.747851,
+  "site_lat": 42.014911,
+  "site_lon": -87.746924,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 78.0,
+  "names": [
+   "Zeigler Cadillac of Lincolnwood Dealership"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   312597
+  ]
+ },
+ {
+  "node": 261313197,
+  "lat": 42.055321,
+  "lon": -87.757714,
+  "site_lat": 42.055636,
+  "site_lon": -87.75774,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 35.0,
+  "names": [
+   "Martin Nissan"
+  ],
+  "networks": [
+   "Non-Networked"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   47133
+  ]
+ },
+ {
+  "node": 6782201938,
+  "lat": 42.08435,
+  "lon": -87.798294,
+  "site_lat": 42.084463,
+  "site_lon": -87.798849,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 47.5,
+  "names": [
+   "NAPLETONHYUNDAI SALES STATION 1"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   387688
+  ]
+ },
+ {
+  "node": 8557311040,
+  "lat": 42.133114,
+  "lon": -87.75813,
+  "site_lat": 42.133232,
+  "site_lon": -87.758107,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 13.2,
+  "names": [
+   "VILLAGE COURT VH CP-250"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   460851
+  ]
+ },
+ {
+  "node": 4334669750,
+  "lat": 42.149922,
+  "lon": -87.800033,
+  "site_lat": 42.149693,
+  "site_lon": -87.80077,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 66.0,
+  "names": [
+   "Napleton Cadillac Of Northbrook"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   347576
+  ]
+ },
+ {
+  "node": 235595871,
+  "lat": 42.202171,
+  "lon": -87.832454,
+  "site_lat": 42.201894,
+  "site_lon": -87.832948,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 51.2,
+  "names": [
+   "2699 Skokie Valley Rd"
+  ],
+  "networks": [
+   "EV Connect"
+  ],
+  "connectors": [
+   "CHADEMO",
+   "J1772",
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   327127
+  ]
+ },
+ {
+  "node": 7699966479,
+  "lat": 42.282049,
+  "lon": -87.935885,
+  "site_lat": 42.28226,
+  "site_lon": -87.936244,
+  "ports": 1,
+  "n_stations": 1,
+  "diameter_m": 0.0,
+  "snap_m": 37.8,
+  "names": [
+   "LIBERTY1 LIBERTY1"
+  ],
+  "networks": [
+   "ChargePoint Network"
+  ],
+  "connectors": [
+   "J1772COMBO"
+  ],
+  "afdc_ids": [
+   463310
+  ]
+ }
+]

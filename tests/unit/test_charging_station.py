@@ -41,6 +41,20 @@ def test_nonpositive_port_capacity_is_rejected(tmp_path) -> None:
         _station(tmp_path, {10: 0})
 
 
+def test_charging_statistics_count_elapsed_port_hours_once(tmp_path):
+    station = _station(tmp_path, {10: 2})
+    station.start_charging(0, 10, charge_hours=2.0, global_clock=0.0)
+    station.start_charging(1, 10, charge_hours=1.0, global_clock=0.5)
+    for _ in range(3):
+        snapshot = station.get_utilization_stats(0.75)
+        assert snapshot["all_chargers"][0]["charge_time"] == pytest.approx(1.0)
+        assert station.charger_stats[10]["total_charge_time"] == pytest.approx(1.0)
+    station.finish_charging(1, 10, global_clock=1.5)
+    assert station.get_utilization_stats(1.5)["all_chargers"][0]["charge_time"] == pytest.approx(2.5)
+    station.finish_charging(0, 10, global_clock=2.0)
+    assert station.get_utilization_stats(2.0)["all_chargers"][0]["charge_time"] == pytest.approx(3.0)
+
+
 def test_start_and_finish_enforce_port_and_session_invariants(tmp_path) -> None:
     station = _station(tmp_path, {10: 1, 20: 1})
     station.start_charging(0, 10, charge_hours=1.0, global_clock=0.0)

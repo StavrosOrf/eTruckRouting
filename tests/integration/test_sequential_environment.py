@@ -88,7 +88,7 @@ def test_later_customer_cannot_bypass_sequence_or_mutate_state(environment, inte
     _, reward, terminated, truncated, _ = env.step(index if integer else (task.node_id, 0.0, False))
     assert not terminated and not truncated and reward < 0
     assert env.event_queue == events and env.global_clock == clock
-    assert np.array_equal(snapshot, env._get_observation())
+    assert not np.array_equal(snapshot, env._get_observation())  # Budgets changed.
     assert task.status == TaskStatus.UNASSIGNED
     with pytest.raises(ValueError, match="out of sequence"):
         env.task_registry.claim(task.node_id, env.active_truck_id, env.global_clock)

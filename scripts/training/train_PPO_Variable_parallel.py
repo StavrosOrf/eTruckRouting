@@ -123,7 +123,7 @@ def worker_process(
                         episode_info = {
                             'done': True,
                             'truncated': truncated,
-                            'all_complete': info.get('all_complete', False),
+                            'successful': info.get('successful', False),
                             'global_clock': info.get('global_clock', 0.0),
                             'trucks': info.get('trucks', [])
                         }
@@ -402,7 +402,7 @@ def evaluate_policy_parallel(
                     # Episode completed - collect metrics
                     info = infos[i]
                     eval_rewards.append(episode_rewards[i])
-                    eval_success_rate.append(1.0 if info.get('all_complete', False) else 0.0)
+                    eval_success_rate.append(1.0 if info.get('successful', False) else 0.0)
                     eval_episode_lengths.append(episode_steps[i])
                     
                     # Extract detailed metrics
@@ -859,7 +859,7 @@ def train(args):
                                 'train/episode_reward': episode_rewards[i],
                                 'train/episode_length': episode_lengths[i],
                                 'train/episode': total_episodes,
-                                'train/success': 1.0 if info.get('all_complete', False) else 0.0,
+                                'train/success': 1.0 if info.get('successful', False) else 0.0,
                                 'train/timestep': total_timesteps + i
                             })
                         
@@ -867,7 +867,7 @@ def train(args):
                             print(f"Episode {total_episodes} (env {i}): "
                                   f"Reward={episode_rewards[i]:.2f}, "
                                   f"Steps={episode_lengths[i]}, "
-                                  f"Success={info.get('all_complete', False)}")
+                                  f"Success={info.get('successful', False)}")
                         
                         total_episodes += 1
                         episode_rewards[i] = 0.0

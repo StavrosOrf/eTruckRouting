@@ -226,11 +226,8 @@ REGIMES: dict[str, dict] = {
         "description": "0.4 h base service time instead of 0.2",
         "overrides": {"problem": {"base_service_time": 0.4}},
     },
-    # environment.min_hop_distance / max_hop_distance are deliberately absent
-    # too: the joint instance generator does not read them at all -- they are
-    # consumed only by the inherited preassigned-route generator -- so a regime
-    # built on them produces the identical instance and would read as spurious
-    # robustness.
+    # Generation hop bounds are explicitly in kWh, not inferred kilometres.
+    # Existing regimes keep the unrestricted default for paired comparisons.
     # -- uncertainty law -----------------------------------------------------
     "traffic_calm": {
         "kind": "ood",

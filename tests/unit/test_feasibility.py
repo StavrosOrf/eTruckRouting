@@ -91,36 +91,50 @@ def test_conservative_energy_bound_is_enforced() -> None:
 def test_unreachable_unknown_and_same_location_are_distinct() -> None:
     unreachable = _route(10, transport_graph=_EnergyGraph({}))
     unknown = _route(99)
-    same_location = _route(1)
+    same_location = _route(10, truck=_truck(node=10))
 
     assert unreachable.reason is FeasibilityReason.UNREACHABLE
     assert unknown.reason is FeasibilityReason.UNKNOWN_DESTINATION
     assert same_location.reason is FeasibilityReason.SAME_LOCATION
 
 
-def test_depot_is_only_available_after_service_and_when_return_required() -> None:
-    registry = _registry()
-    truck = _truck(node=5)
-    before_service = _route(1, truck=truck, task_registry=registry)
-    assert before_service.reason is FeasibilityReason.CUSTOMERS_REMAIN
-
-    for task in registry.tasks():
-        registry.claim(task.node_id, truck_id=0, timestamp=0.0)
-        registry.start_service(task.node_id, truck_id=0, timestamp=0.0)
-        registry.complete_service(task.node_id, truck_id=0, timestamp=0.0)
-
-    no_return = _route(1, truck=truck, task_registry=registry)
-    assert no_return.reason is FeasibilityReason.DEPOT_RETURN_NOT_REQUIRED
-
-    truck.return_to_depot_pending = True
+def test_depot_is_available_before_service_without_a_pending_return() -> None:
     feasible = _route(
         1,
-        truck=truck,
-        task_registry=registry,
+        truck=_truck(node=5),
         transport_graph=_EnergyGraph({(5, 1): 10.0}),
     )
     assert feasible.feasible
     assert feasible.action_kind is ActionKind.DEPOT
+    assert feasible.required_energy == 10.0
+
+
+def test_retiring_at_current_depot_requires_no_battery() -> None:
+    result = _route(1, truck=_truck(battery=0.0))
+    assert result.feasible and result.required_energy == 0.0
+
+
+def test_early_depot_return_still_requires_energy_and_connectivity() -> None:
+    graph = _EnergyGraph({(5, 1): 10.0})
+    assert _route(1, truck=_truck(node=5, battery=10.0), transport_graph=graph).feasible
+    insufficient = _route(1, truck=_truck(node=5, battery=9.0), transport_graph=graph)
+    assert insufficient.reason is FeasibilityReason.INSUFFICIENT_ENERGY
+    reserve = _route(
+        1,
+        truck=_truck(node=5, battery=10.0),
+        transport_graph=graph,
+        energy_multiplier=1.2,
+    )
+    assert reserve.reason is FeasibilityReason.INSUFFICIENT_ENERGY
+    unreachable = _route(1, truck=_truck(node=5), transport_graph=_EnergyGraph({}))
+    assert unreachable.reason is FeasibilityReason.UNREACHABLE
+
+
+def test_busy_truck_cannot_retire() -> None:
+    for state in ("routing", "charging", "unloading", "complete", "failed"):
+        assert (
+            _route(1, truck_state=state).reason is FeasibilityReason.INVALID_TRUCK_STATE
+        )
 
 
 def test_duration_charge_has_no_hidden_location_or_full_battery_fallback() -> None:

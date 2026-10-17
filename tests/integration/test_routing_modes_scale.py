@@ -166,8 +166,8 @@ def drive_deliveries(env, variant, seed=99):
                     for task in env.task_registry.tasks()
                     if task.preassigned_to == truck.truck_id
                 )
-            else:
-                assert env.task_registry.all_served()
+            # Other trucks may still be serving claimed tasks. A truck with
+            # no available customer can close its route independently.
         index = env.num_charging_nodes + slot
         assert mask[index]
         trace.append((env.active_truck_id, index, env.global_clock))
@@ -220,6 +220,352 @@ def test_routing_variant_fleet_and_customer_matrix(
     drive_deliveries(env, variant, seed)
 
 
+def retire_at_depot(env, tuple_action=False):
+    action = (
+        (env.joint_instance.depot_node, 0.0, False)
+        if tuple_action
+        else env.num_charging_nodes + env.fixed_num_stops
+    )
+    return env.step(action)
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("trucks,stops", ((1, 1), (1, 3), (3, 1), (3, 5)))
+@pytest.mark.parametrize("condition", ("empty_battery", "no_chargers"))
+def test_depot_retirement_needs_neither_charge_nor_a_charging_station(
+    make_routing_env, road_graph, monkeypatch, variant, trucks, stops, condition
+):
+    if condition == "no_chargers":
+        for _, attributes in road_graph.nodes(data=True):
+            monkeypatch.setitem(attributes, "has_charger", False)
+        env = make_routing_env(variant, trucks, stops)
+        assert not env.charging_nodes
+    else:
+        env = make_routing_env(variant, trucks, stops)
+        # A zero-SoC fleet with outstanding work is no longer generated. Inject
+        # the physical edge case after certification to test depot semantics.
+        for truck in env.trucks:
+            truck.current_battery = 0.0
+        assert all(truck.current_battery == 0.0 for truck in env.trucks)
+    while env.active_truck_id is not None:
+        result = retire_at_depot(env)
+    assert result[2:4] == (True, False)
+    assert result[4]["all_complete"] and not result[4]["successful"]
+    assert result[4]["invalid_action_count"] == 0
+    assert result[4]["task_counts"]["served"] == 0
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("trucks", (1, 3, 5))
+@pytest.mark.parametrize("stops", (1, 2, 7))
+@pytest.mark.parametrize("tuple_action", (False, True))
+def test_retire_at_initial_depot_with_unserved_customers(
+    make_routing_env, variant, trucks, stops, tuple_action
+):
+    env = make_routing_env(variant, trucks, stops)
+    initial_tasks = env.task_registry.snapshot()
+    retired = set()
+    while env.active_truck_id is not None:
+        truck_id = env.active_truck_id
+        assert truck_id not in retired
+        assert env.mask_fn()[env.num_charging_nodes + env.fixed_num_stops]
+        observation, reward, terminated, truncated, info = retire_at_depot(
+            env, tuple_action
+        )
+        retired.add(truck_id)
+        assert env.trucks[truck_id].is_complete
+        assert not env.trucks[truck_id].failed
+        assert env.global_clock == 0.0 and reward == 0.0
+        assert not truncated and not info["successful"]
+        assert_fleet_invariants(env, observation)
+    assert terminated
+    assert info["all_complete"] and not info["all_customers_served"]
+    assert info["termination_reason"] == "fleet_stopped_with_unserved_customers"
+    assert info["task_counts"]["served"] == 0
+    assert info["operational_metrics"]["vehicles_used"] == 0
+    assert env.task_registry.snapshot() == initial_tasks
+    assert all(truck.is_complete and not truck.failed for truck in env.trucks)
+    for _ in range(2):
+        repeated = retire_at_depot(env, tuple_action)
+        assert repeated[1:4] == (0.0, True, False)
+        assert repeated[4]["operational_metrics"] == info["operational_metrics"]
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("trucks,stops", ((1, 2), (3, 7), (5, 2)))
+@pytest.mark.parametrize("tuple_action", (False, True))
+@pytest.mark.parametrize("stochastic", (False, True))
+def test_retire_after_service_without_reactivating_or_erasing_customers(
+    make_routing_env, variant, trucks, stops, tuple_action, stochastic
+):
+    env = make_routing_env(variant, trucks, stops, stochastic=stochastic)
+    for task in env.task_registry.tasks():
+        task.base_service_time = (task.task_id + 1) * 0.25
+    returning = set()
+    early_return = False
+    for _ in range(stops + trucks + 1):
+        truck_id = env.active_truck_id
+        assert truck_id is not None and truck_id not in returning
+        truck = env.trucks[truck_id]
+        eligible = expected_customers(env, variant)
+        if truck.completed_service_count or not eligible:
+            returning.add(truck_id)
+            early_return |= not env.task_registry.all_served()
+            result = retire_at_depot(env, tuple_action)
+        else:
+            result = env.step(env.num_charging_nodes + eligible[0].task_id)
+        assert_fleet_invariants(env, result[0])
+        assert not result[3]
+        if result[2]:
+            break
+    else:
+        pytest.fail("retiring fleet did not terminate")
+    info = result[4]
+    assert early_return and info["all_complete"]
+    assert info["successful"] == env.task_registry.all_served()
+    assert all(truck.completed_service_count <= 1 for truck in env.trucks)
+    assert len(env.task_registry) == stops
+    assert all(not truck.failed for truck in env.trucks)
+    if not info["successful"]:
+        assert info["termination_reason"] == "fleet_stopped_with_unserved_customers"
+
+
+@pytest.mark.parametrize("trucks", (2, 5))
+@pytest.mark.parametrize("stops", (1, 5))
+def test_joint_fleet_can_succeed_after_one_truck_retires_unused(
+    make_routing_env, trucks, stops
+):
+    env = make_routing_env("joint", trucks, stops)
+    retired_id = env.active_truck_id
+    result = retire_at_depot(env)
+    assert not result[2] and not result[3]
+    assert env.trucks[retired_id].is_complete
+    _, info = drive_deliveries(env, "joint")
+    assert info["successful"]
+    assert not env.trucks[retired_id].served_task_ids
+
+
+@pytest.mark.parametrize("variant", ("preassigned", "sequential"))
+@pytest.mark.parametrize("trucks,stops", ((2, 1), (2, 5), (5, 2)))
+def test_retired_owner_keeps_unserved_tasks_while_other_trucks_continue(
+    make_routing_env, variant, trucks, stops
+):
+    env = make_routing_env(variant, trucks, stops)
+    retired_owner = None
+    abandoned_ids = set()
+    for _ in range(stops + trucks + 1):
+        truck_id = env.active_truck_id
+        assert truck_id is not None and truck_id != retired_owner
+        eligible = expected_customers(env, variant)
+        if retired_owner is None and eligible:
+            retired_owner = truck_id
+            abandoned_ids = {
+                task.task_id
+                for task in env.task_registry.tasks()
+                if task.preassigned_to == truck_id
+            }
+            result = retire_at_depot(env)
+        elif eligible:
+            result = env.step(env.num_charging_nodes + eligible[0].task_id)
+        else:
+            result = retire_at_depot(env)
+        if result[2]:
+            break
+        assert not result[3]
+    assert result[2] and not result[3]
+    assert abandoned_ids and not result[4]["successful"]
+    assert result[4]["termination_reason"] == "fleet_stopped_with_unserved_customers"
+    for task in env.task_registry.tasks():
+        assert task.is_served == (task.task_id not in abandoned_ids)
+        if task.task_id in abandoned_ids:
+            assert task.preassigned_to == retired_owner
+            assert task.status is TaskStatus.UNASSIGNED
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("stops", (1, 3))
+@pytest.mark.parametrize("horizon_offset", (-0.001, 0.0, 0.001))
+def test_early_return_commits_only_on_arrival_with_exact_battery_and_time_bounds(
+    make_routing_env, variant, stops, horizon_offset
+):
+    env = make_routing_env(variant, 1, stops)
+    env.step(0)  # Visit a charger while every customer is still unserved.
+    truck = env.trucks[0]
+    depot = env.joint_instance.depot_node
+    energy = env.transport_graph.get_path_energy(truck.current_node, depot)
+    travel_time = env.transport_graph.get_time_distance(truck.current_node, depot)
+    truck.current_battery = energy
+    env.max_time = env.global_clock + travel_time + horizon_offset
+    result = retire_at_depot(env, tuple_action=True)
+    assert not result[4]["successful"] and not env.task_registry.all_served()
+    if horizon_offset < 0.0:
+        assert result[2:4] == (False, True)
+        assert not truck.is_complete and not truck.failed
+        assert truck.current_node != depot and truck.current_battery == energy
+        assert result[4]["termination_reason"] == "time_limit_exhausted"
+    else:
+        assert result[2:4] == (True, False)
+        assert truck.is_complete and not truck.failed
+        assert truck.current_node == depot and truck.current_battery == 0.0
+        assert truck.battery_at_completion == 0.0
+        assert (
+            result[4]["termination_reason"] == "fleet_stopped_with_unserved_customers"
+        )
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("policy_mask", ("hard", "structural"))
+def test_depot_mask_matches_gnn_before_deliveries_and_reset_restores_trucks(
+    make_routing_env, variant, policy_mask
+):
+    from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
+
+    env = make_routing_env(
+        variant, 2, 5, environment={"policy_action_mask": policy_mask}
+    )
+    initial_tasks = env.task_registry.snapshot()
+    adapter = create_default_gnn_space(env)
+    depot_action = env.num_charging_nodes + env.fixed_num_stops
+    seen_away = False
+    for _ in range(env.num_trucks + 1):
+        graph = adapter.get_state_GNN(env)
+        assert env.mask_fn()[depot_action]
+        assert bool(graph.feasible_action_mask[depot_action])
+        np.testing.assert_array_equal(
+            graph.feasible_action_mask.cpu().numpy(), env.mask_fn()
+        )
+        assert env.policy_mask_fn()[depot_action]
+        if (
+            env.trucks[env.active_truck_id].current_node
+            == env.joint_instance.depot_node
+        ):
+            env.step(0)
+        else:
+            seen_away = True
+            break
+    assert seen_away
+    while env.active_truck_id is not None:
+        retire_at_depot(env)
+    env.reset(seed=23)
+    assert env.task_registry.snapshot() == initial_tasks
+    assert all(not truck.is_complete and not truck.failed for truck in env.trucks)
+    assert env.active_truck_id is not None
+    assert env.termination_reason is None
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize("tuple_action", (False, True))
+@pytest.mark.parametrize("obstacle", ("energy", "disconnected"))
+def test_infeasible_return_does_not_retire_or_advance_the_truck(
+    make_routing_env, monkeypatch, variant, tuple_action, obstacle
+):
+    env = make_routing_env(variant, 1, 2)
+    env.step(0)
+    truck = env.trucks[0]
+    depot = env.joint_instance.depot_node
+    energy = env.transport_graph.get_path_energy(truck.current_node, depot)
+    if obstacle == "energy":
+        truck.current_battery = energy - 0.1
+    else:
+        original = env.transport_graph.get_path_energy
+        monkeypatch.setattr(
+            env.transport_graph,
+            "get_path_energy",
+            lambda a, b: (
+                float("inf")
+                if (a, b) == (truck.current_node, depot)
+                else original(a, b)
+            ),
+        )
+    snapshot = (
+        truck.current_node,
+        truck.current_battery,
+        env.global_clock,
+        env.task_registry.snapshot(),
+    )
+    assert not env.mask_fn()[env.num_charging_nodes + env.fixed_num_stops]
+    result = retire_at_depot(env, tuple_action)
+    assert result[1] == -abs(env.reward_config.get("invalid_action_penalty", 100.0))
+    assert result[2:4] == (False, False)
+    assert not truck.is_complete and not truck.failed
+    assert not truck.return_to_depot_pending
+    assert (
+        truck.current_node,
+        truck.current_battery,
+        env.global_clock,
+        env.task_registry.snapshot(),
+    ) == snapshot
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_truck_returning_early_finishes_after_travel_while_other_truck_continues(
+    make_routing_env, variant
+):
+    from EVRoutingEnv.models.environment.event_handlers import Event, EventType
+
+    env = make_routing_env(variant, 2, 5)
+    env.step(0)  # Truck 0 travels to a charger; truck 1 is ready at the depot.
+    assert env.active_truck_id == 1
+    retire_at_depot(env)  # Truck 1 retires while truck 0's trip is in progress.
+    assert env.trucks[1].is_complete and env.active_truck_id == 0
+    truck = env.trucks[0]
+    assert not truck.is_complete and truck.current_node == env.charging_nodes[0]
+    departure_time = env.global_clock
+    journey = env.transport_graph.get_time_distance(
+        truck.current_node, env.joint_instance.depot_node
+    )
+    # Retired trucks' stale events must neither reactivate them nor exhaust time.
+    import heapq
+
+    heapq.heappush(env.event_queue, Event(env.max_time + 1.0, 1, EventType.TRUCK_READY))
+    result = retire_at_depot(env)
+    assert result[2:4] == (True, False)
+    assert env.global_clock == pytest.approx(departure_time + journey)
+    assert truck.is_complete and not result[4]["successful"]
+    assert result[4]["termination_reason"] == "fleet_stopped_with_unserved_customers"
+
+
+def test_terminal_reason_cannot_be_success_with_unserved_customers(make_routing_env):
+    env = make_routing_env("joint", 1, 1)
+    retire_at_depot(env)
+    env.termination_reason = None  # Exercise the terminal fallback directly.
+    assert env._check_terminated()
+    assert env.termination_reason == "fleet_stopped_with_unserved_customers"
+    assert not env._get_info()["successful"]
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_returning_truck_stays_in_transit_until_depot_arrival(
+    make_routing_env, variant
+):
+    env = make_routing_env(variant, 2, 5)
+    env.step(0)  # Truck 0 starts a trip to a charger.
+    task = expected_customers(env, variant)[0]
+    env.step(env.num_charging_nodes + task.task_id)  # Truck 1 starts service.
+    assert env.active_truck_id == 0
+    returning = env.trucks[0]
+    result = retire_at_depot(env)
+    assert not result[2] and not result[3] and env.active_truck_id == 1
+    assert env.truck_states[0] == "routing"
+    assert returning.route_destination == env.joint_instance.depot_node
+    assert returning.current_node != env.joint_instance.depot_node
+    assert not returning.is_complete and returning.return_to_depot_pending
+    for _ in range(env.num_stops + env.num_trucks + 1):
+        assert env.active_truck_id == 1
+        own = expected_customers(env, variant)
+        result = (
+            env.step(env.num_charging_nodes + own[0].task_id)
+            if own
+            else retire_at_depot(env)
+        )
+        if result[2] or result[3]:
+            break
+    assert result[2:4] == (True, False)
+    assert returning.is_complete and not returning.return_to_depot_pending
+    assert returning.current_node == env.joint_instance.depot_node
+    assert result[4]["successful"] == (variant == "joint")
+
+
 @pytest.mark.parametrize("variant", VARIANTS)
 @pytest.mark.parametrize("trucks,stops", [(1, 25), (100, 25), (128, 150)])
 def test_many_deliveries_and_large_fleets_replay_exactly(
@@ -270,7 +616,7 @@ def test_ownership_and_order_rejections_preserve_the_decision(
     after, reward, terminated, truncated, info = env.step(action)
     assert not terminated and not truncated
     assert reward == -env.reward_config["invalid_action_penalty"]
-    assert np.array_equal(observation, after)
+    assert not np.array_equal(observation, after)  # Spent budgets are observable.
     assert env.event_queue == events and env.task_registry.snapshot() == snapshot
     assert (env.active_truck_id, env.global_clock) == (active, clock)
     assert info["invalid_action_count"] == 1
@@ -297,7 +643,8 @@ def test_only_sequential_mode_restricts_customer_order(make_routing_env, variant
 def test_horizon_during_travel_service_and_exact_depot_arrival(
     make_routing_env, variant, trucks, horizon
 ):
-    env = make_routing_env(variant, trucks, 1, environment={"max_time": horizon})
+    env = make_routing_env(variant, trucks, 1)
+    env.max_time = horizon
     task = expected_customers(env, variant)[0]
     truck = env.trucks[env.active_truck_id]
     # Seed 23 chooses two leaves, so the independent known road cost is 0.25h.
@@ -307,10 +654,12 @@ def test_horizon_during_travel_service_and_exact_depot_arrival(
     observation, _, terminated, truncated, info = env.step(
         env.num_charging_nodes + task.task_id
     )
-    if not (terminated or truncated):
-        observation, _, terminated, truncated, info = env.step(
-            env.num_charging_nodes + env.fixed_num_stops
-        )
+    # Unused trucks now receive a retirement decision instead of being hidden
+    # in a fleet wait state. Close those routes before advancing the journey.
+    for _ in range(trucks + 1):
+        if terminated or truncated:
+            break
+        observation, _, terminated, truncated, info = retire_at_depot(env)
     assert env.global_clock == horizon
     assert_fleet_invariants(env, observation)
     assert info["task_counts"]["served"] == int(horizon >= 0.375)
@@ -331,9 +680,12 @@ def test_horizon_during_travel_service_and_exact_depot_arrival(
 @pytest.mark.parametrize("limit", ["steps", "invalid_actions"])
 def test_large_fleet_limits_latch_and_reset_cleanly(make_routing_env, variant, limit):
     setting = (
-        {"max_episode_steps": 1} if limit == "steps" else {"invalid_action_budget": 2}
+        {} if limit == "steps" else {"invalid_action_budget": 2}
     )
     env = make_routing_env(variant, 128, 25, environment=setting)
+    default_step_limit = env.max_episode_steps
+    if limit == "steps":
+        env.max_episode_steps = 1
     if limit == "steps":
         task = expected_customers(env, variant)[0]
         result = env.step(env.num_charging_nodes + task.task_id)
@@ -350,6 +702,7 @@ def test_large_fleet_limits_latch_and_reset_cleanly(make_routing_env, variant, l
         again = env.step(0)
         assert again[1] == 0.0 and again[2:4] == result[2:4]
         assert np.array_equal(again[0], result[0])
+    env.max_episode_steps = default_step_limit
     env.reset(seed=23)
     assert env.episode_steps == env.invalid_action_count == 0
     assert env.global_clock == 0 and env.termination_reason is None
@@ -430,14 +783,19 @@ def test_unused_trucks_do_not_receive_terminal_battery_penalties(
     task = expected_customers(env, variant)[0]
     used = env.trucks[env.active_truck_id]
     first = env.step(env.num_charging_nodes + task.task_id)
-    final = env.step(env.num_charging_nodes + env.fixed_num_stops)
+    reward = first[1]
+    for _ in range(env.num_trucks + 1):
+        final = retire_at_depot(env)
+        reward += final[1]
+        if final[2] or final[3]:
+            break
     assert final[2:4] == (True, False) and final[4]["successful"]
     expected = (
         env.reward_config["delivery_bonus"]
         - final[4]["operational_metrics"]["total_operating_time"]
     )
     expected -= 2.0 * 100.0 * used.current_battery / used.battery_capacity
-    assert first[1] + final[1] == pytest.approx(expected)
+    assert reward == pytest.approx(expected)
     unused = [truck for truck in env.trucks if truck is not used]
     assert all(
         truck.completed_service_count == 0 and truck.total_distance_traveled == 0
@@ -900,7 +1258,7 @@ def test_invalid_charge_values_are_refused_without_progress(
     )
     assert not terminated and not truncated
     assert reward == -env.reward_config["invalid_action_penalty"]
-    assert np.array_equal(before, after)
+    assert not np.array_equal(before, after)  # Rejection consumes visible budgets.
     assert env.global_clock == clock and env.event_queue == events
     assert info["invalid_action_count"] == 1 and truck.num_charging_sessions == 0
 

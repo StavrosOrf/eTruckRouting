@@ -185,7 +185,8 @@ def test_penalize_mode_lets_a_truck_recover_from_a_refused_action() -> None:
 @pytest.mark.integration
 def test_removing_the_mask_does_not_change_the_dynamics() -> None:
     """A feasible action produces identical transitions under either mask."""
-    hard_env = EventDrivenTruckEnv(_config(), verbose=False, enable_plotting=False)
+    # Keep rejection semantics equal: that setting is now observable too.
+    hard_env = EventDrivenTruckEnv(_config(invalid_action_mode="penalize"), verbose=False, enable_plotting=False)
     soft_env = EventDrivenTruckEnv(
         _config(policy_action_mask="structural", invalid_action_mode="penalize"),
         verbose=False,

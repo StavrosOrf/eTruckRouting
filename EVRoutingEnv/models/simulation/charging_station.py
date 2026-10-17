@@ -165,6 +165,7 @@ class ChargingStation:
 
         # Track when each truck will finish charging (for queue management)
         self.truck_charge_end_time = {}  # truck_id -> expected charge completion time
+        self.truck_charge_accounted_until = {}
 
         # Simplified FCFS waitlist per charging station (feeds all ports)
         # Each entry: {"truck_id": int, "sequence": int}
@@ -203,6 +204,7 @@ class ChargingStation:
         self.charger_occupancy = {node: [] for node in self.charging_nodes}
         self.charger_queue = {node: [] for node in self.charging_nodes}
         self.truck_charge_end_time = {}
+        self.truck_charge_accounted_until = {}
         self.charger_waitlist = {node: [] for node in self.charging_nodes}
         self.waitlist_sequence_counter = 0
         self.pending_wake_trucks = {
@@ -416,8 +418,10 @@ class ChargingStation:
             )
 
         # Calculate when this truck will finish charging
+        self._accrue_charge_time(charger_node, global_clock)
         charge_end_time = global_clock + charge_hours
         self.truck_charge_end_time[truck_id] = charge_end_time
+        self.truck_charge_accounted_until[truck_id] = global_clock
 
         # Remove from waitlist (truck is now charging)
         waitlist = self.charger_waitlist[charger_node]
@@ -460,7 +464,6 @@ class ChargingStation:
             stats["last_update_time"] = global_clock
         stats["total_charge_sessions"] += 1
         stats["total_trucks_served"].add(truck_id)
-        stats["total_charge_time"] += charge_hours
         stats["queue_length"] = len(self.charger_queue[charger_node])
 
     def finish_charging(self, truck_id: int, charger_node: int, global_clock: float):
@@ -485,6 +488,8 @@ class ChargingStation:
             )
         self.charger_occupancy[charger_node].remove(truck_id)
 
+        # Only completed elapsed port-hours belong in cumulative statistics.
+        self._accrue_charge_time(charger_node, global_clock)
         # Remove from queue
         self.charger_queue[charger_node] = [
             (tid, start, dur)
@@ -507,6 +512,7 @@ class ChargingStation:
         # Clean up charge end time tracking
         if truck_id in self.truck_charge_end_time:
             del self.truck_charge_end_time[truck_id]
+        self.truck_charge_accounted_until.pop(truck_id, None)
         self.pending_wake_trucks[charger_node].discard(truck_id)
         
         # Record finish charging event
@@ -668,6 +674,15 @@ class ChargingStation:
             ),
         }
 
+    def _accrue_charge_time(self, node: int, global_clock: float) -> None:
+        """Accrue elapsed port-hours once, also for direct statistics consumers."""
+        for tid, start, duration in self.charger_queue[node]:
+            accounted = self.truck_charge_accounted_until.get(tid, start)
+            until = min(start + duration, global_clock)
+            if until > accounted:
+                self.charger_stats[node]["total_charge_time"] += until - accounted
+                self.truck_charge_accounted_until[tid] = until
+
     def get_utilization_stats(self, global_clock: float) -> dict:
         """
         Calculate charging station utilization statistics.
@@ -680,6 +695,7 @@ class ChargingStation:
         """
         # Update occupancy time for currently occupied chargers
         for node in self.charging_nodes:
+            self._accrue_charge_time(node, global_clock)
             if len(self.charger_occupancy[node]) > 0:
                 stats = self.charger_stats[node]
                 stats["occupancy_time"] += global_clock - stats["last_update_time"]
@@ -705,6 +721,7 @@ class ChargingStation:
             stats = self.charger_stats[node]
             c_type = self.charger_type[node]
             capacity = self.charger_capacity[node]
+            charge_time = stats["total_charge_time"]
 
             # Calculate utilization rate
             utilization_rate = (
@@ -719,7 +736,7 @@ class ChargingStation:
                 "capacity": int(capacity),
                 "utilization_rate": utilization_rate,
                 "sessions": stats["total_charge_sessions"],
-                "charge_time": stats["total_charge_time"],
+                "charge_time": charge_time,
                 "trucks_served": len(stats["total_trucks_served"]),
                 "current_occupancy": len(self.charger_occupancy[node]),
             }
@@ -731,12 +748,12 @@ class ChargingStation:
                 level2_stats["nodes"].append(int(node))
                 level2_stats["utilization_rates"].append(utilization_rate)
                 level2_stats["total_sessions"] += stats["total_charge_sessions"]
-                level2_stats["total_charge_time"] += stats["total_charge_time"]
+                level2_stats["total_charge_time"] += charge_time
             else:  # DCFast
                 dcfast_stats["nodes"].append(int(node))
                 dcfast_stats["utilization_rates"].append(utilization_rate)
                 dcfast_stats["total_sessions"] += stats["total_charge_sessions"]
-                dcfast_stats["total_charge_time"] += stats["total_charge_time"]
+                dcfast_stats["total_charge_time"] += charge_time
 
         # Calculate average utilization by type
         if level2_stats["nodes"]:

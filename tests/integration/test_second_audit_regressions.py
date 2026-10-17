@@ -41,7 +41,8 @@ def make_env():
 
 
 def test_unfinished_delivery_earns_no_bonus_and_reports_elapsed_work(make_env):
-    env = make_env(customers=1, environment={"max_time": 0.01})
+    env = make_env(customers=1)
+    env.max_time = 0.01
     _, reward, terminated, truncated, info = env.step(env.num_charging_nodes)
     assert truncated and not terminated
     assert reward == pytest.approx(-0.01 * env.reward_config["time_multiplier"])
@@ -64,7 +65,7 @@ def test_service_bonus_paid_once_when_service_really_finishes(make_env):
     assert env.step(0)[1] == 0.0
 
 
-def test_preassigned_finished_owner_waits_for_other_owner(make_env):
+def test_preassigned_finished_owner_can_return_while_other_owner_works(make_env):
     env = make_env(trucks=2, customers=4, problem={"assignment": "preassigned"})
     owners = {task.node_id: task.preassigned_to for task in env.task_registry.tasks()}
     env.transport_graph.get_time_distance = lambda a, b: (
@@ -72,11 +73,19 @@ def test_preassigned_finished_owner_waits_for_other_owner(make_env):
     )
     for node in env.charging_nodes:
         env.set_charger_available(node, False)
-    for _ in range(4):
+    returned_early = False
+    for _ in range(7):
         truck_id = env.active_truck_id
         own = env.task_registry.available_tasks(truck_id=truck_id)
-        assert own
-        env.step((own[0].node_id, 0.0, False))
+        if own:
+            result = env.step((own[0].node_id, 0.0, False))
+        else:
+            returned_early |= not env.task_registry.all_served()
+            result = env.step((env.joint_instance.depot_node, 0.0, False))
+        if result[2] or result[3]:
+            break
+    assert returned_early
+    assert result[2:4] == (True, False) and result[4]["successful"]
     assert env.task_registry.all_served()
     assert not any(truck.failed for truck in env.trucks)
 
@@ -91,7 +100,9 @@ def test_discrete_out_of_space_actions_do_not_mutate_state(make_env, action):
 
 
 def test_step_limit_is_latched_and_reset_clears_it(make_env):
-    env = make_env(environment={"max_episode_steps": 1})
+    env = make_env()
+    default_step_limit = env.max_episode_steps
+    env.max_episode_steps = 1
     observation, _, terminated, truncated, info = env.step(env.num_charging_nodes)
     assert truncated and not terminated
     for _ in range(2):
@@ -100,6 +111,7 @@ def test_step_limit_is_latched_and_reset_clears_it(make_env):
         assert (ended, cutoff) == (terminated, truncated)
         assert np.array_equal(again, observation)
         assert info["global_clock"] == next_info["global_clock"]
+    env.max_episode_steps = default_step_limit
     env.reset(seed=8)
     assert not env._episode_ended
     assert env.episode_steps == 0
@@ -267,12 +279,12 @@ def test_task_availability_matches_truck_payload_roundoff_tolerance():
 def test_leftover_battery_penalty_waits_for_physical_completion(make_env):
     env = make_env(
         customers=1,
-        environment={"max_time": 0.01},
         rewards={
             "enable_leftover_battery_penalty": True,
             "leftover_battery_penalty_coef": 2.0,
         },
     )
+    env.max_time = 0.01
     customer = env.task_registry.tasks()[0].node_id
 
     _, reward, terminated, truncated, info = env.step((customer, 0.0, False))
@@ -301,7 +313,13 @@ def test_leftover_battery_penalty_prices_used_truck_once(make_env, enabled):
         (customer, 0.0, False)
     )
     assert not terminated and not truncated
-    assert env.trucks[1].is_complete  # Unused truck was already at the depot.
+    assert env.active_truck_id == 1
+    _, retirement_reward, terminated, truncated, first_info = env.step(
+        (depot, 0.0, False)
+    )
+    first_reward += retirement_reward
+    assert not terminated and not truncated
+    assert env.trucks[1].is_complete  # Explicitly retire the unused truck.
     assert env._penalized_completed_trucks == {1}
     assert env.trucks[1].total_distance_traveled == 0.0
     assert env.trucks[1].completed_service_count == 0
@@ -337,9 +355,9 @@ def test_leftover_battery_penalty_prices_used_truck_once(make_env, enabled):
 def test_failure_at_exact_time_horizon_terminates(make_env):
     env = make_env(
         customers=1,
-        environment={"max_time": 2.0},
         traffic={"enable_traffic": False, "enable_energy_uncertainty": False},
     )
+    env.max_time = 2.0  # Inject the failure boundary after certifying the instance.
     task = env.task_registry.tasks()[0]
     task.earliest_service = 0.0
     task.latest_service = 1.5

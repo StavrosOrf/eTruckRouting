@@ -24,6 +24,7 @@ from algo.canonical_state import (
     scatter_logits,
     unpack_flat_observation,
 )
+from EVRoutingEnv.state.features import SCHEMA_VERSION
 from EVRoutingEnv.state.representations import CanonicalShapeSpec
 
 
@@ -52,8 +53,14 @@ class CanonicalPolicyConfig:
     # head. Persisted with the checkpoint so an ablated run is never reloaded as
     # if it were the full architecture.
     ablate_state_pooling: bool = False
+    feature_schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if self.feature_schema_version != SCHEMA_VERSION:
+            raise ValueError(
+                f"checkpoint feature schema {self.feature_schema_version!r} is incompatible "
+                f"with {SCHEMA_VERSION!r}; retrain using the current observation layout"
+            )
         if self.state_encoder not in STATE_ENCODER_TYPES:
             raise ValueError(
                 f"state_encoder must be one of {STATE_ENCODER_TYPES}, got "
@@ -90,7 +97,9 @@ class CanonicalPolicyConfig:
 
     @classmethod
     def load(cls, path: str | Path) -> CanonicalPolicyConfig:
-        return cls(**json.loads(Path(path).read_text()))
+        payload = json.loads(Path(path).read_text())
+        payload.setdefault("feature_schema_version", "unversioned")
+        return cls(**payload)
 
 
 @dataclass(frozen=True)

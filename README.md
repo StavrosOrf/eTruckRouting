@@ -221,17 +221,54 @@ Environment behavior is controlled through YAML files in
   `config.yaml` contains the same sequential defaults.
 
 Both modes use one fleet task registry, a shared depot, payload limits, service
-completion events, charger queues, and required depot return. Sequential trucks
-can finish and return independently. `environment.num_stops` is the **total
-fleet customer count** in both modes; it is never multiplied by the truck count.
+completion events, charger queues, and required depot return. In all three
+variants, a ready truck may return to the depot before deliveries are finished;
+arrival permanently retires that truck. Selecting the depot while already there
+retires it immediately. Other trucks continue, and the scenario succeeds only
+if every customer is served and every truck finishes at the depot. Outstanding
+preassigned deliveries stay with their original owner after retirement.
+`environment.num_stops` is the **total fleet customer count** in both modes;
+it is never multiplied by the truck count.
 Single-truck flexible routing is covered by `joint_fleet`; its separate legacy
 configuration and independent-route loader have been removed. The old
 `delivery.enable_flexible_delivery_order` setting is rejected: select the mode
 through `problem.mode`.
 
-Canonical features use schema `joint-fleet-v5`, including customer ownership and
-sequence position. Existing checkpoints with older feature/action layouts need
-retraining.
+Every accepted reset has a complete feasible fleet witness, replayed on isolated
+simulator state using that scenario's stochastic seed. Certification includes
+initial SoC, payload/ownership/order, configured charging actions and station
+queues, hard service windows, final depot returns, and time/action limits.
+Candidates without a successful replay are resampled, up to
+`environment.generation_attempts` (default 64); exhaustion raises a descriptive
+error without relaxing constraints. This bounded constructive search may reject
+a configuration for which another feasible route exists. The guarantee is
+existence of a solution for the seeded scenario, not that every policy or every
+possible stochastic realization succeeds. `info["instance_feasibility"]` reports
+certification; `env.feasibility_witness` contains replayable `(truck_id, action)`
+pairs for debugging, outside policy observations.
+
+The inactive `min_hop_distance`/`max_hop_distance` keys are removed and rejected.
+Use `environment.min_hop_energy_kwh` (default 0) and `max_hop_energy_kwh`
+(default `null`, unbounded). These constrain nominal energy from the depot or
+previous customer to the next customer in the generated witness. They do not
+restrict policy reordering, charger detours, or early depot retirement. Charger
+chains have no arbitrary one-hop cap; the configured action budget still applies.
+No kWh quantity is presented as measured kilometres.
+The shipped `energy_ramp` curriculum keeps its actual battery/noise ramp with
+unrestricted hop-energy defaults; its old, inactive distance overrides are gone.
+
+Canonical features use schema `joint-fleet-v6`: ownership/order, remaining time
+and action/invalid-action budgets, committed route ETA/energy, charge/service
+timing and amounts, and FCFS queue positions/reservations are observable.
+`legacy_flat` retains its historical prefix and appends the canonical state.
+The legacy GNN compatibility adapter also exposes the new history and budgets
+in its truck-node features, including after some trucks have retired.
+Observation layouts have changed; older checkpoints require retraining, and
+canonical checkpoint loading rejects missing or incompatible schema versions.
+For success rates use `info["successful"]`, not `all_complete` (which only means
+every truck retired). Curriculum accounting records each terminal episode once
+and preserves explicit action budgets. Charger `charge_time` statistics count
+elapsed port-hours, not the unexecuted remainder of scheduled sessions.
 
 Important configuration sections include:
 

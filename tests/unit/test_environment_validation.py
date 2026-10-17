@@ -23,7 +23,7 @@ def _config() -> dict:
         ("num_trucks", True, ValueError),
         ("num_stops", 0, ValueError),
         ("allow_variable_num_stops", "false", TypeError),
-        ("min_hop_distance", -1.0, ValueError),
+        ("min_hop_energy_kwh", -1.0, ValueError),
         ("max_time", float("nan"), ValueError),
         ("max_episode_steps", 0, ValueError),
         ("verbose", "false", TypeError),
@@ -41,12 +41,12 @@ def test_invalid_environment_boundaries_fail_before_reset(
         EventDrivenTruckEnv(config, enable_plotting=False)
 
 
-def test_hop_distance_bounds_must_be_ordered() -> None:
+def test_hop_energy_bounds_must_be_ordered() -> None:
     config = _config()
-    config["environment"]["min_hop_distance"] = 10.0
-    config["environment"]["max_hop_distance"] = 9.0
+    config["environment"]["min_hop_energy_kwh"] = 10.0
+    config["environment"]["max_hop_energy_kwh"] = 9.0
 
-    with pytest.raises(ValueError, match="max_hop_distance"):
+    with pytest.raises(ValueError, match="max_hop_energy_kwh"):
         EventDrivenTruckEnv(config, enable_plotting=False)
 
 

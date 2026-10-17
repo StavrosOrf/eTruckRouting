@@ -233,8 +233,8 @@ class CurriculumEnvWrapper:
         config['environment']['num_trucks'] = num_trucks
         config['environment']['num_stops'] = num_stops
         
-        # Update max_episode_steps based on problem size
-        config['environment']['max_episode_steps'] = int(num_trucks * num_stops * 7.5)
+        # Preserve explicit budgets. Otherwise the base environment computes a
+        # fleet/customer/charger-scaled default (including charging detours).
         
         # Close old environment if it exists
         if self.env is not None:
@@ -272,6 +272,7 @@ class CurriculumEnvWrapper:
         
         # Reset the environment
         obs, info = self.env.reset(seed=seed, options=options)
+        self._terminal_recorded = False
         
         # Add curriculum info
         info['curriculum'] = {
@@ -287,13 +288,14 @@ class CurriculumEnvWrapper:
         obs, reward, done, truncated, info = self.env.step(action)
         
         # Track performance by problem size
-        if done or truncated:
+        if (done or truncated) and not self._terminal_recorded:
+            self._terminal_recorded = True
             size_key = (self.current_num_trucks, self.current_num_stops)
             self.size_performance[size_key]['rewards'].append(
                 info.get('episode_reward', reward)
             )
             self.size_performance[size_key]['success'].append(
-                1.0 if info.get('all_complete', False) else 0.0
+                1.0 if info.get('successful', False) else 0.0
             )
             
             self.episode_count += 1

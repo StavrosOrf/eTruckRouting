@@ -136,7 +136,10 @@ class EventHandler:
 
         # Track route for visualization
         if enable_plotting:
-            event_label = "delivery" if is_delivery else "charger"
+            event_label = (
+                "depot" if destination == truck.delivery_sequence[0]
+                else "delivery" if is_delivery else "charger"
+            )
             # Get SoC at arrival (after battery discharge from travel)
             soc_at_arrival = truck.get_battery_percentage()
             
@@ -237,12 +240,12 @@ class EventHandler:
             truck_states[truck.truck_id] = "failed"
             if self.verbose:
                 print(f"  Truck {truck.truck_id} FAILED: battery depleted")
-        # Check if truck completed all deliveries
+        # A depot arrival finishes this route, even if customers remain.
         elif truck.is_complete:
             truck.mark_complete(timestamp=global_clock)
             truck_states[truck.truck_id] = "complete"
             if self.verbose:
-                print(f"  Truck {truck.truck_id} COMPLETED all deliveries")
+                print(f"  Truck {truck.truck_id} FINISHED its route")
         # If this was a delivery (and not complete/failed), apply unloading time
         elif waiting_for_service:
             # The opening-time event starts service and schedules completion.

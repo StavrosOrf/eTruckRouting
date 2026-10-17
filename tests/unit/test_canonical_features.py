@@ -461,7 +461,7 @@ def test_truck_rows_expose_return_energy_headroom(env) -> None:
 
 
 def test_depot_action_reports_its_energy_even_while_customers_remain(env) -> None:
-    """A rejected depot action must still price the return leg."""
+    """An early retirement action carries the same energy as physical travel."""
     from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
 
     decisions = joint_action_feasibility(env)
@@ -476,10 +476,11 @@ def test_depot_action_reports_its_energy_even_while_customers_remain(env) -> Non
     features = env.get_canonical_features()
     for index in depot_indices:
         decision = decisions[index]
-        if decision.reason.value in {"customers_remain", "depot_return_not_required"}:
-            # -1.0 is the sentinel for "no value"; the whole point of the fix is
-            # that this rejection now carries a real number.
-            assert features.action_features[index, energy_column] >= 0.0
+        assert decision.feasible
+        assert features.action_features[index, energy_column] == pytest.approx(
+            decision.required_energy
+        )
+        assert decision.required_energy >= 0.0
 
 
 @pytest.mark.parametrize("observation_mode", ["unknown", "canonical_graph"])

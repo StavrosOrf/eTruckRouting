@@ -30,6 +30,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.evaluation.actions import validate_discrete_action
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
@@ -275,7 +276,7 @@ def _run_episode_task(task):
                     if isinstance(raw_action, tuple):
                         action = raw_action
                     else:
-                        action = int(raw_action) % env.action_space.n
+                        action = validate_discrete_action(raw_action, env.action_space.n)
 
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
@@ -330,7 +331,7 @@ def _run_episode_task(task):
             "episode_idx": episode_idx,
             "seed": seed + episode_idx,
             "reward": episode_reward,
-            "success": 1.0 if info["all_complete"] else 0.0,
+            "success": 1.0 if info["successful"] else 0.0,
             "distance": total_dist,
             "charging_time": total_charge,
             "steps": episode_steps,

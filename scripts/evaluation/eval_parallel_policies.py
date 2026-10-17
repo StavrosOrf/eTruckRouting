@@ -29,6 +29,7 @@ from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
 from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
 from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.evaluation.actions import validate_discrete_action
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
 from EVRoutingEnv.state.action_mask import get_action_mask
@@ -227,7 +228,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
                     if isinstance(raw_action, tuple):
                         action = raw_action
                     else:
-                        action = int(raw_action) % env.action_space.n
+                        action = validate_discrete_action(raw_action, env.action_space.n)
 
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
@@ -236,7 +237,7 @@ def evaluate_policy(env, policy, gnn_state_space, policy_type, num_episodes, see
         exec_times.append(time.perf_counter() - start_time)
 
         rewards.append(episode_reward)
-        successes.append(1.0 if info["all_complete"] else 0.0)
+        successes.append(1.0 if info["successful"] else 0.0)
         steps.append(episode_steps)
         completion_times.append(env.global_clock)
 
@@ -487,7 +488,7 @@ def _run_episode_task(task):
                     if isinstance(raw_action, tuple):
                         action = raw_action
                     else:
-                        action = int(raw_action) % env.action_space.n
+                        action = validate_discrete_action(raw_action, env.action_space.n)
 
             obs, reward, done, truncated, info = env.step(action)
             episode_reward += reward
@@ -545,7 +546,7 @@ def _run_episode_task(task):
             "policy_name": policy_name,
             "episode_idx": episode_idx,
             "reward": episode_reward,
-            "success": 1.0 if info["all_complete"] else 0.0,
+            "success": 1.0 if info["successful"] else 0.0,
             "distance": total_dist,
             "charging_time": total_charge,
             "steps": episode_steps,

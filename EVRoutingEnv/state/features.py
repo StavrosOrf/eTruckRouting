@@ -15,8 +15,8 @@ from EVRoutingEnv.state.feasibility import (
 )
 
 
-# v5 makes fixed ownership and prescribed route order observable.
-SCHEMA_VERSION = "joint-fleet-v5"
+# v6 exposes action budgets, committed activity outcomes and FCFS queue order.
+SCHEMA_VERSION = "joint-fleet-v6"
 
 NODE_TYPES = ("truck", "customer", "charger")
 EDGE_FEATURES = ("nominal_energy_kwh", "nominal_travel_hours", "reachable")
@@ -36,6 +36,19 @@ DEPOT_FEATURES = (
     "depot_reachable",
 )
 
+TRUCK_HISTORY_FEATURES = (
+    "routing_started_at", "route_arrival_at", "charging_started_at",
+    "unloading_started_at", "waiting_started_at", "ready_since",
+    "next_event_at", "next_event_remaining_hours", "pending_discharge_kwh",
+    "pending_charge_kwh", "pending_service_hours", "queue_position",
+    "has_port_reservation", "return_to_depot_pending", "completed_services",
+)
+GLOBAL_HISTORY_FEATURES = (
+    "episode_steps", "max_episode_steps", "remaining_episode_steps",
+    "invalid_action_count", "invalid_action_budget", "remaining_invalid_actions",
+    "invalid_actions_terminate", "max_time", "remaining_time",
+)
+
 TRUCK_FEATURES = (
     "current_node",
     "battery_kwh",
@@ -53,6 +66,7 @@ TRUCK_FEATURES = (
     # is already committed to a recharge before it can go home.
     "battery_minus_depot_energy",
     *DEPOT_FEATURES,
+    *TRUCK_HISTORY_FEATURES,
 )
 CUSTOMER_FEATURES = (
     "task_id",
@@ -67,6 +81,8 @@ CUSTOMER_FEATURES = (
     "claimed_at",
     "preassigned_to",
     "sequence_position",
+    "service_started_at",
+    "served_at",
     *DEPOT_FEATURES,
 )
 CHARGER_FEATURES = (
@@ -123,6 +139,7 @@ GLOBAL_FEATURES = (
     "customers_in_service",
     "customers_served",
     "all_customers_served",
+    *GLOBAL_HISTORY_FEATURES,
 )
 
 
@@ -241,6 +258,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 int(truck.failed),
                 headroom,
                 *depot_columns,
+                *_truck_history(env, truck),
             ]
         )
 
@@ -262,6 +280,8 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 _optional_value(task.claimed_at),
                 _optional_value(task.preassigned_to),
                 _optional_value(task.sequence_position),
+                _optional_value(task.service_started_at),
+                _optional_value(task.served_at),
                 *_depot_columns(env, int(task.node_id), depot_node),
             ]
         )
@@ -331,6 +351,15 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
             counts[TaskStatus.IN_SERVICE.value],
             counts[TaskStatus.SERVED.value],
             int(env.task_registry.all_served()),
+            env.episode_steps,
+            env.max_episode_steps,
+            max(0, env.max_episode_steps - env.episode_steps),
+            env.invalid_action_count,
+            env.invalid_action_budget,
+            max(0, env.invalid_action_budget - env.invalid_action_count),
+            int(env.invalid_action_mode == "terminate"),
+            env.max_time,
+            max(0.0, env.max_time - env.global_clock),
         ],
         dtype=np.float32,
     )
@@ -358,6 +387,40 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
     result = _apply_feature_ablations(env, result)
     result.validate()
     return result
+
+
+def _truck_history(env, truck) -> list[float]:
+    """Committed events are observable; unsampled future randomness is not."""
+    tid = truck.truck_id
+    event = min(
+        (event for event in env.event_queue if event.truck_id == tid),
+        default=None,
+    ) if not (truck.failed or truck.is_complete) else None
+    data = {} if event is None else event.data
+    queue_position = -1
+    reserved = False
+    for node in env.charging_nodes:
+        for position, entry in enumerate(env.charging_station.charger_waitlist[node]):
+            if entry["truck_id"] == tid:
+                queue_position = position
+        reserved |= tid in env.charging_station.pending_wake_trucks[node]
+    return [
+        _optional_value(truck.routing_start_time if env.truck_states[tid] == "routing" else None),
+        _optional_value(truck.route_arrival_time),
+        _optional_value(truck.charge_start_time),
+        _optional_value(truck.unloading_start_time),
+        _optional_value(truck.waiting_start_time),
+        _optional_value(env.truck_ready_times.get(tid)),
+        -1.0 if event is None else event.time,
+        -1.0 if event is None else max(0.0, event.time - env.global_clock),
+        data.get("discharge", 0.0),
+        data.get("charge_amount", 0.0),
+        data.get("unloading_duration", data.get("unloading_time", 0.0)) or 0.0,
+        queue_position,
+        int(reserved),
+        int(truck.return_to_depot_pending),
+        truck.completed_service_count,
+    ]
 
 
 # Named blocks a component ablation may blank.  Zeroing rather than removing

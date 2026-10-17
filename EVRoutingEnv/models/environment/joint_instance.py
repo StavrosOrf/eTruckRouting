@@ -9,6 +9,10 @@ import numpy as np
 
 from EVRoutingEnv.models.core.customer import CustomerTask, FleetTaskRegistry
 from EVRoutingEnv.models.environment.energy_reachability import EnergyReachability
+from EVRoutingEnv.models.environment.route_certificate import (
+    NoFeasibleCertificate,
+    construct_energy_routes,
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,8 @@ class JointRoutingInstance:
 
     depot_node: int
     tasks: tuple[CustomerTask, ...]
+    witness_owners: tuple[int, ...] = ()
+    witness_routes: tuple = ()
 
     def create_registry(self, *, sequential: bool = False) -> FleetTaskRegistry:
         # Tasks are mutable during an episode, so return fresh copies.
@@ -36,6 +42,76 @@ class JointRoutingInstance:
 
 
 def generate_joint_routing_instance(
+    transport_graph, charging_nodes, rng, *, num_customers, num_trucks,
+    battery_capacity, payload_capacity, min_customer_demand, max_customer_demand,
+    base_service_time, time_window_config=None, preassign=False,
+    energy_multiplier=1.0, sequential=False, initial_batteries=None,
+    charge_transition=None, min_hop_energy_kwh=0.0, max_hop_energy_kwh=math.inf,
+    generation_attempts=64, certify=None,
+) -> JointRoutingInstance:
+    """Emit only candidates with a complete constructive fleet witness.
+
+    The environment supplies a certifier that replays the configured event
+    engine (windows, queues, initial SoC, charging actions, stochastic seed,
+    horizon and action budget). Standalone callers receive an energy/capacity
+    certificate under full-battery charging, without an execution-time claim.
+    No constraint is relaxed on failure. Bounded search failure raises clearly;
+    it is not a mathematical proof that the configuration is infeasible.
+    """
+    _validate_inputs(
+        num_customers=num_customers, num_trucks=num_trucks,
+        battery_capacity=battery_capacity, payload_capacity=payload_capacity,
+        min_customer_demand=min_customer_demand, max_customer_demand=max_customer_demand,
+        base_service_time=base_service_time,
+    )
+    if isinstance(generation_attempts, bool) or not isinstance(generation_attempts, int) or generation_attempts < 1:
+        raise ValueError("generation_attempts must be a positive integer")
+    if (not math.isfinite(min_hop_energy_kwh) or min_hop_energy_kwh < 0
+            or math.isnan(max_hop_energy_kwh) or max_hop_energy_kwh < min_hop_energy_kwh):
+        raise ValueError("hop energy bounds must satisfy 0 <= min <= max")
+    initial_batteries = ([battery_capacity] * num_trucks if initial_batteries is None
+                         else list(initial_batteries))
+    if len(initial_batteries) != num_trucks or any(
+        not math.isfinite(value) or not 0 <= value <= battery_capacity
+        for value in initial_batteries
+    ):
+        raise ValueError("initial_batteries must contain one valid kWh value per truck")
+    envelope = EnergyReachability.build(
+        transport_graph, charging_nodes, battery_capacity, energy_multiplier,
+    )
+    last_error = "no candidate"
+    for _ in range(generation_attempts):
+        instance = _sample_joint_routing_instance(
+            transport_graph, charging_nodes, rng, num_customers=num_customers,
+            num_trucks=num_trucks, battery_capacity=battery_capacity,
+            payload_capacity=payload_capacity, min_customer_demand=min_customer_demand,
+            max_customer_demand=max_customer_demand, base_service_time=base_service_time,
+            time_window_config=time_window_config, preassign=preassign,
+            energy_multiplier=energy_multiplier, sequential=sequential,
+            envelope=envelope,
+        )
+        try:
+            routes = construct_energy_routes(
+                instance, transport_graph, charging_nodes, num_trucks=num_trucks,
+                battery_capacity=battery_capacity, initial_batteries=initial_batteries,
+                energy_multiplier=energy_multiplier, charge_transition=charge_transition,
+                min_hop_energy_kwh=min_hop_energy_kwh,
+                max_hop_energy_kwh=max_hop_energy_kwh,
+            )
+            instance = replace(instance, witness_routes=routes)
+            if certify is not None:
+                certify(instance)
+            return instance
+        except NoFeasibleCertificate as error:
+            last_error = str(error)
+    raise ValueError(
+        f"could not certify a solvable instance after {generation_attempts} attempts: "
+        f"{last_error}. Check battery/initial SoC, payload, hop-energy bounds, "
+        "time windows, max_time and max_episode_steps; no constraints were relaxed."
+    )
+
+
+def _sample_joint_routing_instance(
     transport_graph,
     charging_nodes: list[int],
     rng: np.random.Generator,
@@ -51,6 +127,7 @@ def generate_joint_routing_instance(
     preassign: bool = False,
     energy_multiplier: float = 1.0,
     sequential: bool = False,
+    envelope: EnergyReachability | None = None,
 ) -> JointRoutingInstance:
     """Generate one feasible-capacity joint-routing instance.
 
@@ -84,7 +161,7 @@ def generate_joint_routing_instance(
     depot_candidates = eligible_nodes.copy()
     rng.shuffle(depot_candidates)
 
-    envelope = EnergyReachability.build(
+    envelope = envelope or EnergyReachability.build(
         transport_graph, charging_nodes, battery_capacity, energy_multiplier
     )
     selected_depot: int | None = None
@@ -146,7 +223,10 @@ def generate_joint_routing_instance(
             ordered.append(replace(task, sequence_position=position))
             positions[owner] = position + 1
         tasks = tuple(ordered)
-    return JointRoutingInstance(depot_node=selected_depot, tasks=tasks)
+    return JointRoutingInstance(
+        depot_node=selected_depot, tasks=tasks,
+        witness_owners=tuple(capacity_assignment),
+    )
 
 
 def _preassign_to_trucks(

@@ -25,6 +25,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.evaluation.actions import validate_discrete_action
 from EVRoutingEnv.state.gnn_state_space_nonflex import GNNStateSpaceNonFlex
 from EVRoutingEnv.state.gnn_state_space_vrp import GNNStateSpaceVRP
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
@@ -299,14 +300,14 @@ def run_scenario(policy_path, policy_type, gnn_space_type="base"):
                 if isinstance(raw_action, tuple):
                     action = raw_action
                 else:
-                    action = int(raw_action) % env.action_space.n
+                    action = validate_discrete_action(raw_action, env.action_space.n)
         
         obs, reward, done, truncated, info = env.step(action)
         episode_steps += 1
 
     print(f"Scenario finished. Reward: {env.episode_reward:.2f}")
     print(f"Total Steps: {episode_steps}")
-    print(f"Success: {'Yes' if info['all_complete'] else 'No'}")
+    print(f"Success: {'Yes' if info['successful'] else 'No'}")
     
     # Clean up temporary output directory
     if hasattr(env, 'output_dir') and os.path.exists(env.output_dir):
@@ -696,7 +697,7 @@ def generate_schedule_log(envs, policy_names, output_dir):
             f.write(f"  Completion Time: {env.global_clock:.2f} hours\n")
             
             # Aggregate statistics
-            all_complete = all(t.is_complete for t in env.trucks)
+            all_complete = env.task_registry.all_served()
             total_distance = sum(t.total_distance_traveled for t in env.trucks)
             total_charging_time = sum(t.total_charging_time for t in env.trucks)
             total_unloading_time = sum(t.total_unloading_time for t in env.trucks)

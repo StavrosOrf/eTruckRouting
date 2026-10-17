@@ -638,7 +638,7 @@ class Truck:
     
     def mark_complete(self, timestamp: float):
         """
-        Mark truck as having completed all deliveries.
+        Mark the truck's route finished; customer coverage is tracked separately.
         
         Args:
             timestamp: Current simulation time

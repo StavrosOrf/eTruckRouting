@@ -201,7 +201,7 @@ def evaluate_policy(policy, base_config, eval_configs, num_episodes_per_config, 
                 episode_reward += reward
             
             episode_rewards.append(episode_reward)
-            episode_success.append(1.0 if info.get('all_complete', False) else 0.0)
+            episode_success.append(1.0 if info.get('successful', False) else 0.0)
         
         results[(num_trucks, num_stops)] = {
             'mean_reward': np.mean(episode_rewards),
@@ -390,7 +390,7 @@ def train(args):
                 wandb.log({
                     'train/reward': episode_reward,
                     'train/length': episode_timesteps,
-                    'train/success': 1.0 if info.get('all_complete', False) else 0.0,
+                    'train/success': 1.0 if info.get('successful', False) else 0.0,
                     'train/trucks': curr_trucks,
                     'train/stops': curr_stops,
                     'timestep': total_timesteps

@@ -46,7 +46,7 @@ def make_env():
 
 
 @pytest.mark.parametrize("integer", [True, False])
-def test_depot_rejection_has_same_meaning_for_both_action_formats(make_env, integer):
+def test_depot_retirement_has_same_meaning_for_both_action_formats(make_env, integer):
     env = make_env()
     action = (
         env.num_charging_nodes + env.fixed_num_stops
@@ -55,9 +55,11 @@ def test_depot_rejection_has_same_meaning_for_both_action_formats(make_env, inte
     )
     _, reward, terminated, _, info = env.step(action)
     assert terminated
-    assert reward == env.reward_config["failure_penalty"]
-    assert info["invalid_action_count"] == 1
+    assert reward == 0.0
+    assert info["invalid_action_count"] == 0
     assert info["task_counts"]["served"] == 0
+    assert info["all_complete"] and not info["successful"]
+    assert info["termination_reason"] == "fleet_stopped_with_unserved_customers"
 
 
 @pytest.mark.parametrize("trucks", [1, 2])
@@ -72,7 +74,8 @@ def test_refusal_retries_same_truck_without_processing_other_events(make_env, tr
     assert env.active_truck_id == truck
     assert env.global_clock == clock
     assert env.event_queue == events
-    assert np.array_equal(env._get_observation(), observation)
+    # Physical/task state is unchanged, but spent action budgets are visible.
+    assert not np.array_equal(env._get_observation(), observation)
     assert reward == -env.reward_config["invalid_action_penalty"]
     env.step(env.num_charging_nodes)
     assert env.task_registry.tasks()[0].claimed_by == truck
@@ -133,7 +136,8 @@ def test_generated_preassignments_preserve_capacity_under_tight_loads(make_env):
 
 
 def test_horizon_stops_return_and_never_reports_success(make_env):
-    env = make_env(stops=1, environment={"max_time": 30.0})
+    env = make_env(stops=1)
+    env.max_time = 30.0  # Inject a cutoff after generating a certified instance.
     assert not env.step(env.num_charging_nodes)[3]
     _, _, terminated, truncated, info = env.step(
         env.num_charging_nodes + env.fixed_num_stops
@@ -148,7 +152,8 @@ def test_horizon_stops_return_and_never_reports_success(make_env):
 
 
 def test_horizon_does_not_serve_a_customer_after_cutoff(make_env):
-    env = make_env(stops=1, environment={"max_time": 0.01})
+    env = make_env(stops=1)
+    env.max_time = 0.01
     _, _, terminated, truncated, info = env.step(env.num_charging_nodes)
     assert not terminated and truncated
     assert env.global_clock == 0.01

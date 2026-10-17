@@ -15,8 +15,8 @@ environment:
   num_stops: 10
   allow_variable_num_stops: false
   observation_mode: canonical_flat
-  min_hop_distance: 10.0
-  max_hop_distance: 50.0
+  min_hop_energy_kwh: 0.0
+  max_hop_energy_kwh: null  # No upper bound; use kWh, not km.
   max_time: 200.0
   # Omitted: use the fleet/customer-scaled action budget. Set an explicit
   # max_episode_steps only for controlled action-budget experiments.

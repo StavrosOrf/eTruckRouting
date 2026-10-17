@@ -330,27 +330,34 @@ class TransportationGraph:
         self,
         start_node: int,
         num_stops: int,
-        min_hop_distance: float = 10.0,
-        max_hop_distance: float = 100.0,
+        min_hop_energy_kwh: float = 0.0,
+        max_hop_energy_kwh: float = math.inf,
         exclude_charging_nodes: bool = False,
         rng: np.random.Generator | None = None,
     ) -> list[int]:
         """
-        Generate a random delivery sequence with constrained hop distances.
+        Generate a candidate sequence with strict nominal hop-energy bounds.
+
+        This legacy utility does not certify EVRP solvability; environments use
+        generate_joint_routing_instance and replay a complete fleet witness.
 
         Args:
             start_node: Starting node for the delivery sequence
             num_stops: Number of delivery stops (excluding start)
-            min_hop_distance: Minimum distance between consecutive stops (km)
-            max_hop_distance: Maximum distance between consecutive stops (km)
+            min_hop_energy_kwh: Minimum nominal energy between consecutive stops
+            max_hop_energy_kwh: Maximum nominal energy between consecutive stops
             exclude_charging_nodes: If True, avoid charging nodes as delivery stops
             rng: Optional episode-scoped generator for reproducible instances
 
         Returns:
             List of nodes representing the delivery sequence [start, stop1, stop2, ...]
         """
-        sequence = [start_node]
-        current_node = start_node
+        if (not math.isfinite(min_hop_energy_kwh) or min_hop_energy_kwh < 0.0
+                or math.isnan(max_hop_energy_kwh)
+                or max_hop_energy_kwh < min_hop_energy_kwh):
+            raise ValueError("hop energy bounds must satisfy 0 <= min <= max")
+        if num_stops < 0 or start_node not in self.graph:
+            raise ValueError("invalid start node or stop count")
 
         # Get candidate nodes (excluding charging nodes if requested) and avoid sinks
         graph_ref = self.graph
@@ -364,80 +371,20 @@ class TransportationGraph:
         else:
             candidate_nodes = [n for n in self.get_all_nodes() if not _is_sink(n)]
 
-        attempts = 0
-        max_attempts = 1000
-
-        while len(sequence) < num_stops + 1 and attempts < max_attempts:
-            attempts += 1
-
-            # Find nodes within distance range from current node
-            valid_next_nodes = []
-            for node in candidate_nodes:
-                if node in sequence:  # Skip already visited nodes
-                    continue
-
-                distance = self.get_path_energy(current_node, node)
-                # Skip unreachable nodes (distance == inf)
-                if distance == float('inf'):
-                    continue
-                if min_hop_distance <= distance <= max_hop_distance:
-                    valid_next_nodes.append(node)
-
-            if not valid_next_nodes:
-                # Try relaxing distance constraints
-                for node in candidate_nodes:
-                    if node not in sequence:
-                        distance = self.get_path_energy(current_node, node)
-                        # Skip unreachable nodes
-                        if distance != float('inf'):
-                            valid_next_nodes.append(node)
-
-                if not valid_next_nodes:
-                    # Try including charging nodes as last resort
-                    for node in self.get_all_nodes():
-                        if node not in sequence and not _is_sink(node):
-                            distance = self.get_path_energy(current_node, node)
-                            if distance != float('inf'):
-                                valid_next_nodes.append(node)
-
-                if not valid_next_nodes:
+        generator = np.random.default_rng() if rng is None else rng
+        for _ in range(1000):
+            sequence = [int(start_node)]
+            for _ in range(num_stops):
+                valid = [int(node) for node in candidate_nodes
+                         if node not in sequence
+                         and min_hop_energy_kwh <= self.get_path_energy(sequence[-1], node) <= max_hop_energy_kwh
+                         and math.isfinite(self.get_path_energy(sequence[-1], node))]
+                if not valid:
                     break
-
-            # Randomly select next node
-            if rng is None:
-                next_node = np.random.choice(valid_next_nodes)
-            else:
-                next_node = rng.choice(valid_next_nodes)
-            sequence.append(next_node)
-            current_node = next_node
-
-        # If we couldn't generate enough stops, fill with random reachable nodes
-        while len(sequence) < num_stops + 1:
-            # Try to find reachable nodes (excluding charging if originally requested)
-            if exclude_charging_nodes:
-                remaining_nodes = [
-                    n for n in candidate_nodes 
-                    if n not in sequence and self.get_path_energy(current_node, n) != float('inf')
-                ]
-            else:
-                remaining_nodes = [
-                    n for n in self.get_all_nodes()
-                    if n not in sequence and not _is_sink(n) and self.get_path_energy(current_node, n) != float('inf')
-                ]
-            
-            if not remaining_nodes:
-                break
-            if rng is None:
-                next_node = np.random.choice(remaining_nodes)
-            else:
-                next_node = rng.choice(remaining_nodes)
-            sequence.append(next_node)
-            current_node = next_node
-
-        # make from numpy array to list of ints
-        sequence = [int(n) for n in sequence]
-
-        return sequence
+                sequence.append(int(generator.choice(valid)))
+            if len(sequence) == num_stops + 1:
+                return sequence
+        raise ValueError("could not generate a sequence within hop-energy bounds; no bounds relaxed")
 
     def get_nearest_charging_node(self, from_node: int) -> tuple[int, float]:
         """

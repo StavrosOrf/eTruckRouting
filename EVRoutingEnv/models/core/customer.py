@@ -131,7 +131,11 @@ class FleetTaskRegistry:
         return task is not None and task.node_id == int(node_id)
 
     def route_complete_for(self, truck_id: int) -> bool:
-        """Sequential routes return independently; joint routes finish as a fleet."""
+        """Report service progress, independently of eligibility to retire.
+
+        Sequential progress follows the prescribed workload; joint progress
+        follows fleet coverage. Neither restricts a truck's depot action.
+        """
         if not self.sequential:
             return self.all_served()
         return self.next_task_for_truck(truck_id) is None

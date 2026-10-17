@@ -325,7 +325,7 @@ def test_joint_mask_uses_hard_engine_without_graph_dependencies() -> None:
 
         assert mask.shape == (env.action_space.n,)
         assert mask[customer_start:customer_end].all()
-        assert not mask[depot_action]
+        assert mask[depot_action]
         assert not mask[env.num_navigation_actions :].any()
         assert env.last_action_feasibility is not None
     finally:
@@ -333,7 +333,7 @@ def test_joint_mask_uses_hard_engine_without_graph_dependencies() -> None:
 
 
 @pytest.mark.integration
-def test_premature_depot_action_fails_instead_of_rerouting() -> None:
+def test_early_depot_action_retires_only_the_acting_truck() -> None:
     env = EventDrivenTruckEnv(
         _joint_config(),
         verbose=False,
@@ -343,16 +343,15 @@ def test_premature_depot_action_fails_instead_of_rerouting() -> None:
         env.reset(seed=31415)
         acting_truck = env.active_truck_id
         depot = env.joint_instance.depot_node
-        _, reward, _, _, info = env.step((depot, 0.0, False))
+        _, reward, terminated, truncated, info = env.step((depot, 0.0, False))
 
-        assert reward == env.reward_config["failure_penalty"]
-        assert env.trucks[acting_truck].failed
-        assert (
-            env.trucks[acting_truck].failure_reason
-            == "invalid_action:same_location"
-        )
+        assert reward == 0.0
+        assert not terminated and not truncated
+        assert env.trucks[acting_truck].is_complete
+        assert not env.trucks[acting_truck].failed
+        assert env.active_truck_id != acting_truck
         assert env.task_registry.counts()["unassigned"] == 4
-        assert info["invalid_action_count"] == 1
+        assert info["invalid_action_count"] == 0
         assert not info["operational_metrics"]["success"]
         assert info["operational_metrics"]["fleet_makespan"] is None
     finally:
@@ -459,7 +458,7 @@ def test_empty_feasible_set_terminates_with_explicit_failure() -> None:
 
 
 @pytest.mark.integration
-def test_payload_deadlock_has_distinct_terminal_cause() -> None:
+def test_payload_exhaustion_still_allows_depot_retirement() -> None:
     env = EventDrivenTruckEnv(
         _joint_config(),
         verbose=False,
@@ -483,11 +482,16 @@ def test_payload_deadlock_has_distinct_terminal_cause() -> None:
             )
 
         env._advance_to_next_decision()
-        info = env._get_info()
-
-        assert env.active_truck_id is None
-        assert info["termination_reason"] == "payload_capacity_deadlock"
-        assert info["failure_causes"] == {"payload_capacity_deadlock": 2}
+        assert env.active_truck_id is not None
+        depot_action = env.num_charging_nodes + env.fixed_num_stops
+        while env.active_truck_id is not None:
+            assert env.mask_fn()[depot_action]
+            _, _, terminated, truncated, info = env.step(depot_action)
+            assert not truncated
+        assert terminated
+        assert info["termination_reason"] == "fleet_stopped_with_unserved_customers"
+        assert info["failure_causes"] == {}
+        assert info["all_complete"] and not info["successful"]
         assert not info["all_customers_served"]
     finally:
         env.close()

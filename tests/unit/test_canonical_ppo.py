@@ -36,6 +36,7 @@ from EVRoutingEnv.state.features import (
     CHARGER_FEATURES,
     CUSTOMER_FEATURES,
     EDGE_FEATURES,
+    GLOBAL_FEATURES,
     RELATION_TYPES,
     SCHEMA_VERSION,
     TRUCK_FEATURES,
@@ -65,7 +66,7 @@ def _features(rng: np.random.Generator, feasible: np.ndarray) -> CanonicalFleetF
         ),
         charger_features=rng.normal(size=(2, len(CHARGER_FEATURES))).astype(np.float32),
         action_features=action_rows,
-        global_features=rng.normal(size=8).astype(np.float32),
+        global_features=rng.normal(size=len(GLOBAL_FEATURES)).astype(np.float32),
         pairwise_features={
             relation: rng.uniform(
                 0.0,

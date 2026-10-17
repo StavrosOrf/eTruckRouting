@@ -371,6 +371,7 @@ def simulate_action(env: EventDrivenTruckEnv, action_idx: int) -> Dict:
             "truncated": truncated,
             "info": {
                 "all_complete": info.get("all_complete", False),
+                "successful": info.get("successful", False),
                 "any_failed": info.get("any_failed", False),
                 "global_clock": info.get("global_clock", None),
                 "active_truck_id": info.get("active_truck_id", None),

@@ -4,6 +4,11 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from EVRoutingEnv.state.features import (
+    SCHEMA_VERSION,
+    TRUCK_FEATURES,
+    TRUCK_HISTORY_FEATURES,
+)
 from EVRoutingEnv.state.gnn_state_space import GNNStateSpace
 from EVRoutingEnv.state.gnn_utils import extract_action_graph
 
@@ -43,6 +48,29 @@ class GNNStateSpaceVRP(GNNStateSpace):
         data = super().get_state_GNN(env)
         data, depot_node_to_idx = self._add_depot_nodes_and_edges(env, data)
         data = self._update_depot_action_metadata(env, data, depot_node_to_idx)
+        # Legacy encoders pool node rows, not graph-level metadata. Broadcast
+        # the global state into live truck rows so budgets actually reach the
+        # policy, alongside the same committed activity history as Gym/canonical.
+        canonical = env.get_canonical_features()
+        history_columns = [
+            TRUCK_FEATURES.index(name) for name in TRUCK_HISTORY_FEATURES
+        ]
+        live_ids = [
+            truck.truck_id for truck in env.trucks
+            if not truck.failed and not truck.is_complete
+        ]
+        history = canonical.truck_features[np.ix_(live_ids, history_columns)]
+        global_rows = np.broadcast_to(
+            canonical.global_features,
+            (len(live_ids), len(canonical.global_features)),
+        )
+        suffix = torch.as_tensor(
+            np.concatenate((history, global_rows), axis=1),
+            dtype=data["truck"].x.dtype, device=self.device,
+        )
+        data["truck"].x = torch.cat((data["truck"].x, suffix), dim=1)
+        self._truck_feature_dim = int(data["truck"].x.shape[1])
+        data.feature_schema_version = SCHEMA_VERSION
 
         active_truck = None
         if getattr(env, "active_truck_id", None) is not None and env.active_truck_id < len(env.trucks):
@@ -279,16 +307,11 @@ class GNNStateSpaceVRP(GNNStateSpace):
 
         action_node_type = getattr(data, "action_node_type", None)
         action_local_index = getattr(data, "action_local_index", None)
-        action_is_charging = getattr(data, "action_is_charging", None)
-        action_charge_durations = getattr(data, "action_charge_durations", None)
-        feasible_action_mask = getattr(data, "feasible_action_mask", None)
-
-        if action_node_type is None or action_local_index is None or action_is_charging is None:
+        if action_node_type is None or action_local_index is None:
             return data
 
         action_node_type = action_node_type.clone()
         action_local_index = action_local_index.clone()
-        action_is_charging_list = action_is_charging.tolist()
 
         for idx, (node_id, is_charging) in enumerate(action_to_node_map):
             if is_charging:
@@ -300,43 +323,8 @@ class GNNStateSpaceVRP(GNNStateSpace):
         data.action_node_type = action_node_type
         data.action_local_index = action_local_index
 
-        active_truck = None
-        if getattr(env, "active_truck_id", None) is not None and env.active_truck_id < len(env.trucks):
-            active_truck = env.trucks[env.active_truck_id]
-        allow_depot_action = bool(getattr(active_truck, "return_to_depot_pending", False))
-
-        if feasible_action_mask is not None and not allow_depot_action:
-            feasible_action_mask = feasible_action_mask.clone()
-            for idx, (node_id, is_charging) in enumerate(action_to_node_map):
-                if is_charging:
-                    continue
-                if node_id in depot_node_to_idx:
-                    feasible_action_mask[idx] = False
-            data.feasible_action_mask = feasible_action_mask
-
-            feasible_indices = [i for i, is_ok in enumerate(feasible_action_mask.tolist()) if is_ok]
-            feasible_action_to_node_map = [action_to_node_map[i] for i in feasible_indices]
-            feasible_action_is_charging = [action_is_charging_list[i] for i in feasible_indices]
-            feasible_action_durations = (
-                [action_charge_durations[i].item() for i in feasible_indices]
-                if action_charge_durations is not None
-                else []
-            )
-            if feasible_action_to_node_map:
-                active_truck_idx = None
-                node_id_to_type = getattr(data, "node_id_to_type", {})
-                if getattr(env, "active_truck_id", None) in node_id_to_type:
-                    node_type, local_idx = node_id_to_type[env.active_truck_id]
-                    if node_type == "truck":
-                        active_truck_idx = local_idx
-                data.action_graph_features = self._build_action_graph_features(
-                    env,
-                    feasible_action_to_node_map,
-                    feasible_action_is_charging,
-                    feasible_action_durations,
-                    active_truck_idx,
-                )
-
+        # The shared feasibility engine decides depot availability, including
+        # early returns. Do not replace its verdict with a completion flag.
         return data
 
     def _get_depot_ids(self, env):

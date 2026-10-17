@@ -136,7 +136,9 @@ class EventHandler:
             travel_time=data["travel_time"],
             discharge=data["discharge"],
             timestamp=global_clock,
-            mark_delivery_on_arrival=not is_joint_delivery,
+            mark_delivery_on_arrival=(
+                not is_joint_delivery and delivery_simulator is None
+            ),
             complete_on_arrival=delivery_simulator is None,
         )
 
@@ -283,11 +285,6 @@ class EventHandler:
                         "unloading_duration": unloading_time,
                         "task_id": task_id,
                         "customer_node": destination,
-                        "complete_after_service": (
-                            not is_joint_delivery
-                            and not truck.enable_flexible_delivery_order
-                            and truck.get_next_delivery_target() is None
-                        ),
                     },
                 ),
             )

@@ -636,6 +636,15 @@ def test_full_station_fcfs_transfer_runs_through_environment_events() -> None:
         customer = env.task_registry.available_tasks(
             env.trucks[0].remaining_payload
         )[0]
+        # Keep the next truck decision during truck 1's charge. The sampled
+        # customer leg can otherwise outlast that charge, leaving the port empty
+        # by the time step() returns and obscuring the queue-transfer behavior.
+        original_time_distance = env.transport_graph.get_time_distance
+        env.transport_graph.get_time_distance = lambda origin, destination: (
+            0.01
+            if origin == charger and destination == customer.node_id
+            else original_time_distance(origin, destination)
+        )
         env.step((customer.node_id, 0.0, False))
 
         assert env.active_truck_id == 1

@@ -3,13 +3,18 @@ Transportation Graph class for managing the road network.
 """
 
 import hashlib
+import heapq
 import json
+import math
 import os
 import pickle
 import tempfile
 
 import networkx as nx
 import numpy as np
+
+
+ROUTING_POLICY_VERSION = "min_energy_then_time_v1"
 
 
 class TransportationGraph:
@@ -26,13 +31,20 @@ class TransportationGraph:
         self.graph = graph
         self.num_nodes = graph.number_of_nodes()
         self.charging_nodes = self._extract_charging_nodes()
+        self._ordered_successors = {
+            node: tuple(sorted(graph.successors(node))) for node in graph
+        }
 
         # Distance cache
-        self._distance_cache = {}  # Dict[Tuple[int, int], float]
+        self._distance_cache = {}  # (source, target) -> route energy
+        self._time_cache = {}  # (source, target, "time") -> time on that route
+        self._path_cache = {}  # (source, target) -> energy-optimal route
+        self._populated_sources = set()
         # A cache belongs to one graph, including its node mapping and costs.
         # The old package-wide pickle had no identity and leaked costs between
         # unrelated networks. Keep versioned caches outside the source tree.
         identity = {
+            "routing_policy": ROUTING_POLICY_VERSION,
             "nodes": sorted(
                 (node, data.get("original_id", node))
                 for node, data in graph.nodes(data=True)
@@ -47,7 +59,7 @@ class TransportationGraph:
         ).hexdigest()
         self._cache_file = os.path.join(
             tempfile.gettempdir(),
-            "evrp_transport_cache_v1",
+            "evrp_transport_cache_v3",
             self._cache_fingerprint + ".pkl",
         )
 
@@ -76,13 +88,12 @@ class TransportationGraph:
             if "distance" in attributes:
                 attributes["distance"] = float(attributes["distance"]) * energy_scale
 
-        rescaled = {}
-        for key, value in self._distance_cache.items():
-            # Energy is keyed (source, target); time carries a third element.
-            scale = time_scale if len(key) > 2 and key[2] == "time" else energy_scale
-            rescaled[key] = value * scale
-        self._distance_cache = rescaled
-        self._time_cache = {}
+        self._distance_cache = {
+            key: value * energy_scale for key, value in self._distance_cache.items()
+        }
+        self._time_cache = {
+            key: value * time_scale for key, value in self._time_cache.items()
+        }
         # The dense view is derived from the above, so it has to be rebuilt.
         self._dense_node_index = None
         self._dense_transport = None
@@ -145,29 +156,23 @@ class TransportationGraph:
         if self.load_distance_cache():
             return
 
-        # Compute all-pairs shortest paths
-        print("[TransportationGraph] Computing all-pairs shortest path distances...")
+        # Compute energy-optimal paths and the travel time on each same path.
+        # Negative OD energy values cannot be executed by Truck.move_to_node,
+        # so those edges are excluded rather than used as regenerative shortcuts.
+        print("[TransportationGraph] Computing all-pairs route costs...")
         print(
             f"  - Graph has {self.num_nodes} nodes, {self.graph.number_of_edges()} edges"
         )
 
-        # Compute all-pairs shortest paths using Bellman-Ford (handles negative weights)
+        # Compute deterministic minimum-energy paths, breaking ties by travel
+        # time and then by hop count and node sequence.
         import time
 
         start_time = time.time()
         
-        # For each source node, compute shortest paths to all destinations
+        # For each source node, compute paired costs to all destinations.
         for source_node in self.graph.nodes():
-            try:
-                # Use Bellman-Ford which handles negative weights
-                lengths = nx.single_source_bellman_ford_path_length(
-                    self.graph, source_node, weight="distance"
-                )
-                for target_node, distance in lengths.items():
-                    self._distance_cache[(source_node, target_node)] = distance
-            except nx.NetworkXError:
-                # If Bellman-Ford fails (e.g., negative cycle), skip this source
-                pass
+            self._populate_source_routes(source_node)
         
         compute_time = time.time() - start_time
 
@@ -202,105 +207,97 @@ class TransportationGraph:
         return list(self.graph.nodes())
 
     def get_path_energy(self, from_node: int, to_node: int) -> float:
-        """
-        Get the distance between two nodes.
-
-        Uses cached distance matrix for O(1) lookup if available,
-        otherwise falls back to Bellman-Ford computation.
-
-        Args:
-            from_node: Starting node
-            to_node: Destination node
-
-        Returns:
-            Distance in kWh of energy used for the trip, or float('inf') if no path exists
-        """
-        # Check cache first
-        cache_key = (from_node, to_node)
-        if cache_key in self._distance_cache:
-            return self._distance_cache[cache_key]
-
-        # If same node, distance is 0
-        if from_node == to_node:
-            self._distance_cache[cache_key] = 0.0
-            return 0.0
-
-        # Compute using Bellman-Ford and cache result
-        try:
-            lengths = nx.single_source_bellman_ford_path_length(
-                self.graph, from_node, weight="distance"
-            )
-            distance = lengths.get(to_node, float('inf'))
-            self._distance_cache[cache_key] = distance
-            return distance
-        except nx.NetworkXError:
-
-            raise ValueError(f"No valid path from {from_node} to {to_node}")
-            # If path doesn't exist or negative cycle detected
-            self._distance_cache[cache_key] = float('inf')
-            return float('inf')
+        """Energy consumed along the energy-optimal executable route."""
+        return self.get_leg_costs(from_node, to_node)[0]
 
     def get_shortest_path(self, from_node: int, to_node: int) -> list[int]:
-        """
-        Get the shortest path between two nodes.
-
-        Args:
-            from_node: Starting node
-            to_node: Destination node
-
-        Returns:
-            List of nodes in the shortest path, or empty list if no path exists
-        """
-        try:
-            return nx.shortest_path(self.graph, from_node, to_node, weight="distance")
-        except nx.NetworkXNoPath:
-            return []
+        """Return the route used by both energy and travel-time lookups."""
+        self.get_leg_costs(from_node, to_node)
+        return list(self._path_cache.get((int(from_node), int(to_node)), ()))
 
     def get_time_distance(self, from_node: int, to_node: int) -> float:
-        """
-        Get the travel time between two nodes.
-        
-        Uses shortest path computation similar to get_path_energy for consistency.
+        """Travel hours on the route returned by :meth:`get_shortest_path`."""
+        return self.get_leg_costs(from_node, to_node)[1]
 
-        Args:
-            from_node: Starting node
-            to_node: Destination node
+    def get_leg_costs(self, from_node: int, to_node: int) -> tuple[float, float]:
+        """Return energy and time for one energy-optimal executable route.
 
-        Returns:
-            Travel time in hours, or float('inf') if no path exists
+        Negative or nonfinite edge costs cannot be used by the truck's movement
+        and event models. Such edges are excluded from route search; an alternate
+        valid path is used when one exists. Both costs are therefore drawn from
+        the same explicit path, including for data supplied as OD matrices.
         """
-        # Check cache first
-        cache_key = (from_node, to_node, 'time')
-        if hasattr(self, '_time_cache') and cache_key in self._time_cache:
-            return self._time_cache[cache_key]
-        
-        # Initialize time cache if needed
-        if not hasattr(self, '_time_cache'):
-            self._time_cache = {}
-        
-        # If same node, time distance is 0
+        from_node, to_node = int(from_node), int(to_node)
+        pair = (from_node, to_node)
+        if from_node not in self.graph or to_node not in self.graph:
+            return math.inf, math.inf
         if from_node == to_node:
-            self._time_cache[cache_key] = 0.0
-            return 0.0
-        
-        # Check if direct edge exists
-        if self.graph.has_edge(from_node, to_node):
-            time_val = self.graph[from_node][to_node]["time"]
-            self._time_cache[cache_key] = time_val
-            return time_val
-        
-        # Compute shortest path using Bellman-Ford (multi-hop)
+            self._distance_cache[pair] = 0.0
+            self._time_cache[(*pair, "time")] = 0.0
+            self._path_cache[pair] = (from_node,)
+            return 0.0, 0.0
+
+        if from_node not in self._populated_sources:
+            self._populate_source_routes(from_node)
+        return (
+            self._distance_cache.get(pair, math.inf),
+            self._time_cache.get((*pair, "time"), math.inf),
+        )
+
+    @staticmethod
+    def _usable_route_costs(data: dict) -> tuple[float, float] | None:
+        """Hide malformed or negative-consumption edges from route search."""
         try:
-            lengths = nx.single_source_bellman_ford_path_length(
-                self.graph, from_node, weight="time"
-            )
-            time_val = lengths.get(to_node, float('inf'))
-            self._time_cache[cache_key] = time_val
-            return time_val
-        except nx.NetworkXError:
-            # If path doesn't exist or negative cycle detected
-            self._time_cache[cache_key] = float('inf')
-            return float('inf')
+            energy = float(data["distance"])
+            travel_time = float(data["time"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not (math.isfinite(energy) and energy >= 0.0):
+            return None
+        if not (math.isfinite(travel_time) and travel_time >= 0.0):
+            return None
+        return energy, travel_time
+
+    def _populate_source_routes(self, source_node: int) -> None:
+        """Cache all executable energy-optimal paths from one source."""
+        if source_node in self._populated_sources:
+            return
+        if source_node not in self.graph:
+            self._populated_sources.add(source_node)
+            return
+        # Every edge has non-negative energy and time. Lexicographic Dijkstra
+        # gives a stable path even when graph insertion order differs, which is
+        # important because disk caches are keyed by edge values, not order.
+        origin_path = (source_node,)
+        best = {source_node: (0.0, 0.0, 0, origin_path)}
+        pending = [(0.0, 0.0, 0, origin_path, source_node)]
+        while pending:
+            energy, travel_time, hops, path, node = heapq.heappop(pending)
+            if (energy, travel_time, hops, path) != best[node]:
+                continue
+            for neighbor in self._ordered_successors[node]:
+                costs = self._usable_route_costs(self.graph[node][neighbor])
+                if costs is None:
+                    continue
+                leg_energy, leg_time = costs
+                candidate = (
+                    energy + leg_energy,
+                    travel_time + leg_time,
+                    hops + 1,
+                    (*path, neighbor),
+                )
+                if not (math.isfinite(candidate[0]) and math.isfinite(candidate[1])):
+                    continue
+                if neighbor not in best or candidate < best[neighbor]:
+                    best[neighbor] = candidate
+                    heapq.heappush(pending, (*candidate, neighbor))
+
+        for target_node, (energy, route_time, _, path) in best.items():
+            pair = (source_node, target_node)
+            self._distance_cache[pair] = energy
+            self._time_cache[(*pair, "time")] = route_time
+            self._path_cache[pair] = path
+        self._populated_sources.add(source_node)
 
     def get_edge_data(self, from_node: int, to_node: int) -> dict:
         """
@@ -535,8 +532,16 @@ class TransportationGraph:
         return node in self.charging_nodes
 
     def clear_distance_cache(self):
-        """Clear the distance cache from memory."""
+        """Clear all paired route costs and paths from memory."""
         self._distance_cache.clear()
+        self._time_cache.clear()
+        self._path_cache.clear()
+        self._populated_sources.clear()
+        self._ordered_successors = {
+            node: tuple(sorted(self.graph.successors(node))) for node in self.graph
+        }
+        self._dense_node_index = None
+        self._dense_transport = None
         print("[TransportationGraph] Distance cache cleared from memory")
 
     def save_distance_cache(self) -> bool:
@@ -557,8 +562,13 @@ class TransportationGraph:
                 temporary_path = file.name
                 pickle.dump(
                     {
+                        "version": 3,
+                        "routing_policy": ROUTING_POLICY_VERSION,
                         "fingerprint": self._cache_fingerprint,
                         "distances": self._distance_cache,
+                        "times": self._time_cache,
+                        "paths": self._path_cache,
+                        "populated_sources": self._populated_sources,
                     },
                     file,
                 )
@@ -579,13 +589,28 @@ class TransportationGraph:
                 payload = pickle.load(file)
             if (
                 not isinstance(payload, dict)
+                or payload.get("version") != 3
+                or payload.get("routing_policy") != ROUTING_POLICY_VERSION
                 or payload.get("fingerprint") != self._cache_fingerprint
             ):
                 return False
             distances = payload.get("distances")
-            if not isinstance(distances, dict):
+            times = payload.get("times")
+            paths = payload.get("paths")
+            populated_sources = payload.get("populated_sources")
+            if (
+                not isinstance(distances, dict)
+                or not isinstance(times, dict)
+                or not isinstance(paths, dict)
+                or not isinstance(populated_sources, set)
+            ):
                 return False
             self._distance_cache = distances
+            self._time_cache = times
+            self._path_cache = paths
+            self._populated_sources = populated_sources
+            self._dense_node_index = None
+            self._dense_transport = None
             return True
         except (OSError, EOFError, pickle.PickleError):
             return False

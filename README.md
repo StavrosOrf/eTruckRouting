@@ -87,6 +87,23 @@ This makes the environment useful for studying RL policies that must generalize
 across fleet size, number of stops, charger density, traffic uncertainty, and
 delivery-order flexibility.
 
+Routing uses an explicit minimum-energy path for each origin and destination.
+Energy consumption and travel time are both summed along that same path, and
+the simulator, feasibility masks, features, and planners share these costs.
+Edges with negative or nonfinite energy or travel time are excluded because the
+movement model requires nonnegative consumption; a valid alternate path is used
+when available. Transport caches are versioned so older independent cost tables
+cannot be reused.
+
+Run the complete test suite with:
+
+```bash
+uv run pytest
+```
+
+The test session limits PyTorch CPU threads for the small neural networks used
+by its learning checks, then restores the original thread setting.
+
 ## Repository Layout
 
 ```text

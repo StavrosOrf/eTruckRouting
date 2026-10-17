@@ -111,6 +111,7 @@ class Truck:
         self.event_history: list[dict] = []  # Log of all truck events with timestamps
         self.current_state: str = "initial"  # Track current state for event logging
         self.unloading_start_time: float | None = None  # Track when unloading started
+        self.completed_service_count = 0  # Delivery services finished, excluding depot return
         self.waiting_start_time: float | None = None  # Track when waiting started
         self.routing_start_time: float | None = None  # Track when routing started
     
@@ -320,9 +321,9 @@ class Truck:
             travel_time: Time taken (hours)
             discharge: Battery consumed (kWh)
             timestamp: Current simulation time (for event logging)
-            mark_delivery_on_arrival: Preserve legacy route-execution semantics
-                when true. Joint-routing episodes set this to false and commit
-                service through the fleet task registry after unloading.
+            mark_delivery_on_arrival: Commit delivery immediately when there is
+                no separate service event. Environments with unloading events
+                commit delivery when service finishes instead.
             complete_on_arrival: Whether sequential completion can happen here
                 or must wait for a separate unloading-completion event.
         """
@@ -374,9 +375,8 @@ class Truck:
             )
         
         if mark_delivery_on_arrival:
-            # Check if this was a delivery target. This is the historical
-            # route-execution behavior; the joint model completes service only
-            # after its unloading event.
+            # Direct movement callers can commit service on arrival. Event
+            # driven environments with unloading defer this until completion.
             if self.enable_flexible_delivery_order:
                 remaining_deliveries = self.get_next_delivery_target()
                 if node in remaining_deliveries:
@@ -607,6 +607,7 @@ class Truck:
             raise ValueError("unloading timestamp must be finite and non-negative")
         self.total_unloading_time += unloading_duration
         self.total_time_elapsed += unloading_duration
+        self.completed_service_count += 1
         
         if timestamp is not None:
             self._record_event(
@@ -732,6 +733,7 @@ class Truck:
             "total_energy_charged": self.total_energy_charged,
             "total_charging_time": self.total_charging_time,
             "total_unloading_time": self.total_unloading_time,
+            "completed_service_count": self.completed_service_count,
             "waiting_time": self.waiting_time,
             "time_window_waiting_time": self.time_window_waiting_time,
             "num_charging_sessions": self.num_charging_sessions,

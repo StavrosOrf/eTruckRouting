@@ -262,3 +262,145 @@ def test_task_availability_matches_truck_payload_roundoff_tolerance():
     truck.remaining_payload = remaining
     assert truck.can_accept_demand(1.0)
     assert registry.available_tasks(remaining, truck_id=0) == registry.tasks()
+
+
+def test_leftover_battery_penalty_waits_for_physical_completion(make_env):
+    env = make_env(
+        customers=1,
+        environment={"max_time": 0.01},
+        rewards={
+            "enable_leftover_battery_penalty": True,
+            "leftover_battery_penalty_coef": 2.0,
+        },
+    )
+    customer = env.task_registry.tasks()[0].node_id
+
+    _, reward, terminated, truncated, info = env.step((customer, 0.0, False))
+
+    assert truncated and not terminated
+    assert info["task_counts"]["served"] == 0
+    assert reward == pytest.approx(-0.01 * env.reward_config["time_multiplier"])
+    assert env._penalized_completed_trucks == set()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_leftover_battery_penalty_prices_used_truck_once(make_env, enabled):
+    coefficient = 2.0
+    env = make_env(
+        trucks=2,
+        customers=1,
+        rewards={
+            "enable_leftover_battery_penalty": enabled,
+            "leftover_battery_penalty_coef": coefficient,
+        },
+    )
+    customer = env.task_registry.tasks()[0].node_id
+    depot = env.joint_instance.depot_node
+
+    _, first_reward, terminated, truncated, first_info = env.step(
+        (customer, 0.0, False)
+    )
+    assert not terminated and not truncated
+    assert env.trucks[1].is_complete  # Unused truck was already at the depot.
+    assert env._penalized_completed_trucks == {1}
+    assert env.trucks[1].total_distance_traveled == 0.0
+    assert env.trucks[1].completed_service_count == 0
+    assert first_reward == pytest.approx(
+        env.reward_config["delivery_bonus"]
+        - env.reward_config["time_multiplier"]
+        * first_info["operational_metrics"]["total_operating_time"]
+    )
+
+    _, second_reward, terminated, truncated, final_info = env.step(
+        (depot, 0.0, False)
+    )
+    assert terminated and not truncated
+    assert final_info["successful"]
+    assert env._penalized_completed_trucks == {0, 1}
+    terminal_penalty = (
+        coefficient
+        * 100.0
+        * env.trucks[0].battery_at_completion
+        / env.trucks[0].battery_capacity
+        if enabled
+        else 0.0
+    )
+    assert first_reward + second_reward == pytest.approx(
+        env.reward_config["delivery_bonus"]
+        - env.reward_config["time_multiplier"]
+        * final_info["operational_metrics"]["total_operating_time"]
+        - terminal_penalty
+    )
+    assert env.step(0)[1] == 0.0
+
+
+def test_failure_at_exact_time_horizon_terminates(make_env):
+    env = make_env(
+        customers=1,
+        environment={"max_time": 2.0},
+        traffic={"enable_traffic": False, "enable_energy_uncertainty": False},
+    )
+    task = env.task_registry.tasks()[0]
+    task.earliest_service = 0.0
+    task.latest_service = 1.5
+    env.traffic_simulator.apply_traffic = lambda **kwargs: (2.0, 2.0)
+
+    _, _, terminated, truncated, info = env.step((task.node_id, 0.0, False))
+
+    assert env.global_clock == pytest.approx(env.max_time)
+    assert terminated and not truncated
+    assert info["termination_reason"] == "all_trucks_failed"
+    assert info["failure_causes"] == {"time_window_violation_after_realization": 1}
+
+
+def _legacy_flexible_env(customers):
+    config = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    config["environment"].update(num_trucks=1, num_stops=customers)
+    config["truck"]["battery_capacity"] = 10_000.0
+    config["traffic"].update(
+        enable_traffic=False, enable_energy_uncertainty=False
+    )
+    config["delivery"]["enable_stochastic_unloading"] = False
+    env = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
+    env.reset(seed=7)
+    env.transport_graph.get_path_energy = lambda a, b: float(a != b)
+    env.transport_graph.get_time_distance = lambda a, b: float(a != b)
+    return env
+
+
+def test_legacy_flexible_does_not_count_unfinished_service():
+    env = _legacy_flexible_env(customers=2)
+    try:
+        truck = env.trucks[0]
+        customer = truck.get_remaining_deliveries()[0]
+        env.max_time = 1.0 + env.delivery_simulator.base_unloading_time / 2
+
+        _, _, terminated, truncated, info = env.step((customer, 0.0, False))
+
+        assert truncated and not terminated
+        assert env.truck_states[0] == "unloading"
+        assert truck.completed_service_count == 0
+        assert customer not in truck.delivered_nodes
+        assert customer in truck.get_remaining_deliveries()
+        assert info["operational_metrics"]["customers_served"] == 0
+    finally:
+        env.close()
+
+
+def test_legacy_flexible_counts_served_customer_before_depot_return():
+    env = _legacy_flexible_env(customers=1)
+    try:
+        truck = env.trucks[0]
+        customer = truck.get_remaining_deliveries()[0]
+
+        _, _, terminated, truncated, info = env.step((customer, 0.0, False))
+
+        assert not terminated and not truncated
+        assert not truck.is_complete
+        assert truck.completed_service_count == 1
+        assert customer in truck.delivered_nodes
+        assert info["operational_metrics"]["customers_served"] == 1
+        assert info["operational_metrics"]["completed_fraction"] == 1.0
+        assert info["all_customers_served"]
+    finally:
+        env.close()

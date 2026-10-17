@@ -525,6 +525,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.termination_reason: str | None = None
         self.invalid_action_count = 0
         self._penalized_failed_trucks: set[int] = set()
+        self._penalized_completed_trucks: set[int] = set()
         self._truncation_reason: str | None = None
         self.scenario_descriptor: dict | None = None
 
@@ -584,6 +585,7 @@ class EventDrivenTruckEnv(gym.Env):
         self.termination_reason = None
         self.invalid_action_count = 0
         self._penalized_failed_trucks: set[int] = set()
+        self._penalized_completed_trucks: set[int] = set()
         self._truncation_reason: str | None = None
         self.scenario_descriptor = None
 
@@ -1093,11 +1095,14 @@ class EventDrivenTruckEnv(gym.Env):
                         truck.finish_unloading(unloading_duration=unloading_duration, timestamp=self.global_clock)
                     if self.joint_routing:
                         self._complete_joint_customer_service(truck, event.data)
-                    elif event.data.get("complete_after_service", False):
-                        truck.battery_at_completion = truck.current_battery
-                        truck.mark_complete(timestamp=self.global_clock)
-                        self.truck_states[truck.truck_id] = "complete"
-                        continue
+                    else:
+                        truck.advance_to_next_delivery(
+                            delivered_node=int(event.data["customer_node"])
+                        )
+                        if truck.is_complete:
+                            truck.mark_complete(timestamp=self.global_clock)
+                            self.truck_states[truck.truck_id] = "complete"
+                            continue
 
                 if (
                     self.joint_routing
@@ -1258,7 +1263,7 @@ class EventDrivenTruckEnv(gym.Env):
                         )
 
         if self.global_clock >= self.max_time and not all(
-            truck.is_complete for truck in self.trucks
+            truck.is_complete or truck.failed for truck in self.trucks
         ):
             self.active_truck_id = None
             self._truncation_reason = "time_limit_exhausted"
@@ -1281,7 +1286,13 @@ class EventDrivenTruckEnv(gym.Env):
                         for truck in self.trucks
                         if not truck.failed and not truck.is_complete
                     ]
-                    if unassigned and not any(
+                    if not live_trucks:
+                        self.termination_reason = (
+                            "all_trucks_failed"
+                            if all(truck.failed for truck in self.trucks)
+                            else "fleet_stopped_with_unserved_customers"
+                        )
+                    elif unassigned and not any(
                         truck.can_accept_demand(task.demand)
                         for truck in live_trucks
                         for task in unassigned
@@ -1322,7 +1333,10 @@ class EventDrivenTruckEnv(gym.Env):
         if self.active_truck_id is None:
             truncated = self._check_truncated()
             terminated = self._check_terminated()
-            reward = self._consume_failure_penalties()
+            reward = (
+                self._consume_failure_penalties()
+                + self._consume_completion_penalties()
+            )
             self.episode_reward += reward
             return self._get_observation(), reward, terminated, truncated, self._get_info()
 
@@ -1463,6 +1477,7 @@ class EventDrivenTruckEnv(gym.Env):
         elif not refused:
             self._advance_to_next_decision()
         reward += self._consume_failure_penalties()
+        reward += self._consume_completion_penalties()
         reward += self.completed_delivery_reward
         self.completed_delivery_reward = 0.0
         self.waiting_penalty_buffer = 0.0
@@ -1724,12 +1739,6 @@ class EventDrivenTruckEnv(gym.Env):
                 timestamp=departure_time,
             )
 
-        realized_time_window_violation = False
-        if joint_task is not None:
-            realized_time_window_violation = (
-                completion_time > joint_task.latest_service + 1e-9
-            )
-        
         # Record routing start event
         truck.start_routing(destination=target_node, timestamp=departure_time)
         
@@ -1767,51 +1776,9 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Battery: {truck.current_battery:.1f} → {truck.current_battery - discharge:.1f} kWh")
             print(f"    Will arrive at t={completion_time:.2f}h")
 
-        # Calculate reward (using actual travel time, not base time)
-        # Operating-time costs accrue at the step boundary, including partial
-        # events at a horizon. Do not charge future travel/service at departure.
-        time_penalty = 0.0
-
-        # Bonus if this is a delivery
-        if is_delivery_nav:
-            if realized_time_window_violation:
-                return time_penalty
-            # The bonus is collected only by the unloading-completion event.
-            delivery_bonus = 0.0
-            # Use the same service-time realization carried by the arrival event.
-            unloading_penalty = 0.0
-            window_wait_penalty = 0.0
-            
-            # Check if this is the last delivery for this truck
-            # Apply leftover battery penalty if enabled
-            leftover_battery_penalty = 0.0
-            remaining_deliveries = truck.get_remaining_deliveries()
-            is_last_delivery = (
-                target_node != depot_node
-                and len(remaining_deliveries) == 1
-                and target_node in remaining_deliveries
-            )
-            
-            if is_last_delivery and self.reward_config["enable_leftover_battery_penalty"]:
-                # Calculate expected battery at completion (after this delivery)
-                expected_battery_at_completion = truck.current_battery - discharge
-                remaining_soc_percentage = (expected_battery_at_completion / truck.battery_capacity) * 100.0
-                penalty_coef = self.reward_config["leftover_battery_penalty_coef"]
-                leftover_battery_penalty = -penalty_coef * remaining_soc_percentage
-                
-                if self.verbose:
-                    print(f"  Last delivery! Expected SOC at completion: {remaining_soc_percentage:.1f}%")
-                    print(f"  Leftover battery penalty: {leftover_battery_penalty:.2f}")
-            
-            return (
-                time_penalty
-                + delivery_bonus
-                + unloading_penalty
-                + window_wait_penalty
-                + leftover_battery_penalty
-            )
-
-        return time_penalty
+        # Time costs accrue from elapsed work at the step boundary. Delivery
+        # bonuses and terminal battery costs accrue only when their events finish.
+        return 0.0
 
     def _reject_joint_action(
         self,
@@ -2119,6 +2086,35 @@ class EventDrivenTruckEnv(gym.Env):
         self._penalized_failed_trucks.update(newly_failed)
         return len(newly_failed) * float(self.reward_config["failure_penalty"])
 
+    def _consume_completion_penalties(self) -> float:
+        """Price terminal battery state once, after each truck actually completes."""
+        newly_completed = [
+            truck
+            for truck in self.trucks
+            if truck.is_complete
+            and truck.truck_id not in self._penalized_completed_trucks
+        ]
+        self._penalized_completed_trucks.update(
+            truck.truck_id for truck in newly_completed
+        )
+        if not self.reward_config["enable_leftover_battery_penalty"]:
+            return 0.0
+        coefficient = float(self.reward_config["leftover_battery_penalty_coef"])
+        return -sum(
+            coefficient
+            * 100.0
+            * (
+                truck.battery_at_completion
+                if truck.battery_at_completion is not None
+                else truck.current_battery
+            )
+            / truck.battery_capacity
+            for truck in newly_completed
+            if truck.served_task_ids
+            or truck.completed_service_count > 0
+            or truck.total_distance_traveled > 0.0
+        )
+
     def _check_terminated(self) -> bool:
         """Physical success/failure ends the task; a time cutoff only truncates it."""
         if self._truncation_reason is not None:
@@ -2190,17 +2186,17 @@ class EventDrivenTruckEnv(gym.Env):
             if self.task_registry is not None
             else None
         )
-        all_customers_served = (
-            self.task_registry.all_served()
-            if self.task_registry is not None
-            else all_complete
-        )
-
         # Get charger utilization statistics from charging station manager
         charger_utilization = self.charging_station.get_utilization_stats(
             self.global_clock
         )
         operational_metrics = extract_operational_metrics(self).as_dict()
+        all_customers_served = (
+            self.task_registry.all_served()
+            if self.task_registry is not None
+            else operational_metrics["customers_served"]
+            == operational_metrics["customers_total"]
+        )
 
         return {
             "scenario": self.scenario_descriptor,

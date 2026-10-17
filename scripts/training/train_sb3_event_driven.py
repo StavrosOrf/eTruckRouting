@@ -28,9 +28,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import MaskablePPO, QRDQN
 from sb3_contrib.common.wrappers import ActionMasker
-from sb3_contrib.common.maskable.evaluation import (
-    evaluate_policy as evaluate_maskable_policy,
-)
 from wandb.integration.sb3 import WandbCallback
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
@@ -74,6 +71,9 @@ class MaskableEvalCallback(EvalCallback):
                 obs, reward, done, info = self.eval_env.step(action)
                 episode_reward += reward[0]
                 episode_length += 1
+                self._log_success_callback(
+                    {"done": bool(done[0]), "info": info[0]}, {}
+                )
 
                 if self.render:
                     self.eval_env.render()
@@ -83,11 +83,20 @@ class MaskableEvalCallback(EvalCallback):
 
         return episode_rewards, episode_lengths
 
+    def _log_success_callback(self, locals_, globals_):
+        """Read the environment's success field in either SB3 convention."""
+        if locals_["done"]:
+            info = locals_["info"]
+            success = info.get("successful", info.get("is_success"))
+            if success is not None:
+                self._is_success_buffer.append(bool(success))
+
     def _on_step(self) -> bool:
         """Override to use maskable evaluation for MaskablePPO."""
         continue_training = True
 
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            self._is_success_buffer = []
             # Use custom maskable evaluation if the model is MaskablePPO
             if isinstance(self.model, MaskablePPO):
                 episode_rewards, episode_lengths = self._evaluate_maskable_policy()
@@ -112,6 +121,17 @@ class MaskableEvalCallback(EvalCallback):
                 self.evaluations_timesteps.append(self.num_timesteps)
                 self.evaluations_results.append(episode_rewards)
                 self.evaluations_length.append(episode_lengths)
+                saved = {}
+                if self._is_success_buffer:
+                    self.evaluations_successes.append(self._is_success_buffer)
+                    saved["successes"] = self.evaluations_successes
+                np.savez(
+                    self.log_path,
+                    timesteps=self.evaluations_timesteps,
+                    results=self.evaluations_results,
+                    ep_lengths=self.evaluations_length,
+                    **saved,
+                )
 
             mean_reward, std_reward = np.mean(episode_rewards), np.std(episode_rewards)
             mean_ep_length, std_ep_length = np.mean(episode_lengths), np.std(
@@ -174,7 +194,7 @@ def mask_fn(env) -> np.ndarray:
     return get_action_mask(base_env)
 
 
-def make_env(config, seed: int, enable_plotting: bool = False, 
+def make_env(config, enable_plotting: bool = False,
              use_detour: bool = False, vrp_top_k: int = 5,
              detour_top_k: int = 2, detour_hop_limit: int = 2):
     """Create and return environment wrapped with Monitor."""
@@ -202,7 +222,7 @@ def make_env(config, seed: int, enable_plotting: bool = False,
     return _init
 
 
-def make_masked_env(config, seed: int, enable_plotting: bool = False,
+def make_masked_env(config, enable_plotting: bool = False,
                     use_detour: bool = False, vrp_top_k: int = 5,
                     detour_top_k: int = 2, detour_hop_limit: int = 2):
     """Create and return environment wrapped for MaskablePPO with Monitor and ActionMasker."""
@@ -283,7 +303,7 @@ def train_sb3_agent(
         config["environment"]["num_stops"] = num_stops
 
     print(f"\n{'='*60}")
-    print(f"Training Configuration")
+    print("Training Configuration")
     print(f"{'='*60}")
     print(f"Algorithm: {algo.upper()}")
     print(f"Seed: {seed}")
@@ -330,12 +350,17 @@ def train_sb3_agent(
     use_masked = algo == "maskppo"
     env_fn = make_masked_env if use_masked else make_env
 
-    train_env = DummyVecEnv([env_fn(config, seed, False, use_detour, 
+    train_env = DummyVecEnv([env_fn(config, False, use_detour,
                                      vrp_top_k_deliveries, detour_top_k_chargers, 
                                      detour_hop_limit)])
-    eval_env = DummyVecEnv([env_fn(config, seed + 100, False, use_detour,
+    eval_env = DummyVecEnv([env_fn(config, False, use_detour,
                                     vrp_top_k_deliveries, detour_top_k_chargers,
                                     detour_hop_limit)])
+    # VecEnv passes these seeds to the underlying Gym environments on their
+    # next reset. The evaluation environment is reset by EvalCallback, which
+    # otherwise starts from an uncontrolled random scenario stream.
+    train_env.seed(seed)
+    eval_env.seed(seed + 100)
 
     save_path = f"./saved_models/{group_name}/{run_name}/"
     os.makedirs(f"./saved_models/{group_name}", exist_ok=True)
@@ -374,8 +399,6 @@ def train_sb3_agent(
 
     # Create model based on algorithm
     model = None
-
-    import tensorboard
 
     tb_log = f"./logs/{run_name}"
 

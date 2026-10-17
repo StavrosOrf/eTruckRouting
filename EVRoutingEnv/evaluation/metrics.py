@@ -44,7 +44,7 @@ def extract_operational_metrics(env) -> OperationalMetrics:
     else:
         customers_total = sum(len(truck.delivery_sequence) - 1 for truck in trucks)
         customers_served = sum(
-            (len(truck.delivery_sequence) - 1) - len(truck.get_remaining_deliveries())
+            truck.completed_service_count
             for truck in trucks
         )
 

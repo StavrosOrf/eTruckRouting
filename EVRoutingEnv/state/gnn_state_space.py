@@ -853,10 +853,14 @@ class GNNStateSpace:
                         print(f'[FlexibleMode] Closest deliveries: {sorted(allowed_delivery_nodes)}')
                         print(f'[FlexibleMode] Delivery sequence: {active_truck.delivery_sequence}')
 
-                    # Create actions for each possible delivery slot (num_stops actions) + depot return
-                    for i in range(env.num_stops + 1):
+                    # Keep the graph action indices aligned with the fixed
+                    # discrete action envelope when an episode samples fewer
+                    # stops. The depot always follows the final reserved
+                    # customer slot, including on smaller instances.
+                    action_stop_limit = getattr(env, "fixed_num_stops", env.num_stops)
+                    for i in range(action_stop_limit + 1):
                         # Map action index to delivery node in sequence (skip depot at index 0)
-                        if i == env.num_stops:
+                        if i == action_stop_limit:
                             delivery_node = active_truck.delivery_sequence[0]
                         elif i + 1 < len(active_truck.delivery_sequence):
                             delivery_node = active_truck.delivery_sequence[i + 1]

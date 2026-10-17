@@ -32,7 +32,7 @@ from EVRoutingEnv.utils.utils import load_config
 
 
 def _config() -> dict:
-    config = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    config = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     config["environment"].update(
         {"num_trucks": 2, "num_stops": 4, "allow_variable_num_stops": False}
     )

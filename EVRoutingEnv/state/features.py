@@ -15,8 +15,8 @@ from EVRoutingEnv.state.feasibility import (
 )
 
 
-# v4 adds ROUTING_ACTION_FEATURES: per-action leg cost and detour lookahead.
-SCHEMA_VERSION = "joint-fleet-v4"
+# v5 makes fixed ownership and prescribed route order observable.
+SCHEMA_VERSION = "joint-fleet-v5"
 
 NODE_TYPES = ("truck", "customer", "charger")
 EDGE_FEATURES = ("nominal_energy_kwh", "nominal_travel_hours", "reachable")
@@ -65,6 +65,8 @@ CUSTOMER_FEATURES = (
     "status_code",
     "claimed_by",
     "claimed_at",
+    "preassigned_to",
+    "sequence_position",
     *DEPOT_FEATURES,
 )
 CHARGER_FEATURES = (
@@ -198,7 +200,7 @@ class CanonicalFleetFeatures:
 def extract_canonical_features(env) -> CanonicalFleetFeatures:
     """Extract canonical joint-routing features from current environment state."""
     if not env.joint_routing or env.task_registry is None:
-        raise ValueError("canonical joint features require problem.mode=joint_fleet")
+        raise ValueError("canonical features require an initialized fleet task registry")
 
     state_codes = {
         state: index
@@ -258,6 +260,8 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 task_status_codes[task.status],
                 _optional_value(task.claimed_by),
                 _optional_value(task.claimed_at),
+                _optional_value(task.preassigned_to),
+                _optional_value(task.sequence_position),
                 *_depot_columns(env, int(task.node_id), depot_node),
             ]
         )
@@ -622,8 +626,8 @@ def _action_metadata(env) -> tuple[list[int], list[float]]:
     targets = [int(node) for node in env.charging_nodes]
     for offset in range(env.fixed_num_stops):
         target = (
-            int(truck.delivery_sequence[offset + 1])
-            if offset + 1 < len(truck.delivery_sequence)
+            int(env.joint_instance.tasks[offset].node_id)
+            if offset < len(env.joint_instance.tasks)
             else -1
         )
         targets.append(target)

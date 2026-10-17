@@ -10,7 +10,7 @@ import yaml
 
 # python_path = "/home/sorfanouda/EVPR/.venv/bin/python"
 python_path = "~/EVRP/.venv/bin/python"
-config_path = "EVRoutingEnv/config_files/config_vrp.yaml"
+config_path = "EVRoutingEnv/config_files/config_joint.yaml"
 # config_path = "EVRoutingEnv/config_files/config.yaml"
 
 # Select which stacks to run: choose any of ["ppo-variable", "sb3"]
@@ -75,9 +75,9 @@ def load_env_meta(cfg_path: str):
     charging_cfg = cfg["charging"]
     env_cfg = cfg["environment"]
 
-    flexible = delivery_cfg["enable_flexible_delivery_order"]
+    flexible = cfg.get("problem", {}).get("mode", "joint_fleet") == "joint_fleet"
 
-    gnn_state = "vrp" if flexible else "detour"
+    gnn_state = "vrp"
     flags = []
     if traffic_cfg["enable_traffic"]:
         flags.append("T")

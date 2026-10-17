@@ -274,7 +274,7 @@ def waitlist():
 
 @probe("failure_reason_on_legacy_success")
 def legacy():
-    c = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    c = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     c["environment"].update(num_trucks=1, num_stops=1, verbose=False)
     c["truck"]["battery_capacity"] = 10000.0
     c["traffic"].update(enable_traffic=False, enable_energy_uncertainty=False)
@@ -344,7 +344,7 @@ def success_after_deadline():
 @probe("legacy_default_constructor")
 def legacy_defaults():
     outcomes = {}
-    for path in ("config.yaml", "config_vrp.yaml"):
+    for path in ("config.yaml", "config_joint.yaml"):
         try:
             e = EventDrivenTruckEnv("EVRoutingEnv/config_files/" + path)
         except Exception as exc:  # noqa: BLE001 -- Record each isolated probe error.
@@ -387,7 +387,7 @@ def time_cache():
 
 @probe("legacy_fleet_delivery_slots")
 def legacy_slots():
-    c = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    c = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     c["environment"].update(num_trucks=2, num_stops=3)
     with env_for(c) as e:
         unique = set().union(*(set(t.delivery_sequence[1:]) for t in e.trucks))
@@ -434,7 +434,7 @@ def legacy_final_service():
 
 @probe("legacy_depot_collects_delivery_bonus")
 def legacy_depot_bonus():
-    c = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    c = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     c["environment"].update(num_trucks=1, num_stops=1)
     c["truck"]["battery_capacity"] = 10000.0
     c["traffic"].update(enable_traffic=False, enable_energy_uncertainty=False)

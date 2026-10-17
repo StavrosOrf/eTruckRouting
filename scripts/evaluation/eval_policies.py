@@ -65,7 +65,7 @@ POLICIES = [
 
 ]
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_joint.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 10
 NUM_EVAL_SCENARIOS = 5 #
@@ -261,13 +261,7 @@ def main():
 
     config = load_config(CONFIG_FILE)
 
-    # Detour GNN space requires sequential deliveries; disable flexible ordering if needed
-    if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
-        if config["delivery"].get("enable_flexible_delivery_order", False):
-            print(
-                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
-            )
-            config["delivery"]["enable_flexible_delivery_order"] = False
+    # Routing constraints are selected by problem.mode in the configuration.
 
     # Detect SB3-trained configuration from policy paths (e.g., "1trucks_10stops")
     sb3_present = any(len(entry) >= 2 and entry[1].startswith("sb3-") for entry in POLICIES)

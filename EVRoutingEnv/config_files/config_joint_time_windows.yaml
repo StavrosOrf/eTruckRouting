@@ -47,7 +47,6 @@ charging:
   charge_durations: [0.25, 0.5, 1.0]
 
 delivery:
-  enable_flexible_delivery_order: true
   enable_stochastic_unloading: true
   base_unloading_time: 0.2
   std_dev_factor: 0.20

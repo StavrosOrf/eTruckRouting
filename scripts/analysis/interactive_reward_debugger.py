@@ -26,7 +26,7 @@ from EVRoutingEnv.utils.utils import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactive reward debugger for EVPR.")
-    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_vrp.yaml",
+    parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config_joint.yaml",
     # parser.add_argument("--config", type=str, default="EVRoutingEnv/config_files/config.yaml",
                         help="Path to the environment config file.")
     parser.add_argument("--seed", type=int, default=1007, help="Environment RNG seed.")
@@ -694,9 +694,6 @@ if __name__ == "__main__":
     env_config = config.setdefault("environment", {})
     env_config.setdefault("verbose", False)
 
-    # Respect flexible delivery flag to align masks/state space
-    flexible = config.get("delivery", {}).get("enable_flexible_delivery_order", False)
-    env_config["enable_flexible_delivery_order"] = flexible
 
     env = EventDrivenTruckEnv(
         config=config,

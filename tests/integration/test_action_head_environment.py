@@ -11,11 +11,10 @@ from EVRoutingEnv.utils.utils import load_config
 
 @pytest.fixture(scope="module")
 def seeded_gnn_state():
-    config = copy.deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    config = copy.deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     config["environment"]["num_trucks"] = 1
     config["environment"]["num_stops"] = 3
     config["environment"]["max_episode_steps"] = 50
-    config["delivery"]["enable_flexible_delivery_order"] = True
     environment = EventDrivenTruckEnv(
         config=config,
         verbose=False,

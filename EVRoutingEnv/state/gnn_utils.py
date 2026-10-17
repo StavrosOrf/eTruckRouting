@@ -75,7 +75,7 @@ def create_default_gnn_space(
     """
     device = device or getattr(env, "device", "cpu")
 
-    if mode == "vrp":
+    if getattr(env, "joint_routing", False) or mode == "vrp":
         from EVRoutingEnv.state.gnn_state_space_vrp import GNNStateSpaceVRP
 
         return GNNStateSpaceVRP(

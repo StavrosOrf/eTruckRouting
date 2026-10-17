@@ -616,7 +616,6 @@ def build_and_cache_state_space(
     use_detour = normalized == 'detour'
 
     env.use_detour_mask = use_detour
-    env.enable_flexible_delivery_order = mode == 'vrp'
 
     gnn_space = create_default_gnn_space(
         env,
@@ -651,9 +650,7 @@ def train(args):
     mode = 'vrp' if state_space_type == 'vrp' else 'nonflex'
     use_detour = state_space_type == 'detour'
 
-    # Keep env action space aligned with the chosen state space
-    config.setdefault('delivery', {})
-    config['delivery']['enable_flexible_delivery_order'] = mode == 'vrp'
+    # Routing constraints come from problem.mode; all adapters share its action layout.
 
     # Generate experiment name
     if args.exp_name is None:
@@ -687,7 +684,7 @@ def train(args):
         "type": state_space_type,
         "mode": mode,
         "use_detour": use_detour,
-        "enable_flexible_delivery_order": mode == 'vrp',
+        "problem_mode": config.get("problem", {}).get("mode", "joint_fleet"),
         "vrp_top_k_deliveries": args.vrp_top_k_deliveries,
         "detour_top_k_chargers": args.detour_top_k_chargers,
     }

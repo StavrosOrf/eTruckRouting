@@ -13,7 +13,7 @@ import heapq
 import math
 import os
 import sys
-from numbers import Integral
+from numbers import Integral, Real
 
 import gymnasium as gym
 import numpy as np
@@ -36,7 +36,6 @@ from EVRoutingEnv.models.environment.joint_instance import (
     JointRoutingInstance,
     generate_joint_routing_instance,
 )
-from EVRoutingEnv.models.environment.loaders import create_truck
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
@@ -64,11 +63,7 @@ from EVRoutingEnv.state.state_space import StateSpace
 from EVRoutingEnv.utils.charging_logger import ChargingLogger
 from EVRoutingEnv.utils.plotter import EnvironmentPlotter
 from EVRoutingEnv.utils.statistics import EnvironmentStatistics
-from EVRoutingEnv.utils.utils import (
-    check_navigation_feasibility,
-    get_graph,
-    load_config,
-)
+from EVRoutingEnv.utils.utils import get_graph, load_config
 
 
 class EventDrivenTruckEnv(gym.Env):
@@ -147,11 +142,7 @@ class EventDrivenTruckEnv(gym.Env):
             "environment.max_time",
         )
         max_stops_for_bounds = self.fixed_num_stops
-        default_step_limit = (
-            max(200, 16 * max_stops_for_bounds + 8 * self.num_trucks)
-            if self.config.get("problem", {}).get("mode") == "joint_fleet"
-            else int(self.num_trucks * max_stops_for_bounds * 7.5)
-        )
+        default_step_limit = max(200, 16 * max_stops_for_bounds + 8 * self.num_trucks)
         self.max_episode_steps = _positive_integer(
             env_config.get("max_episode_steps", default_step_limit),
             "environment.max_episode_steps",
@@ -215,15 +206,17 @@ class EventDrivenTruckEnv(gym.Env):
         # Delivery simulation settings
         self.delivery_config = self.config["delivery"]
         self.problem_config = self.config.get("problem", {})
-        self.problem_mode = self.problem_config.get("mode", "preassigned_routes")
-        if self.problem_mode not in {"preassigned_routes", "joint_fleet"}:
+        self.problem_mode = self.problem_config.get("mode", "joint_fleet")
+        if self.problem_mode not in {"joint_fleet", "sequential"}:
+            raise ValueError("problem.mode must be 'joint_fleet' or 'sequential'")
+        self.sequential_routing = self.problem_mode == "sequential"
+        # Both modes use the fleet task registry and the same action envelope.
+        self.joint_routing = True
+        self.enable_flexible_delivery_order = True
+        if "enable_flexible_delivery_order" in self.delivery_config:
             raise ValueError(
-                "problem.mode must be 'preassigned_routes' or 'joint_fleet'"
+                "delivery.enable_flexible_delivery_order was removed; use problem.mode"
             )
-        self.joint_routing = self.problem_mode == "joint_fleet"
-        self.enable_flexible_delivery_order = self.joint_routing or self.delivery_config.get(
-            "enable_flexible_delivery_order", False
-        )
         
         # Note: seed will be set in reset() method for reproducibility
         self.delivery_simulator = DeliverySimulator(
@@ -299,11 +292,10 @@ class EventDrivenTruckEnv(gym.Env):
             "waiting_time_lookup.json",
         )
         station_charging_config = dict(self.charging_config)
-        if self.joint_routing:
-            station_charging_config.setdefault(
-                "station_power_classes_kw",
-                [150.0, 350.0, 750.0],
-            )
+        station_charging_config.setdefault(
+            "station_power_classes_kw",
+            [150.0, 350.0, 750.0],
+        )
         self.charging_station = ChargingStation(
             charging_nodes=self.charging_nodes,
             transport_graph=self.transport_graph,
@@ -332,9 +324,9 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"  - Max simulation time: {self.max_time} hours")
 
         # Define action space - Discrete for single active truck
-        # Sequential mode: [chargers (0 to num_charging_nodes-1), next_delivery (num_charging_nodes), charge_1h, ...]
-        # Flexible mode: [chargers (0 to num_charging_nodes-1), delivery_0, ..., delivery_N-1, depot_return, charge_1h, ...]
-        default_charging_mode = "target_soc" if self.joint_routing else "duration"
+        # Both modes: chargers, global customer slots, depot, charging values.
+        # Sequential ownership and order are enforced by the task registry.
+        default_charging_mode = "target_soc"
         self.charging_action_mode = self.charging_config.get(
             "action_mode",
             default_charging_mode,
@@ -377,12 +369,7 @@ class EventDrivenTruckEnv(gym.Env):
             )
         
         stops_for_action_space = self.fixed_num_stops
-        if self.enable_flexible_delivery_order:
-            # Flexible mode: separate action for each potential delivery node (size with max to keep action space stable)
-            self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space + 1
-        else:
-            # Sequential mode: single next delivery action
-            self.num_navigation_actions = self.num_charging_nodes + 1
+        self.num_navigation_actions = self.num_charging_nodes + stops_for_action_space + 1
         
         self.num_charge_actions = len(self.charge_action_values)
 
@@ -391,9 +378,7 @@ class EventDrivenTruckEnv(gym.Env):
             self.num_navigation_actions + self.num_charge_actions
         )
 
-        default_observation_mode = (
-            "canonical_flat" if self.joint_routing else "legacy_flat"
-        )
+        default_observation_mode = "canonical_flat"
         self.observation_mode = env_config.get(
             "observation_mode",
             default_observation_mode,
@@ -402,10 +387,6 @@ class EventDrivenTruckEnv(gym.Env):
             raise ValueError(
                 "environment.observation_mode must be 'canonical_flat' or "
                 "'legacy_flat'"
-            )
-        if self.observation_mode == "canonical_flat" and not self.joint_routing:
-            raise ValueError(
-                "canonical_flat observations require problem.mode=joint_fleet"
             )
 
         # Which mask a learning policy is handed.  "hard" is the proposed method:
@@ -420,9 +401,13 @@ class EventDrivenTruckEnv(gym.Env):
         # assignment. This is the operational case the main benchmark models,
         # expressed inside the canonical stack so that the same architecture,
         # mask, and artifact contract apply to both settings.
-        assignment = self.problem_config.get("assignment", "fleet")
+        assignment = self.problem_config.get(
+            "assignment", "preassigned" if self.sequential_routing else "fleet"
+        )
         if assignment not in {"fleet", "preassigned"}:
             raise ValueError("problem.assignment must be 'fleet' or 'preassigned'")
+        if self.sequential_routing and assignment != "preassigned":
+            raise ValueError("sequential mode requires problem.assignment=preassigned")
         self.preassigned_customers = assignment == "preassigned"
 
         self.policy_action_mask = env_config.get("policy_action_mask", "hard")
@@ -487,11 +472,7 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             self.state_space_manager = StateSpace(
                 num_trucks=self.num_trucks,
-                num_stops=(
-                    stops_for_action_space
-                    if self.joint_routing
-                    else self.num_trucks * stops_for_action_space
-                ),
+                num_stops=stops_for_action_space,
                 max_time=self.max_time,
                 num_charging_nodes=self.num_charging_nodes,
             )
@@ -598,19 +579,12 @@ class EventDrivenTruckEnv(gym.Env):
             {}
         )  # truck_id -> {'start': node, 'deliveries': [nodes]}
 
-        # Create either one fleet-owned customer instance or independent legacy
-        # truck routes. The latter remains available as a secondary benchmark.
+        # Both modes create one fleet-owned instance and use the same event engine.
         self.trucks = []
         self.truck_states = {}
-        if self.joint_routing:
-            self._create_joint_fleet()
-        else:
-            self.joint_instance = None
-            self.task_registry = None
+        self._create_joint_fleet()
 
         for i in range(self.num_trucks):
-            if not self.joint_routing:
-                self._create_truck(i)
             self.truck_states[i] = "ready"  # All trucks start in ready state
             # Schedule initial TRUCK_READY event for each truck
             heapq.heappush(
@@ -697,20 +671,32 @@ class EventDrivenTruckEnv(gym.Env):
             ),
             time_window_config=self.problem_config.get("time_windows"),
             preassign=self.preassigned_customers,
+            sequential=self.sequential_routing,
             energy_multiplier=(max(1.0, float(self.traffic_config["max_energy_multiplier"]))
                 if self.traffic_config["enable_traffic"] and self.traffic_config["enable_energy_uncertainty"]
                 else 1.0),
         )
-        self.task_registry = self.joint_instance.create_registry()
+        self.task_registry = self.joint_instance.create_registry(
+            sequential=self.sequential_routing
+        )
         shared_sequence = [self.joint_instance.depot_node] + [
             task.node_id for task in self.joint_instance.tasks
         ]
 
         for truck_id in range(self.num_trucks):
+            sequence = shared_sequence
+            if self.sequential_routing:
+                sequence = [self.joint_instance.depot_node] + [
+                    task.node_id
+                    for task in sorted(
+                        (task for task in self.joint_instance.tasks if task.preassigned_to == truck_id),
+                        key=lambda task: task.sequence_position,
+                    )
+                ]
             truck = Truck(
                 truck_id=truck_id,
                 truck_type="electric",
-                delivery_sequence=shared_sequence,
+                delivery_sequence=sequence,
                 initial_battery=self._initial_battery(battery_capacity),
                 battery_capacity=battery_capacity,
                 base_speed=float(truck_config["base_speed"]),
@@ -724,7 +710,7 @@ class EventDrivenTruckEnv(gym.Env):
             ]
             self.truck_initial_plans[truck_id] = {
                 "start": self.joint_instance.depot_node,
-                "deliveries": shared_sequence.copy(),
+                "deliveries": sequence.copy(),
             }
 
     def _initial_battery(self, battery_capacity: float) -> float:
@@ -779,19 +765,17 @@ class EventDrivenTruckEnv(gym.Env):
             node_id=node_id,
         )
 
-        # The current legacy encoders infer served nodes from each truck. Keep
-        # those compatibility views synchronized until the canonical feature
-        # extractor replaces them.
         for fleet_truck in self.trucks:
-            fleet_truck.delivered_nodes.add(node_id)
-
-        if not self.task_registry.all_served():
-            self._wake_joint_idle_trucks()
-            return
+            if not self.sequential_routing or fleet_truck.truck_id == truck.truck_id:
+                fleet_truck.delivered_nodes.add(node_id)
 
         depot_node = self.joint_instance.depot_node
         for fleet_truck in self.trucks:
-            if fleet_truck.failed or fleet_truck.is_complete:
+            if (
+                fleet_truck.failed
+                or fleet_truck.is_complete
+                or not self.task_registry.route_complete_for(fleet_truck.truck_id)
+            ):
                 continue
             if (
                 int(fleet_truck.current_node) == depot_node
@@ -814,7 +798,7 @@ class EventDrivenTruckEnv(gym.Env):
             can_take_task = bool(
                 self.task_registry.available_tasks(truck.remaining_payload, truck_id=truck.truck_id)
             )
-            if not (can_take_task or self.task_registry.all_served()):
+            if not (can_take_task or self.task_registry.route_complete_for(truck_id)):
                 continue
             heapq.heappush(
                 self.event_queue,
@@ -826,31 +810,6 @@ class EventDrivenTruckEnv(gym.Env):
                 ),
             )
             self.joint_idle_trucks.remove(truck_id)
-
-    def _create_truck(self, truck_id: int):
-        """Create a new truck with random delivery sequence."""
-        truck, delivery_sequence, start_node = create_truck(
-            truck_id=truck_id,
-            transport_graph=self.transport_graph,
-            config=self.config,
-            num_stops=self.num_stops,
-            min_hop_distance=self.min_hop_distance,
-            max_hop_distance=self.max_hop_distance,
-            charging_nodes=self.charging_nodes,
-            enable_flexible_delivery_order=self.enable_flexible_delivery_order,
-            rng=self.instance_rng,
-        )
-
-        self.trucks.append(truck)
-
-        # Store initial plan for visualization
-        # Include initial SoC (should be 100% at start)
-        initial_soc = truck.get_battery_percentage()
-        self.truck_routes[truck_id] = [(start_node, 0.0, "start", initial_soc)]
-        self.truck_initial_plans[truck_id] = {
-            "start": start_node,
-            "deliveries": delivery_sequence.copy(),
-        }
 
     def _advance_to_next_decision(self):
         """
@@ -891,6 +850,17 @@ class EventDrivenTruckEnv(gym.Env):
                         print(
                             f"  Skipping TRUCK_READY for truck {truck.truck_id} (status: {status})"
                         )
+                    continue
+
+                if (
+                    self.sequential_routing
+                    and self.task_registry.route_complete_for(truck.truck_id)
+                    and int(truck.current_node) == self.joint_instance.depot_node
+                    and self.truck_states[truck.truck_id] == "ready"
+                ):
+                    truck.battery_at_completion = truck.current_battery
+                    truck.mark_complete(timestamp=self.global_clock)
+                    self.truck_states[truck.truck_id] = "complete"
                     continue
 
                 # Skip if this is a stale wake event and truck is no longer waiting
@@ -1093,21 +1063,12 @@ class EventDrivenTruckEnv(gym.Env):
                     unloading_duration = event.data.get("unloading_duration", 0.0)
                     if truck.unloading_start_time is not None:
                         truck.finish_unloading(unloading_duration=unloading_duration, timestamp=self.global_clock)
-                    if self.joint_routing:
-                        self._complete_joint_customer_service(truck, event.data)
-                    else:
-                        truck.advance_to_next_delivery(
-                            delivered_node=int(event.data["customer_node"])
-                        )
-                        if truck.is_complete:
-                            truck.mark_complete(timestamp=self.global_clock)
-                            self.truck_states[truck.truck_id] = "complete"
-                            continue
+                    self._complete_joint_customer_service(truck, event.data)
 
                 if (
                     self.joint_routing
                     and self.task_registry is not None
-                    and not self.task_registry.all_served()
+                    and not self.task_registry.route_complete_for(truck.truck_id)
                     and not self.task_registry.available_tasks(
                         truck.remaining_payload, truck_id=truck.truck_id
                     )
@@ -1139,19 +1100,18 @@ class EventDrivenTruckEnv(gym.Env):
                 if self.global_clock >= self.max_time:
                     self.active_truck_id = None
                     continue
-                if self.joint_routing:
-                    decisions = joint_action_feasibility(self)
-                    self.last_action_feasibility = decisions
-                    if not any(item.feasible for item in decisions):
-                        truck.mark_failed(
-                            reason="no_feasible_action",
-                            timestamp=self.global_clock,
-                        )
-                        self.truck_states[truck.truck_id] = "failed"
-                        if self.termination_reason is None:
-                            self.termination_reason = "no_feasible_action"
-                        self.active_truck_id = None
-                        continue
+                decisions = joint_action_feasibility(self)
+                self.last_action_feasibility = decisions
+                if not any(item.feasible for item in decisions):
+                    truck.mark_failed(
+                        reason="no_feasible_action",
+                        timestamp=self.global_clock,
+                    )
+                    self.truck_states[truck.truck_id] = "failed"
+                    if self.termination_reason is None:
+                        self.termination_reason = "no_feasible_action"
+                    self.active_truck_id = None
+                    continue
 
                 return
 
@@ -1316,13 +1276,11 @@ class EventDrivenTruckEnv(gym.Env):
 
         Args:
             action: Action for the active truck. Can be either:
-                    - Integer (legacy format): 
-                      * 0 to num_charging_nodes-1: Go to charging station
-                      * num_charging_nodes: Go to next delivery
-                      * num_charging_nodes+1 to end: Charge for 1-4 hours at current location
-                    - Tuple (new GNN format): (node_id, charge_value, is_charging)
+                    - Integer: chargers, global customer slots, depot, then
+                      configured charging values. Empty customer slots are masked.
+                    - Tuple: (node_id, charge_value, is_charging)
                       * node_id: Target node to navigate to or charge at
-                      * charge_value: Target SoC in joint mode or hours in legacy mode
+                      * charge_value: Target SoC or hours, according to charging.action_mode
                       * is_charging: Whether this is a charging action
 
         Returns:
@@ -1352,6 +1310,20 @@ class EventDrivenTruckEnv(gym.Env):
             or not 0 <= action < self.action_space.n
         ):
             raise ValueError(f"discrete action must be an integer in [0, {self.action_space.n})")
+
+        # Tuple actions must preserve their declared meaning. In particular,
+        # int(12.5) must never silently navigate to node 12, and a string such
+        # as "False" must never be interpreted as a charging flag.
+        if isinstance(action, tuple):
+            if len(action) != 3:
+                raise ValueError("tuple action must contain (node_id, charge_value, is_charging)")
+            node_id, charge_value, is_charging = action
+            if isinstance(node_id, (bool, np.bool_)) or not isinstance(node_id, Integral):
+                raise ValueError("tuple action node_id must be an integer")
+            if isinstance(charge_value, (bool, np.bool_)) or not isinstance(charge_value, Real):
+                raise ValueError("tuple action charge_value must be a real number")
+            if not isinstance(is_charging, (bool, np.bool_)):
+                raise ValueError("tuple action is_charging must be boolean")
 
         # Decode action format
         if isinstance(action, tuple):
@@ -1407,43 +1379,17 @@ class EventDrivenTruckEnv(gym.Env):
                     target_node = self.charging_nodes[action]
                 else:
                     # Go to delivery
-                    if self.enable_flexible_delivery_order:
-                        # Flexible mode: decode which delivery from action index.
-                        #
-                        # The layout is the one the feasibility engine publishes
-                        # and is keyed to the *fixed* action envelope, not to how
-                        # many customers this particular instance happens to
-                        # carry: slots [0, fixed_num_stops) are customer slots
-                        # and the slot immediately after them is the depot.
-                        # Decoding against len(delivery_sequence) instead made
-                        # the two disagree on every instance smaller than the
-                        # envelope, which is exactly what size-transfer
-                        # evaluation produces.
-                        delivery_idx = action - self.num_charging_nodes
-                        if delivery_idx < self.fixed_num_stops:
-                            if delivery_idx + 1 < len(truck.delivery_sequence):
-                                target_node = truck.delivery_sequence[delivery_idx + 1]
-                            elif self.joint_routing:
-                                # An empty slot denotes no action at all; only an
-                                # unmasked policy can select one, and it is
-                                # refused the same way any infeasible action is.
-                                target_node = None
-                            else:
-                                raise ValueError(
-                                    f"Invalid delivery action index: {delivery_idx}"
-                                )
-                        elif delivery_idx == self.fixed_num_stops:
-                            if self.joint_routing or truck.return_to_depot_pending:
-                                target_node = truck.delivery_sequence[0]
-                            else:
-                                target_node = self._select_closest_delivery(truck)
-                        else:
-                            raise ValueError(f"Invalid delivery action index: {delivery_idx}")
+                    delivery_idx = action - self.num_charging_nodes
+                    if delivery_idx < self.fixed_num_stops:
+                        target_node = (
+                            self.joint_instance.tasks[delivery_idx].node_id
+                            if delivery_idx < len(self.joint_instance.tasks)
+                            else None
+                        )
+                    elif delivery_idx == self.fixed_num_stops:
+                        target_node = self.joint_instance.depot_node
                     else:
-                        # Sequential mode: go to next delivery
-                        target_node = truck.get_next_delivery_target()
-                        if target_node is None:
-                            raise ValueError("No remaining deliveries for truck")
+                        raise ValueError(f"Invalid delivery action index: {delivery_idx}")
                 if target_node is None:
                     reward += self._reject_joint_action(
                         truck, FeasibilityReason.EMPTY_ACTION_SLOT
@@ -1517,62 +1463,39 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             target_node = int(target_node)
 
-        if self.joint_routing:
-            if self.task_registry is None or self.joint_instance is None:
-                raise RuntimeError("joint-routing state is not initialized")
-            energy_multiplier = 1.0
-            if (
-                self.traffic_config["enable_traffic"]
-                and self.traffic_config["enable_energy_uncertainty"]
-            ):
-                energy_multiplier = max(
-                    1.0,
-                    float(self.traffic_config["max_energy_multiplier"]),
-                )
-            feasibility = evaluate_joint_route(
-                truck=truck,
-                truck_state=self.truck_states[truck.truck_id],
-                target_node=target_node,
-                transport_graph=self.transport_graph,
-                charging_nodes=self.charging_nodes,
-                task_registry=self.task_registry,
-                depot_node=self.joint_instance.depot_node,
-                energy_multiplier=energy_multiplier,
-                current_time=self.global_clock,
-                unavailable_charging_nodes={
-                    int(node)
-                    for node, available in (
-                        self.charging_station.station_available.items()
-                    )
-                    if not available
-                },
+        if self.task_registry is None or self.joint_instance is None:
+            raise RuntimeError("joint-routing state is not initialized")
+        energy_multiplier = 1.0
+        if (
+            self.traffic_config["enable_traffic"]
+            and self.traffic_config["enable_energy_uncertainty"]
+        ):
+            energy_multiplier = max(
+                1.0,
+                float(self.traffic_config["max_energy_multiplier"]),
             )
-            if not feasibility.feasible:
-                return self._reject_joint_action(truck, feasibility.reason)
-
-        if self.enable_flexible_delivery_order:
-            depot_node = int(truck.delivery_sequence[0])
-            if truck.return_to_depot_pending:
-                # Force any delivery navigation to go to depot once return is required.
-                if target_node != depot_node and target_node not in self.charging_nodes:
-                    target_node = depot_node
-            elif target_node == depot_node:
-                target_node = self._select_closest_delivery(truck)
+        feasibility = evaluate_joint_route(
+            truck=truck,
+            truck_state=self.truck_states[truck.truck_id],
+            target_node=target_node,
+            transport_graph=self.transport_graph,
+            charging_nodes=self.charging_nodes,
+            task_registry=self.task_registry,
+            depot_node=self.joint_instance.depot_node,
+            energy_multiplier=energy_multiplier,
+            current_time=self.global_clock,
+            unavailable_charging_nodes={
+                int(node)
+                for node, available in (
+                    self.charging_station.station_available.items()
+                )
+                if not available
+            },
+        )
+        if not feasibility.feasible:
+            return self._reject_joint_action(truck, feasibility.reason)
 
         current_node = int(truck.current_node)
-
-        # Check if already at target
-        if current_node == target_node:
-            if self.verbose:
-                print(f"  Already at target node {target_node}")
-            # If at a charger, default to charging for 1 hour
-            if target_node in self.charging_nodes:
-                return self._execute_charge_action(truck, 1.0, target_node)
-            else:
-                # Already at delivery - no movement needed, return 0 reward
-                if self.verbose:
-                    print(f"  Already at delivery node {target_node}, no movement needed")
-                return 0.0
 
         # Calculate energy and time for the trip
         energy_used = self.transport_graph.get_path_energy(current_node, target_node)
@@ -1615,34 +1538,11 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Determine if this is navigation to a charger or delivery.
         is_charger_nav = target_node in self.charging_nodes
-        next_delivery = truck.get_next_delivery_target()
-        joint_task = None
-        if self.joint_routing and self.task_registry is not None:
-            try:
-                joint_task = self.task_registry.task_for_node(target_node)
-            except KeyError:
-                joint_task = None
-            is_delivery_nav = joint_task is not None
-            if is_delivery_nav:
-                if not joint_task.is_available:
-                    raise ValueError(
-                        f"customer task at node {target_node} is not available"
-                    )
-                if not truck.can_accept_demand(joint_task.demand):
-                    raise ValueError(
-                        f"truck {truck.truck_id} lacks payload for customer "
-                        f"{target_node} demand {joint_task.demand:.3f}"
-                    )
-        elif self.enable_flexible_delivery_order:
-            # Flexible mode: check if target is any remaining delivery
-            remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
-            is_delivery_nav = (
-                target_node in remaining_deliveries
-                and target_node != int(truck.delivery_sequence[0])
-            )
-        else:
-            # Sequential mode: check if target is next delivery
-            is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
+        try:
+            joint_task = self.task_registry.task_for_node(target_node)
+        except KeyError:
+            joint_task = None
+        is_delivery_nav = joint_task is not None
 
         # Track detour loop state (charge -> charger without delivery)
         just_charged = getattr(truck, "detour_last_action_was_charge", False)
@@ -1657,29 +1557,6 @@ class EventDrivenTruckEnv(gym.Env):
             truck.detour_last_action_was_charge = False
         
         # If navigating to a non-terminal delivery, check if truck will have feasible actions after arrival
-        if is_delivery_nav and not self.joint_routing:
-            # Get energy safety factor for feasibility check
-            energy_safety_factor = 1.0
-            if self.traffic_config['enable_traffic'] and self.traffic_config['enable_energy_uncertainty']:
-                energy_safety_factor = self.traffic_config['max_energy_multiplier']
-            
-            is_feasible = check_navigation_feasibility(
-                truck=truck,
-                target_node=target_node,
-                discharge=discharge,
-                transport_graph=self.transport_graph,
-                charging_nodes=self.charging_nodes,
-                energy_safety_factor=energy_safety_factor,
-                verbose=self.verbose
-            )
-            
-            if not is_feasible:
-                truck.mark_failed(
-                    reason="legacy_navigation_lookahead_failed",
-                    timestamp=self.global_clock,
-                )
-                self.truck_states[truck.truck_id] = "failed"
-                return 0.0
 
         if is_charger_nav and self.verbose:
             charger_info = self.charging_station.get_charger_info(target_node, self.global_clock)
@@ -1817,82 +1694,40 @@ class EventDrivenTruckEnv(gym.Env):
 
 
     def _execute_charge_action(self, truck: Truck, charge_value: float, charger_node: int) -> float:
-        """Execute a target-SoC or legacy duration charging action."""
+        """Execute a target-SoC or duration charging action."""
         # Convert to int if needed
         if hasattr(charger_node, "item"):
             charger_node = int(charger_node.item())
         else:
             charger_node = int(charger_node)
 
-        if self.joint_routing:
-            if self.charging_action_mode == "target_soc":
-                feasibility = evaluate_target_soc_charge(
-                    truck=truck,
-                    truck_state=self.truck_states[truck.truck_id],
-                    charger_node=charger_node,
-                    charging_nodes=self.charging_nodes,
-                    target_soc=float(charge_value),
-                    station_available=self.charging_station.station_available.get(
-                        charger_node,
-                        False,
-                    ),
-                )
-            else:
-                feasibility = evaluate_duration_charge(
-                    truck=truck,
-                    truck_state=self.truck_states[truck.truck_id],
-                    charger_node=charger_node,
-                    charging_nodes=self.charging_nodes,
-                    charge_hours=float(charge_value),
-                    station_available=self.charging_station.station_available.get(
-                        charger_node,
-                        False,
-                    ),
-                )
-            if not feasibility.feasible:
-                return self._reject_joint_action(truck, feasibility.reason)
+        if self.charging_action_mode == "target_soc":
+            feasibility = evaluate_target_soc_charge(
+                truck=truck,
+                truck_state=self.truck_states[truck.truck_id],
+                charger_node=charger_node,
+                charging_nodes=self.charging_nodes,
+                target_soc=float(charge_value),
+                station_available=self.charging_station.station_available.get(
+                    charger_node,
+                    False,
+                ),
+            )
+        else:
+            feasibility = evaluate_duration_charge(
+                truck=truck,
+                truck_state=self.truck_states[truck.truck_id],
+                charger_node=charger_node,
+                charging_nodes=self.charging_nodes,
+                charge_hours=float(charge_value),
+                station_available=self.charging_station.station_available.get(
+                    charger_node,
+                    False,
+                ),
+            )
+        if not feasibility.feasible:
+            return self._reject_joint_action(truck, feasibility.reason)
         
-        # Validate truck is at a charger
-        if truck.current_node not in self.charging_nodes:
-            if self.verbose:
-                print(f"  WARNING: Truck not at charging station (current: {truck.current_node})")
-                print("  Fallback: Navigating to next delivery instead")
-            # Navigate to next delivery instead
-            next_delivery = truck.get_next_delivery_target()
-            if next_delivery is not None:
-                # In flexible order, next_delivery can be a list; pick a concrete target
-                if isinstance(next_delivery, list):
-                    if not next_delivery:
-                        raise RuntimeError("No remaining deliveries to navigate to from fallback charge")
-                    target_node = next_delivery[0]
-                else:
-                    target_node = next_delivery
-                return self._execute_navigation_action(truck, target_node)
-            raise RuntimeError("Truck attempted to charge while not at a charging station")
-        
-        # Validate charger_node matches current location
-        if charger_node != truck.current_node:
-            if self.verbose:
-                print(f"  WARNING: Charger node {charger_node} doesn't match current {truck.current_node}")
-                print(f"  Using current location {truck.current_node}")
-            charger_node = truck.current_node
-
-        # If battery full, go to next delivery instead
-        battery_deficit = truck.battery_capacity - truck.current_battery
-        if battery_deficit <= 1e-3:
-            next_delivery = truck.get_next_delivery_target()
-            if self.verbose:
-                print(f"  Truck {truck.truck_id} battery full; rerouting instead of charging")
-            if next_delivery is not None:
-                if isinstance(next_delivery, list):
-                    if not next_delivery:
-                        raise RuntimeError("No remaining deliveries to navigate to after full battery check")
-                    target_node = next_delivery[0]
-                else:
-                    target_node = next_delivery
-                return self._execute_navigation_action(truck, target_node)
-            return 0.0
-
         # Check charger gating
         can_proceed, next_check_time = self.charging_station.check_charger_gating(
             truck_id=truck.truck_id,
@@ -2024,36 +1859,6 @@ class EventDrivenTruckEnv(gym.Env):
         
         # Return time penalty
         return 0.0  # Elapsed charging time is charged at the step boundary.
-
-    def _select_closest_delivery(self, truck: Truck) -> int:
-        """Pick the closest remaining delivery (by energy) for fallback routing."""
-        if self.joint_routing and self.task_registry is not None:
-            remaining = [
-                task.node_id
-                for task in self.task_registry.available_tasks(
-                    truck.remaining_payload, truck_id=truck.truck_id
-                )
-            ]
-        else:
-            remaining = truck.get_remaining_deliveries()
-        if not remaining:
-            raise ValueError("No remaining deliveries available for fallback routing")
-
-        current_node = int(truck.current_node)
-        best_node = None
-        best_energy = float("inf")
-        for node_id in remaining:
-            if node_id == current_node:
-                return node_id
-            energy = self.transport_graph.get_path_energy(current_node, node_id)
-            if energy < best_energy:
-                best_energy = energy
-                best_node = node_id
-
-        if best_node is None or best_energy == float("inf"):
-            raise ValueError("No reachable remaining deliveries for fallback routing")
-
-        return best_node
 
     def _remove_pending_events(self, truck_id: int, event_type: EventType = None):
         """
@@ -2204,8 +2009,12 @@ class EventDrivenTruckEnv(gym.Env):
             "active_truck_id": self.active_truck_id,
             "episode_reward": self.episode_reward,
             "problem_mode": self.problem_mode,
-            "feature_schema_version": (
-                SCHEMA_VERSION if self.joint_routing else None
+            "feature_schema_version": SCHEMA_VERSION,
+            "sequential_routing": self.sequential_routing,
+            "prescribed_routes": (
+                {truck.truck_id: [*truck.delivery_sequence, self.joint_instance.depot_node]
+                 for truck in self.trucks}
+                if self.sequential_routing else None
             ),
             "observation_mode": self.observation_mode,
             "all_complete": all_complete,
@@ -2304,43 +2113,26 @@ class EventDrivenTruckEnv(gym.Env):
             )
 
     def _action_to_string(self, action: int) -> str:
-        """Convert action to human-readable string (supports flexible order)."""
-        # Charging navigation actions
-        if action < self.num_charging_nodes:
-            node = self.charging_nodes[action]
-            return f"Go to charger @ node {node}"
-
-        # Delivery navigation actions
-        if action < self.num_navigation_actions:
-            if self.enable_flexible_delivery_order:
-                delivery_idx = action - self.num_charging_nodes
-                truck = None
-                if self.active_truck_id is not None and self.active_truck_id < len(self.trucks):
-                    truck = self.trucks[self.active_truck_id]
-
-                if truck is not None:
-                    if delivery_idx + 1 < len(truck.delivery_sequence):
-                        node = truck.delivery_sequence[delivery_idx + 1]
-                        remaining = set(truck.get_remaining_deliveries())
-                        status = "pending" if node in remaining else "done"
-                        return f"Go to delivery slot {delivery_idx} @ node {node} ({status})"
-                    if delivery_idx == len(truck.delivery_sequence) - 1:
-                        node = truck.delivery_sequence[0]
-                        remaining = set(truck.get_remaining_deliveries())
-                        status = "pending" if node in remaining else "done"
-                        return f"Return to depot @ node {node} ({status})"
-                return f"Go to delivery slot {delivery_idx} (empty)"
-            else:
-                return "Go to next delivery"
-
-        # Charging actions (use configured durations to avoid negative hours)
+        """Describe the global action slot shared by both routing modes."""
+        if 0 <= action < self.num_charging_nodes:
+            return f"Go to charger @ node {self.charging_nodes[action]}"
+        if self.num_charging_nodes <= action < self.num_navigation_actions:
+            slot = action - self.num_charging_nodes
+            if self.joint_instance is not None:
+                if slot == self.fixed_num_stops:
+                    return f"Return to depot @ node {self.joint_instance.depot_node}"
+                if slot < len(self.joint_instance.tasks):
+                    node = self.joint_instance.tasks[slot].node_id
+                    status = self.task_registry.task_for_node(node).status.value
+                    return f"Go to delivery slot {slot} @ node {node} ({status})"
+            return f"Go to delivery slot {slot} (empty)"
         charge_idx = action - self.num_navigation_actions
         if 0 <= charge_idx < len(self.charge_action_values):
             value = self.charge_action_values[charge_idx]
             if self.charging_action_mode == "target_soc":
                 return f"Charge to {value:.0%} SoC"
             return f"Charge for {value:g}h"
-        return f"Invalid charge action {charge_idx}"
+        return f"Invalid action {action}"
 
     def get_delivery_sequence_index(self, node_id: int) -> int:
         """

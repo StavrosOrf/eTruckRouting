@@ -72,13 +72,14 @@ class EnergyPathHeuristicPolicy:
                 ):
                     routes.add_edge(source, target, weight=duration)
         lengths, paths = nx.single_source_dijkstra(routes, origin, weight="weight")
-        all_served = env.task_registry.all_served()
+        route_complete = env.task_registry.route_complete_for(truck.truck_id)
         available = env.task_registry.available_tasks(
             truck.remaining_payload, truck_id=truck.truck_id
         )
-        exits = stations + (
-            [depot] if len(env.task_registry.pending_tasks()) == 1 else []
-        )
+        pending = env.task_registry.pending_tasks()
+        if env.sequential_routing:
+            pending = [task for task in pending if task.preassigned_to == truck.truck_id]
+        exits = stations + ([depot] if len(pending) == 1 else [])
 
         def approach(goal, reserve):
             options = []
@@ -98,7 +99,7 @@ class EnergyPathHeuristicPolicy:
             return cost, [*paths[source], goal]
 
         options = {}
-        if all_served:
+        if route_complete:
             result = approach(depot, 0.0)
             if result is not None:
                 options[depot] = (0, *result)

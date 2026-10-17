@@ -79,7 +79,7 @@ NUM_STOPS_GRID = [1, 2, 3, 4, 5, 6, 7, 8]
 # NUM_STOPS_GRID = [1,3]
 
 CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-# CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+# CONFIG_FILE = "EVRoutingEnv/config_files/config_joint.yaml"
 NUM_EVAL_SCENARIOS = 50
 SEED = 1000
 
@@ -584,12 +584,7 @@ def main():
     config = load_config(CONFIG_FILE)
     config["_config_name"] = CONFIG_FILE
 
-    if any((len(entry) > 2 and entry[2] == "detour") for entry in POLICIES):
-        if config["delivery"].get("enable_flexible_delivery_order", False):
-            print(
-                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
-            )
-            config["delivery"]["enable_flexible_delivery_order"] = False
+
 
     # Build policy entries with names
     policies = {}

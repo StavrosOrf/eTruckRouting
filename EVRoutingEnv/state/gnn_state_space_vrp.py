@@ -1,9 +1,4 @@
-"""
-GNN State Representation for flexible-delivery (VRP-style) control.
-
-Use this when ``enable_flexible_delivery_order`` is enabled; otherwise prefer
-``GNNStateSpaceNonFlex`` (with or without detour masking) for sequential runs.
-"""
+"""GNN compatibility adapter for the shared fleet action layout in both modes."""
 from __future__ import annotations
 
 import numpy as np
@@ -69,7 +64,7 @@ class GNNStateSpaceVRP(GNNStateSpace):
             )
 
         # Attach small bits of metadata for downstream debuggers/agents.
-        data.delivery_mode = "flexible"
+        data.delivery_mode = env.problem_mode
         data.action_space_n = expected_actions
         return data
 

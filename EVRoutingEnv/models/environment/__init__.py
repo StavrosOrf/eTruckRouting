@@ -9,7 +9,6 @@ from .curriculum_env import (
     MixedCurriculumStrategy,
 )
 from .event_handlers import EventType, Event, EventHandler
-from .loaders import create_truck
 
 __all__ = [
     "EventDrivenTruckEnv",
@@ -21,5 +20,4 @@ __all__ = [
     "EventType",
     "Event",
     "EventHandler",
-    "create_truck",
 ]

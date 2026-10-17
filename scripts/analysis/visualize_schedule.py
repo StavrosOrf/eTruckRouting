@@ -70,7 +70,7 @@ POLICIES = [
 ]
 
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_joint.yaml"
 NUM_TRUCKS = 1
 NUM_STOPS = 20
 MAX_TIME = 200.0

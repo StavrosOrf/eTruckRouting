@@ -354,7 +354,7 @@ def test_failure_at_exact_time_horizon_terminates(make_env):
 
 
 def _legacy_flexible_env(customers):
-    config = deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    config = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     config["environment"].update(num_trucks=1, num_stops=customers)
     config["truck"]["battery_capacity"] = 10_000.0
     config["traffic"].update(

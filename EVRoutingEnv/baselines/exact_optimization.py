@@ -194,6 +194,18 @@ def solve_nominal_plan(
         for truck in trucks:
             model.Add(visit[(truck.truck_id, index)] == int(truck.truck_id == owner))
 
+    if getattr(env, "sequential_routing", False):
+        for truck in trucks:
+            sequence = sorted(
+                ((index, task) for index, task in enumerate(tasks, start=1)
+                 if task.preassigned_to == truck.truck_id),
+                key=lambda pair: pair[1].sequence_position,
+            )
+            path = [0, *(index for index, _ in sequence), 0]
+            required = set(zip(path, path[1:])) if sequence else set()
+            for arc, literal in arcs_by_truck[truck.truck_id].items():
+                model.Add(literal == int(arc in required))
+
     if parameters.objective == "total_time":
         model.Minimize(sum(leg_costs))
     else:

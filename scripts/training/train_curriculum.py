@@ -169,8 +169,7 @@ def evaluate_policy(policy, base_config, eval_configs, num_episodes_per_config, 
     all_rewards = []
     all_success = []
 
-    flexible = base_config.get('delivery', {}).get('enable_flexible_delivery_order', False)
-    mode = 'vrp' if flexible else 'nonflex'
+    mode = 'vrp'
     use_detour = False
     
     for num_trucks, num_stops in eval_configs:
@@ -181,7 +180,6 @@ def evaluate_policy(policy, base_config, eval_configs, num_episodes_per_config, 
         
         eval_env = EventDrivenTruckEnv(config=config, verbose=False, enable_plotting=False)
         eval_env.use_detour_mask = use_detour
-        eval_env.enable_flexible_delivery_order = mode == 'vrp'
         state_space = create_default_gnn_space(eval_env, mode=mode, use_detour=use_detour)
         eval_env._default_gnn_state_space = state_space
         
@@ -234,8 +232,7 @@ def train(args):
     # Load configurations
     base_config = load_config(args.config)
     curriculum_strategy, curriculum_config = load_curriculum_strategy(args.curriculum_config, args.seed)
-    flexible = base_config.get('delivery', {}).get('enable_flexible_delivery_order', False)
-    mode = 'vrp' if flexible else 'nonflex'
+    mode = 'vrp'
     use_detour = False
     
     # Initialize wandb
@@ -256,7 +253,6 @@ def train(args):
         enable_plotting=False
     )
     train_env.env.use_detour_mask = use_detour
-    train_env.env.enable_flexible_delivery_order = mode == 'vrp'
     
     # Initialize state spaces cache
     state_spaces = {}
@@ -356,7 +352,6 @@ def train(args):
         state_space = state_spaces[size_key]
         train_env.env._default_gnn_state_space = state_space
         train_env.env.use_detour_mask = use_detour
-        train_env.env.enable_flexible_delivery_order = mode == 'vrp'
         gnn_state = state_space.get_state_GNN(train_env.env)
         
         # Act

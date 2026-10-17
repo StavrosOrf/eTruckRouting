@@ -719,7 +719,7 @@ class GNNStateSpace:
                 current_battery = active_truck.current_battery
                 current_location = active_truck.current_node
 
-                charge_durations = env.charging_config['charge_durations']  # in hours
+                charge_durations = env.charge_action_values
                 
                 # Check if truck must leave charger (after charging)
                 must_leave = active_truck.must_leave_charger
@@ -861,7 +861,12 @@ class GNNStateSpace:
                     for i in range(action_stop_limit + 1):
                         # Map action index to delivery node in sequence (skip depot at index 0)
                         if i == action_stop_limit:
-                            delivery_node = active_truck.delivery_sequence[0]
+                            delivery_node = env.joint_instance.depot_node
+                        elif getattr(env, "joint_routing", False):
+                            delivery_node = (
+                                env.joint_instance.tasks[i].node_id
+                                if i < len(env.joint_instance.tasks) else None
+                            )
                         elif i + 1 < len(active_truck.delivery_sequence):
                             delivery_node = active_truck.delivery_sequence[i + 1]
                         else:
@@ -1362,6 +1367,15 @@ class GNNStateSpace:
                             max_energy_to_delivery = energy_to_delivery * relaxed_safety
                             is_energy_feasible = max_energy_to_delivery < current_battery and not np.isinf(energy_to_delivery)
                             feasible_action_mask[nav_idx] = is_energy_feasible
+
+        if getattr(env, "joint_routing", False):
+            from EVRoutingEnv.state.feasibility import joint_action_feasibility
+
+            feasible_action_mask = [
+                result.feasible for result in joint_action_feasibility(env)
+            ]
+            if len(action_to_node_map) != env.action_space.n:
+                raise ValueError("GNN action slots do not match the environment action space")
 
         # Convert to tensors
         data.action_to_node_map = action_to_node_map  # Keep as list for easy lookup
@@ -1904,7 +1918,7 @@ class GNNStateSpace:
         battery_capacity = active_truck.battery_capacity
         current_location = active_truck.current_node
         
-        max_charge_duration = max(env.charging_config["charge_durations"])
+        max_charge_duration = max(env.charge_action_values)
         features = []
         for action_idx, (node_id, is_charging) in enumerate(action_to_node_map):
             charge_duration = action_charge_durations[action_idx]
@@ -1914,6 +1928,9 @@ class GNNStateSpace:
             # Determine action type
             if action_is_charging[action_idx]:
                 action_type_norm = 3.0 / 3.0  # Charging action
+                if env.charging_action_mode == "target_soc":
+                    features.append([action_type_norm, float(charge_duration), charge_duration_norm])
+                    continue
                 # After charging, battery will depend on charge duration (using curve model)
                 charger_type = env.charging_station.charger_type[current_location]
                 charging_config = env.config["charging"]
@@ -1957,7 +1974,7 @@ class GNNStateSpace:
                     # print(f'Action {action_idx}: Routing to node {node_id} from {current_location}, energy_consumed: {energy_consumed:.2f}, resulting_soc: {resulting_soc:.2f}')
                     
                 else:
-                    raise ValueError("Invalid node_id or current_location for routing action")
+                    resulting_soc = 0.0
                     # # Invalid action or no path
                     # resulting_soc = 0.0
             

@@ -43,6 +43,7 @@ class FeasibilityReason(StrEnum):
     MUST_LEAVE_CHARGER = "must_leave_charger"
     EMPTY_ACTION_SLOT = "empty_action_slot"
     PREASSIGNED_TO_OTHER = "preassigned_to_other"
+    OUT_OF_SEQUENCE = "out_of_sequence"
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,12 @@ def evaluate_joint_route(
                 action_kind,
                 target_node=target_node,
             )
+        if not task_registry.is_next_customer(target_node, truck.truck_id):
+            return FeasibilityResult.reject(
+                FeasibilityReason.OUT_OF_SEQUENCE,
+                action_kind,
+                target_node=target_node,
+            )
         if not truck.can_accept_demand(task.demand):
             return FeasibilityResult.reject(
                 FeasibilityReason.PAYLOAD_EXCEEDED,
@@ -197,7 +204,7 @@ def evaluate_joint_route(
         # The verdict is unchanged -- only the diagnostic is richer -- so that a
         # policy can price the mandatory depot return before the last customer
         # is served, rather than discovering the cost once it is too late.
-        if not task_registry.all_served():
+        if not task_registry.route_complete_for(truck.truck_id):
             return FeasibilityResult.reject(
                 FeasibilityReason.CUSTOMERS_REMAIN,
                 action_kind,
@@ -409,7 +416,7 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
         )
 
     for offset in range(env.fixed_num_stops):
-        if offset + 1 >= len(truck.delivery_sequence):
+        if offset >= len(env.joint_instance.tasks):
             decisions.append(
                 FeasibilityResult.reject(
                     FeasibilityReason.EMPTY_ACTION_SLOT,
@@ -421,7 +428,7 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
             evaluate_joint_route(
                 truck=truck,
                 truck_state=truck_state,
-                target_node=truck.delivery_sequence[offset + 1],
+                target_node=env.joint_instance.tasks[offset].node_id,
                 transport_graph=env.transport_graph,
                 charging_nodes=env.charging_nodes,
                 task_registry=env.task_registry,

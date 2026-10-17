@@ -95,6 +95,9 @@ class _NominalProblem:
             int(task.node_id): getattr(task, "preassigned_to", None)
             for task in tasks
         }
+        self.sequence_position = {
+            int(task.node_id): task.sequence_position for task in tasks
+        } if getattr(env, "sequential_routing", False) else {}
         self.capacity = {
             truck.truck_id: (
                 float(truck.remaining_payload)
@@ -181,6 +184,12 @@ def _greedy_initial(problem: _NominalProblem) -> dict[int, list[int]]:
 def _insertion_delta(
     problem: _NominalProblem, route: list[int], position: int, node: int
 ) -> float:
+    if problem.sequence_position:
+        rank = problem.sequence_position[node]
+        if position > 0 and problem.sequence_position[route[position - 1]] > rank:
+            return math.inf
+        if position < len(route) and problem.sequence_position[route[position]] < rank:
+            return math.inf
     previous = problem.depot if position == 0 else route[position - 1]
     following = problem.depot if position == len(route) else route[position]
     return (

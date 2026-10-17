@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -18,10 +18,10 @@ class JointRoutingInstance:
     depot_node: int
     tasks: tuple[CustomerTask, ...]
 
-    def create_registry(self) -> FleetTaskRegistry:
+    def create_registry(self, *, sequential: bool = False) -> FleetTaskRegistry:
         # Tasks are mutable during an episode, so return fresh copies.
         return FleetTaskRegistry(
-            CustomerTask(
+            (CustomerTask(
                 task_id=task.task_id,
                 node_id=task.node_id,
                 demand=task.demand,
@@ -29,8 +29,9 @@ class JointRoutingInstance:
                 earliest_service=task.earliest_service,
                 latest_service=task.latest_service,
                 preassigned_to=task.preassigned_to,
-            )
-            for task in self.tasks
+                sequence_position=task.sequence_position,
+            ) for task in self.tasks),
+            sequential=sequential,
         )
 
 
@@ -49,6 +50,7 @@ def generate_joint_routing_instance(
     time_window_config: dict | None = None,
     preassign: bool = False,
     energy_multiplier: float = 1.0,
+    sequential: bool = False,
 ) -> JointRoutingInstance:
     """Generate one feasible-capacity joint-routing instance.
 
@@ -128,13 +130,22 @@ def generate_joint_routing_instance(
             zip(selected_customers, demands, time_windows, strict=True)
         )
     )
-    if preassign:
+    if preassign or sequential:
         tasks = _preassign_to_trucks(
             tasks,
             num_trucks=num_trucks,
             payload_capacity=payload_capacity,
             assignment=capacity_assignment,
         )
+    if sequential:
+        positions: dict[int, int] = {}
+        ordered = []
+        for task in tasks:
+            owner = task.preassigned_to
+            position = positions.get(owner, 0)
+            ordered.append(replace(task, sequence_position=position))
+            positions[owner] = position + 1
+        tasks = tuple(ordered)
     return JointRoutingInstance(depot_node=selected_depot, tasks=tasks)
 
 

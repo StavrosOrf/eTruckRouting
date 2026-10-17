@@ -106,7 +106,7 @@ POLICIES = [
 
 ]
 # CONFIG_FILE = "EVRoutingEnv/config_files/config.yaml"
-CONFIG_FILE = "EVRoutingEnv/config_files/config_vrp.yaml"
+CONFIG_FILE = "EVRoutingEnv/config_files/config_joint.yaml"
 NUM_TRUCKS = 1  # Must match the configuration used during training
 NUM_STOPS = 20
 NUM_EVAL_SCENARIOS = 100
@@ -751,12 +751,7 @@ def run_parallel_eval(
 
     local_config = copy.deepcopy(config)
 
-    if any((len(entry) > 2 and entry[2] == "detour") for entry in policy_entries):
-        if local_config["delivery"].get("enable_flexible_delivery_order", False):
-            print(
-                "Detected detour policies; forcing sequential delivery order (enable_flexible_delivery_order=False)."
-            )
-            local_config["delivery"]["enable_flexible_delivery_order"] = False
+
 
     sb3_present = any(len(entry) >= 2 and entry[1].startswith("sb3-") for entry in policy_entries)
     sb3_configs = []

@@ -6,10 +6,11 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.utils.utils import load_config
+from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 
 
 def test_flexible_variable_stops_keep_fixed_action_indices() -> None:
-    config = load_config("EVRoutingEnv/config_files/config_vrp.yaml")
+    config = load_config("EVRoutingEnv/config_files/config_joint.yaml")
     config["environment"].update(
         num_trucks=1,
         num_stops=4,
@@ -26,7 +27,7 @@ def test_flexible_variable_stops_keep_fixed_action_indices() -> None:
             raise AssertionError("no smaller variable-stop episode was sampled")
 
         mask = env.mask_fn()
-        state = env._default_gnn_state_space.get_state_GNN(env)
+        state = create_default_gnn_space(env).get_state_GNN(env)
         action_map = state.action_to_node_map
         assert len(mask) == len(action_map) == env.action_space.n
 

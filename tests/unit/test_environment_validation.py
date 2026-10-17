@@ -13,7 +13,7 @@ from EVRoutingEnv.utils.utils import load_config
 
 
 def _config() -> dict:
-    return deepcopy(load_config("EVRoutingEnv/config_files/config_vrp.yaml"))
+    return deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
 
 
 @pytest.mark.parametrize(
@@ -81,6 +81,7 @@ def test_invalid_numeric_initial_battery_percentage_is_rejected(
 
 def test_nonfinite_duration_action_is_rejected() -> None:
     config = _config()
+    config["charging"]["action_mode"] = "duration"
     config["charging"]["charge_durations"] = [0.25, float("nan")]
 
     with pytest.raises(ValueError, match="charge_durations"):

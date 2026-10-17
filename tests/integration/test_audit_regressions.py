@@ -158,10 +158,12 @@ def test_horizon_does_not_serve_a_customer_after_cutoff(make_env):
 
 def test_completion_exactly_at_horizon_is_success(make_env):
     env = make_env(legacy="config.yaml", stops=1)
-    target = env.trucks[0].get_next_delivery_target()
+    target = env.trucks[0].get_next_delivery_target()[0]
     travel = env.transport_graph.get_time_distance(env.trucks[0].current_node, target)
-    env.max_time = travel + env.delivery_simulator.base_unloading_time
-    _, _, terminated, truncated, info = env.step((target, 0.0, False))
+    depot = env.joint_instance.depot_node
+    env.max_time = travel + env.problem_config["base_service_time"] + env.transport_graph.get_time_distance(target, depot)
+    env.step((target, 0.0, False))
+    _, _, terminated, truncated, info = env.step((depot, 0.0, False))
     assert terminated and not truncated
     assert info["successful"] and info["termination_reason"] == "success"
 
@@ -276,7 +278,7 @@ def test_curriculum_starts_with_a_valid_size_and_uses_first_sample_once():
         env.close()
 
 
-@pytest.mark.parametrize("name", ["config.yaml", "config_vrp.yaml"])
+@pytest.mark.parametrize("name", ["config.yaml", "config_joint.yaml"])
 def test_legacy_yaml_default_constructor_is_runnable(name):
     env = EventDrivenTruckEnv("EVRoutingEnv/config_files/" + name)
     try:
@@ -305,12 +307,12 @@ def test_network_caches_are_isolated_and_scaling_invalidates_time_lookup():
 
 
 def test_legacy_flat_state_includes_every_fleet_customer(make_env):
-    env = make_env(legacy="config_vrp.yaml", trucks=2, stops=3)
+    env = make_env(legacy="config_joint.yaml", trucks=2, stops=3, environment={"observation_mode": "legacy_flat"})
     unique = set().union(*(set(truck.delivery_sequence[1:]) for truck in env.trucks))
-    assert len(unique) <= env.state_space_manager.num_stops == 6
+    assert len(unique) == env.state_space_manager.num_stops == 3
 
 
-@pytest.mark.parametrize("legacy", ["config.yaml", "config_vrp.yaml"])
+@pytest.mark.parametrize("legacy", ["config.yaml", "config_joint.yaml"])
 def test_legacy_service_completion_and_depot_reward(make_env, legacy):
     env = make_env(legacy=legacy, stops=1)
     truck = env.trucks[0]
@@ -340,8 +342,9 @@ def test_stale_event_after_completion_cannot_move_makespan_past_horizon(make_env
             {"reason": "charger_port_available"},
         ),
     )
+    env.step((env.trucks[0].get_next_delivery_target()[0], 0.0, False))
     _, _, terminated, truncated, info = env.step(
-        (env.trucks[0].get_next_delivery_target(), 0.0, False)
+        (env.joint_instance.depot_node, 0.0, False)
     )
     assert terminated and not truncated
     assert info["successful"] and info["global_clock"] < env.max_time

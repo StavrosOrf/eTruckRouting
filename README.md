@@ -104,6 +104,21 @@ uv run pytest
 The test session limits PyTorch CPU threads for the small neural networks used
 by its learning checks, then restores the original thread setting.
 
+Run the routing logic and scale regressions separately with:
+
+```bash
+uv run pytest tests/integration/test_routing_modes_scale.py
+```
+
+These cover joint assignment, preassigned ownership, and sequential routes with
+1, 3, 10, 100, and 128 trucks and 1, 2, 5, 20, and 25 total customers, plus
+128-truck/150-customer replay and observation checks. Scheduling cases isolate
+routing with ample battery; separate cases require charging, send 128 trucks to
+a shared station, close a station with 127 waiting trucks, and run the bundled
+road network at the standard 400 kWh battery capacity. Checks include ownership,
+order, unique service, payload and battery accounting, FCFS queues, exact episode
+boundaries, reset, stochastic replay, malformed actions, and terminal rewards.
+
 ## Repository Layout
 
 ```text
@@ -157,7 +172,7 @@ Run a short custom PPO-Variable training job without external logging:
 
 ```bash
 uv run python scripts/training/train_PPO_Variable_parallel.py \
-  --config EVRoutingEnv/config_files/config_vrp.yaml \
+  --config EVRoutingEnv/config_files/config_joint.yaml \
   --gnn-state-space vrp \
   --num-trucks 1 \
   --num-stops 10 \
@@ -173,7 +188,7 @@ Train a Stable-Baselines3 policy:
 ```bash
 uv run python scripts/training/train_sb3_event_driven.py \
   --algo maskppo \
-  --config EVRoutingEnv/config_files/config_vrp.yaml \
+  --config EVRoutingEnv/config_files/config_joint.yaml \
   --num-trucks 1 \
   --num-stops 10 \
   --steps 100000 \
@@ -197,16 +212,34 @@ The training scripts save models and run metadata under `saved_models/`.
 Environment behavior is controlled through YAML files in
 `EVRoutingEnv/config_files/`.
 
-- `config.yaml` is the default electric truck routing setup.
-- `config_vrp.yaml` enables flexible delivery order for single-truck VRP-style
-  experiments.
+- `config_joint.yaml`: `problem.mode: joint_fleet`, for one or more trucks.
+  Trucks choose customer ownership and visit order. Set `problem.assignment:
+  preassigned` (or use `config_joint_preassigned.yaml`) to fix ownership while
+  still choosing visit order.
+- `config_sequential.yaml`: `problem.mode: sequential`, with fixed customer
+  ownership and visit order. Trucks choose charging stops and charging amounts.
+  `config.yaml` contains the same sequential defaults.
+
+Both modes use one fleet task registry, a shared depot, payload limits, service
+completion events, charger queues, and required depot return. Sequential trucks
+can finish and return independently. `environment.num_stops` is the **total
+fleet customer count** in both modes; it is never multiplied by the truck count.
+Single-truck flexible routing is covered by `joint_fleet`; its separate legacy
+configuration and independent-route loader have been removed. The old
+`delivery.enable_flexible_delivery_order` setting is rejected: select the mode
+through `problem.mode`.
+
+Canonical features use schema `joint-fleet-v5`, including customer ownership and
+sequence position. Existing checkpoints with older feature/action layouts need
+retraining.
 
 Important configuration sections include:
 
 - `environment`: number of trucks, stops, episode limits, hop energy bounds.
 - `truck`: battery capacity, speed, initial battery state.
 - `charging`: charger types, charging durations, realistic tapering behavior.
-- `delivery`: flexible order, unloading-time stochasticity, service-time bounds.
+- `problem`: routing mode, assignment, payload capacity, demands, time windows.
+- `delivery`: unloading-time stochasticity and service-time bounds.
 - `traffic`: travel-time noise, rush-hour effects, energy uncertainty.
 - `rewards`: time cost, completion bonus, battery-failure penalty.
 - `network`: paths to travel-time, energy, and station data.
@@ -230,10 +263,12 @@ samples or selects an action, and maps the selected action back to the simulator
 
 Supported GNN state-space modes:
 
-- `nonflex`: sequential delivery routing.
-- `detour`: sequential routing with restricted charger detours.
-- `vrp`: flexible delivery order with top-k delivery candidates.
-- `base`: compatibility alias for non-flex experiments.
+Routing constraints are selected by `problem.mode`. The GNN factory uses the
+shared fleet action layout for both modes; historical `nonflex` and `detour`
+CLI selections no longer change the environment's routing rules. Use `vrp` for
+the shared GNN compatibility adapter, or the canonical graph/flat observations
+for the complete ownership and sequence features.
+`base` is another historical CLI alias for this adapter.
 
 ## Baselines
 
@@ -316,7 +351,7 @@ uv run python scripts/analysis/visualize_transport_graph.py \
 
 ```bash
 uv run python scripts/analysis/analyze_delivery_routes.py \
-  --config EVRoutingEnv/config_files/config_vrp.yaml \
+  --config EVRoutingEnv/config_files/config_joint.yaml \
   --num-samples 1000 \
   --num-trucks 10 \
   --num-stops 15

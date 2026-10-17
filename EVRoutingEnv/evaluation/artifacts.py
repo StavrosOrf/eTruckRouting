@@ -93,6 +93,8 @@ def build_scenario_descriptor(env) -> dict:
                 "node_id": task.node_id,
                 "demand": task.demand,
                 "base_service_time": task.base_service_time,
+                "preassigned_to": task.preassigned_to,
+                "sequence_position": task.sequence_position,
                 "earliest_service": task.earliest_service,
                 "latest_service": (
                     task.latest_service

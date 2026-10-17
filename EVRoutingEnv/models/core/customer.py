@@ -37,6 +37,7 @@ class CustomerTask:
     service_started_at: float | None = None
     served_at: float | None = None
     served_by: int | None = None
+    sequence_position: int | None = None
 
     def __post_init__(self) -> None:
         self.task_id = int(self.task_id)
@@ -60,6 +61,14 @@ class CustomerTask:
             raise ValueError("latest service time cannot be NaN")
         if self.latest_service < self.earliest_service:
             raise ValueError("latest service time precedes earliest service time")
+        if self.sequence_position is not None:
+            if (
+                isinstance(self.sequence_position, bool)
+                or not isinstance(self.sequence_position, int)
+                or self.sequence_position < 0
+                or self.preassigned_to is None
+            ):
+                raise ValueError("sequence_position requires an assigned truck and a nonnegative integer")
 
     @property
     def is_available(self) -> bool:
@@ -78,7 +87,7 @@ class CustomerTask:
 class FleetTaskRegistry:
     """Atomic ownership and service state for all customers in an episode."""
 
-    def __init__(self, tasks: Iterable[CustomerTask]):
+    def __init__(self, tasks: Iterable[CustomerTask], *, sequential: bool = False):
         task_list = list(tasks)
         if not task_list:
             raise ValueError("a joint-routing instance requires at least one customer")
@@ -95,6 +104,37 @@ class FleetTaskRegistry:
                 )
             self._tasks_by_id[task.task_id] = task
             self._task_id_by_node[task.node_id] = task.task_id
+        self.sequential = sequential
+        self._truck_sequences: dict[int, list[CustomerTask]] = {}
+        if sequential:
+            for task in task_list:
+                if task.preassigned_to is None or task.sequence_position is None:
+                    raise ValueError("sequential tasks require an owner and sequence_position")
+                owner = self._validate_truck_id(task.preassigned_to)
+                self._truck_sequences.setdefault(owner, []).append(task)
+            for sequence in self._truck_sequences.values():
+                sequence.sort(key=lambda task: task.sequence_position)
+                if [task.sequence_position for task in sequence] != list(range(len(sequence))):
+                    raise ValueError("truck sequence positions must be unique and contiguous from zero")
+
+    def next_task_for_truck(self, truck_id: int) -> CustomerTask | None:
+        """First unfinished task in a truck's prescribed route."""
+        return next(
+            (task for task in self._truck_sequences.get(truck_id, ()) if not task.is_served),
+            None,
+        )
+
+    def is_next_customer(self, node_id: int, truck_id: int) -> bool:
+        if not self.sequential:
+            return True
+        task = self.next_task_for_truck(truck_id)
+        return task is not None and task.node_id == int(node_id)
+
+    def route_complete_for(self, truck_id: int) -> bool:
+        """Sequential routes return independently; joint routes finish as a fleet."""
+        if not self.sequential:
+            return self.all_served()
+        return self.next_task_for_truck(truck_id) is None
 
     def __len__(self) -> int:
         return len(self._tasks_by_id)
@@ -119,6 +159,10 @@ class FleetTaskRegistry:
             task
             for task in self.tasks()
             if task.is_available
+            and self.is_next_customer(
+                task.node_id,
+                task.preassigned_to if truck_id is None else truck_id,
+            )
             and (
                 truck_id is None
                 or task.preassigned_to is None
@@ -146,6 +190,8 @@ class FleetTaskRegistry:
             )
         if task.preassigned_to is not None and task.preassigned_to != truck_id:
             raise ValueError(f"task {task.task_id} is preassigned to another truck")
+        if not self.is_next_customer(node_id, truck_id):
+            raise ValueError(f"task {task.task_id} is out of sequence for truck {truck_id}")
         task.status = TaskStatus.CLAIMED
         task.claimed_by = truck_id
         task.claimed_at = timestamp

@@ -37,16 +37,9 @@ class OperationalMetrics:
 def extract_operational_metrics(env) -> OperationalMetrics:
     """Extract metrics from simulator state without consulting episode reward."""
     trucks = list(env.trucks)
-    if env.task_registry is not None:
-        tasks = env.task_registry.tasks()
-        customers_total = len(tasks)
-        customers_served = sum(task.is_served for task in tasks)
-    else:
-        customers_total = sum(len(truck.delivery_sequence) - 1 for truck in trucks)
-        customers_served = sum(
-            truck.completed_service_count
-            for truck in trucks
-        )
+    tasks = env.task_registry.tasks()
+    customers_total = len(tasks)
+    customers_served = sum(task.is_served for task in tasks)
 
     completed_fraction = customers_served / customers_total if customers_total else 1.0
     success = bool(

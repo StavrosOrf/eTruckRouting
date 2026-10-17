@@ -88,28 +88,18 @@ class EventHandler:
         truck = trucks[event.truck_id]
         data = event.data
 
-        # Joint-routing events carry an explicit task identity. Legacy events
-        # infer delivery status from the truck-owned sequence.
+        if task_registry is None:
+            raise RuntimeError("routing events require a fleet task registry")
         destination = data["destination"]
         task_id = data.get("task_id")
-        is_joint_delivery = task_registry is not None and task_id is not None
-        next_delivery_target = truck.get_next_delivery_target()
-
-        if is_joint_delivery:
-            is_delivery = True
-        elif truck.enable_flexible_delivery_order:
-            remaining_deliveries = (
-                next_delivery_target
-                if isinstance(next_delivery_target, list)
-                else []
-            )
-            is_delivery = (
-                destination in remaining_deliveries
-                and destination != truck.delivery_sequence[0]
-            )
-        else:
-            # Sequential mode: check if destination is next delivery
-            is_delivery = destination == next_delivery_target
+        is_joint_delivery = task_id is not None
+        is_delivery = is_joint_delivery
+        if is_delivery:
+            task = task_registry.task_for_node(destination)
+            if task.task_id != task_id:
+                raise RuntimeError("routing event task does not match destination")
+            if delivery_simulator is None:
+                raise RuntimeError("customer service requires a delivery simulator")
 
         if (
             is_delivery
@@ -136,10 +126,8 @@ class EventHandler:
             travel_time=data["travel_time"],
             discharge=data["discharge"],
             timestamp=global_clock,
-            mark_delivery_on_arrival=(
-                not is_joint_delivery and delivery_simulator is None
-            ),
-            complete_on_arrival=delivery_simulator is None,
+            mark_delivery_on_arrival=False,
+            complete_on_arrival=False,
         )
 
         # Clear route tracking information

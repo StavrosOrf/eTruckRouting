@@ -112,14 +112,25 @@ class FleetTaskRegistry:
             raise KeyError(f"node {node_id} is not a customer task") from error
         return self._tasks_by_id[task_id]
 
-    def available_tasks(self, remaining_payload: float | None = None) -> list[CustomerTask]:
-        tasks = [task for task in self.tasks() if task.is_available]
+    def available_tasks(
+        self, remaining_payload: float | None = None, *, truck_id: int | None = None
+    ) -> list[CustomerTask]:
+        tasks = [
+            task
+            for task in self.tasks()
+            if task.is_available
+            and (
+                truck_id is None
+                or task.preassigned_to is None
+                or task.preassigned_to == truck_id
+            )
+        ]
         if remaining_payload is None:
             return tasks
         capacity = float(remaining_payload)
         if not math.isfinite(capacity) or capacity < 0.0:
             raise ValueError("remaining_payload must be finite and non-negative")
-        return [task for task in tasks if task.demand <= capacity]
+        return [task for task in tasks if task.demand <= capacity + 1e-9]
 
     def pending_tasks(self) -> list[CustomerTask]:
         return [task for task in self.tasks() if not task.is_served]
@@ -133,6 +144,8 @@ class FleetTaskRegistry:
                 f"task {task.task_id} at node {node_id} is {task.status.value}, "
                 "not available"
             )
+        if task.preassigned_to is not None and task.preassigned_to != truck_id:
+            raise ValueError(f"task {task.task_id} is preassigned to another truck")
         task.status = TaskStatus.CLAIMED
         task.claimed_by = truck_id
         task.claimed_at = timestamp

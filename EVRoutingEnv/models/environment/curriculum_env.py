@@ -217,7 +217,8 @@ class CurriculumEnvWrapper:
         self.current_num_stops = None
         
         # Create initial environment with first sampled size
-        self._create_new_env(0, 0)
+        self._initial_size = self.curriculum_strategy.sample(0)
+        self._create_new_env(*self._initial_size)
     
     def _create_new_env(self, num_trucks: int, num_stops: int):
         """Create environment with specified problem size."""
@@ -258,7 +259,11 @@ class CurriculumEnvWrapper:
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple:
         """Reset with new problem size sampled from curriculum."""
         # Sample new problem size
-        num_trucks, num_stops = self.curriculum_strategy.sample(self.episode_count)
+        if self._initial_size is not None:
+            num_trucks, num_stops = self._initial_size
+            self._initial_size = None
+        else:
+            num_trucks, num_stops = self.curriculum_strategy.sample(self.episode_count)
         
         # Create new environment if size changed
         if (num_trucks != self.current_num_trucks or 

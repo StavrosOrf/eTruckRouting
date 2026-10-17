@@ -70,9 +70,7 @@ class DeliverySimulator:
             seed: Random seed for reproducibility
         """
         if not math.isfinite(base_unloading_time) or base_unloading_time < 0.0:
-            raise ValueError(
-                "base_unloading_time must be finite and non-negative"
-            )
+            raise ValueError("base_unloading_time must be finite and non-negative")
         if enable_stochastic_unloading and base_unloading_time <= 0.0:
             raise ValueError(
                 "stochastic unloading requires positive base_unloading_time"
@@ -85,18 +83,14 @@ class DeliverySimulator:
             not math.isfinite(business_hours_multiplier)
             or business_hours_multiplier < 1.0
         ):
-            raise ValueError(
-                "business_hours_multiplier must be finite and at least 1"
-            )
+            raise ValueError("business_hours_multiplier must be finite and at least 1")
         if (
             not math.isfinite(min_unloading_multiplier)
             or not math.isfinite(max_unloading_multiplier)
             or min_unloading_multiplier <= 0.0
             or max_unloading_multiplier < min_unloading_multiplier
         ):
-            raise ValueError(
-                "unloading multipliers must satisfy 0 < min <= max"
-            )
+            raise ValueError("unloading multipliers must satisfy 0 < min <= max")
 
         self.enable_stochastic_unloading = enable_stochastic_unloading
         self.base_unloading_time = base_unloading_time
@@ -115,7 +109,13 @@ class DeliverySimulator:
         self._uncertainty_cache: dict[tuple[int, int, int], float] = {}
         self._delivery_counters: dict[int, int] = {}
 
-    def apply_unloading_time(self, delivery_node: int, current_time: float) -> float:
+    def apply_unloading_time(
+        self,
+        delivery_node: int,
+        current_time: float,
+        *,
+        base_service_time: float | None = None,
+    ) -> float:
         """
         Apply stochastic unloading time for a delivery at a specific node and time.
 
@@ -126,17 +126,26 @@ class DeliverySimulator:
 
         Args:
             delivery_node: Node ID where delivery occurs
-            current_time: Current simulation time in hours
+            current_time: Service start time in hours, after any window wait
+            base_service_time: Optional task-specific mean duration; the
+                configured simulator default remains unchanged.
 
         Returns:
             Actual unloading time in hours (bounded to realistic range)
         """
+        base_time = (
+            self.base_unloading_time
+            if base_service_time is None
+            else float(base_service_time)
+        )
+        if not math.isfinite(base_time) or base_time < 0.0:
+            raise ValueError("base_service_time must be finite and non-negative")
         if int(delivery_node) < 0:
             raise ValueError("delivery_node must be non-negative")
         if not math.isfinite(current_time) or current_time < 0.0:
             raise ValueError("current_time must be finite and non-negative")
-        if not self.enable_stochastic_unloading:
-            return self.base_unloading_time
+        if not self.enable_stochastic_unloading or base_time == 0.0:
+            return base_time
 
         # Calculate time-of-day effects (business hours: 9am-5pm)
         hour_of_day = current_time % 24
@@ -146,7 +155,7 @@ class DeliverySimulator:
         )
 
         # Calculate standard deviation with business hours effect
-        base_std_dev = self.base_unloading_time * self.std_dev_factor
+        base_std_dev = base_time * self.std_dev_factor
         std_dev = base_std_dev * business_multiplier
 
         # Cap standard deviation to prevent extreme outliers
@@ -157,27 +166,24 @@ class DeliverySimulator:
         unloading_random = self._get_uncertainty_value(delivery_node, current_time)
 
         # Sample from normal distribution
-        actual_unloading_time = self.base_unloading_time + std_dev * unloading_random
+        actual_unloading_time = base_time + std_dev * unloading_random
 
         # Apply bounds to keep unloading time realistic
-        min_time = self.base_unloading_time * self.min_unloading_multiplier
-        max_time = self.base_unloading_time * self.max_unloading_multiplier
+        min_time = base_time * self.min_unloading_multiplier
+        max_time = base_time * self.max_unloading_multiplier
 
-        # Ensure minimum time is always positive
-        min_time = max(min_time, 0.1)  # At least 0.1 hours (6 minutes)
+        # Bounds scale with the requested service duration. A fixed six-minute
+        # floor conflicts with the upper bound for short legitimate services.
 
         actual_unloading_time = max(actual_unloading_time, min_time)
         actual_unloading_time = min(actual_unloading_time, max_time)
 
         if self.verbose:
-            variation_percent = (
-                (actual_unloading_time - self.base_unloading_time)
-                / self.base_unloading_time
-            ) * 100
+            variation_percent = ((actual_unloading_time - base_time) / base_time) * 100
             hours_label = " [BUSINESS HOURS]" if is_business_hours else " [OFF-HOURS]"
             print(
                 f"    Unloading time{hours_label}: "
-                f"{self.base_unloading_time:.2f}h → {actual_unloading_time:.2f}h "
+                f"{base_time:.2f}h → {actual_unloading_time:.2f}h "
                 f"({variation_percent:+.1f}%)"
             )
 

@@ -137,9 +137,8 @@ def test_penalize_mode_refuses_the_action_and_keeps_the_episode_alive() -> None:
         # again, which is the whole point of the charitable variant.
         assert env.truck_states[env.trucks[0].truck_id] != "failed"
 
-        # Nothing can spin forever here.  A refusal schedules no event, so once
-        # every truck refuses in turn the queue empties and the simulator ends
-        # the episode on its own deadlock check rather than on the budget.
+        # Retries keep the same active truck. The explicit refusal budget,
+        # rather than event exhaustion, ends repeated invalid proposals.
         for _ in range(20):
             repeat = _first_infeasible_defined_action(env)
             if repeat is None:
@@ -149,8 +148,8 @@ def test_penalize_mode_refuses_the_action_and_keeps_the_episode_alive() -> None:
                 break
 
         assert terminated or truncated
-        assert info["termination_reason"] is not None
-        assert not info["termination_reason"].startswith("invalid_action:")
+        assert info["termination_reason"] == "invalid_action_budget_exhausted"
+        assert env.invalid_action_count == env.invalid_action_budget
     finally:
         env.close()
 

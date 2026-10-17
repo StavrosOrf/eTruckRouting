@@ -2,8 +2,11 @@
 Transportation Graph class for managing the road network.
 """
 
+import hashlib
+import json
 import os
 import pickle
+import tempfile
 
 import networkx as nx
 import numpy as np
@@ -26,16 +29,27 @@ class TransportationGraph:
 
         # Distance cache
         self._distance_cache = {}  # Dict[Tuple[int, int], float]
-        # Cache file path: EVRoutingEnv/data/distance_matrix_cache.pkl
-        # __file__ is at EVRoutingEnv/models/transportation_graph.py
-        # So we go up to EVRoutingEnv, then into data
+        # A cache belongs to one graph, including its node mapping and costs.
+        # The old package-wide pickle had no identity and leaked costs between
+        # unrelated networks. Keep versioned caches outside the source tree.
+        identity = {
+            "nodes": sorted(
+                (node, data.get("original_id", node))
+                for node, data in graph.nodes(data=True)
+            ),
+            "edges": sorted(
+                (u, v, data.get("distance", 1.0), data.get("time"))
+                for u, v, data in graph.edges(data=True)
+            ),
+        }
+        self._cache_fingerprint = hashlib.sha256(
+            json.dumps(identity, sort_keys=True).encode("utf-8")
+        ).hexdigest()
         self._cache_file = os.path.join(
-            os.path.dirname(__file__),  # EVRoutingEnv/models
-            "..",  # EVRoutingEnv
-            "data",
-            "distance_matrix_cache.pkl",
+            tempfile.gettempdir(),
+            "evrp_transport_cache_v1",
+            self._cache_fingerprint + ".pkl",
         )
-        self._cache_file = os.path.normpath(self._cache_file)
 
         if precompute_distances:
             self._initialize_distance_cache()
@@ -68,6 +82,7 @@ class TransportationGraph:
             scale = time_scale if len(key) > 2 and key[2] == "time" else energy_scale
             rescaled[key] = value * scale
         self._distance_cache = rescaled
+        self._time_cache = {}
         # The dense view is derived from the above, so it has to be rebuilt.
         self._dense_node_index = None
         self._dense_transport = None
@@ -127,30 +142,8 @@ class TransportationGraph:
         Initialize the distance cache by either loading from file or computing it.
         This is called during __init__ if precompute_distances=True.
         """
-        # Ensure cache directory exists first
-        cache_dir = os.path.dirname(self._cache_file)
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        # Try to load from cache file
-        if os.path.exists(self._cache_file):
-            try:
-                with open(self._cache_file, "rb") as f:
-                    self._distance_cache = pickle.load(f)
-                cache_entries = len(self._distance_cache)
-                cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
-                # print(f"[TransportationGraph] ✓ Loaded distance cache from disk")
-                # print(
-                #     f"  - Cache contains {cache_entries} distance entries ({cache_size_mb:.2f} MB)"
-                # )
-                return
-            except Exception as e:
-                print(
-                    f"[TransportationGraph] ✗ Error loading distance cache: {e}"
-                )
-                print("[TransportationGraph] Computing distance matrix from scratch...")
-        else:
-            print(f"[TransportationGraph] Cache file not found at {self._cache_file}")
-            print("[TransportationGraph] Computing distance matrix from scratch...")
+        if self.load_distance_cache():
+            return
 
         # Compute all-pairs shortest paths
         print("[TransportationGraph] Computing all-pairs shortest path distances...")
@@ -183,16 +176,7 @@ class TransportationGraph:
             f"  - Computed {num_entries} distance pairs in {compute_time:.2f}s"
         )
 
-        # Save to cache file
-        try:
-            with open(self._cache_file, "wb") as f:
-                pickle.dump(self._distance_cache, f)
-            cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
-            print(
-                f"  - ✓ Saved cache to disk: {self._cache_file} ({cache_size_mb:.2f} MB)"
-            )
-        except Exception as e:
-            print(f"  - ✗ Error saving cache file: {e}")
+        self.save_distance_cache()
 
     def get_charging_nodes(self) -> list[int]:
         """Return list of all charging station nodes."""
@@ -562,36 +546,48 @@ class TransportationGraph:
         Returns:
             True if successful, False otherwise
         """
+        if self._cache_file is None:
+            return False
+        temporary_path = None
         try:
             os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
-            with open(self._cache_file, "wb") as f:
-                pickle.dump(self._distance_cache, f)
-            cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)
-            print(f"[TransportationGraph] Distance cache saved: {cache_size_mb:.2f} MB")
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(self._cache_file), delete=False
+            ) as file:
+                temporary_path = file.name
+                pickle.dump(
+                    {
+                        "fingerprint": self._cache_fingerprint,
+                        "distances": self._distance_cache,
+                    },
+                    file,
+                )
+            os.replace(temporary_path, self._cache_file)
             return True
-        except Exception as e:
-            print(f"[TransportationGraph] Error saving distance cache: {e}")
+        except (OSError, pickle.PickleError):
             return False
+        finally:
+            if temporary_path is not None and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
     def load_distance_cache(self) -> bool:
-        """
-        Load the distance cache from file.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not os.path.exists(self._cache_file):
-            print("[TransportationGraph] Cache file not found")
+        """Load only a versioned cache that matches this exact graph."""
+        if self._cache_file is None or not os.path.exists(self._cache_file):
             return False
-
         try:
-            with open(self._cache_file, "rb") as f:
-                self._distance_cache = pickle.load(f)
-            print("[TransportationGraph] Distance cache loaded from disk")
-            print(f"  - Contains {len(self._distance_cache)} distance entries")
+            with open(self._cache_file, "rb") as file:
+                payload = pickle.load(file)
+            if (
+                not isinstance(payload, dict)
+                or payload.get("fingerprint") != self._cache_fingerprint
+            ):
+                return False
+            distances = payload.get("distances")
+            if not isinstance(distances, dict):
+                return False
+            self._distance_cache = distances
             return True
-        except Exception as e:
-            print(f"[TransportationGraph] Error loading distance cache: {e}")
+        except (OSError, EOFError, pickle.PickleError):
             return False
 
     def get_cache_stats(self) -> dict:
@@ -601,7 +597,7 @@ class TransportationGraph:
         Returns:
             Dictionary with cache statistics
         """
-        cache_exists = os.path.exists(self._cache_file)
+        cache_exists = self._cache_file is not None and os.path.exists(self._cache_file)
         cache_size_mb = 0
         if cache_exists:
             cache_size_mb = os.path.getsize(self._cache_file) / (1024 * 1024)

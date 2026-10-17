@@ -147,12 +147,16 @@ class EventDrivenTruckEnv(gym.Env):
             "environment.max_time",
         )
         max_stops_for_bounds = self.fixed_num_stops
-        default_step_limit = int(self.num_trucks * max_stops_for_bounds * 7.5)
+        default_step_limit = (
+            max(200, 16 * max_stops_for_bounds + 8 * self.num_trucks)
+            if self.config.get("problem", {}).get("mode") == "joint_fleet"
+            else int(self.num_trucks * max_stops_for_bounds * 7.5)
+        )
         self.max_episode_steps = _positive_integer(
             env_config.get("max_episode_steps", default_step_limit),
             "environment.max_episode_steps",
         )
-        self.verbose = verbose if verbose is not None else env_config["verbose"]
+        self.verbose = verbose if verbose is not None else env_config.get("verbose", False)
         if not isinstance(self.verbose, bool):
             raise TypeError("environment.verbose must be boolean")
         _validate_initial_battery_setting(
@@ -255,6 +259,13 @@ class EventDrivenTruckEnv(gym.Env):
         # Get charging nodes
         self.charging_nodes = self.transport_graph.get_charging_nodes()
         self.num_charging_nodes = len(self.charging_nodes)
+        if self.joint_routing and "max_episode_steps" not in env_config:
+            # A simple charger path can visit each station once, with a route
+            # and charge decision per hop. Cover customer approaches and each
+            # truck's final return; this is a guard, not a wall-time budget.
+            self.max_episode_steps = max(
+                200, 2 * (self.num_charging_nodes + 2) * (self.fixed_num_stops + self.num_trucks)
+            )
 
         # If verbose, print charger summary loaded into the simulation
         if self.verbose:
@@ -476,7 +487,11 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             self.state_space_manager = StateSpace(
                 num_trucks=self.num_trucks,
-                num_stops=stops_for_action_space,
+                num_stops=(
+                    stops_for_action_space
+                    if self.joint_routing
+                    else self.num_trucks * stops_for_action_space
+                ),
                 max_time=self.max_time,
                 num_charging_nodes=self.num_charging_nodes,
             )
@@ -494,6 +509,9 @@ class EventDrivenTruckEnv(gym.Env):
             {}
         )  # truck_id -> "ready", "routing", "waiting_to_charge", "charging", "unloading", "complete", "failed"
         self.episode_reward = 0.0
+        self.completed_delivery_reward = 0.0
+        self._episode_ended = False
+        self._episode_end_flags = (False, False)
         self.episode_steps = 0  # Track number of steps in current episode
         self.waiting_start_times = {}  # Track when trucks enter waiting_to_charge state
         self.waiting_penalty_buffer = 0.0  # Buffer for waiting penalty to apply on next step
@@ -506,6 +524,8 @@ class EventDrivenTruckEnv(gym.Env):
         self.last_action_feasibility = None
         self.termination_reason: str | None = None
         self.invalid_action_count = 0
+        self._penalized_failed_trucks: set[int] = set()
+        self._truncation_reason: str | None = None
         self.scenario_descriptor: dict | None = None
 
     def reset(
@@ -552,6 +572,9 @@ class EventDrivenTruckEnv(gym.Env):
         self.global_clock = 0.0
         self.event_queue = []
         self.episode_reward = 0.0
+        self.completed_delivery_reward = 0.0
+        self._episode_ended = False
+        self._episode_end_flags = (False, False)
         self.episode_steps = 0  # Reset step counter
         self.waiting_start_times = {}  # Reset waiting time tracking
         self.waiting_penalty_buffer = 0.0  # Reset waiting penalty buffer
@@ -560,6 +583,8 @@ class EventDrivenTruckEnv(gym.Env):
         self.last_action_feasibility = None
         self.termination_reason = None
         self.invalid_action_count = 0
+        self._penalized_failed_trucks: set[int] = set()
+        self._truncation_reason: str | None = None
         self.scenario_descriptor = None
 
         # Reset charging station state
@@ -670,6 +695,9 @@ class EventDrivenTruckEnv(gym.Env):
             ),
             time_window_config=self.problem_config.get("time_windows"),
             preassign=self.preassigned_customers,
+            energy_multiplier=(max(1.0, float(self.traffic_config["max_energy_multiplier"]))
+                if self.traffic_config["enable_traffic"] and self.traffic_config["enable_energy_uncertainty"]
+                else 1.0),
         )
         self.task_registry = self.joint_instance.create_registry()
         shared_sequence = [self.joint_instance.depot_node] + [
@@ -782,7 +810,7 @@ class EventDrivenTruckEnv(gym.Env):
         for truck_id in sorted(self.joint_idle_trucks):
             truck = self.trucks[truck_id]
             can_take_task = bool(
-                self.task_registry.available_tasks(truck.remaining_payload)
+                self.task_registry.available_tasks(truck.remaining_payload, truck_id=truck.truck_id)
             )
             if not (can_take_task or self.task_registry.all_served()):
                 continue
@@ -828,6 +856,18 @@ class EventDrivenTruckEnv(gym.Env):
         Process events until we find a TRUCK_READY event that can actually proceed.
         """
         while self.event_queue:
+            pending_truck = self.trucks[self.event_queue[0].truck_id]
+            if pending_truck.is_complete or pending_truck.failed:
+                heapq.heappop(self.event_queue)
+                continue
+            # A journey/service may extend past the episode horizon. Keep its
+            # event pending: nothing after the horizon has physically completed.
+            if self.event_queue[0].time > self.max_time:
+                self.global_clock = self.max_time
+                self.active_truck_id = None
+                self._truncation_reason = "time_limit_exhausted"
+                self.termination_reason = self._truncation_reason
+                return
             # Get next event
             event = heapq.heappop(self.event_queue)
 
@@ -906,9 +946,14 @@ class EventDrivenTruckEnv(gym.Env):
                     "recheck_after_arrival",
                     "recheck_charge_attempt",
                     "port_freed_early",
+                    "charger_port_available",
+                    "charger_closed",
                 ]:
                     current_state = self.truck_states.get(truck.truck_id, "")
-                    if current_state not in ["waiting_to_charge", "ready"]:
+                    wrong_station = "charger_node" in event.data and int(
+                        event.data["charger_node"]
+                    ) != int(truck.current_node)
+                    if current_state not in ["waiting_to_charge", "ready"] or wrong_station:
                         if self.verbose:
                             print(
                                 f"  Skipping stale TRUCK_READY for truck {truck.truck_id} (state: {current_state})"
@@ -1027,7 +1072,7 @@ class EventDrivenTruckEnv(gym.Env):
                     if waiting_duration > 0:
                         # Calculate time penalty for waiting
                         waiting_penalty = -waiting_duration * self.reward_config["time_multiplier"]
-                        self.waiting_penalty_buffer = waiting_penalty
+                        self.waiting_penalty_buffer += waiting_penalty
                         
                         # Update truck's waiting time stat and record event
                         truck.add_waiting_time(waiting_duration, timestamp=self.global_clock)
@@ -1042,18 +1087,24 @@ class EventDrivenTruckEnv(gym.Env):
                 
                 # Handle unloading completion
                 if reason == "unloading_complete":
+                    self.completed_delivery_reward += self.reward_config["delivery_bonus"]
                     unloading_duration = event.data.get("unloading_duration", 0.0)
-                    if unloading_duration > 0:
+                    if truck.unloading_start_time is not None:
                         truck.finish_unloading(unloading_duration=unloading_duration, timestamp=self.global_clock)
                     if self.joint_routing:
                         self._complete_joint_customer_service(truck, event.data)
+                    elif event.data.get("complete_after_service", False):
+                        truck.battery_at_completion = truck.current_battery
+                        truck.mark_complete(timestamp=self.global_clock)
+                        self.truck_states[truck.truck_id] = "complete"
+                        continue
 
                 if (
                     self.joint_routing
                     and self.task_registry is not None
                     and not self.task_registry.all_served()
                     and not self.task_registry.available_tasks(
-                        truck.remaining_payload
+                        truck.remaining_payload, truck_id=truck.truck_id
                     )
                 ):
                     truck.mark_ready(
@@ -1080,6 +1131,9 @@ class EventDrivenTruckEnv(gym.Env):
                 self.truck_ready_times[event.truck_id] = event.time
                 self.truck_states[truck.truck_id] = "ready"
                 self.active_truck_id = event.truck_id
+                if self.global_clock >= self.max_time:
+                    self.active_truck_id = None
+                    continue
                 if self.joint_routing:
                     decisions = joint_action_feasibility(self)
                     self.last_action_feasibility = decisions
@@ -1203,6 +1257,14 @@ class EventDrivenTruckEnv(gym.Env):
                             ),
                         )
 
+        if self.global_clock >= self.max_time and not all(
+            truck.is_complete for truck in self.trucks
+        ):
+            self.active_truck_id = None
+            self._truncation_reason = "time_limit_exhausted"
+            self.termination_reason = self._truncation_reason
+            return
+
         # No more events - episode is over. Successful completion and an
         # unserved-customer deadlock are distinct terminal outcomes.
         self.active_truck_id = None
@@ -1255,13 +1317,28 @@ class EventDrivenTruckEnv(gym.Env):
         Returns:
             observation, reward, terminated, truncated, info
         """
+        if self._episode_ended:
+            return (self._get_observation(), 0.0, *self._episode_end_flags, self._get_info())
         if self.active_truck_id is None:
-            # No active truck - episode is over
-            return self._get_observation(), 0.0, True, False, self._get_info()
+            truncated = self._check_truncated()
+            terminated = self._check_terminated()
+            reward = self._consume_failure_penalties()
+            self.episode_reward += reward
+            return self._get_observation(), reward, terminated, truncated, self._get_info()
 
         truck = self.trucks[self.active_truck_id]
         reward = 0.0
+        invalid_actions_before = self.invalid_action_count
+        operating_before = extract_operational_metrics(self).total_operating_time
         
+        # Reject malformed/out-of-envelope integers before indexing or logging.
+        if not isinstance(action, tuple) and (
+            isinstance(action, (bool, np.bool_))
+            or not isinstance(action, Integral)
+            or not 0 <= action < self.action_space.n
+        ):
+            raise ValueError(f"discrete action must be an integer in [0, {self.action_space.n})")
+
         # Decode action format
         if isinstance(action, tuple):
             # New GNN format: (node_id, charging_duration, is_charging)
@@ -1291,7 +1368,8 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Add any buffered waiting penalty from previous wait
         if self.waiting_penalty_buffer != 0.0:
-            reward += self.waiting_penalty_buffer
+            # Elapsed waiting cost is collected with all other operating time
+            # below; the buffer remains useful for queue diagnostics only.
             if self.verbose:
                 print(f"  Adding waiting penalty from queue: {self.waiting_penalty_buffer:.2f}")
             self.waiting_penalty_buffer = 0.0  # Clear the buffer
@@ -1341,7 +1419,7 @@ class EventDrivenTruckEnv(gym.Env):
                                     f"Invalid delivery action index: {delivery_idx}"
                                 )
                         elif delivery_idx == self.fixed_num_stops:
-                            if truck.return_to_depot_pending:
+                            if self.joint_routing or truck.return_to_depot_pending:
                                 target_node = truck.delivery_sequence[0]
                             else:
                                 target_node = self._select_closest_delivery(truck)
@@ -1368,12 +1446,29 @@ class EventDrivenTruckEnv(gym.Env):
                     truck.current_node,
                 )
 
-        # Accumulate reward
+        self.episode_steps += 1
+        refused = (
+            self.invalid_action_mode == "penalize"
+            and self.invalid_action_count > invalid_actions_before
+            and not truck.failed
+        )
+        # A refused action keeps this exact decision point, including the truck
+        # and clock. No event is needed until an action is actually accepted.
+        if (
+            self.invalid_action_mode == "penalize"
+            and self.invalid_action_count >= self.invalid_action_budget
+        ):
+            self.active_truck_id = None
+            self.termination_reason = "invalid_action_budget_exhausted"
+        elif not refused:
+            self._advance_to_next_decision()
+        reward += self._consume_failure_penalties()
+        reward += self.completed_delivery_reward
+        self.completed_delivery_reward = 0.0
+        self.waiting_penalty_buffer = 0.0
+        elapsed_work = extract_operational_metrics(self).total_operating_time - operating_before
+        reward -= max(0.0, elapsed_work) * self.reward_config["time_multiplier"]
         self.episode_reward += reward
-        self.episode_steps += 1  # Increment step counter
-
-        # Advance to next decision point
-        self._advance_to_next_decision()
         
         if self.verbose:
             # print status of all trucks
@@ -1383,8 +1478,12 @@ class EventDrivenTruckEnv(gym.Env):
                 print(f"  Truck {t.truck_id}: State={state}, Battery={t.current_battery:.1f} kWh, Completed={t.is_complete}, Failed={t.failed}")
 
         # Check termination conditions
-        terminated = self._check_terminated()
         truncated = self._check_truncated()
+        terminated = self._check_terminated()
+        self._episode_ended = terminated or truncated
+        self._episode_end_flags = (terminated, truncated)
+        if self._episode_ended:
+            self.active_truck_id = None
 
         # Get observation and info
         obs = self._get_observation()
@@ -1489,7 +1588,7 @@ class EventDrivenTruckEnv(gym.Env):
         )
         
         # Check if truck can make it
-        if discharge > truck.current_battery:
+        if discharge > truck.current_battery + 1e-9:
             if self.verbose:
                 print(f"  ERROR: Insufficient battery ({truck.current_battery:.1f} kWh < {discharge:.1f} kWh needed)")
             truck.mark_failed(
@@ -1497,7 +1596,7 @@ class EventDrivenTruckEnv(gym.Env):
                 timestamp=self.global_clock,
             )
             self.truck_states[truck.truck_id] = "failed"
-            return self.reward_config["failure_penalty"]
+            return 0.0
         
         # Determine if this is navigation to a charger or delivery.
         is_charger_nav = target_node in self.charging_nodes
@@ -1522,7 +1621,10 @@ class EventDrivenTruckEnv(gym.Env):
         elif self.enable_flexible_delivery_order:
             # Flexible mode: check if target is any remaining delivery
             remaining_deliveries = next_delivery if isinstance(next_delivery, list) else []
-            is_delivery_nav = target_node in remaining_deliveries
+            is_delivery_nav = (
+                target_node in remaining_deliveries
+                and target_node != int(truck.delivery_sequence[0])
+            )
         else:
             # Sequential mode: check if target is next delivery
             is_delivery_nav = (next_delivery is not None and target_node == next_delivery)
@@ -1562,7 +1664,7 @@ class EventDrivenTruckEnv(gym.Env):
                     timestamp=self.global_clock,
                 )
                 self.truck_states[truck.truck_id] = "failed"
-                return self.reward_config["failure_penalty"]
+                return 0.0
 
         if is_charger_nav and self.verbose:
             charger_info = self.charging_station.get_charger_info(target_node, self.global_clock)
@@ -1570,7 +1672,7 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Current occupancy: {charger_info['current_occupancy']}/{charger_info['capacity']}")
 
         # If leaving a charger to navigate elsewhere, remove from its waitlist and wake others
-        if (not is_charger_nav) and (current_node in self.charging_nodes):
+        if current_node in self.charging_nodes and target_node != current_node:
             self.charging_station.remove_from_waitlist(truck.truck_id, current_node)
             self.charging_station.wake_waiting_trucks(
                 charger_node=current_node,
@@ -1599,9 +1701,20 @@ class EventDrivenTruckEnv(gym.Env):
             and self.delivery_simulator is not None
             and target_node != depot_node
         ):
+            service_start = (
+                max(completion_time, joint_task.earliest_service)
+                if joint_task is not None
+                else completion_time
+            )
+            service_kwargs = (
+                {"base_service_time": joint_task.base_service_time}
+                if joint_task is not None
+                else {}
+            )
             actual_unloading_time = self.delivery_simulator.apply_unloading_time(
                 delivery_node=target_node,
-                current_time=completion_time,
+                current_time=service_start,
+                **service_kwargs,
             )
 
         if joint_task is not None:
@@ -1611,13 +1724,8 @@ class EventDrivenTruckEnv(gym.Env):
                 timestamp=departure_time,
             )
 
-        time_window_wait = 0.0
         realized_time_window_violation = False
         if joint_task is not None:
-            time_window_wait = max(
-                0.0,
-                joint_task.earliest_service - completion_time,
-            )
             realized_time_window_violation = (
                 completion_time > joint_task.latest_service + 1e-9
             )
@@ -1660,18 +1768,19 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Will arrive at t={completion_time:.2f}h")
 
         # Calculate reward (using actual travel time, not base time)
-        time_penalty = -actual_travel_time * self.reward_config["time_multiplier"]
+        # Operating-time costs accrue at the step boundary, including partial
+        # events at a horizon. Do not charge future travel/service at departure.
+        time_penalty = 0.0
 
         # Bonus if this is a delivery
         if is_delivery_nav:
             if realized_time_window_violation:
-                return time_penalty + self.reward_config["failure_penalty"]
-            delivery_bonus = self.reward_config["delivery_bonus"]
+                return time_penalty
+            # The bonus is collected only by the unloading-completion event.
+            delivery_bonus = 0.0
             # Use the same service-time realization carried by the arrival event.
-            unloading_penalty = -actual_unloading_time * self.reward_config["time_multiplier"]
-            window_wait_penalty = (
-                -time_window_wait * self.reward_config["time_multiplier"]
-            )
+            unloading_penalty = 0.0
+            window_wait_penalty = 0.0
             
             # Check if this is the last delivery for this truck
             # Apply leftover battery penalty if enabled
@@ -1729,14 +1838,14 @@ class EventDrivenTruckEnv(gym.Env):
                 self.truck_states[truck.truck_id] = "failed"
                 if self.termination_reason is None:
                     self.termination_reason = exhausted
-                return penalty + float(self.reward_config["failure_penalty"])
+                return penalty
             return penalty
 
         truck.mark_failed(reason=cause, timestamp=self.global_clock)
         self.truck_states[truck.truck_id] = "failed"
         if self.termination_reason is None:
             self.termination_reason = cause
-        return float(self.reward_config["failure_penalty"])
+        return 0.0
 
 
 
@@ -1947,7 +2056,7 @@ class EventDrivenTruckEnv(gym.Env):
             print(f"    Will complete at t={completion_time:.2f}h")
         
         # Return time penalty
-        return -actual_charge_hours
+        return 0.0  # Elapsed charging time is charged at the step boundary.
 
     def _select_closest_delivery(self, truck: Truck) -> int:
         """Pick the closest remaining delivery (by energy) for fallback routing."""
@@ -1955,7 +2064,7 @@ class EventDrivenTruckEnv(gym.Env):
             remaining = [
                 task.node_id
                 for task in self.task_registry.available_tasks(
-                    truck.remaining_payload
+                    truck.remaining_payload, truck_id=truck.truck_id
                 )
             ]
         else:
@@ -2002,43 +2111,47 @@ class EventDrivenTruckEnv(gym.Env):
             ]
         heapq.heapify(self.event_queue)
 
-    def _check_terminated(self) -> bool:
-        """Check if episode is terminated (all trucks done)."""
-        if self.active_truck_id is None:
-            if self.termination_reason is None:
-                self.termination_reason = "no_active_truck"
-            return True
+    def _consume_failure_penalties(self) -> float:
+        """Price every truck failure once, regardless of which handler found it."""
+        newly_failed = {
+            truck.truck_id for truck in self.trucks if truck.failed
+        } - self._penalized_failed_trucks
+        self._penalized_failed_trucks.update(newly_failed)
+        return len(newly_failed) * float(self.reward_config["failure_penalty"])
 
+    def _check_terminated(self) -> bool:
+        """Physical success/failure ends the task; a time cutoff only truncates it."""
+        if self._truncation_reason is not None:
+            return False
         all_done = all(
-            state in ["complete", "failed"] for state in self.truck_states.values()
+            state in {"complete", "failed"} for state in self.truck_states.values()
         )
-        if all_done and self.termination_reason is None:
-            # Every truck stopped before any event declared why. Name the
-            # outcome from the fleet state so no failed episode reaches the
-            # aggregates as "unspecified": R1.5 asks for the cause of every
-            # retained failure, and "we did not record it" is not a cause.
-            served = (
-                self.task_registry.all_served()
-                if self.joint_routing and self.task_registry is not None
-                else None
-            )
-            if served and all(truck.is_complete for truck in self.trucks):
+        ended = all_done or self.active_truck_id is None
+        if ended and self.termination_reason is None:
+            if all(truck.is_complete for truck in self.trucks):
                 self.termination_reason = "success"
-            elif all(state == "failed" for state in self.truck_states.values()):
+            elif all(truck.failed for truck in self.trucks):
                 self.termination_reason = "all_trucks_failed"
             else:
                 self.termination_reason = "fleet_stopped_with_unserved_customers"
-        return all_done
+        return ended
 
     def _check_truncated(self) -> bool:
-        """Check if episode is truncated (time limit or step limit exceeded)."""
+        """Completing within the allowed time/steps takes precedence over a cap."""
+        if self.termination_reason == "invalid_action_budget_exhausted":
+            return False
+        if (
+            self._truncation_reason is None
+            and all(truck.is_complete or truck.failed for truck in self.trucks)
+            and self.global_clock <= self.max_time
+        ):
+            return False
         if self.global_clock >= self.max_time:
-            if self.termination_reason is None:
-                self.termination_reason = "time_limit_exhausted"
-            return True
-        if self.episode_steps >= self.max_episode_steps:
-            if self.termination_reason is None:
-                self.termination_reason = "step_limit_exhausted"
+            self._truncation_reason = "time_limit_exhausted"
+        elif self.episode_steps >= self.max_episode_steps:
+            self._truncation_reason = "step_limit_exhausted"
+        if self._truncation_reason is not None:
+            self.termination_reason = self._truncation_reason
             return True
         return False
 
@@ -2101,7 +2214,7 @@ class EventDrivenTruckEnv(gym.Env):
             "observation_mode": self.observation_mode,
             "all_complete": all_complete,
             "all_customers_served": all_customers_served,
-            "successful": bool(all_complete and all_customers_served and not any_failed),
+            "successful": operational_metrics["success"],
             "any_failed": any_failed,
             "termination_reason": self.termination_reason,
             "failure_causes": failure_causes,

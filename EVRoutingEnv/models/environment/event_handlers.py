@@ -103,10 +103,31 @@ class EventHandler:
                 if isinstance(next_delivery_target, list)
                 else []
             )
-            is_delivery = destination in remaining_deliveries
+            is_delivery = (
+                destination in remaining_deliveries
+                and destination != truck.delivery_sequence[0]
+            )
         else:
             # Sequential mode: check if destination is next delivery
             is_delivery = destination == next_delivery_target
+
+        if (
+            is_delivery
+            and delivery_simulator is not None
+            and data.get("unloading_time") is None
+        ):
+            task = task_registry.task_for_node(destination) if is_joint_delivery else None
+            data["unloading_time"] = delivery_simulator.apply_unloading_time(
+                delivery_node=destination,
+                current_time=(
+                    max(global_clock, task.earliest_service)
+                    if task is not None else global_clock
+                ),
+                **(
+                    {"base_service_time": task.base_service_time}
+                    if task is not None else {}
+                ),
+            )
 
         # Update truck position and state
         truck.move_to_node(
@@ -116,6 +137,7 @@ class EventHandler:
             discharge=data["discharge"],
             timestamp=global_clock,
             mark_delivery_on_arrival=not is_joint_delivery,
+            complete_on_arrival=delivery_simulator is None,
         )
 
         # Clear route tracking information
@@ -261,8 +283,13 @@ class EventHandler:
                         "unloading_duration": unloading_time,
                         "task_id": task_id,
                         "customer_node": destination,
-                    }
-                )
+                        "complete_after_service": (
+                            not is_joint_delivery
+                            and not truck.enable_flexible_delivery_order
+                            and truck.get_next_delivery_target() is None
+                        ),
+                    },
+                ),
             )
             
             # Mark truck as "unloading" state

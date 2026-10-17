@@ -121,6 +121,11 @@ cd EVRP
 uv sync
 ```
 
+`uv sync` installs the simulator, learning and solver dependencies (including
+OR-Tools), plus the default development group with pytest, coverage, and Ruff.
+Run tests with `uv run pytest`; use `uv sync --no-dev` for runtime dependencies only.
+The `test` extra remains available for `uv sync --extra test`.
+
 The package currently targets Python `>=3.13,<3.14`. Some baselines require
 additional system support:
 

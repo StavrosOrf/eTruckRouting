@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from EVRoutingEnv.models.core.customer import CustomerTask, FleetTaskRegistry
+from EVRoutingEnv.models.environment.energy_reachability import EnergyReachability
 
 
 @dataclass(frozen=True)
@@ -47,13 +48,14 @@ def generate_joint_routing_instance(
     base_service_time: float,
     time_window_config: dict | None = None,
     preassign: bool = False,
+    energy_multiplier: float = 1.0,
 ) -> JointRoutingInstance:
     """Generate one feasible-capacity joint-routing instance.
 
-    Every customer is placed at a unique non-charging node that can be reached
-    from and returned to the selected depot, possibly through charging stations,
-    with a full battery. This validates static reachability only; online energy
-    feasibility remains a policy responsibility.
+    Every unique customer has an affordable approach AND exit on one battery,
+    through chargers connected to the depot in both directions. The multiplier
+    matches execution's stochastic reserve. This certifies individual energy
+    reachability; a full capacity/time-feasible routing policy is still needed.
     """
     _validate_inputs(
         num_customers=num_customers,
@@ -80,28 +82,13 @@ def generate_joint_routing_instance(
     depot_candidates = eligible_nodes.copy()
     rng.shuffle(depot_candidates)
 
+    envelope = EnergyReachability.build(
+        transport_graph, charging_nodes, battery_capacity, energy_multiplier
+    )
     selected_depot: int | None = None
     selected_customers: list[int] | None = None
     for depot in depot_candidates:
-        feasible_customers = [
-            node
-            for node in eligible_nodes
-            if node != depot
-            and _leg_is_feasible(
-                depot,
-                node,
-                battery_capacity,
-                transport_graph,
-                charging_set,
-            )
-            and _leg_is_feasible(
-                node,
-                depot,
-                battery_capacity,
-                transport_graph,
-                charging_set,
-            )
-        ]
+        feasible_customers = envelope.customers(depot, eligible_nodes)
         if len(feasible_customers) < num_customers:
             continue
         chosen = rng.choice(feasible_customers, size=num_customers, replace=False)
@@ -111,16 +98,17 @@ def generate_joint_routing_instance(
 
     if selected_depot is None or selected_customers is None:
         raise ValueError(
-            "could not generate enough battery-reachable customers from any depot"
+            "could not generate enough energy-safe customers from any depot"
         )
 
-    demands = _capacity_feasible_demands(
+    demands, capacity_assignment = _capacity_feasible_demands(
         rng,
         count=num_customers,
         num_trucks=num_trucks,
         payload_capacity=payload_capacity,
         min_demand=min_customer_demand,
         max_demand=max_customer_demand,
+        return_assignment=True,
     )
     time_windows = _generate_time_windows(
         rng,
@@ -142,7 +130,10 @@ def generate_joint_routing_instance(
     )
     if preassign:
         tasks = _preassign_to_trucks(
-            tasks, num_trucks=num_trucks, payload_capacity=payload_capacity
+            tasks,
+            num_trucks=num_trucks,
+            payload_capacity=payload_capacity,
+            assignment=capacity_assignment,
         )
     return JointRoutingInstance(depot_node=selected_depot, tasks=tasks)
 
@@ -152,33 +143,67 @@ def _preassign_to_trucks(
     *,
     num_trucks: int,
     payload_capacity: float,
+    assignment: list[int] | None = None,
 ) -> tuple[CustomerTask, ...]:
-    """Bind every customer to exactly one truck, as the eTFRP setting does.
+    """Keep the generator's feasible partition; pack explicit tasks exactly."""
+    ordered = sorted(range(len(tasks)), key=lambda i: -tasks[i].demand)
+    if assignment is None:
+        assignment = [-1] * len(tasks)
+        remaining = [payload_capacity] * num_trucks
+        failed_states: set[tuple[int, tuple[float, ...]]] = set()
 
-    Customers are dealt largest-demand-first onto the truck with the most
-    remaining payload, which keeps every truck's assignment within its own
-    capacity whenever the fleet as a whole can carry the instance.  The result
-    is the operational case the eTFRP models: assignment is decided before the
-    episode begins, and the policy decides only sequencing, charging, and
-    routing.
-    """
-    remaining = [payload_capacity] * num_trucks
-    assigned: list[CustomerTask] = []
-    for task in sorted(tasks, key=lambda item: -float(item.demand)):
-        truck = max(range(num_trucks), key=lambda index: remaining[index])
-        remaining[truck] -= float(task.demand)
-        assigned.append(
-            CustomerTask(
-                task_id=task.task_id,
-                node_id=task.node_id,
-                demand=task.demand,
-                base_service_time=task.base_service_time,
-                earliest_service=task.earliest_service,
-                latest_service=task.latest_service,
-                preassigned_to=truck,
+        def place(position: int) -> bool:
+            if position == len(ordered):
+                return True
+            key = (position, tuple(sorted(remaining)))
+            if key in failed_states:
+                return False
+            index = ordered[position]
+            demand = tasks[index].demand
+            seen_capacities: set[float] = set()
+            for owner in sorted(range(num_trucks), key=lambda i: -remaining[i]):
+                capacity = remaining[owner]
+                if capacity in seen_capacities or demand > capacity + 1e-9:
+                    continue
+                seen_capacities.add(capacity)
+                remaining[owner] -= demand
+                assignment[index] = owner
+                if place(position + 1):
+                    return True
+                remaining[owner] = capacity
+            failed_states.add(key)
+            return False
+
+        if not place(0):
+            raise ValueError(
+                "customer demands cannot be assigned within truck payloads"
             )
+    if len(assignment) != len(tasks) or any(
+        owner < 0 or owner >= num_trucks for owner in assignment
+    ):
+        raise ValueError("invalid capacity assignment")
+    if any(
+        sum(
+            task.demand
+            for task, owner in zip(tasks, assignment, strict=True)
+            if owner == truck
         )
-    return tuple(sorted(assigned, key=lambda item: item.task_id))
+        > payload_capacity + 1e-9
+        for truck in range(num_trucks)
+    ):
+        raise ValueError("customer assignment exceeds truck payload capacity")
+    return tuple(
+        CustomerTask(
+            task_id=task.task_id,
+            node_id=task.node_id,
+            demand=task.demand,
+            base_service_time=task.base_service_time,
+            earliest_service=task.earliest_service,
+            latest_service=task.latest_service,
+            preassigned_to=owner,
+        )
+        for task, owner in zip(tasks, assignment, strict=True)
+    )
 
 
 def _capacity_feasible_demands(
@@ -189,7 +214,8 @@ def _capacity_feasible_demands(
     payload_capacity: float,
     min_demand: float,
     max_demand: float,
-) -> list[float]:
+    return_assignment: bool = False,
+) -> list[float] | tuple[list[float], list[int]]:
     """Sample demands with a guaranteed feasible multi-bin partition."""
     total_capacity = num_trucks * payload_capacity
     if count * min_demand > total_capacity + 1e-9:
@@ -204,15 +230,14 @@ def _capacity_feasible_demands(
         remaining_tasks[truck_id] -= 1
         maximum_here = min(
             max_demand,
-            remaining_capacity[truck_id]
-            - remaining_tasks[truck_id] * min_demand,
+            remaining_capacity[truck_id] - remaining_tasks[truck_id] * min_demand,
         )
         if maximum_here < min_demand - 1e-9:
             raise ValueError("could not allocate capacity-feasible customer demands")
         demand = float(rng.uniform(min_demand, maximum_here))
         demands[index] = demand
         remaining_capacity[truck_id] -= demand
-    return demands
+    return (demands, assignments.tolist()) if return_assignment else demands
 
 
 def _generate_time_windows(
@@ -302,8 +327,6 @@ def _validate_inputs(
         raise ValueError("one customer demand may exceed truck payload capacity")
     tasks_per_truck = math.ceil(num_customers / num_trucks)
     if tasks_per_truck * min_customer_demand > payload_capacity + 1e-9:
-        raise ValueError(
-            "minimum demands cannot be partitioned across truck payloads"
-        )
+        raise ValueError("minimum demands cannot be partitioned across truck payloads")
     if base_service_time < 0.0:
         raise ValueError("base service time cannot be negative")

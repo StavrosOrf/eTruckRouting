@@ -18,7 +18,8 @@ environment:
   min_hop_distance: 10.0
   max_hop_distance: 50.0
   max_time: 200.0
-  max_episode_steps: 200
+  # Omitted: use the fleet/customer-scaled action budget. Set an explicit
+  # max_episode_steps only for controlled action-budget experiments.
   verbose: false
 
 truck:

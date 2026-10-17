@@ -223,13 +223,20 @@ class Truck:
             },
         )
     
-    def advance_to_next_delivery(self, delivered_node: int | None = None):
+    def advance_to_next_delivery(
+        self,
+        delivered_node: int | None = None,
+        *,
+        complete_on_arrival: bool = True,
+    ):
         """
         Mark delivery as complete and advance.
         
         Args:
             delivered_node: Specific node to mark as delivered (for flexible order mode).
                            If None, advances to next in sequence (sequential mode).
+            complete_on_arrival: False when an environment must finish service
+                before completing the final sequential customer.
         """
         if self.enable_flexible_delivery_order:
             # Flexible mode: mark specific node as delivered
@@ -257,7 +264,10 @@ class Truck:
                 self.detour_charger_hops_since_delivery = 0
                 
                 # Check if all deliveries complete
-                if self.current_sequence_index == len(self.delivery_sequence) - 1:
+                if (
+                    complete_on_arrival
+                    and self.current_sequence_index == len(self.delivery_sequence) - 1
+                ):
                     self.is_complete = True
                     # Store battery level at completion for penalty calculation
                     self.battery_at_completion = self.current_battery
@@ -299,6 +309,7 @@ class Truck:
         discharge: float,
         timestamp: float | None = None,
         mark_delivery_on_arrival: bool = True,
+        complete_on_arrival: bool = True,
     ):
         """
         Update truck state after moving to a new node.
@@ -312,6 +323,8 @@ class Truck:
             mark_delivery_on_arrival: Preserve legacy route-execution semantics
                 when true. Joint-routing episodes set this to false and commit
                 service through the fleet task registry after unloading.
+            complete_on_arrival: Whether sequential completion can happen here
+                or must wait for a separate unloading-completion event.
         """
         node = int(node)
         distance = float(distance)
@@ -369,16 +382,11 @@ class Truck:
                 if node in remaining_deliveries:
                     self.advance_to_next_delivery(delivered_node=node)
             elif node == self.get_next_delivery_target():
-                self.advance_to_next_delivery()
-        
-        # Check if out of battery
-        if self.current_battery <= 0:
-            self.current_battery = 0
-            self.mark_failed(
-                reason="battery_depleted",
-                timestamp=timestamp if timestamp is not None else 0.0,
-            )
-        elif self.enable_flexible_delivery_order and self.return_to_depot_pending:
+                self.advance_to_next_delivery(complete_on_arrival=complete_on_arrival)
+
+        # Zero-energy arrival is physically valid, including at a charger or
+        # the final depot. Onward feasibility is checked at the next decision.
+        if self.enable_flexible_delivery_order and self.return_to_depot_pending:
             depot_node = self.delivery_sequence[0]
             if node == depot_node:
                 self.is_complete = True

@@ -215,6 +215,10 @@ wandb/
 saved_models/
 .vscode/
 logs/
+
+notes/
+uv.lock
+
 # LaTeX build intermediates
 latex/*.aux
 latex/*.bbl
@@ -222,3 +226,4 @@ latex/*.abs
 latex/*.out
 latex/*.log
 latex/*.blg
+

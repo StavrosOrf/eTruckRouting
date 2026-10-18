@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import time
 from pathlib import Path
 
@@ -59,6 +60,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minibatch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--entropy-coefficient", type=float, default=0.01)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gae-lambda", type=float, default=0.95)
+    parser.add_argument("--schedule-timesteps", type=int, default=None)
+    parser.add_argument("--stop-after-timesteps", type=int, default=None)
+    parser.add_argument(
+        "--normalize-action-features",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--action-entity-links", action="store_true")
+    parser.add_argument("--completion-shield", action="store_true")
+    parser.add_argument(
+        "--resume", default=None, help="Trusted complete training checkpoint."
+    )
+    parser.add_argument("--checkpoint-every", type=int, default=100)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-output-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=2)
@@ -85,9 +101,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "Override rewards.time_multiplier, the dense per-leg travel-time "
-            "penalty. This is the only signal with per-action credit assignment "
-            "for the travel-time objective; the config default of 1.0 leaves it "
+            "Override rewards.time_multiplier, the dense operating-time "
+            "penalty. The config default of 1.0 leaves it "
             "negligible beside the 500-per-delivery bonus."
         ),
     )
@@ -239,6 +254,10 @@ def main() -> None:
     destination.mkdir(parents=True, exist_ok=True)
 
     config = load_config(arguments.config)
+    if arguments.resume and arguments.init_from:
+        raise ValueError("choose resume or initialization, not both")
+    if arguments.completion_shield:
+        config["environment"]["completion_shield"] = True
     if arguments.disable_routing_action_features:
         config["environment"]["routing_action_features"] = False
         print("routing action features zeroed (ablation arm)", flush=True)
@@ -267,7 +286,7 @@ def main() -> None:
     if arguments.time_multiplier is not None:
         config["rewards"]["time_multiplier"] = float(arguments.time_multiplier)
         print(
-            f"dense travel-time penalty: {arguments.time_multiplier} per hour driven",
+            f"dense operating-time penalty: {arguments.time_multiplier} per truck-hour",
             flush=True,
         )
 
@@ -287,6 +306,8 @@ def main() -> None:
         action_attention_heads=arguments.action_attention_heads,
         allow_infeasible_actions=arguments.policy_action_mask == "structural",
         ablate_state_pooling=arguments.ablate_state_pooling,
+        normalize_action_features=arguments.normalize_action_features,
+        action_entity_links=arguments.action_entity_links,
     )
     probe.close()
 
@@ -298,6 +319,9 @@ def main() -> None:
         minibatch_size=arguments.minibatch_size,
         learning_rate=arguments.learning_rate,
         entropy_coefficient=arguments.entropy_coefficient,
+        gamma=arguments.gamma,
+        gae_lambda=arguments.gae_lambda,
+        schedule_timesteps=arguments.schedule_timesteps,
         seed=arguments.seed,
     )
     shaping = RewardShaping(
@@ -366,8 +390,37 @@ def main() -> None:
     # selection_score is "lower is better" (negated success, then the objective),
     # so the initial bar has to be worse than anything a run can produce.
     best_score = (float("inf"), float("inf"))
+    if arguments.resume:
+        restored = trainer.load_training(arguments.resume)
+        validation_history = restored.get("validation_history", [])
+        best_score = tuple(restored.get("best_score", best_score))
+        print(f"resumed {trainer.total_steps} transitions", flush=True)
     started = time.perf_counter()
     pretrain_history: list[dict] = []
+    stop_requested = False
+
+    def request_stop(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+
+    for sig in (signal.SIGUSR1, signal.SIGTERM):
+        signal.signal(sig, request_stop)
+
+    (destination / "resolved_config.json").write_text(json.dumps(config, indent=2))
+    (destination / "run_config.json").write_text(
+        json.dumps(
+            {
+                "run_name": run_name,
+                "arguments": vars(arguments),
+                "policy_config": policy_config.__dict__,
+                "ppo_config": ppo_config.__dict__,
+                "reward_shaping": shaping.__dict__,
+                "validation_seeds": validation_seeds,
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
     if arguments.demonstrations or arguments.pretrain_demonstrations > 0:
         from algo.behavior_cloning import (
@@ -481,7 +534,16 @@ def main() -> None:
             flush=True,
         )
 
-    def progress(record: dict) -> None:
+    def checkpoint() -> None:
+        trainer.save_training(
+            destination / "training.pt",
+            {
+                "best_score": best_score,
+                "validation_history": validation_history,
+            },
+        )
+
+    def progress(record: dict) -> bool:
         if record["update"] % 5 == 0 or record["update"] == 1:
             print(
                 f"upd {record['update']:4d}/{record['num_updates']} "
@@ -494,14 +556,24 @@ def main() -> None:
                 f"{record['elapsed_seconds']:.0f}s",
                 flush=True,
             )
-        if record["update"] % arguments.validate_every == 0:
+        stopping = stop_requested or (
+            arguments.stop_after_timesteps is not None
+            and trainer.total_steps >= arguments.stop_after_timesteps
+        )
+        if record["update"] % arguments.validate_every == 0 and not stop_requested:
             score_validation(record["update"])
+        if stopping or record["update"] % arguments.checkpoint_every == 0:
+            checkpoint()
+        return stopping
 
     try:
         if pretrain_history:
             score_validation(0)
         history = trainer.learn(progress)
-        score_validation(ppo_config.num_updates)
+        checkpoint()
+        if not stop_requested:
+            score_validation(trainer.completed_updates)
+            checkpoint()
         trainer.save(destination, prefix="final")
         (destination / "training_history.json").write_text(
             json.dumps(history.as_dict(), indent=2, sort_keys=True)

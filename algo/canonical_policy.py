@@ -24,7 +24,13 @@ from algo.canonical_state import (
     scatter_logits,
     unpack_flat_observation,
 )
-from EVRoutingEnv.state.features import SCHEMA_VERSION
+from EVRoutingEnv.state.features import (
+    ACTION_FEATURES,
+    CHARGER_FEATURES,
+    CUSTOMER_FEATURES,
+    SCHEMA_VERSION,
+    TRUCK_FEATURES,
+)
 from EVRoutingEnv.state.representations import CanonicalShapeSpec
 
 
@@ -53,9 +59,15 @@ class CanonicalPolicyConfig:
     # head. Persisted with the checkpoint so an ablated run is never reloaded as
     # if it were the full architecture.
     ablate_state_pooling: bool = False
+    normalize_action_features: bool = False
+    action_entity_links: bool = False
     feature_schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if self.action_entity_links and self.state_encoder != "hetero_graph":
+            raise ValueError(
+                "action entity links require the heterogeneous graph encoder"
+            )
         if self.feature_schema_version != SCHEMA_VERSION:
             raise ValueError(
                 f"checkpoint feature schema {self.feature_schema_version!r} is incompatible "
@@ -131,7 +143,8 @@ class CanonicalActorCritic(nn.Module):
             config.action_head,
             config.encoder_output_dim,
             config.hidden_dim,
-            ACTION_FEATURE_DIM,
+            ACTION_FEATURE_DIM
+            + (2 * config.hidden_dim if config.action_entity_links else 0),
             num_layers=config.action_head_layers,
             attention_heads=config.action_attention_heads,
             dropout=config.action_head_dropout,
@@ -173,7 +186,42 @@ class CanonicalActorCritic(nn.Module):
                 feasible = feasible & action_mask.to(
                     dtype=torch.bool, device=feasible.device
                 )
-        embedding = self.encoder(tensors)
+        if self.config.normalize_action_features:
+            action_rows = self.encoder.normalizer._standardize(
+                "action", tensors.action
+            )[feasible]
+        if self.config.action_entity_links:
+            embedding, nodes = self.encoder(tensors, return_nodes=True)
+            active = tensors.nodes["truck"][..., TRUCK_FEATURES.index("is_active")]
+            active_embedding = (nodes["truck"] * active.unsqueeze(-1)).sum(dim=1)
+            target_ids = tensors.action[..., ACTION_FEATURES.index("target_node")]
+            target_embedding = nodes["truck"].new_zeros(
+                (*target_ids.shape, self.config.hidden_dim)
+            )
+            # Customer/station identity is used only for exact matching, never
+            # as an ordinal neural feature. California uses small integer IDs.
+            for kind, names in (
+                ("customer", CUSTOMER_FEATURES),
+                ("charger", CHARGER_FEATURES),
+            ):
+                ids = tensors.nodes[kind][..., names.index("node_id")]
+                matches = target_ids.unsqueeze(-1) == ids.unsqueeze(1)
+                matches = matches & tensors.node_masks[kind].unsqueeze(1)
+                target_embedding = target_embedding + torch.bmm(
+                    matches.to(embedding.dtype), nodes[kind]
+                )
+            action_rows = torch.cat(
+                (
+                    action_rows,
+                    active_embedding.unsqueeze(1).expand(
+                        -1, self.config.max_actions, -1
+                    )[feasible],
+                    target_embedding[feasible],
+                ),
+                dim=-1,
+            )
+        else:
+            embedding = self.encoder(tensors)
         head_input = embedding
         if self.config.ablate_state_pooling:
             # Component ablation: the action head scores candidates without the

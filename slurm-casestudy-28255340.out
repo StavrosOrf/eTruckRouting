@@ -1,0 +1,51 @@
+[10:26:07] === de_nl_be
+[10:26:07]   region bbox (47.2, 2.5, 55.15, 15.1)
+[10:26:07] using cached road network de_nl_be_3de9ce2d0d.pkl
+[10:29:29]   DC-fast: 6854 stations (22828 ports) -> 1429 merged sites -> 1427 road-snapped nodes -> 1427 charger nodes (22824 ports)
+[10:30:13]   terminals: 1427 chargers, 4 depots, 230 customers
+[10:30:16]   computing all-pairs minimum-energy routes between terminals
+[10:31:47]   OD rows 40/1661
+[10:33:01]   OD rows 80/1661
+[10:33:54]   OD rows 120/1661
+[10:34:25]   OD rows 160/1661
+[10:35:31]   OD rows 200/1661
+[10:36:17]   OD rows 240/1661
+[10:37:05]   OD rows 280/1661
+[10:38:03]   OD rows 320/1661
+[10:38:59]   OD rows 360/1661
+[10:39:36]   OD rows 400/1661
+[10:40:25]   OD rows 440/1661
+[10:41:16]   OD rows 480/1661
+[10:42:26]   OD rows 520/1661
+[10:43:06]   OD rows 560/1661
+[10:44:01]   OD rows 600/1661
+[10:44:59]   OD rows 640/1661
+[10:46:00]   OD rows 680/1661
+[10:47:08]   OD rows 720/1661
+[10:48:10]   OD rows 760/1661
+[10:49:06]   OD rows 800/1661
+[10:49:56]   OD rows 840/1661
+[10:50:50]   OD rows 880/1661
+[10:51:45]   OD rows 920/1661
+[10:52:00]   OD rows 960/1661
+[10:53:09]   OD rows 1000/1661
+[10:54:23]   OD rows 1040/1661
+[10:55:13]   OD rows 1080/1661
+[10:56:23]   OD rows 1120/1661
+[10:57:26]   OD rows 1160/1661
+[10:58:15]   OD rows 1200/1661
+[10:59:25]   OD rows 1240/1661
+[11:00:35]   OD rows 1280/1661
+[11:01:27]   OD rows 1320/1661
+[11:02:10]   OD rows 1360/1661
+[11:03:21]   OD rows 1400/1661
+[11:04:27]   OD rows 1440/1661
+[11:05:24]   OD rows 1480/1661
+[11:06:05]   OD rows 1520/1661
+[11:07:08]   OD rows 1560/1661
+[11:08:27]   OD rows 1600/1661
+[11:09:04]   OD rows 1640/1661
+[11:09:08]   OD rows 1641/1661
+[11:09:17]   OD rows 1661/1661
+[11:09:47]   done -> /gpfs/home2/sorfanoudakis/EVRP/EVRoutingEnv/data/case_studies/de_nl_be
+[11:09:47]   asymmetry: {"energy": {"pairs": 1378579, "median_rel_diff": 0.0665, "p90_rel_diff": 0.1563, "frac_over_5pct": 0.6117, "frac_over_20pct": 0.0516}, "time": {"pairs": 1378615, "median_rel_diff": 0.0196, "p90_rel_diff": 0.0711, "frac_over_5pct": 0.185, "frac_over_20pct": 0.0056}}

@@ -30,6 +30,23 @@ def _head(head_type: str):
     ).eval()
 
 
+def test_segmented_complete_graph_matches_edge_values_and_gradients():
+    head = _head("complete_gcn")
+    ptr = torch.tensor([0, 1, 5, 5, 7])
+    x = torch.randn(7, HIDDEN_DIM, requires_grad=True)
+    other = x.detach().clone().requires_grad_(True)
+    edges = head.build_complete_edge_index(ptr)
+    expected, actual = x, other
+    for layer in head.layers:
+        expected = layer(expected, edges)
+        actual = layer.forward_segments(actual, ptr)
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    weights = torch.randn_like(x)
+    (expected * weights).sum().backward()
+    (actual * weights).sum().backward()
+    torch.testing.assert_close(x.grad, other.grad, rtol=1e-4, atol=1e-6)
+
+
 @pytest.mark.parametrize("head_type", ACTION_HEAD_TYPES)
 def test_action_heads_are_permutation_equivariant(head_type):
     head = _head(head_type)

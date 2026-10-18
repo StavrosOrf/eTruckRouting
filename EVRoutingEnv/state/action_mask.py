@@ -34,10 +34,10 @@ if TYPE_CHECKING:
 def get_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     """
     Generate the hard mask from the shared routing feasibility engine.
-    
+
     Args:
         env: EventDrivenTruckEnv instance
-    
+
     Returns:
         np.ndarray: Boolean array where True indicates feasible actions.
                    Shape: (action_space.n,)
@@ -75,6 +75,67 @@ def policy_action_mask(env: "EventDrivenTruckEnv") -> np.ndarray:
     the test suite -- only expose ``mask_fn``, so fall back to it.
     """
     accessor = getattr(env, "policy_mask_fn", None)
-    if accessor is None:
-        return env.mask_fn()
-    return accessor()
+    mask = env.mask_fn() if accessor is None else accessor()
+    if (
+        not getattr(env, "config", {})
+        .get("environment", {})
+        .get("completion_shield", False)
+    ):
+        return mask
+    return completion_action_mask(env, mask)
+
+
+def completion_action_mask(env, legal_mask: np.ndarray) -> np.ndarray:
+    """Optional robust escape/capacity restriction of the execution-legal set.
+
+    This is a conservative policy shield, not a change to simulator legality.
+    A fallback restores only legal choices when the restriction empties a set.
+    """
+    from EVRoutingEnv.state.feasibility import ActionKind
+
+    if env.active_truck_id is None:
+        return legal_mask
+    truck = env.trucks[env.active_truck_id]
+    multiplier = 1.0
+    if (
+        env.traffic_config["enable_traffic"]
+        and env.traffic_config["enable_energy_uncertainty"]
+    ):
+        multiplier = max(1.0, float(env.traffic_config["max_energy_multiplier"]))
+    decisions = joint_action_feasibility(env)
+    safe_nodes = [env.joint_instance.depot_node] + [
+        node
+        for node in env.charging_nodes
+        if env.charging_station.station_available[node]
+    ]
+    result = legal_mask.copy()
+    tasks = [task for task in env.task_registry.tasks() if task.is_available]
+    other_capacity = sum(
+        float(other.remaining_payload)
+        for other in env.trucks
+        if other.truck_id != truck.truck_id
+        and not other.failed
+        and not other.is_complete
+    )
+    for index in np.flatnonzero(legal_mask):
+        decision = decisions[index]
+        if decision.action_kind is ActionKind.CUSTOMER:
+            escape = (
+                min(
+                    env.transport_graph.get_path_energy(decision.target_node, node)
+                    for node in safe_nodes
+                )
+                * multiplier
+            )
+            if (
+                float(truck.current_battery) - float(decision.required_energy) + 1e-8
+                < escape
+            ):
+                result[index] = False
+        elif decision.action_kind is ActionKind.DEPOT and tasks:
+            owned = any(task.preassigned_to == truck.truck_id for task in tasks)
+            if owned or other_capacity + 1e-8 < sum(task.demand for task in tasks):
+                result[index] = False
+    if not result.any() and legal_mask.any():
+        return legal_mask
+    return result

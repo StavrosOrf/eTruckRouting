@@ -168,13 +168,15 @@ def test_california_is_the_default_scenario_and_old_data_is_gone():
         assert path.endswith(f"case_studies/{expected}"), (config.name, path)
 
 
-def test_generated_cases_use_dc_fast_sites_merged_within_5_km_complete_linkage(case):
+def test_generated_cases_use_dc_fast_sites_merged_within_their_radius_complete_linkage(case):
+    """5 km for the US cases; the 1000 km-scale European case merges within 10 km to keep the node count down."""
     path, meta, _ = case
     _generated_only(meta)
-    assert meta["preset"]["charger_merge_m"] == 5000 and meta["preset"]["charger_merge_linkage"] == "complete"
+    radius = meta["preset"]["charger_merge_m"]
+    assert radius in (5000, 10000, 15000) and meta["preset"]["charger_merge_linkage"] == "complete"
     for site in json.load(open(path / "vis_data" / "stations.json")):
         assert site["ports"] >= 1
-        assert site["diameter_m"] <= 5000 + 1e-6  # complete linkage: every pair of member stations within 5 km
+        assert site["diameter_m"] <= radius + 1e-6  # complete linkage: every pair of member stations within the radius
     assert {st["station_type"] for st in json.load(open(path / "station_info_dict.json")).values()} == {"DCFast"}
 
 

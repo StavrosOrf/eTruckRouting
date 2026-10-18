@@ -63,3 +63,9 @@
 [10:18:46]   OD rows 2280/2507
 [10:19:41]   OD rows 2320/2507
 [10:20:35]   OD rows 2360/2507
+[10:21:52]   OD rows 2400/2507
+[10:22:54]   OD rows 2440/2507
+[10:24:22]   OD rows 2480/2507
+[10:24:39]   OD rows 2507/2507
+[10:25:30]   done -> /gpfs/home2/sorfanoudakis/EVRP/EVRoutingEnv/data/case_studies/de_nl_be
+[10:25:30]   asymmetry: {"energy": {"pairs": 3141142, "median_rel_diff": 0.065, "p90_rel_diff": 0.154, "frac_over_5pct": 0.6019, "frac_over_20pct": 0.0494}, "time": {"pairs": 3141252, "median_rel_diff": 0.0201, "p90_rel_diff": 0.0737, "frac_over_5pct": 0.1956, "frac_over_20pct": 0.0063}}

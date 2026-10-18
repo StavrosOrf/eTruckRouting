@@ -7,11 +7,12 @@ construction.  Only the policy architecture differs between runs.
 
 from __future__ import annotations
 
+import random
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,7 @@ class PPOConfig:
     normalize_advantage: bool = True
     normalize_reward: bool = True
     seed: int = 0
+    schedule_timesteps: int | None = None
 
     def __post_init__(self) -> None:
         positive = (
@@ -338,6 +340,17 @@ class SyncCanonicalVecEnv:
         for env in self.envs:
             env.close()
 
+    def state_dict(self) -> dict:
+        return {"envs": self.envs, "position": self._seed_position}
+
+    def load_state_dict(self, state: dict) -> None:
+        if len(state["envs"]) != self.num_envs:
+            raise ValueError("checkpoint environment count differs")
+        for env in self.envs:
+            env.close()
+        self.envs = state["envs"]
+        self._seed_position = state["position"]
+
 
 def _worker_loop(connection, env_factory, seeds, shaping) -> None:
     """Own one slice of the vector environment inside a forked process.
@@ -371,6 +384,24 @@ def _worker_loop(connection, env_factory, seeds, shaping) -> None:
             command, payload = connection.recv()
             if command == "close":
                 break
+            if command == "state":
+                connection.send(
+                    {
+                        "envs": envs,
+                        "position": position,
+                        "numpy_rng": np.random.get_state(),
+                        "python_rng": random.getstate(),
+                    }
+                )
+                continue
+            if command == "restore":
+                for env in envs:
+                    env.close()
+                envs, position = payload["envs"], payload["position"]
+                np.random.set_state(payload["numpy_rng"])
+                random.setstate(payload["python_rng"])
+                connection.send(True)
+                continue
             if command == "reset":
                 observations, masks = [], []
                 for index, env in enumerate(envs):
@@ -393,9 +424,7 @@ def _worker_loop(connection, env_factory, seeds, shaping) -> None:
                 rewards[index] = float(reward)
                 dones[index] = bool(terminated or truncated)
                 if dones[index]:
-                    compact = summarize(
-                        info, observation, truncated and not terminated
-                    )
+                    compact = summarize(info, observation, truncated and not terminated)
                     rewards[index] += shaping.terminal_adjustment(compact)
                     infos.append(compact)
                     observation, _ = env.reset(seed=next_seed(index))
@@ -457,9 +486,7 @@ class WorkerCanonicalVecEnv:
                 f"seed stream of {len(stream)} scenarios cannot feed {num_envs} "
                 "sub-environments; every sub-environment needs its own slice"
             )
-        assignment = [
-            list(range(index, num_envs, workers)) for index in range(workers)
-        ]
+        assignment = [list(range(index, num_envs, workers)) for index in range(workers)]
         context = mp.get_context("fork")
         self._connections = []
         self._processes = []
@@ -469,9 +496,7 @@ class WorkerCanonicalVecEnv:
             width = len(assignment[worker])
             # Each sub-environment gets its own slice of the shared stream so no
             # two workers can draw the same scenario in the same episode index.
-            slices = [
-                stream[(cursor + offset) :: num_envs] for offset in range(width)
-            ]
+            slices = [stream[(cursor + offset) :: num_envs] for offset in range(width)]
             cursor += width
             parent, child = context.Pipe()
             process = context.Process(
@@ -518,10 +543,21 @@ class WorkerCanonicalVecEnv:
             infos,
         )
 
+    def state_dict(self) -> dict:
+        for connection in self._connections:
+            connection.send(("state", None))
+        return {"workers": [connection.recv() for connection in self._connections]}
+
+    def load_state_dict(self, state: dict) -> None:
+        if len(state["workers"]) != len(self._connections):
+            raise ValueError("checkpoint rollout worker count differs")
+        for connection, worker in zip(self._connections, state["workers"], strict=True):
+            connection.send(("restore", worker))
+        for connection in self._connections:
+            connection.recv()
+
     def close(self) -> None:
-        for connection, process in zip(
-            self._connections, self._processes, strict=True
-        ):
+        for connection, process in zip(self._connections, self._processes, strict=True):
             try:
                 connection.send(("close", None))
                 connection.close()
@@ -589,6 +625,9 @@ class CanonicalPPO:
         self._episode_makespans: deque[float] = deque(maxlen=100)
         self._episode_travel_times: deque[float] = deque(maxlen=100)
         self.total_steps = 0
+        self.completed_updates = 0
+        self._current_observations = None
+        self._current_masks = None
 
     def _build_vec_env(self, env_factory: Callable[[], object], base_seed: int):
         """Vector environment for one curriculum stage, sync or worker-backed."""
@@ -611,17 +650,21 @@ class CanonicalPPO:
     ) -> TrainingHistory:
         """Run the configured interaction budget and return the history."""
         config = self.config
-        observations, masks = self.envs.reset()
+        if self._current_observations is None:
+            observations, masks = self.envs.reset()
+            self.policy.observe(self._to_tensor(observations))
+        else:
+            observations, masks = self._current_observations, self._current_masks
         observation_tensor = self._to_tensor(observations)
         mask_tensor = self._to_bool(masks)
         # Seed the shared normalizer before the first gradient step so that no
         # variant is penalised by cold statistics.
-        self.policy.observe(observation_tensor)
         start_time = time.perf_counter()
 
-        for update in range(config.num_updates):
+        for update in range(self.completed_updates, config.num_updates):
             if config.anneal_learning_rate:
-                fraction = 1.0 - update / config.num_updates
+                horizon = config.schedule_timesteps or config.total_timesteps
+                fraction = max(0.0, 1.0 - self.total_steps / horizon)
                 for group in self.optimizer.param_groups:
                     group["lr"] = fraction * config.learning_rate
 
@@ -629,6 +672,9 @@ class CanonicalPPO:
                 observation_tensor, mask_tensor
             )
             statistics = self._optimize(rollout)
+            # Old and recomputed action probabilities must use identical
+            # preprocessing throughout collection AND all PPO epochs.
+            self.policy.observe(rollout["observations"])
             self.history.timesteps.append(self.total_steps)
             self.history.mean_episode_reward.append(_mean(self._episode_rewards))
             self.history.success_rate.append(_mean(self._episode_successes))
@@ -638,8 +684,14 @@ class CanonicalPPO:
             self.history.value_loss.append(statistics["value_loss"])
             self.history.entropy.append(statistics["entropy"])
             self.history.approx_kl.append(statistics["approx_kl"])
+            observation_tensor, mask_tensor = self._maybe_advance_stage(
+                observation_tensor, mask_tensor
+            )
+            self.completed_updates = update + 1
+            self._current_observations = observation_tensor.detach().cpu().numpy()
+            self._current_masks = mask_tensor.detach().cpu().numpy()
             if progress_callback is not None:
-                progress_callback(
+                stop_requested = progress_callback(
                     {
                         "update": update + 1,
                         "num_updates": config.num_updates,
@@ -653,9 +705,8 @@ class CanonicalPPO:
                         **statistics,
                     }
                 )
-            observation_tensor, mask_tensor = self._maybe_advance_stage(
-                observation_tensor, mask_tensor
-            )
+                if stop_requested:
+                    break
         return self.history
 
     @property
@@ -768,7 +819,11 @@ class CanonicalPPO:
             # unbiased. Truncation is common here (step and horizon limits), so
             # treating it as termination would systematically understate returns.
             truncated_indices = [
-                index for index, info in enumerate(infos) if info.get("truncated")
+                index
+                for index, info in enumerate(infos)
+                if info.get("truncated")
+                and info.get("termination_reason")
+                not in {"time_limit_exhausted", "step_limit_exhausted"}
             ]
             if truncated_indices:
                 terminal_batch = self._to_tensor(
@@ -793,7 +848,6 @@ class CanonicalPPO:
             observation_tensor = self._to_tensor(observations)
             mask_tensor = self._to_bool(masks)
 
-        self.policy.observe(observation_buffer.reshape(-1, self.envs.observation_size))
         with torch.no_grad():
             last_value = self.policy.predict_values(observation_tensor)
         advantages = self._compute_advantages(
@@ -940,6 +994,88 @@ class CanonicalPPO:
 
     def save(self, directory: str | Path, prefix: str = "policy") -> None:
         self.policy.save(directory, prefix=prefix)
+
+    def save_training(self, path: str | Path, metadata: dict | None = None) -> None:
+        """Atomic trusted checkpoint including live episodes and RNG streams."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "version": 1,
+            "policy_config": asdict(self.policy_config),
+            "ppo_config": asdict(self.config),
+            "policy": self.policy.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "history": self.history,
+            "reward_scale": self.reward_scale,
+            "total_steps": self.total_steps,
+            "completed_updates": self.completed_updates,
+            "stage_index": self.stage_index,
+            "stage_updates": self.stage_updates,
+            "stage_log": self.stage_log,
+            "environments": self.envs.state_dict(),
+            "observations": self._current_observations,
+            "masks": self._current_masks,
+            "torch_rng": torch.get_rng_state(),
+            "numpy_rng": np.random.get_state(),
+            "python_rng": random.getstate(),
+            "cuda_rng": torch.cuda.get_rng_state_all()
+            if self.device.type == "cuda"
+            else None,
+            "episode_stats": [
+                self._episode_rewards,
+                self._episode_successes,
+                self._episode_makespans,
+                self._episode_travel_times,
+            ],
+            "metadata": metadata or {},
+        }
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        torch.save(state, temporary)
+        temporary.replace(path)
+
+    def load_training(self, path: str | Path) -> dict:
+        # These contain Python simulator objects: load only our trusted files.
+        state = torch.load(path, map_location="cpu", weights_only=False)
+        if state["policy_config"] != asdict(self.policy_config):
+            raise ValueError("checkpoint policy configuration differs")
+        for key in (
+            "num_envs",
+            "rollout_steps",
+            "gamma",
+            "gae_lambda",
+            "schedule_timesteps",
+        ):
+            if state["ppo_config"][key] != asdict(self.config)[key]:
+                raise ValueError(f"checkpoint PPO configuration differs: {key}")
+        self.policy.load_state_dict(state["policy"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.history, self.reward_scale = state["history"], state["reward_scale"]
+        self.total_steps, self.completed_updates = (
+            state["total_steps"],
+            state["completed_updates"],
+        )
+        self.stage_index, self.stage_updates = (
+            state["stage_index"],
+            state["stage_updates"],
+        )
+        self.stage_log = state["stage_log"]
+        self.envs.load_state_dict(state["environments"])
+        self._current_observations, self._current_masks = (
+            state["observations"],
+            state["masks"],
+        )
+        (
+            self._episode_rewards,
+            self._episode_successes,
+            self._episode_makespans,
+            self._episode_travel_times,
+        ) = state["episode_stats"]
+        torch.set_rng_state(state["torch_rng"])
+        np.random.set_state(state["numpy_rng"])
+        random.setstate(state["python_rng"])
+        if state["cuda_rng"] is not None and self.device.type == "cuda":
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+        return state["metadata"]
 
     def close(self) -> None:
         self.envs.close()

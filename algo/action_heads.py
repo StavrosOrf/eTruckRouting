@@ -157,6 +157,20 @@ class _CompleteGraphConvolution(nn.Module):
         update = self.self_linear(x) + self.neighbor_linear(neighbor_mean)
         return self.norm(x + F.relu(update))
 
+    def forward_segments(self, x: torch.Tensor, ptr: torch.Tensor) -> torch.Tensor:
+        """Exact complete-graph means without constructing quadratic edges."""
+        counts = ptr[1:] - ptr[:-1]
+        segment = torch.repeat_interleave(
+            torch.arange(counts.numel(), device=x.device), counts
+        )
+        sums = x.new_zeros((counts.numel(), x.shape[-1]))
+        sums.index_add_(0, segment, x)
+        neighbors = (sums[segment] - x) / (counts[segment] - 1).clamp_min(1).unsqueeze(
+            -1
+        )
+        update = self.self_linear(x) + self.neighbor_linear(neighbors)
+        return self.norm(x + F.relu(update))
+
 
 class CompleteGraphGCNActionHead(_BaseActionHead):
     """Message passing on every ordered pair of distinct actions per state."""
@@ -191,9 +205,8 @@ class CompleteGraphGCNActionHead(_BaseActionHead):
     ) -> ActionHeadOutput:
         embedding = self._validate_inputs(embedding, action_features, ptr)
         actions = F.relu(self.action_proj(action_features))
-        edge_index = self.build_complete_edge_index(ptr)
         for layer in self.layers:
-            actions = layer(actions, edge_index)
+            actions = layer.forward_segments(actions, ptr)
         return self._score_actions(embedding, actions, ptr)
 
     @staticmethod

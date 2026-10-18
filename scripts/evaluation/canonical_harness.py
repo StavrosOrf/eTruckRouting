@@ -138,6 +138,11 @@ def summarize(outcomes: Sequence[EpisodeOutcome]) -> dict:
         "mean_operating_time": float(
             np.mean([outcome.total_operating_time for outcome in outcomes])
         ),
+        "mean_operating_time_successful": (
+            float(np.mean([outcome.total_operating_time for outcome in successes]))
+            if successes
+            else None
+        ),
         "mean_energy_charged": float(
             np.mean([outcome.total_energy_charged for outcome in outcomes])
         ),
@@ -151,7 +156,7 @@ def summarize(outcomes: Sequence[EpisodeOutcome]) -> dict:
 OBJECTIVE_KEYS = {
     "travel_time": "mean_travel_time_successful",
     "makespan": "mean_makespan_successful",
-    "operating_time": "mean_operating_time",
+    "operating_time": "mean_operating_time_successful",
     "distance": "mean_distance_successful",
 }
 

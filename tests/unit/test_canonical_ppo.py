@@ -413,9 +413,7 @@ def test_worker_vec_env_matches_the_synchronous_one() -> None:
     def factory():
         return CanonicalBanditEnv(seed=0)
 
-    shaping = RewardShaping(
-        enabled=True, success_bonus=5.0, incompletion_penalty=2.0
-    )
+    shaping = RewardShaping(enabled=True, success_bonus=5.0, incompletion_penalty=2.0)
     synchronous = SyncCanonicalVecEnv(
         factory, num_envs=4, seed_stream=stream, shaping=shaping
     )
@@ -457,3 +455,78 @@ def test_worker_vec_env_matches_the_synchronous_one() -> None:
     finally:
         synchronous.close()
         parallel.close()
+
+
+def test_rollout_keeps_old_policy_probabilities_unchanged() -> None:
+    config = CanonicalPolicyConfig(
+        max_trucks=1,
+        max_customers=2,
+        max_chargers=2,
+        max_actions=4,
+        hidden_dim=16,
+        encoder_output_dim=16,
+        state_encoder="flat",
+        action_head="independent",
+        normalize_action_features=True,
+    )
+    trainer = CanonicalPPO(
+        config, PPOConfig(num_envs=2, rollout_steps=8), CanonicalBanditEnv
+    )
+    try:
+        obs, masks = trainer.envs.reset()
+        trainer.policy.observe(trainer._to_tensor(obs))
+        rollout, _, _ = trainer._collect_rollout(
+            trainer._to_tensor(obs), trainer._to_bool(masks)
+        )
+        with torch.no_grad():
+            logprobs, _, _ = trainer.policy.evaluate_actions(
+                rollout["observations"], rollout["actions"], rollout["masks"]
+            )
+        torch.testing.assert_close(logprobs, rollout["logprobs"], atol=2e-6, rtol=1e-6)
+    finally:
+        trainer.close()
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_complete_checkpoint_continuation_matches_uninterrupted(
+    tmp_path, workers
+) -> None:
+    config = CanonicalPolicyConfig(
+        max_trucks=1,
+        max_customers=2,
+        max_chargers=2,
+        max_actions=4,
+        hidden_dim=16,
+        encoder_output_dim=16,
+        state_encoder="hetero_graph",
+        action_head="complete_gcn",
+        normalize_action_features=True,
+        action_entity_links=True,
+    )
+    ppo = PPOConfig(
+        total_timesteps=64, num_envs=2, rollout_steps=8, epochs=1, minibatch_size=16
+    )
+    trainer = CanonicalPPO(config, ppo, CanonicalBanditEnv, rollout_workers=workers)
+    path = tmp_path / "training.pt"
+    try:
+        trainer.learn(lambda record: record["update"] == 2)
+        trainer.save_training(path)
+        trainer.learn()
+        expected = {
+            key: value.clone() for key, value in trainer.policy.state_dict().items()
+        }
+        expected_history = trainer.history.as_dict()
+    finally:
+        trainer.close()
+    restored = CanonicalPPO(config, ppo, CanonicalBanditEnv, rollout_workers=workers)
+    try:
+        restored.load_training(path)
+        restored.learn()
+        for key, value in restored.policy.state_dict().items():
+            torch.testing.assert_close(value, expected[key], rtol=0, atol=0)
+        assert (
+            restored.history.as_dict()["policy_loss"] == expected_history["policy_loss"]
+        )
+        assert restored.total_steps == 64
+    finally:
+        restored.close()

@@ -1,0 +1,150 @@
+{
+ "name": "de_nl_be",
+ "title": "Germany + Netherlands + Belgium",
+ "generated_utc": "2026-10-18T09:09:47Z",
+ "preset": {
+  "name": "de_nl_be",
+  "title": "Germany + Netherlands + Belgium",
+  "geofabrik": [
+   "europe/germany",
+   "europe/netherlands",
+   "europe/belgium"
+  ],
+  "delivery_source": "places",
+  "bbox": [
+   47.2,
+   2.5,
+   55.15,
+   15.1
+  ],
+  "n_customers": 230,
+  "n_depots": 4,
+  "min_population": 1000,
+  "min_place_spacing_m": 5000,
+  "chargers_source": "osm",
+  "min_charger_kw": 50,
+  "max_chargers": 0,
+  "charger_merge_m": 10000,
+  "charger_merge_linkage": "complete",
+  "max_snap_m": 5000,
+  "max_road_class": "unclassified",
+  "terrain_zoom": 11,
+  "terrain_source": "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)",
+  "smooth_length_m": 150,
+  "vis_max_class": "secondary",
+  "vehicle_profile": "heavy_truck",
+  "vehicle": {
+   "max_speed_kph": 90
+  },
+  "seed": 0,
+  "workers": 12
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 882.0,
+ "counts": {
+  "nodes": 1661,
+  "chargers": 1427,
+  "depots": 4,
+  "customers": 230,
+  "dcfast_ports_in_nodes": 22824,
+  "dcfast_sites_available": 1429,
+  "dcfast_stations_raw": 6854
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  47.2,
+  2.5,
+  55.15,
+  15.1
+ ],
+ "road_network": {
+  "nodes": 16303514,
+  "directed_edges": 29997582,
+  "plotted_segments": 6538271,
+  "excluded": "service roads, private/no-motor-vehicle ways, road classes below unclassified",
+  "terrain_zoom": 11,
+  "dem_rms_change_m": 1.848839618193582,
+  "n_span_nodes_interpolated": 77815,
+  "elevation_range_m": [
+   -14.525720539996335,
+   1539.475449190117
+  ],
+  "dem_nodes_reset_to_sea_level": 173
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0,
+  "max_speed_kph": 90
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 36,
+ "od_stats": {
+  "reduced_cost_min": 0.000341595864123129,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 3.2723012282076525e-05,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   130.22,
+   525.26,
+   982.51,
+   1475.17
+  ],
+  "time_h_p5_p50_p95_max": [
+   2.597,
+   9.966,
+   18.983,
+   27.92
+  ],
+  "dist_km_p5_p50_p95_max": [
+   103.2,
+   408.7,
+   770.9,
+   1106.2
+  ],
+  "kwh_per_km_median": 1.268
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs": 1378579,
+   "median_rel_diff": 0.0665,
+   "p90_rel_diff": 0.1563,
+   "frac_over_5pct": 0.6117,
+   "frac_over_20pct": 0.0516
+  },
+  "time": {
+   "pairs": 1378615,
+   "median_rel_diff": 0.0196,
+   "p90_rel_diff": 0.0711,
+   "frac_over_5pct": 0.185,
+   "frac_over_20pct": 0.0056
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 9991.2,
+  "merged_nodes_with_multiple_stations": 1135
+ },
+ "sources": {
+  "delivery_and_depot_locations": "OpenStreetMap place nodes (city/town/village with population tag), ODbL",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)",
+  "chargers": "OpenStreetMap amenity=charging_station (CCS/CHAdeMO/NACS sockets, tagged output >= 50 kW), ODbL"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_de_nl_be.yaml"
+}

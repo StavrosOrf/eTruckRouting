@@ -10,6 +10,7 @@ baselines and plotting work on any of them by pointing `network.data_path` at th
 | Case | Config | Extent | Nodes: chargers / depots / delivery | DC-fast ports | Median leg | Max leg | Terrain |
 |---|---|---|---|---|---|---|---|
 | **Texas** | `config_joint_texas.yaml` | 1260 km | 666: 432 / 4 / 230 | 5665 | 466 kWh | 1863 kWh | flat to hilly, 0-2040 m |
+| **Germany + Netherlands + Belgium** | `config_joint_de_nl_be.yaml` | 882 km | 1661: 1427 / 4 / 230 | 22824 | 525 kWh | 1475 kWh | mostly flat, Eifel to Alpine foothills, -15 to 1540 m (the 90 km/h truck limit applies) |
 | **Pacific Northwest** (WA + OR) | `config_joint_pacific_northwest.yaml` | 790 km | 557: 323 / 4 / 230 | 3772 | 486 kWh | 1729 kWh | Cascades and Coast Range, 0-2950 m |
 | Puget Sound (Seattle) | `config_joint_seattle.yaml` | 118 km | 283: 50 / 3 / 230 | 952 | 58 kWh | 201 kWh | hilly, 0-590 m |
 | Chicagoland | `config_joint_chicago.yaml` | 107 km | 340: 106 / 4 / 230 | 1644 | 52 kWh | 168 kWh | flat, 165-306 m |
@@ -33,7 +34,7 @@ the system temp folder afterwards; set `TMPDIR` to keep it).
 | Road network | OpenStreetMap via Geofabrik (ODbL). One-ways and speed limits respected; service roads excluded; state cases keep motorway to `unclassified` classes only | directed graph, largest strongly connected component (3.5M nodes for each state case) |
 | Slope | AWS terrain tiles (USGS 3DEP/NED over the US; SRTM, EU-DEM and national DEMs over Europe): about 13 m per pixel for metros, 52 m for the Pacific Northwest, 100 m for Texas, 48 m for Germany + Netherlands + Belgium | node elevation, smoothed along the road graph (60-300 m scale); bridge and tunnel nodes interpolated between their land ends; offshore bathymetry values reset to sea level |
 | Chargers, US | NREL/NLR Alternative Fuels Data Center, public open DC-fast stations only (no Level 1 or Level 2) | **every** DC-fast station in the area, merged within 5 km (complete linkage) into one node, `total_capacity` = DC-fast ports of the node |
-| Chargers, Europe | OpenStreetMap `amenity=charging_station` (ODbL): CCS, CHAdeMO and NACS sockets with a tagged output of at least 50 kW (untagged outputs are kept) | Germany + Netherlands + Belgium: all DC sites are read and merged within 5 km (complete linkage), like the US cases (see "Charger nodes") |
+| Chargers, Europe | OpenStreetMap `amenity=charging_station` (ODbL): CCS, CHAdeMO and NACS sockets with a tagged output of at least 50 kW (untagged outputs are kept) | Germany + Netherlands + Belgium: 6854 DC stations are read and merged within **10 km** (complete linkage) into 1429 sites, 1427 of which are on a road node (see "Charger nodes") |
 | Energy and time | modelled (below) | all-pairs minimum-energy routes between the nodes |
 
 Delivery demand, service times and time windows are **not** taken from the data sources; they come from
@@ -75,7 +76,7 @@ pair inside a node is within the radius). Nodes before snapping to the road netw
 
 ![sweep](charger_merge_sweep.png)
 
-- Going from 1 km to 10 km removes 55-75 % of the nodes with complete linkage, and up to 99 % with single linkage. **The case studies use 5 km, complete linkage.**
+- Going from 1 km to 10 km removes 55-75 % of the nodes with complete linkage, and up to 99 % with single linkage. **The US case studies use 5 km, complete linkage; the Germany + Netherlands + Belgium case uses 10 km** (below).
 - **Single linkage stops being usable above 2 km**: it chains neighbouring towns into one node (Chicago 31 nodes at 5 km
   and 2 at 10 km, chains 63-124 km long, 360-1216 ports in one node), which is why the case studies use complete linkage.
 - Complete linkage keeps nodes compact (largest centre displacement 3-5 km at 5 km, 7-9 km at 10 km, ports per node
@@ -86,6 +87,21 @@ pair inside a node is within the radius). Nodes before snapping to the road netw
   regenerates the table, `charger_merge_sweep.json` and the figure; the full numbers (ports, diameters,
   displacement) are in the JSON.
 
+**Germany + Netherlands + Belgium** has 6854 OSM DC stations (22828 ports) and is four times the size of the US metros, so
+it merges within 10 km (the same sweep on its stations):
+
+| radius | complete linkage: nodes / largest centre displacement / median ports | single linkage: nodes / longest chain |
+|---|---|---|
+| 1 km | 4347 / 0.9 km / 3 | 4068 / 4.6 km |
+| 5 km | 2275 / 4.7 km / 6 | 1474 / 69 km |
+| **10 km (used)** | **1429 / 8.8 km / 10** | 542 / 265 km |
+| 15 km | 1015 / 12.8 km / 14 | 196 / 777 km |
+
+At 5 km the case has 2273 charger nodes (2507 terminals), which makes the all-pairs matrices 2.3 times larger and
+the route certificate slower; 10 km gives 1427 charger nodes with all 22824 ports kept. Single linkage chains
+chargers along the motorway network across hundreds of kilometres, so only complete linkage is used.
+The depots are the four largest drawn places: Hamburg, Munich, Amsterdam and Leipzig.
+
 ### Energy and time model
 Per directed road segment, from the slope of the smoothed elevation profile:
 
@@ -93,11 +109,11 @@ Per directed road segment, from the slope of the smoothed elevation profile:
 - battery energy = traction (gravity + rolling + drag) divided by the drivetrain efficiency, or
   multiplied by the regeneration efficiency on net-downhill segments, + auxiliary load x time +
   kinetic losses at signals and stop signs;
-- vehicle profile `heavy_truck` (default): 36 t class-8 battery-electric truck, Crr 0.007, CdA 6.5 m2,
+- vehicle profile `heavy_truck` (default): 36 t class-8 battery-electric truck (the Germany + Netherlands + Belgium preset adds `vehicle: {max_speed_kph: 90}`, the EU speed limiter of heavy trucks: posted limits above 90 km/h are capped before the class speed factor), Crr 0.007, CdA 6.5 m2,
   drivetrain 0.90, regeneration 0.65, 6 kW auxiliary. These were **calibrated to the California data**
   (median 1.57 kWh/km, 10th-90th percentile 1.13-1.97, from its lane table) rather than read from a
   publication: median over routes is 1.47 (Seattle), 1.25 (Chicago), 1.33 (Pacific Northwest) and
-  1.18 (Texas) kWh/km. A `van` profile (4.2 t, about 0.3 kWh/km) is also provided. Parameters are
+  1.18 (Texas) and 1.27 (Germany + Netherlands + Belgium) kWh/km. A `van` profile (4.2 t, about 0.3 kWh/km) is also provided. Parameters are
   recorded in `metadata.json` and overridable in the preset (`vehicle_profile:`, `vehicle:`).
 
 Uphill and downhill, and one-way versus two-way streets, make both costs depend on direction. Routes
@@ -118,6 +134,7 @@ floored to 0.02 kWh (219 of 80k legs in Seattle, 31 of 310k in the Pacific North
 | Pacific Northwest | 7.8 % | 63 % | 15 % | 24 % |
 | Seattle | 13.5 % | 79 % | 35 % | 52 % |
 | Chicago | 10.1 % | 77 % | 11 % | 20 % |
+| Germany + Netherlands + Belgium | 6.7 % | 61 % | 5 % | 19 % |
 
 Seattle's energy asymmetry follows net climb between the two ends (`figures/asymmetry.png`), and its time
 asymmetry is high because a 36 t truck's minimum-energy route differs by direction; a lighter vehicle gives
@@ -156,6 +173,7 @@ plays the episode. Results are in `<case>/scenario_check.json` and `<case>/figur
 | California (default) | 20 / 0 | yes | 20 / 139 | 45 % | 20 of 20 | 7038 km | 14, 149 | 0.1 |
 | Texas | 20 / 0 | yes | 19 / 142 | 80 % | 20 of 20 | 4167 km | 19, 31 | 4.0 |
 | Pacific Northwest | 20 / 0 | yes | 19 / 139 | 85 % | 20 of 20 | 3293 km | 18, 29 | 2.2 |
+| Germany + Netherlands + Belgium | 20 / 0 | yes | 20 / 135 | 90 % | 20 of 20 | 1505 km | 5, 12 | 0.3 |
 | Seattle | 20 / 0 | yes | 19 / 143 | 100 % | 0 of 20 | 462 km | 0, 0 | < 0.1 |
 | Chicago | 20 / 0 | yes | 19 / 139 | 100 % | 0 of 20 | 470 km | 0, 0 | < 0.1 |
 

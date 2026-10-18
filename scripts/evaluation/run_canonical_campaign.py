@@ -93,9 +93,19 @@ def build_policy(name: str, settings: dict):
         )
     if name == "alns":
         return ALNSPolicy(ALNSParameters(**settings.get("parameters", {})))
+    if name == "bnp":
+        # Exact branch-and-price on the nominal problem; certificates written
+        # offline by solve_branch_and_price.py are reused when present.
+        from EVRoutingEnv.baselines.optimization.branch_and_price.julia_bridge import BPParameters
+        from EVRoutingEnv.baselines.optimization.branch_and_price.policy import BranchAndPricePolicy
+
+        return BranchAndPricePolicy(
+            BPParameters(**settings.get("parameters", {})),
+            certificate_dir=settings.get("certificate_dir"),
+        )
     raise ValueError(
         f"unknown method {name!r}; non-learned methods must be one of "
-        "random/heuristic/mpc/cpsat/alns, and a learned method must supply a checkpoint"
+        "random/heuristic/mpc/cpsat/alns/bnp, and a learned method must supply a checkpoint"
     )
 
 

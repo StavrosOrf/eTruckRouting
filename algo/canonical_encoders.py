@@ -461,7 +461,7 @@ class HeteroGraphStateEncoder(_BaseStateEncoder):
             nn.ReLU(),
         )
 
-    def forward(self, tensors: CanonicalTensors) -> torch.Tensor:
+    def forward(self, tensors: CanonicalTensors, *, return_nodes: bool = False):
         normalized = self.normalizer(tensors)
         node_embeddings = {
             node_type: F.relu(
@@ -482,7 +482,8 @@ class HeteroGraphStateEncoder(_BaseStateEncoder):
             for node_type in NODE_TYPES
         ]
         summary.append(self.global_encoder(normalized.global_features))
-        return self.readout(torch.cat(summary, dim=-1))
+        pooled = self.readout(torch.cat(summary, dim=-1))
+        return (pooled, node_embeddings) if return_nodes else pooled
 
 
 class _AttentionBlock(nn.Module):

@@ -1,0 +1,154 @@
+[TransportationGraph] Computing all-pairs route costs...
+  - Graph has 1661 nodes, 2757260 edges
+  - Computed 2758921 distance pairs in 1402.03s
+[de_nl_be] environment ready in 1426s: 1661 nodes, 1427 charger nodes, battery 400.0 kWh, trucks 2, stops 10
+  seed 1000: depot=Burdinne success=True steps=20 distance=1331km charges=4 queue=0.00h makespan=23.505739670378585
+  seed 1001: depot=Niederschöna success=True steps=24 distance=1602km charges=5 queue=0.00h makespan=27.541942434942236
+  seed 1002: depot=Rheinsberg success=True steps=38 distance=2717km charges=12 queue=0.00h makespan=52.233462846215765
+  seed 1003: depot=Wildervank success=True steps=17 distance=1150km charges=2 queue=0.00h makespan=18.606261884855744
+  seed 1004: depot=Apeldoorn success=True steps=22 distance=1244km charges=5 queue=0.00h makespan=24.113788663820973
+  seed 1005: depot=Liebenwalde success=True steps=28 distance=1983km charges=7 queue=0.00h makespan=38.925512091883576
+  seed 1006: depot=Alkmaar success=True steps=23 distance=1624km charges=5 queue=0.00h makespan=30.60881887751285
+  seed 1007: depot=Thenhoven success=False steps=15 distance=784km charges=2 queue=0.00h makespan=None
+  seed 1008: depot=Nieuwe-Tonge success=True steps=26 distance=1778km charges=7 queue=0.00h makespan=34.306213931166
+  seed 1009: depot=Zuidlaren success=True steps=19 distance=1356km charges=3 queue=0.00h makespan=26.74805318601922
+  seed 1010: depot=Forstern success=True steps=26 distance=1551km charges=7 queue=0.00h makespan=31.293523074685563
+  seed 1011: depot=Osterfeld success=True steps=39 distance=2743km charges=11 queue=0.00h makespan=45.578020087340796
+  seed 1012: depot=Titisee success=True steps=24 distance=1492km charges=6 queue=0.00h makespan=27.204515710528863
+  seed 1013: depot=Haar success=True steps=22 distance=1232km charges=5 queue=0.00h makespan=21.676200518814216
+  seed 1014: depot=Tuitjenhorn success=False steps=20 distance=1410km charges=4 queue=0.00h makespan=None
+  seed 1015: depot=Kassel success=True steps=28 distance=1864km charges=7 queue=0.00h makespan=33.84282814141902
+  seed 1016: depot=Duffel success=True steps=22 distance=1471km charges=4 queue=0.00h makespan=25.88939689680737
+  seed 1017: depot=Eggermühlen success=True steps=22 distance=1518km charges=4 queue=0.00h makespan=25.709898669447536
+  seed 1018: depot=Bad Wünnenberg success=True steps=21 distance=1410km charges=4 queue=0.00h makespan=28.177068586531174
+  seed 1019: depot=Stadtprozelten success=True steps=27 distance=1664km charges=7 queue=0.00h makespan=31.87389403990351
+{
+ "case": "de_nl_be",
+ "config": "EVRoutingEnv/config_files/config_joint_de_nl_be.yaml",
+ "env_load_seconds": 1426,
+ "nodes": 1661,
+ "charger_nodes": 1427,
+ "battery_kwh": 400.0,
+ "trucks": 2,
+ "stops": 10,
+ "episodes_requested": 20,
+ "episodes_played": 20,
+ "scenario_failures": [],
+ "same_seed_replays_same_scenario": true,
+ "success_rate": 0.9,
+ "termination_reasons": {
+  "no_feasible_action": 2,
+  "success": 18
+ },
+ "distinct_depots": 20,
+ "distinct_customers_used": 135,
+ "distinct_scenarios": 20,
+ "episodes_needing_charge": 20,
+ "metrics": {
+  "total_distance": {
+   "mean": 1596.151,
+   "median": 1504.701,
+   "min": 784.156,
+   "max": 2743.439
+  },
+  "total_energy_consumed": {
+   "mean": 1980.594,
+   "median": 1832.122,
+   "min": 1002.514,
+   "max": 3477.841
+  },
+  "total_energy_charged": {
+   "mean": 1382.05,
+   "median": 1198.276,
+   "min": 394.789,
+   "max": 2959.241
+  },
+  "charging_sessions": {
+   "mean": 5.55,
+   "median": 5.0,
+   "min": 2.0,
+   "max": 12.0
+  },
+  "total_charging_time": {
+   "mean": 10.74,
+   "median": 9.3,
+   "min": 3.08,
+   "max": 23.062
+  },
+  "total_queue_time": {
+   "mean": 0.0,
+   "median": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "fleet_makespan": {
+   "mean": 30.435,
+   "median": 27.86,
+   "min": 18.606,
+   "max": 52.233
+  },
+  "total_operating_time": {
+   "mean": 53.771,
+   "median": 50.185,
+   "min": 26.052,
+   "max": 97.581
+  },
+  "minimum_terminal_soc": {
+   "mean": 0.145,
+   "median": 0.098,
+   "min": 0.004,
+   "max": 0.4
+  },
+  "steps": {
+   "mean": 24.15,
+   "median": 22.5,
+   "min": 15.0,
+   "max": 39.0
+  }
+ },
+ "seconds_per_scenario_median": 8.3,
+ "seconds_to_generate_median": 0.3
+}
+
+================================================================================
+SIMULATION STATISTICS
+================================================================================
+
+Total Simulation Time: 27.54 hours
+Number of Trucks: 2
+
+-------------------------------Truck Statistics:--------------------------------
+
+Truck 0:
+  Status: complete
+  Total Distance: 722.34 km
+  Total Time: 26.04 hours
+  Deliveries Completed: 11/11
+  Final Battery: 366.0/400.0 kWh (91.5%)
+  Total Charge Sessions: 3
+  Total Charge Time: 6.78 hours
+  Route Nodes Visited: 11
+  Charging Station Visits: 3
+
+Truck 1:
+  Status: complete
+  Total Distance: 879.95 km
+  Total Time: 27.54 hours
+  Deliveries Completed: 11/11
+  Final Battery: 12.7/400.0 kWh (3.2%)
+  Total Charge Sessions: 2
+  Total Charge Time: 5.36 hours
+  Route Nodes Visited: 10
+  Charging Station Visits: 4
+
+-----------------------------Aggregate Statistics:------------------------------
+Successful Trucks: 2/2
+Failed Trucks: 0/2
+Total Distance Traveled: 1602.28 km
+Total Deliveries Completed: 22
+Average Distance per Truck: 801.14 km
+
+Statistics saved to: /gpfs/home2/sorfanoudakis/EVRP/EVRoutingEnv/models/../results/scenario_check_de_nl_be/statistics.txt
+================================================================================
+
+episode figures in EVRoutingEnv/results/scenario_check_de_nl_be

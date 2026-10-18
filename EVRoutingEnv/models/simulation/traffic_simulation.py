@@ -432,17 +432,6 @@ class TrafficSimulator:
         self.random_streams = random_streams or ScenarioRandomStreams(self.seed)
         self.clear_cache()
 
-    def reset_journey_counters(self):
-        """
-        Reset journey counters for a new episode.
-
-        Call this at the start of each episode to ensure consistent
-        uncertainty across episodes with the same seed.
-        """
-        self._journey_counters.clear()
-        self._pending_energy.clear()
-        self._anonymous_counter = 0
-
     def clear_cache(self):
         """
         Clear the uncertainty cache.

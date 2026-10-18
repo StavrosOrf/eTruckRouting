@@ -3,9 +3,6 @@ Truck class representing individual delivery vehicles.
 """
 import math
 
-import numpy as np
-
-
 class Truck:
     """Represents a delivery truck with battery, route, and state information."""
     
@@ -492,26 +489,6 @@ class Truck:
         )
         self.current_state = "waiting_to_charge"
     
-    def finish_waiting(self, timestamp: float):
-        """
-        Mark truck as finishing waiting period.
-        
-        Args:
-            timestamp: Current simulation time
-        """
-        if self.waiting_start_time is not None:
-            wait_duration = timestamp - self.waiting_start_time
-            
-            self._record_event(
-                event_type="WAITING_END",
-                timestamp=timestamp,
-                details={
-                    "wait_duration_hours": wait_duration,
-                    "wait_start_time": self.waiting_start_time
-                }
-            )
-            self.waiting_start_time = None
-    
     def add_waiting_time(self, wait_duration: float, timestamp: float | None = None):
         """
         Add waiting time at a charging station.
@@ -742,30 +719,7 @@ class Truck:
             "num_charging_sessions": self.num_charging_sessions,
             "detour_last_action_was_charge": self.detour_last_action_was_charge,
             "detour_charger_hops_since_delivery": self.detour_charger_hops_since_delivery,
-            # This legacy node-ID difference sum telescopes; preserve its value
-            # without rescanning the entire shared customer list for each truck.
-            "total_distance_to_travel": self.delivery_sequence[-1] - self.delivery_sequence[0],
         }
-    
-    def get_state_vector(self) -> np.ndarray:
-        """
-        Get truck state as a numpy array (for RL observation).
-        
-        Returns:
-            Numpy array containing normalized state values
-        """
-        state = self.get_state_dict()
-        return np.array([
-            float(state["current_node"]),
-            float(state["next_delivery_target"]),
-            state["current_battery"],
-            state["battery_percentage"] / 100.0,  # Normalize to [0, 1]
-            float(state["is_charging"]),
-            float(state["is_complete"]),
-            float(state["deliveries_remaining"]),
-            state["total_distance"],
-            state["total_time"],
-        ], dtype=np.float32)
     
     def get_event_history(self) -> list[dict]:
         """

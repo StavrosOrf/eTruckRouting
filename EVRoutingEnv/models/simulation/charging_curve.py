@@ -342,15 +342,6 @@ class ChargingCurveModel:
             cache[order] = np.polynomial.legendre.leggauss(order)
         return cache[order]
 
-    @staticmethod
-    def _cccv_power_array(soc, peak_power, taper_start_soc, taper_power_min):
-        """Vectorised twin of :meth:`cccv_power_at_soc` (same piecewise curve)."""
-        ramp1 = peak_power * (0.6 + 0.3 * (soc / 0.1))
-        ramp2 = peak_power * (0.9 + 0.1 * ((soc - 0.1) / 0.4))
-        progress = np.clip((soc - taper_start_soc) / (1.0 - taper_start_soc), 0.0, None)
-        taper = np.maximum(peak_power * (1.0 - (1.0 - 0.4) * progress ** 1.5), taper_power_min)
-        return np.where(soc < 0.1, ramp1, np.where(soc < 0.5, ramp2, np.where(soc < taper_start_soc, peak_power, taper)))
-
     def _linear_charge(
         self,
         initial_soc: float,

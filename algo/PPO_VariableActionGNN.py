@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from torch_geometric.data import Batch, HeteroData
 
-from algo.PPO_actionGNN import BATCH_EXCLUDE_KEYS, GNNFeatureEncoder
 from algo.action_heads import ActionHeadOutput, build_action_head
+from algo.gnn_encoder import BATCH_EXCLUDE_KEYS, GNNFeatureEncoder
 
 
 VARIABLE_BATCH_EXCLUDE_KEYS = BATCH_EXCLUDE_KEYS + [

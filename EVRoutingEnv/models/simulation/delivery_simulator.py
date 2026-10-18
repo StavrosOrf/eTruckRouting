@@ -271,15 +271,6 @@ class DeliverySimulator:
         self.random_streams = random_streams or ScenarioRandomStreams(self.seed)
         self.clear_cache()
 
-    def reset_delivery_counters(self):
-        """
-        Reset delivery counters for a new episode.
-
-        This should be called at the start of each episode to ensure
-        consistent delivery counting across episodes.
-        """
-        self._delivery_counters.clear()
-
     def clear_cache(self):
         """
         Clear all cached uncertainty values and counters.

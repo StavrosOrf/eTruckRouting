@@ -10,8 +10,6 @@ This flattened state space mirrors the GNN state representation,
 including all truck, delivery, and charger features.
 """
 
-from typing import Any
-
 import numpy as np
 from gymnasium import spaces
 
@@ -371,93 +369,5 @@ class StateSpace:
             time = transport_graph.get_time_distance(active_truck.current_node, node_id)
             features[4] = energy / 1000.0 if not np.isinf(energy) else 0.0
             features[5] = time / self.max_time if not np.isinf(time) else 0.0
-        
+
         return features
-
-    @property
-    def state_shape(self) -> tuple:
-        """Get the shape of the state array."""
-        return self.observation_space.shape
-
-    @property
-    def state_size(self) -> int:
-        """Get the total size of the state vector."""
-        return self.observation_space.shape[0]
-    
-    def get_feature_info(self) -> dict[str, Any]:
-        """
-        Get information about the state features and their positions.
-        
-        Returns:
-            Dictionary with feature dimensions and offsets
-        """
-        truck_offset = 0
-        delivery_offset = truck_offset + self.num_trucks * self._truck_feature_dim
-        charger_offset = delivery_offset + self.num_stops * self._delivery_feature_dim
-        global_offset = charger_offset + self.num_charging_nodes * self._charger_feature_dim
-        
-        return {
-            'total_size': self._total_size,
-            'truck_features': {
-                'count': self.num_trucks,
-                'features_per_truck': self._truck_feature_dim,
-                'offset': truck_offset,
-                'size': self.num_trucks * self._truck_feature_dim,
-                'feature_names': [
-                    'node_type', 'current_position', 'battery_level', 'battery_percentage',
-                    'state_ready', 'state_routing', 'state_waiting', 'state_charging',
-                    'deliveries_done', 'deliveries_remaining', 'time_elapsed',
-                    'distance_traveled', 'time_to_destination', 'reserved'
-                ],
-            },
-            'delivery_features': {
-                'count': self.num_stops,
-                'features_per_delivery': self._delivery_feature_dim,
-                'offset': delivery_offset,
-                'size': self.num_stops * self._delivery_feature_dim,
-                'feature_names': ['node_type', 'node_id', 'delivery_sequence_index', 'energy_to_reach', 'time_to_reach'],
-            },
-            'charger_features': {
-                'count': self.num_charging_nodes,
-                'features_per_charger': self._charger_feature_dim,
-                'offset': charger_offset,
-                'size': self.num_charging_nodes * self._charger_feature_dim,
-                'feature_names': ['node_type', 'node_id', 'occupancy_rate', 'queue_length', 'energy_to_reach', 'time_to_reach'],
-            },
-            'global_features': {
-                'count': 1,
-                'features': self._global_feature_dim,
-                'offset': global_offset,
-                'size': self._global_feature_dim,
-                'feature_names': ['global_clock', 'active_truck_id'],
-            },
-        }
-
-
-def action_to_string(
-    action: int,
-    num_charging_nodes: int,
-    num_navigation_actions: int,
-    charging_nodes: list,
-) -> str:
-    """
-    Convert action integer to human-readable string.
-
-    Args:
-        action: Action index
-        num_charging_nodes: Number of charging stations
-        num_navigation_actions: Number of navigation actions
-        charging_nodes: List of charging station nodes
-
-    Returns:
-        Human-readable action description
-    """
-    if action < num_charging_nodes:
-        node = charging_nodes[action]
-        return f"Go to charger @ node {node}"
-    elif action == num_charging_nodes:
-        return "Go to next delivery"
-    else:
-        charge_idx = action - num_navigation_actions
-        hours = charge_idx + 1
-        return f"Charge for {hours}h"

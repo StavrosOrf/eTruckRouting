@@ -144,16 +144,6 @@ class TransportationGraph:
             self._cost_matrices = (index, energy, hours)
         return self._cost_matrices
 
-    @staticmethod
-    def _finite_path_value(function, source: int, target: int) -> float | None:
-        try:
-            value = float(function(int(source), int(target)))
-        except (KeyError, TypeError, ValueError):
-            return None
-        if not np.isfinite(value) or value < 0.0:
-            return None
-        return value
-
     def _extract_charging_nodes(self) -> list[int]:
         """Extract all nodes that have charging stations."""
         return [
@@ -321,93 +311,6 @@ class TransportationGraph:
             self._path_cache[pair] = path
         self._populated_sources.add(source_node)
 
-    def get_edge_data(self, from_node: int, to_node: int) -> dict:
-        """
-        Get edge data between two nodes.
-
-        Args:
-            from_node: Starting node
-            to_node: Destination node
-
-        Returns:
-            Dictionary containing edge attributes (distance, time, terrain_factor)
-        """
-        if self.graph.has_edge(from_node, to_node):
-            return self.graph[from_node][to_node]
-        return {}
-
-    def get_neighbors(self, node: int) -> list[int]:
-        """
-        Get all neighboring nodes (direct connections).
-
-        Args:
-            node: Node to get neighbors for
-
-        Returns:
-            List of neighboring node IDs
-        """
-        return list(self.graph.neighbors(node))
-
-    def generate_delivery_sequence(
-        self,
-        start_node: int,
-        num_stops: int,
-        min_hop_energy_kwh: float = 0.0,
-        max_hop_energy_kwh: float = math.inf,
-        exclude_charging_nodes: bool = False,
-        rng: np.random.Generator | None = None,
-    ) -> list[int]:
-        """
-        Generate a candidate sequence with strict nominal hop-energy bounds.
-
-        This legacy utility does not certify EVRP solvability; environments use
-        generate_joint_routing_instance and replay a complete fleet witness.
-
-        Args:
-            start_node: Starting node for the delivery sequence
-            num_stops: Number of delivery stops (excluding start)
-            min_hop_energy_kwh: Minimum nominal energy between consecutive stops
-            max_hop_energy_kwh: Maximum nominal energy between consecutive stops
-            exclude_charging_nodes: If True, avoid charging nodes as delivery stops
-            rng: Optional episode-scoped generator for reproducible instances
-
-        Returns:
-            List of nodes representing the delivery sequence [start, stop1, stop2, ...]
-        """
-        if (not math.isfinite(min_hop_energy_kwh) or min_hop_energy_kwh < 0.0
-                or math.isnan(max_hop_energy_kwh)
-                or max_hop_energy_kwh < min_hop_energy_kwh):
-            raise ValueError("hop energy bounds must satisfy 0 <= min <= max")
-        if num_stops < 0 or start_node not in self.graph:
-            raise ValueError("invalid start node or stop count")
-
-        # Get candidate nodes (excluding charging nodes if requested) and avoid sinks
-        graph_ref = self.graph
-        def _is_sink(node_id: int) -> bool:
-            return graph_ref.out_degree(node_id) == 0
-
-        if exclude_charging_nodes:
-            candidate_nodes = [
-                n for n in self.get_all_nodes() if n not in self.charging_nodes and not _is_sink(n)
-            ]
-        else:
-            candidate_nodes = [n for n in self.get_all_nodes() if not _is_sink(n)]
-
-        generator = np.random.default_rng() if rng is None else rng
-        for _ in range(1000):
-            sequence = [int(start_node)]
-            for _ in range(num_stops):
-                valid = [int(node) for node in candidate_nodes
-                         if node not in sequence
-                         and min_hop_energy_kwh <= self.get_path_energy(sequence[-1], node) <= max_hop_energy_kwh
-                         and math.isfinite(self.get_path_energy(sequence[-1], node))]
-                if not valid:
-                    break
-                sequence.append(int(generator.choice(valid)))
-            if len(sequence) == num_stops + 1:
-                return sequence
-        raise ValueError("could not generate a sequence within hop-energy bounds; no bounds relaxed")
-
     def get_nearest_charging_node(self, from_node: int) -> tuple[int, float]:
         """
         Find the nearest charging station from a given node.
@@ -495,10 +398,6 @@ class TransportationGraph:
         """
         info = self.get_charger_info(node)
         return info.get("total_capacity", 0.0)
-
-    def has_charger(self, node: int) -> bool:
-        """Check if a node has a charging station."""
-        return node in self.charging_nodes
 
     def clear_distance_cache(self):
         """Clear all paired route costs and paths from memory."""

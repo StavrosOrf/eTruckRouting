@@ -127,18 +127,17 @@ EVRoutingEnv/
     core/                  # Truck and transportation-graph primitives
     environment/           # Event-driven and curriculum environments
     simulation/            # Traffic, charging-curve, charger, delivery models
-  state/                   # Linear, heterogeneous GNN, VRP, and action-mask states
+  state/                   # Flat, heterogeneous GNN, VRP, and action-mask states
   baselines/               # Heuristic, classical VRP, and Gurobi policies
   config_files/            # Experiment configuration files
   data/case_studies/       # Case studies, one folder each: california (default), texas, pacific_northwest, seattle, chicago
   utils/                   # Plotting, statistics, config, charging logs
 algo/
   PPO_VariableActionGNN.py # Variable-action PPO with action-graph head
-  PPO_actionGNN.py         # PPO actor-critic over GNN state
-  networks.py              # Neural-network components
+  gnn_encoder.py           # Shared heterogeneous-GNN encoder components
 scripts/
   training/                # PPO, curriculum, and SB3 training entry points
-  evaluation/              # Policy comparison, parallel eval, generalization
+  evaluation/              # Canonical policy comparison and generalization
   analysis/                # Route, network, schedule, and state inspection
   runners/                 # tmux/grid experiment launchers
 ```
@@ -360,24 +359,20 @@ number of scenarios, and seeds, run:
 uv run python scripts/evaluation/eval_policies.py
 ```
 
-For larger comparisons, use the parallel evaluator. It is also configured by
-constants near the top of the file:
+For reproducible multi-method comparisons, use the canonical campaign runner.
+It evaluates methods in parallel when `--workers` is greater than one:
 
 ```bash
-uv run python scripts/evaluation/eval_parallel_policies.py
+uv run python scripts/evaluation/run_canonical_campaign.py \
+  --split validation --scenarios 50 --workers 8
 ```
 
-To evaluate size-matched policies across the default truck/stop grid:
+Generalization and size-transfer experiments use the canonical generalization
+runner with a frozen methods JSON file:
 
 ```bash
-uv run python scripts/evaluation/eval_parallel_by_size.py
-```
-
-Grid generalization experiments are configured near the top of
-`scripts/evaluation/generalization_eval.py`:
-
-```bash
-uv run python scripts/evaluation/generalization_eval.py
+uv run python scripts/evaluation/run_generalization_campaign.py \
+  --methods results/canonical/methods.json --workers 8
 ```
 
 Evaluation outputs include per-episode metrics, summary CSV files, policy

@@ -1862,25 +1862,6 @@ class GNNStateSpace:
         
         return np.array(features, dtype=np.float32)
 
-    # ==================== Edge Feature Functions ====================
-
-    def _get_edge_features(self, src_node_id: int, dst_node_id: int, env) -> list:
-        """
-        Get edge features between two nodes.
-        
-        Edge Features (normalized):
-        - Energy distance (normalized by dividing by 1000)
-        - Time to traverse (normalized by max simulation time)
-        """
-        energy_dist = env.transport_graph.get_path_energy(src_node_id, dst_node_id)
-        time_to_traverse = env.transport_graph.get_time_distance(src_node_id, dst_node_id)
-        
-        # Normalize edge features
-        energy_dist_norm = energy_dist / 1000.0
-        time_to_traverse_norm = time_to_traverse / self.max_time
-        
-        return [energy_dist_norm, time_to_traverse_norm]
-
     def _build_action_graph_features(
         self,
         env,
@@ -1982,28 +1963,6 @@ class GNNStateSpace:
         
         return torch.tensor(features, dtype=torch.float32, device=self.device)
 
-    # ==================== Utility Functions ====================
-
-    def get_state_dict_for_gnn(self, env) -> dict:
-        """
-        Get complete state information for GNN as dictionary.
-
-        Returns:
-            Dictionary with environment state and metadata
-        """
-        return {
-            "graph": self.get_state_GNN(env),
-            "active_truck_id": env.active_truck_id,
-            "global_clock": env.global_clock,
-            "num_trucks": env.num_trucks,
-            "num_deliveries_remaining": (
-                len(env.trucks[env.active_truck_id].get_remaining_deliveries())
-                if env.active_truck_id is not None
-                else 0
-            ),
-            "max_time": env.max_time,
-        }
-
     def get_action_graph(self, env) -> dict:
         """Convenience wrapper returning action graph metadata.
 
@@ -2019,31 +1978,3 @@ class GNNStateSpace:
             "feasible_action_mask": feasible_mask_to_numpy(getattr(data, "feasible_action_mask", None)),
             "action_to_node_map": getattr(data, "action_to_node_map", []),
         }
-
-    @staticmethod
-    def graph_to_numpy(data: HeteroData) -> dict:
-        """Convert PyTorch Geometric HeteroData to numpy for inspection."""
-        result = {}
-        
-        # Node features
-        for node_type in data.node_types:
-            result[f'{node_type}_x'] = data[node_type].x.cpu().numpy()
-        
-        # Edge features
-        for edge_type in data.edge_types:
-            result[f'{edge_type}_edge_index'] = data[edge_type].edge_index.cpu().numpy()
-            result[f'{edge_type}_edge_attr'] = data[edge_type].edge_attr.cpu().numpy()
-        
-        return result
-
-    @staticmethod
-    def visualize_graph_info(data: HeteroData):
-        """Print information about the heterogeneous graph."""
-        print("PyTorch Geometric HeteroData Graph")
-        print("Node types:")
-        for node_type in data.node_types:
-            print(f"  - {node_type}: {data[node_type].x.shape[0]} nodes, {data[node_type].x.shape[1]} features")
-        print("Edge types:")
-        for edge_type in data.edge_types:
-            num_edges = data[edge_type].edge_index.shape[1]
-            print(f"  - {edge_type}: {num_edges} edges")

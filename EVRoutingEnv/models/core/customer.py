@@ -104,8 +104,11 @@ class FleetTaskRegistry:
                 )
             self._tasks_by_id[task.task_id] = task
             self._task_id_by_node[task.node_id] = task.task_id
+        self._ordered_tasks = tuple(self._tasks_by_id[key] for key in sorted(self._tasks_by_id))
+        self._served_count = sum(task.is_served for task in task_list)
         self.sequential = sequential
         self._truck_sequences: dict[int, list[CustomerTask]] = {}
+        self._sequence_cursors: dict[int, int] = {}
         if sequential:
             for task in task_list:
                 if task.preassigned_to is None or task.sequence_position is None:
@@ -119,10 +122,12 @@ class FleetTaskRegistry:
 
     def next_task_for_truck(self, truck_id: int) -> CustomerTask | None:
         """First unfinished task in a truck's prescribed route."""
-        return next(
-            (task for task in self._truck_sequences.get(truck_id, ()) if not task.is_served),
-            None,
-        )
+        sequence = self._truck_sequences.get(truck_id, ())
+        position = self._sequence_cursors.get(truck_id, 0)
+        while position < len(sequence) and sequence[position].is_served:
+            position += 1
+        self._sequence_cursors[truck_id] = position
+        return sequence[position] if position < len(sequence) else None
 
     def is_next_customer(self, node_id: int, truck_id: int) -> bool:
         if not self.sequential:
@@ -147,7 +152,7 @@ class FleetTaskRegistry:
         return iter(self.tasks())
 
     def tasks(self) -> list[CustomerTask]:
-        return [self._tasks_by_id[key] for key in sorted(self._tasks_by_id)]
+        return list(self._ordered_tasks)
 
     def task_for_node(self, node_id: int) -> CustomerTask:
         try:
@@ -235,6 +240,7 @@ class FleetTaskRegistry:
         ):
             raise ValueError("service cannot complete before it starts")
         task.status = TaskStatus.SERVED
+        self._served_count += 1
         task.served_at = timestamp
         task.served_by = truck_id
         return task
@@ -252,7 +258,7 @@ class FleetTaskRegistry:
         return task
 
     def all_served(self) -> bool:
-        return all(task.is_served for task in self._tasks_by_id.values())
+        return self._served_count == len(self._tasks_by_id)
 
     def counts(self) -> dict[str, int]:
         return {

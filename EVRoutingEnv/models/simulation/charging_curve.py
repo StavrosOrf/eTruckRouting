@@ -10,7 +10,6 @@ import math
 from itertools import pairwise
 
 import numpy as np
-
 from scipy.integrate import quad
 
 
@@ -23,14 +22,17 @@ class ChargingCurveModel:
     2. CCCV: Realistic DC fast charging with power tapering at high SOC
     """
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, *, record_power_curve: bool = True):
         """
         Initialize charging curve model.
 
         Args:
             verbose: Enable detailed logging of charging calculations
+            record_power_curve: Sample intermediate target-SoC plotting points.
+                Private certificate replay only needs the physical integral.
         """
         self.verbose = verbose
+        self.record_power_curve = record_power_curve
 
     def calculate_charge(
         self,
@@ -186,8 +188,13 @@ class ChargingCurveModel:
                     if initial_soc < value < target_soc
                 ),
                 *(
+                    value
+                    for value in (self._taper_floor_soc(peak_power, taper_start_soc, taper_power_min),)
+                    if not self.record_power_curve and initial_soc < value < target_soc
+                ),
+                *(
                     initial_soc + (target_soc - initial_soc) * i / 20
-                    for i in range(1, 20)
+                    for i in (range(1, 20) if self.record_power_curve else ())
                 ),
             }
         )
@@ -195,7 +202,7 @@ class ChargingCurveModel:
             integral, _ = quad(
                 lambda soc: (
                     peak_power
-                    / self.cccv_power_at_soc(
+                    / self._cccv_power_unchecked(
                         soc, peak_power, taper_start_soc, taper_power_min
                     )
                 ),
@@ -241,6 +248,11 @@ class ChargingCurveModel:
             "power_curve": power_curve,
         }
         return delivered, details
+
+    @staticmethod
+    def _taper_floor_soc(peak_power, taper_start_soc, taper_power_min):
+        progress = ((1.0 - taper_power_min / peak_power) / 0.6) ** (2.0 / 3.0)
+        return taper_start_soc + progress * (1.0 - taper_start_soc)
 
     def charge_hours_to_target_fast(
         self,
@@ -436,6 +448,14 @@ class ChargingCurveModel:
             raise ValueError("taper_start_soc must be in (0, 1)")
         if not 0.0 < taper_power_min <= peak_power:
             raise ValueError("taper_power_min must be in (0, peak_power]")
+
+        return ChargingCurveModel._cccv_power_unchecked(
+            soc, peak_power, taper_start_soc, taper_power_min,
+        )
+
+    @staticmethod
+    def _cccv_power_unchecked(soc, peak_power, taper_start_soc, taper_power_min):
+        """Same curve for integrators whose inputs were validated once already."""
 
         if soc < 0.1:
             # Initial ramp-up (0-10%): start at ~60% power.

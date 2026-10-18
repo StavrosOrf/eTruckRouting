@@ -12,8 +12,9 @@ min_population: 1000
 min_place_spacing_m: 5000
 chargers_source: osm                   # no AFDC outside the US: DC sockets of amenity=charging_station
 min_charger_kw: 50
-max_chargers: 650                      # about Texas' 648; all ~3000+ DC sites would give a ~10M-pair matrix
-charger_merge_m: 1000
+max_chargers: 0                        # keep every merged DC site (5 km merge keeps the node count manageable)
+charger_merge_m: 5000                  # DC sites within 5 km become one node (ports add up)
+charger_merge_linkage: complete        # every pair inside a node is within the radius
 max_snap_m: 5000
 max_road_class: unclassified           # motorway .. unclassified; residential streets are left out
 terrain_zoom: 11                       # about 48 m per pixel at this latitude

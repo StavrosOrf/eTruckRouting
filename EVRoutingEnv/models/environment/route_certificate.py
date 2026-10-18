@@ -34,7 +34,7 @@ def construct_energy_routes(
 
     Partition/order are hidden witnesses in fleet mode, not imposed ownership.
     Reserve uses worst-case energy, including the exit from every customer.
-    Chargers may be chained; no artificial one-charger-hop restriction applies.
+    Each depot/customer segment visits at most one charging station.
     Bounds apply to nominal depot/customer->next-customer legs in this witness,
     not to charging detours or depot retirement.
     """
@@ -120,6 +120,8 @@ def construct_energy_routes(
                     return (*prefix, (destination, 0.0, False)), max(
                         0.0, departure_battery - to_destination
                     )
+                if node in charger_set:
+                    continue  # A second station would violate the segment limit.
                 if matrices is None:
                     for target, required, hours in reachable_chargers(node, departure_battery):
                         remaining = max(0.0, departure_battery - required)
@@ -180,7 +182,7 @@ def construct_energy_routes(
                         (new_cost, next(serial), chargers[k], remaining, (*prefix, (chargers[k], 0.0, False))),
                     )
         raise NoFeasibleCertificate(
-            "no complete battery-feasible customer/charger path"
+            "no complete battery-feasible path through at most one charging station"
         )
 
     routes = []
@@ -205,7 +207,7 @@ def construct_energy_routes(
     return tuple(routes)
 
 
-def replay_routes(env, routes):
+def replay_routes(env, routes, *, step=None):
     """Run a witness on an isolated, freshly reset simulator state.
 
     Skip a planned recharge only if the realized SoC already exceeds its target.
@@ -214,6 +216,10 @@ def replay_routes(env, routes):
     """
     positions = [0] * len(routes)
     trace = []
+    step = env.step if step is None else step
+    charger_actions = {node: i for i, node in enumerate(env.charging_nodes)}
+    charge_actions = {value: env.num_navigation_actions + i
+                      for i, value in enumerate(env.charge_action_values)}
     while not env._episode_ended:
         tid = env.active_truck_id
         if tid is None or positions[tid] >= len(routes[tid]):
@@ -232,16 +238,16 @@ def replay_routes(env, routes):
         ):
             continue
         if charging:
-            action = env.num_navigation_actions + env.charge_action_values.index(value)
+            action = charge_actions[value]
         elif node == env.joint_instance.depot_node:
             action = env.num_charging_nodes + env.fixed_num_stops
-        elif node in env.charging_nodes:
-            action = env.charging_nodes.index(node)
+        elif node in charger_actions:
+            action = charger_actions[node]
         else:
             task = env.task_registry.task_for_node(node)
             action = env.num_charging_nodes + task.task_id
         trace.append((tid, action))
-        env.step(action)
+        step(action)
         if env.invalid_action_count or any(truck.failed for truck in env.trucks):
             raise NoFeasibleCertificate(
                 "witness failed under configured execution semantics"

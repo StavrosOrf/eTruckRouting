@@ -130,7 +130,7 @@ EVRoutingEnv/
   state/                   # Linear, heterogeneous GNN, VRP, and action-mask states
   baselines/               # Heuristic, classical VRP, and Gurobi policies
   config_files/            # Experiment configuration files
-  data/                    # Network, station, travel-time, and energy data
+  data/case_studies/       # Case studies, one folder each: california (default), texas, pacific_northwest, seattle, chicago
   utils/                   # Plotting, statistics, config, charging logs
 algo/
   PPO_VariableActionGNN.py # Variable-action PPO with action-graph head
@@ -234,6 +234,24 @@ configuration and independent-route loader have been removed. The old
 `delivery.enable_flexible_delivery_order` setting is rejected: select the mode
 through `problem.mode`.
 
+Scenarios use route-first random walks (`route-walk-v2-single-charger`): choose a shared depot,
+build one closed walk per truck, and select unique delivery nodes along those
+walks. Every segment between consecutive depot/customer stops visits at most
+one charging station, including departure from and return to the depot. The
+sampler chooses a station and the next delivery together, and reserves energy
+for a direct or one-station depot return, optionally via another delivery.
+Demands fit each witness truck's payload. Flexible-mode task IDs are
+shuffled so they do not disclose the hidden witness order or fleet assignment;
+sequential tasks retain their public prescribed order.
+
+Map/vehicle energy lookups are prepared at environment initialization and reused
+across resets. Small random proposal batches and swap-delete customer pools
+avoid solving routes for randomly scattered customers. A bounded full-pool scan
+is used when a proposal batch misses all feasible customers. Generation therefore
+scales with workload and map size; constant millisecond latency for arbitrary
+fleet/customer counts is not guaranteed. The fixed road graph must still contain
+enough distinct eligible nodes for all customers and the depot.
+
 Every accepted reset has a complete feasible fleet witness, replayed on isolated
 simulator state using that scenario's stochastic seed. Certification includes
 initial SoC, payload/ownership/order, configured charging actions and station
@@ -246,13 +264,26 @@ existence of a solution for the seeded scenario, not that every policy or every
 possible stochastic realization succeeds. `info["instance_feasibility"]` reports
 certification; `env.feasibility_witness` contains replayable `(truck_id, action)`
 pairs for debugging, outside policy observations.
+Private replay uses the same action validators and event handlers, omitting
+policy observations, reward accounting, and enumeration of alternative actions.
+Scenario descriptors record `generator_version`; the scenario disk-cache version
+is bumped so previous generators' instances are not reused for the same seed.
+Measure uncached construction, certification, and complete reset separately with
+`.venv/bin/python scripts/analysis/benchmark_scenario_generation.py --seeds 10`.
+This compares California and Texas and reports charging sessions and route
+length per truck. Texas road distances use its stored OD road-route lengths;
+the simulator's time-times-speed distance proxy is labelled separately.
+For an explicit workload-scaling test on a synthetic hub-and-spoke map, add
+`--synthetic --trucks 1 10 100 --deliveries-per-truck 20`.
 
 The inactive `min_hop_distance`/`max_hop_distance` keys are removed and rejected.
 Use `environment.min_hop_energy_kwh` (default 0) and `max_hop_energy_kwh`
 (default `null`, unbounded). These constrain nominal energy from the depot or
 previous customer to the next customer in the generated witness. They do not
-restrict policy reordering, charger detours, or early depot retirement. Charger
-chains have no arbitrary one-hop cap; the configured action budget still applies.
+restrict policy reordering, charger detours, or early depot retirement. Generated
+witnesses obey the one-station-per-segment limit and the configured action budget.
+The limit guarantees a feasible witness without consecutive station visits;
+it does not change the simulator's policy action space.
 No kWh quantity is presented as measured kilometres.
 The shipped `energy_ramp` curriculum keeps its actual battery/noise ramp with
 unrestricted hop-energy defaults; its old, inactive distance overrides are gone.

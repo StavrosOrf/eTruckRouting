@@ -1,7 +1,7 @@
 {
  "name": "chicago",
  "title": "Chicagoland (IL)",
- "generated_utc": "2026-10-17T22:13:19Z",
+ "generated_utc": "2026-10-17T22:31:21Z",
  "preset": {
   "name": "chicago",
   "title": "Chicagoland (IL)",
@@ -22,7 +22,7 @@
   "max_chargers": 0,
   "charger_merge_m": 5000,
   "charger_merge_linkage": "complete",
-  "max_snap_m": 400,
+  "max_snap_m": 2000,
   "vehicle_profile": "heavy_truck",
   "seed": 0,
   "workers": 32

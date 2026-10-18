@@ -3,9 +3,10 @@
     python scripts/casestudies/generate_scenarios.py EVRoutingEnv/config_files/config_joint_texas.yaml \
         --seeds 0:2000 --workers 16 --out /path/to/scenario_cache
 
-A reset on a state-scale case spends seconds to a minute in the solvability certificate (a search
-through hundreds of chargers). The result depends only on the scenario seed, the config and the
-network, so it is generated once here and reused: point ``environment.scenario_cache_dir`` in the config
+A reset constructs battery-safe random walks and certifies their physical events. Large workloads
+can still spend substantial time replaying queues, traffic and service. The result depends only on
+the scenario seed, config and network, so it can be generated once here and reused: point
+``environment.scenario_cache_dir`` in the config
 (or the ``EVRP_SCENARIO_CACHE`` environment variable) at ``--out``; ``reset(seed=s)`` then loads the
 stored instance in milliseconds and the episode is identical to one generated on the spot.
 

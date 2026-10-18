@@ -1,0 +1,9 @@
+[01:39:20] === de_nl_be
+[01:39:20]   region bbox (47.2, 2.5, 55.15, 15.1)
+[01:39:20] using cached road network de_nl_be_3de9ce2d0d.pkl
+[01:42:56]   DC-fast: 6854 stations (22828 ports) -> 2275 merged sites -> 2273 road-snapped nodes -> 2273 charger nodes (22824 ports)
+[01:43:36]   terminals: 2273 chargers, 4 depots, 230 customers
+[01:43:38]   computing all-pairs minimum-energy routes between terminals
+[02:23:39]   OD rows 40/2507
+[02:26:29]   OD rows 80/2507
+[02:30:09]   OD rows 120/2507

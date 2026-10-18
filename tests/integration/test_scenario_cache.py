@@ -38,3 +38,6 @@ def test_scenario_cache_round_trip(tmp_path, monkeypatch):
     other = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
     other.config["truck"]["battery_capacity"] = 450.0
     assert other._scenario_cache_path([450.0, 450.0]) != writer._scenario_cache_path([450.0, 450.0])
+    current_path = writer._scenario_cache_path([400.0, 400.0])
+    monkeypatch.setattr(writer, "SCENARIO_CACHE_VERSION", 2)
+    assert writer._scenario_cache_path([400.0, 400.0]) != current_path

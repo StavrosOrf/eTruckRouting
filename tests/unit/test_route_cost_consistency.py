@@ -1,6 +1,8 @@
 """Energy and time must describe the same executable route."""
 
 import math
+import random
+from itertools import pairwise
 
 import networkx as nx
 
@@ -110,3 +112,46 @@ def test_shipped_negative_energy_od_uses_an_executable_alternate_route():
     assert math.isfinite(travel_time) and travel_time >= 0.0
     assert path[0] == origin and path[-1] == target
     assert all(graph[u][v]["distance"] >= 0.0 for u, v in zip(path, path[1:]))
+
+
+def test_prevalidated_edges_preserve_exhaustive_route_ordering():
+    """Check energy/time/hop/lexicographic ties against independent enumeration."""
+    for seed in range(4):
+        rng = random.Random(seed)
+        graph = nx.DiGraph()
+        graph.add_nodes_from(range(7))
+        for a in graph:
+            for b in graph:
+                if a != b and rng.random() < 0.7:
+                    graph.add_edge(a, b, distance=float(rng.randrange(4)), time=float(rng.randrange(4)))
+        graph.add_edge(0, 1, distance=-1.0, time=0.0)
+        usable = graph.copy()
+        usable.remove_edge(0, 1)
+        transport = TransportationGraph(graph, precompute_distances=False)
+        for a in graph:
+            for b in graph:
+                candidates = [(0.0, 0.0, 0, (a,))] if a == b else []
+                if a != b:
+                    for path in nx.all_simple_paths(usable, a, b):
+                        legs = [usable[u][v] for u, v in pairwise(path)]
+                        candidates.append((sum(e["distance"] for e in legs),
+                                           sum(e["time"] for e in legs), len(legs), tuple(path)))
+                expected = min(candidates) if candidates else (math.inf, math.inf, 0, ())
+                assert transport.get_leg_costs(a, b) == expected[:2]
+                assert tuple(transport.get_shortest_path(a, b)) == expected[3]
+
+
+def test_prevalidated_edges_and_matrices_refresh_after_scaling_and_mutation():
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, distance=2.0, time=3.0)
+    graph.add_edge(1, 0, distance=4.0, time=5.0)
+    transport = TransportationGraph(graph, precompute_distances=False)
+    assert transport.get_leg_costs(0, 1) == (2.0, 3.0)
+    transport.scale_network(energy_scale=2.0, time_scale=3.0)
+    # Source 1 was not populated before scaling: it must use refreshed edges.
+    assert transport.get_leg_costs(1, 0) == (8.0, 15.0)
+    old_matrix = transport.cost_matrices()
+    graph[1][0]["distance"] = 7.0
+    transport.clear_distance_cache()
+    assert transport.get_leg_costs(1, 0) == (7.0, 15.0)
+    assert transport.cost_matrices() is not old_matrix

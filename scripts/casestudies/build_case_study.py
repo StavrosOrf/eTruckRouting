@@ -336,7 +336,7 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
     snap = Snapper(net)
     max_snap = float(preset["max_snap_m"])
 
-    # --- chargers: every public DC-fast site, merged within charger_merge_m (single linkage)
+    # --- chargers: every public DC-fast site, merged within charger_merge_m (preset: 5 km, complete linkage)
     sites = []
     charger_source = preset.get("chargers_source", "afdc")
     if charger_source == "afdc":
@@ -351,7 +351,7 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
                        f"{float(preset.get('min_charger_kw', 50.0)):g} kW), ODbL")
     else:
         raise SystemExit(f"unknown chargers_source {charger_source!r} (afdc or osm)")
-    merged = chg.merge_sites(sites, preset["charger_merge_m"], preset.get("charger_merge_linkage", "single"))
+    merged = chg.merge_sites(sites, preset["charger_merge_m"], preset.get("charger_merge_linkage", "complete"))
     # sites that snap to the same road node are one charger node; sites far from any road are dropped
     by_node: dict[int, list[dict]] = {}
     for c in merged:

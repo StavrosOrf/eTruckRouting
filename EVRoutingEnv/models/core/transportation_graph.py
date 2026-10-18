@@ -34,6 +34,7 @@ class TransportationGraph:
         self._ordered_successors = {
             node: tuple(sorted(graph.successors(node))) for node in graph
         }
+        self._route_successors = None
 
         # Distance cache
         self._distance_cache = {}  # (source, target) -> route energy
@@ -100,6 +101,7 @@ class TransportationGraph:
         self._dense_node_index = None
         self._dense_transport = None
         self._cost_matrices = None
+        self._route_successors = None
         # A scaled network must never be written back over the shared cache file.
         self._cache_file = None
 
@@ -114,21 +116,12 @@ class TransportationGraph:
         if self._dense_transport is not None and self._dense_node_index is not None:
             return self._dense_node_index, self._dense_transport
 
-        nodes = sorted(self.graph.nodes())
-        index = {int(node): position for position, node in enumerate(nodes)}
-        values = np.zeros((len(nodes), len(nodes), 3), dtype=np.float32)
-        for source_position, source in enumerate(nodes):
-            for target_position, target in enumerate(nodes):
-                energy = self._finite_path_value(self.get_path_energy, source, target)
-                travel_hours = self._finite_path_value(
-                    self.get_time_distance, source, target
-                )
-                if energy is not None and travel_hours is not None:
-                    values[source_position, target_position] = (
-                        energy,
-                        travel_hours,
-                        1.0,
-                    )
+        index, energy, hours = self.cost_matrices()
+        usable = np.isfinite(energy) & (energy >= 0.0) & np.isfinite(hours) & (hours >= 0.0)
+        values = np.zeros((*energy.shape, 3), dtype=np.float32)
+        values[:, :, 0] = np.where(usable, energy, 0.0)
+        values[:, :, 1] = np.where(usable, hours, 0.0)
+        values[:, :, 2] = usable
         self._dense_node_index = index
         self._dense_transport = values
         return index, values
@@ -286,6 +279,18 @@ class TransportationGraph:
         if source_node not in self.graph:
             self._populated_sources.add(source_node)
             return
+        if self._route_successors is None:
+            # The fixed graph is scanned once per source. Validate/read its
+            # edge costs once rather than repeating NetworkX dictionary access
+            # and float validation for every source/edge combination.
+            self._route_successors = {}
+            for node, neighbors in self._ordered_successors.items():
+                usable = []
+                for neighbor in neighbors:
+                    costs = self._usable_route_costs(self.graph[node][neighbor])
+                    if costs is not None:
+                        usable.append((neighbor, *costs))
+                self._route_successors[node] = tuple(usable)
         # Every edge has non-negative energy and time. Lexicographic Dijkstra
         # gives a stable path even when graph insertion order differs, which is
         # important because disk caches are keyed by edge values, not order.
@@ -296,11 +301,7 @@ class TransportationGraph:
             energy, travel_time, hops, path, node = heapq.heappop(pending)
             if (energy, travel_time, hops, path) != best[node]:
                 continue
-            for neighbor in self._ordered_successors[node]:
-                costs = self._usable_route_costs(self.graph[node][neighbor])
-                if costs is None:
-                    continue
-                leg_energy, leg_time = costs
+            for neighbor, leg_energy, leg_time in self._route_successors[node]:
                 candidate = (
                     energy + leg_energy,
                     travel_time + leg_time,
@@ -504,12 +505,14 @@ class TransportationGraph:
         self._distance_cache.clear()
         self._time_cache.clear()
         self._path_cache.clear()
+        self._route_successors = None
         self._populated_sources.clear()
         self._ordered_successors = {
             node: tuple(sorted(self.graph.successors(node))) for node in self.graph
         }
         self._dense_node_index = None
         self._dense_transport = None
+        self._cost_matrices = None
         print("[TransportationGraph] Distance cache cleared from memory")
 
     def save_distance_cache(self) -> bool:

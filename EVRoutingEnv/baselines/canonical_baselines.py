@@ -701,6 +701,10 @@ def _claimable_customer_nodes(env, truck_id: int) -> list[int]:
     """
     nodes: list[int] = []
     for task in env.task_registry.tasks():
+        if task.preassigned_to is not None and task.preassigned_to != truck_id:
+            continue
+        if not env.task_registry.is_next_customer(task.node_id, truck_id):
+            continue
         if (
             task.status is TaskStatus.UNASSIGNED
             or task.status is TaskStatus.CLAIMED

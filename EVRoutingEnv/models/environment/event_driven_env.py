@@ -41,6 +41,7 @@ from EVRoutingEnv.models.environment.joint_instance import (
     generate_joint_routing_instance,
 )
 from EVRoutingEnv.models.environment.route_certificate import replay_routes
+from EVRoutingEnv.models.environment.route_walk import RouteWalkTopology
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
@@ -538,6 +539,17 @@ class EventDrivenTruckEnv(gym.Env):
         self.scenario_descriptor: dict | None = None
         self.feasibility_witness: tuple[tuple[int, int], ...] = ()
 
+        # Map preparation belongs to initialization, never the first episode's
+        # latency. Subsequent resets only sample routes and replay their events.
+        RouteWalkTopology.for_graph(
+            self.transport_graph, self.charging_nodes,
+            float(self.config["truck"]["battery_capacity"]),
+            (max(1.0, float(self.traffic_config["max_energy_multiplier"]))
+             if self.traffic_config["enable_traffic"] and self.traffic_config["enable_energy_uncertainty"]
+             else 1.0),
+        )
+        self.transport_graph.dense_transport_matrix()
+
     def reset(
         self, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:
@@ -735,7 +747,7 @@ class EventDrivenTruckEnv(gym.Env):
                 )
         self._install_joint_instance(self.joint_instance, initial_batteries)
 
-    SCENARIO_CACHE_VERSION = 1  # bump when generation or certification semantics change
+    SCENARIO_CACHE_VERSION = 3  # at most one station between depot/customer stops
 
     def _scenario_cache_path(self, initial_batteries) -> str | None:
         """Disk path of this scenario's certified instance, or None when caching is off.
@@ -790,17 +802,21 @@ class EventDrivenTruckEnv(gym.Env):
         shared_sequence = [self.joint_instance.depot_node] + [
             task.node_id for task in self.joint_instance.tasks
         ]
+        sequences = {}
+        if self.sequential_routing:
+            for task in self.joint_instance.tasks:
+                sequences.setdefault(task.preassigned_to, []).append(task)
+            sequences = {
+                owner: [self.joint_instance.depot_node] + [
+                    task.node_id for task in sorted(tasks, key=lambda task: task.sequence_position)
+                ]
+                for owner, tasks in sequences.items()
+            }
 
         for truck_id in range(self.num_trucks):
             sequence = shared_sequence
             if self.sequential_routing:
-                sequence = [self.joint_instance.depot_node] + [
-                    task.node_id
-                    for task in sorted(
-                        (task for task in self.joint_instance.tasks if task.preassigned_to == truck_id),
-                        key=lambda task: task.sequence_position,
-                    )
-                ]
+                sequence = sequences.get(truck_id, [self.joint_instance.depot_node])
             truck = Truck(
                 truck_id=truck_id,
                 truck_type="electric",
@@ -875,17 +891,48 @@ class EventDrivenTruckEnv(gym.Env):
         ):
             setattr(shadow, name, copy.deepcopy(getattr(self, name), memo))
         shadow.verbose = shadow.enable_plotting = False
+        shadow._certificate_replay = True
         shadow.event_handler = EventHandler(False)
-        shadow.charging_curve_model = ChargingCurveModel(verbose=False)
+        shadow.charging_curve_model = ChargingCurveModel(verbose=False, record_power_curve=False)
         shadow.charging_logger = None
         shadow.charging_station.verbose = False
         shadow.traffic_simulator.verbose = shadow.delivery_simulator.verbose = False
-        shadow._get_observation = lambda: np.empty(0, dtype=np.float32)
-        shadow._get_info = lambda: {}
         shadow._install_joint_instance(instance, initial_batteries)
         shadow._schedule_initial_decisions()
         shadow._advance_to_next_decision()
-        self.feasibility_witness = replay_routes(shadow, instance.witness_routes)
+        self.feasibility_witness = replay_routes(
+            shadow, instance.witness_routes, step=shadow._certificate_step,
+        )
+
+    def _certificate_step(self, action: int) -> None:
+        """Replay physical transitions without calculating policy observations/rewards.
+
+        The same navigation/charging validators and event handlers as ``step``
+        enforce energy, payload, windows, queues and completion. Only reporting
+        work is omitted on this private simulator state.
+        """
+        truck = self.trucks[self.active_truck_id]
+        if action >= self.num_navigation_actions:
+            self._execute_charge_action(
+                truck, self.charge_action_values[action - self.num_navigation_actions],
+                truck.current_node,
+            )
+        else:
+            if action < self.num_charging_nodes:
+                target = self.charging_nodes[action]
+            elif action == self.num_charging_nodes + self.fixed_num_stops:
+                target = self.joint_instance.depot_node
+            else:
+                target = self.joint_instance.tasks[action - self.num_charging_nodes].node_id
+            self._execute_navigation_action(truck, target)
+        self.episode_steps += 1
+        self._advance_to_next_decision()
+        truncated = self._check_truncated()
+        terminated = self._check_terminated()
+        self._episode_ended = terminated or truncated
+        self._episode_end_flags = (terminated, truncated)
+        if self._episode_ended:
+            self.active_truck_id = None
 
     def _initial_battery(self, battery_capacity: float) -> float:
         """Resolve the configured initial SoC using the instance RNG."""
@@ -944,7 +991,10 @@ class EventDrivenTruckEnv(gym.Env):
                 fleet_truck.delivered_nodes.add(node_id)
 
         depot_node = self.joint_instance.depot_node
-        for fleet_truck in self.trucks:
+        if not self.sequential_routing and not self.task_registry.all_served():
+            return
+        completing = [truck] if self.sequential_routing else self.trucks
+        for fleet_truck in completing:
             if (
                 fleet_truck.failed
                 or fleet_truck.is_complete
@@ -1237,6 +1287,11 @@ class EventDrivenTruckEnv(gym.Env):
                 if self.global_clock >= self.max_time:
                     self.active_truck_id = None
                     continue
+                if getattr(self, "_certificate_replay", False):
+                    # The next witness action is checked by its normal action
+                    # validator. Enumerating all customer/charger alternatives
+                    # at every replay step would make certification quadratic.
+                    return
                 decisions = joint_action_feasibility(self)
                 self.last_action_feasibility = decisions
                 if not any(item.feasible for item in decisions):

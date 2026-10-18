@@ -84,6 +84,8 @@ def build_scenario_descriptor(env) -> dict:
     """Capture the immutable inputs defining one reset scenario."""
     if env.scenario_random_streams is None or env.scenario_seed is None:
         raise RuntimeError("scenario descriptor requires a completed reset")
+    from EVRoutingEnv.models.environment.joint_instance import GENERATOR_VERSION
+
     rng_metadata = env.scenario_random_streams.metadata()
     customers = []
     if env.joint_instance is not None:
@@ -108,6 +110,7 @@ def build_scenario_descriptor(env) -> dict:
         "schema_version": SCENARIO_DESCRIPTOR_VERSION,
         "seed": int(env.scenario_seed),
         "rng_version": str(rng_metadata["version"]),
+        "generator_version": GENERATOR_VERSION,
         "problem_mode": env.problem_mode,
         "config_sha256": canonical_json_sha256(env.config),
         "num_trucks": env.num_trucks,

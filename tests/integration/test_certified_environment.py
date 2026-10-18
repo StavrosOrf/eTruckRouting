@@ -155,7 +155,7 @@ def test_individually_reachable_customers_do_not_certify_a_whole_route(build_env
 
 
 @pytest.mark.parametrize("variant", ["joint", "preassigned", "sequential"])
-def test_certificate_handles_multiple_charger_hops_and_tight_action_limit(
+def test_certificate_rejects_routes_that_require_consecutive_chargers(
     build_env, variant
 ):
     graph = nx.DiGraph()
@@ -170,9 +170,33 @@ def test_certificate_handles_multiple_charger_hops_and_tight_action_limit(
         graph=graph,
         truck={"battery_capacity": 100.0, "initial_battery": "full"},
         environment={"max_episode_steps": 10},
+        reset=False,
     )
-    assert len(env.feasibility_witness) == 10
+    with pytest.raises(ValueError, match="one.charg"):
+        env.reset(seed=7)
+
+
+@pytest.mark.parametrize("variant", ["joint", "preassigned", "sequential"])
+def test_single_station_segments_replay_with_tight_action_limit(build_env, variant):
+    graph = nx.DiGraph()
+    for node in range(3):
+        graph.add_node(node, has_charger=node == 1, charger_type={"DCFast": 1})
+    for a, b, energy in ((0, 1, 60), (1, 2, 40)):
+        graph.add_edge(a, b, distance=energy, time=0.1)
+        graph.add_edge(b, a, distance=energy, time=0.1)
+    env = build_env(
+        variant,
+        stops=1,
+        graph=graph,
+        truck={"battery_capacity": 100.0, "initial_battery": "full"},
+        environment={"max_episode_steps": 6},
+    )
+    assert len(env.feasibility_witness) == 6
     replay_certificate(env)
+    env.config["environment"]["max_episode_steps"] = 5
+    env.max_episode_steps = 5
+    with pytest.raises(ValueError, match="could not certify"):
+        env.reset(seed=7)
 
 
 def test_energy_bounds_are_enforced_without_restricting_early_depot_return(build_env):

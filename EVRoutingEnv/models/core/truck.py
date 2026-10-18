@@ -725,7 +725,10 @@ class Truck:
             "is_complete": self.is_complete,
             "failed": self.failed,
             "failure_reason": self.failure_reason,
-            "deliveries_remaining": len(self.get_remaining_deliveries()),
+            "deliveries_remaining": (
+                len(next_target) if self.enable_flexible_delivery_order
+                else len(self.get_remaining_deliveries())
+            ),
             "total_distance": self.total_distance_traveled,
             "total_time": self.total_time_elapsed,
             "total_routing_time": self.total_routing_time,
@@ -739,10 +742,9 @@ class Truck:
             "num_charging_sessions": self.num_charging_sessions,
             "detour_last_action_was_charge": self.detour_last_action_was_charge,
             "detour_charger_hops_since_delivery": self.detour_charger_hops_since_delivery,
-            "total_distance_to_travel": sum(
-                self.delivery_sequence[i+1] - self.delivery_sequence[i] 
-                for i in range(len(self.delivery_sequence) - 1)
-            ) if len(self.delivery_sequence) > 1 else 0,
+            # This legacy node-ID difference sum telescopes; preserve its value
+            # without rescanning the entire shared customer list for each truck.
+            "total_distance_to_travel": self.delivery_sequence[-1] - self.delivery_sequence[0],
         }
     
     def get_state_vector(self) -> np.ndarray:

@@ -10,7 +10,7 @@ n_customers: 230
 max_chargers: 0                        # 0 = keep every DC-fast site in the study area
 charger_merge_m: 5000                  # DC-fast stations within 5 km become one node (ports add up)
 charger_merge_linkage: complete        # every pair inside a node is within the radius; single linkage chains towns together
-max_snap_m: 400                        # drop stops/chargers farther than this from a road
+max_snap_m: 2000                       # drop stops and charger nodes farther than this from a road
 vehicle_profile: heavy_truck           # 36 t class-8 BEV calibrated to the California consumption
 # battery_kwh: 400                      # default: the 400 kWh of config_joint.yaml
 seed: 0

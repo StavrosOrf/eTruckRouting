@@ -137,13 +137,22 @@ def test_generated_preassignments_preserve_capacity_under_tight_loads(make_env):
 
 def test_horizon_stops_return_and_never_reports_success(make_env):
     env = make_env(stops=1)
-    env.max_time = 30.0  # Inject a cutoff after generating a certified instance.
+    depot = env.joint_instance.depot_node
+    task = env.joint_instance.tasks[0]
+    # Cut the generated return leg in half, independently of which nodes this
+    # generator version maps the seed to. Service must finish before the cutoff.
+    horizon = (
+        env.transport_graph.get_time_distance(depot, task.node_id)
+        + task.base_service_time
+        + env.transport_graph.get_time_distance(task.node_id, depot) / 2
+    )
+    env.max_time = horizon
     assert not env.step(env.num_charging_nodes)[3]
     _, _, terminated, truncated, info = env.step(
         env.num_charging_nodes + env.fixed_num_stops
     )
     assert not terminated and truncated
-    assert env.global_clock == 30.0
+    assert env.global_clock == horizon
     assert not info["successful"] and not info["operational_metrics"]["success"]
     assert info["termination_reason"] == "time_limit_exhausted"
     assert env.event_queue and env.trucks[0].route_destination is not None

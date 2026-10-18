@@ -23,6 +23,22 @@ def test_fast_charge_hours_match_adaptive_integration(peak, floor):
         assert fast == pytest.approx(details["actual_charge_hours"], rel=1e-7)
 
 
+@pytest.mark.parametrize("peak,floor", [(150.0, 150.0), (350.0, 150.0), (750.0, 150.0)])
+def test_replay_charging_without_plot_samples_matches_physical_curve(peak, floor):
+    full = ChargingCurveModel()
+    replay = ChargingCurveModel(record_power_curve=False)
+    settings = {"charge_rate": peak, "efficiency": 0.9, "use_realistic_curve": True,
+                "taper_start_soc": 0.8, "taper_power_min": floor}
+    rng = np.random.default_rng(82)
+    for _ in range(40):
+        soc = float(rng.uniform(0.0, 0.99))
+        target = float(rng.uniform(soc + 1e-6, 1.0))
+        expected, details = full.calculate_charge_to_target(soc, target, 400.0, settings)
+        actual, fast_details = replay.calculate_charge_to_target(soc, target, 400.0, settings)
+        assert actual == expected
+        assert fast_details["actual_charge_hours"] == pytest.approx(details["actual_charge_hours"], rel=1e-9)
+
+
 class _Task:
     def __init__(self, node_id):
         self.node_id = node_id

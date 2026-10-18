@@ -213,7 +213,7 @@ def test_sequential_time_window_wait_commits_before_next_task(environment):
 
 
 def test_energy_path_dispatcher_finishes_sequential_routes(environment):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     env = environment(trucks=2, stops=4)
     env.task_registry.next_task_for_truck(0).base_service_time = 500.0
@@ -233,17 +233,17 @@ def test_energy_path_dispatcher_finishes_sequential_routes(environment):
 def test_nominal_planners_preserve_prescribed_routes(environment, planner):
     env = environment(trucks=2, stops=6)
     if planner == "cpsat":
-        from EVRoutingEnv.baselines.exact_optimization import ExactPlannerParameters, solve_nominal_plan
+        from EVRoutingEnv.baselines.optimization.exact_optimization import ExactPlannerParameters, solve_nominal_plan
         solution = solve_nominal_plan(env, ExactPlannerParameters(time_limit_seconds=2, workers=1))
     else:
-        from EVRoutingEnv.baselines.alns import ALNSParameters, solve_alns_plan
+        from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, solve_alns_plan
         solution = solve_alns_plan(env, ALNSParameters(iterations=50))
     for truck in env.trucks:
         assert solution.routes[truck.truck_id] == truck.delivery_sequence[1:]
 
 
 def test_public_heuristic_entrypoint_handles_sequential_fleet(environment):
-    from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.heuristic_policy import HeuristicPolicy
 
     env = environment(trucks=2, stops=4)
     policy = HeuristicPolicy()

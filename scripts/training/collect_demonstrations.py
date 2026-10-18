@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from algo.behavior_cloning import collect_demonstrations
-from EVRoutingEnv.baselines.canonical_baselines import (
+from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     GreedyHeuristicPolicy,
     HeuristicParameters,
     MPCParameters,
@@ -49,7 +49,7 @@ def build_demonstrator(name: str):
             )
         )
     if name == "ensemble":
-        from EVRoutingEnv.baselines.exact_optimization import (
+        from EVRoutingEnv.baselines.optimization.exact_optimization import (
             ExactPlannerParameters,
             MathematicalProgrammingPolicy,
         )

@@ -12,7 +12,7 @@ import pytest
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
-from EVRoutingEnv.baselines.canonical_baselines import (
+from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     GreedyHeuristicPolicy,
     HeuristicParameters,
     MPCParameters,
@@ -20,7 +20,7 @@ from EVRoutingEnv.baselines.canonical_baselines import (
     RollingHorizonMPCPolicy,
     decode_feasible_actions,
 )
-from EVRoutingEnv.baselines.exact_optimization import (
+from EVRoutingEnv.baselines.optimization.exact_optimization import (
     ExactPlannerParameters,
     MathematicalProgrammingPolicy,
     solve_nominal_plan,

@@ -14,6 +14,7 @@ Key Features:
 - Configurable parameters via config.yaml
 """
 
+import copy
 import math
 
 import numpy as np
@@ -108,6 +109,35 @@ class DeliverySimulator:
         self.random_streams = random_streams or ScenarioRandomStreams(self.seed)
         self._uncertainty_cache: dict[tuple[int, int, int], float] = {}
         self._delivery_counters: dict[int, int] = {}
+
+    def realize_service_time(
+        self,
+        *,
+        delivery_node: int,
+        current_time: float,
+        base_service_time: float | None = None,
+        occurrence: int = 0,
+    ) -> float:
+        """Query a node's future service draw without changing live state."""
+        if (
+            isinstance(occurrence, bool)
+            or not isinstance(occurrence, int)
+            or occurrence < 0
+        ):
+            raise ValueError("occurrence must be a non-negative integer")
+        shadow = copy.copy(self)
+        shadow.random_streams = ScenarioRandomStreams(
+            self.random_streams.seed, self.random_streams.descriptor.version
+        )
+        shadow._uncertainty_cache = {}
+        shadow._delivery_counters = {}
+        shadow.verbose = False
+        shadow._delivery_counters[int(delivery_node)] = occurrence
+        return shadow.apply_unloading_time(
+            delivery_node,
+            current_time,
+            base_service_time=base_service_time,
+        )
 
     def apply_unloading_time(
         self,

@@ -1,0 +1,88 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software or results in your research,
+  please cite it using the metadata below.
+type: software
+title: >-
+  Uncertainty-Aware Deep Reinforcement Learning for Sustainable
+  Electric Vehicle Routing: A Hybrid Optimization Framework
+authors:
+  - family-names: Abdulelah
+    given-names: Aymen Jalil
+    affiliation: >-
+      Electronic Computer Center, University of Anbar,
+      Ramadi, 31001, Iraq
+    email: ayman.ja90@uoanbar.edu.iq
+    orcid: ""
+  - family-names: Sonuç
+    given-names: Emrullah
+    affiliation: >-
+      Department of Computer Engineering, Karabük University,
+      Karabük, 78050, Türkiye
+  - family-names: Yassen
+    given-names: Esam Taha
+    affiliation: >-
+      College of Computer Science and Information Technology,
+      University of Anbar, Ramadi, 31001, Iraq
+  - family-names: Farhan
+    given-names: Ahmeed Suliman
+    affiliation: >-
+      Electronic Computer Center, University of Anbar,
+      Ramadi, 31001, Iraq
+  - family-names: Al-kubaisi
+    given-names: Ali
+    affiliation: >-
+      College of Computer Science and Information Technology,
+      University of Anbar, Ramadi, 31001, Iraq
+  - family-names: Mustafa
+    given-names: Ahmed Shamil
+    affiliation: >-
+      Department of Electrical and Electronics Engineering,
+      Universiti Tenaga Nasional, Kajang, Selangor, Malaysia
+repository-code: >-
+  https://github.com/aymenjalil/uncertainty-aware-evrptw
+url: >-
+  https://github.com/aymenjalil/uncertainty-aware-evrptw
+abstract: >-
+  Implementation of a hybrid deep reinforcement learning framework
+  for the Electric Vehicle Routing Problem with Time Windows (EVRPTW)
+  under operational uncertainty. The framework combines bidirectional
+  LSTM probabilistic energy forecasting, Graph Attention Network
+  encoding, PPO policy optimization, and optional MILP refinement to
+  achieve 12.3% cost reduction over state-of-the-art methods with
+  formal chance-constrained battery feasibility guarantees (94.7%
+  empirical coverage at the 95% confidence level).
+keywords:
+  - electric vehicle routing
+  - deep reinforcement learning
+  - uncertainty quantification
+  - graph attention networks
+  - probabilistic forecasting
+  - chance-constrained optimization
+  - MILP
+  - sustainable logistics
+  - urban freight
+license: MIT
+version: "1.0.0"
+date-released: "2025-01-01"
+preferred-citation:
+  type: article
+  title: >-
+    Uncertainty-Aware Deep Reinforcement Learning for Sustainable
+    Electric Vehicle Routing: A Hybrid Optimization Framework
+  authors:
+    - family-names: Abdulelah
+      given-names: Aymen Jalil
+    - family-names: Sonuç
+      given-names: Emrullah
+    - family-names: Yassen
+      given-names: Esam Taha
+    - family-names: Farhan
+      given-names: Ahmeed Suliman
+    - family-names: Al-kubaisi
+      given-names: Ali
+    - family-names: Mustafa
+      given-names: Ahmed Shamil
+  journal: "Transportation Research Part D: Transport and Environment"
+  year: 2025
+  status: under review

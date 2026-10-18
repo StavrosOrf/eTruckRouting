@@ -33,9 +33,9 @@ from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.evaluation.actions import validate_discrete_action
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space
 from EVRoutingEnv.utils.utils import load_config
-from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
-from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
-from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
+from EVRoutingEnv.baselines.legacy.optimal_gurobi import OptimalGurobiPolicy
+from EVRoutingEnv.baselines.legacy.optimal_gurobi_simple import OptimalGurobiSimplePolicy
+from EVRoutingEnv.baselines.legacy.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.state.action_mask import get_action_mask
 from algo.policy_utils import load_policy
 

@@ -898,7 +898,7 @@ def test_simultaneous_charger_arrivals_obey_fcfs_and_port_capacity(
 
 @pytest.mark.parametrize("variant", VARIANTS)
 def test_station_closure_releases_a_hundred_waiting_trucks(make_routing_env, variant):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     env = make_routing_env(
         variant,
@@ -937,7 +937,7 @@ def test_station_closure_releases_a_hundred_waiting_trucks(make_routing_env, var
 def test_low_battery_routes_require_and_execute_recharging(
     make_routing_env, variant, trucks
 ):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     env = make_routing_env(variant, trucks, 25, truck={"battery_capacity": 12.0})
     # One truck must recharge repeatedly. With 128 trucks, start below full SoC
@@ -1007,7 +1007,7 @@ def test_variable_customer_counts_preserve_large_fleet_action_slots(
 
 @pytest.mark.parametrize("variant", VARIANTS)
 def test_exact_zero_energy_arrival_at_charger_can_recover(make_routing_env, variant):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     env = make_routing_env(
         variant, 1, 5, truck={"battery_capacity": 12.0, "initial_battery": 100.0 / 3}
@@ -1121,7 +1121,7 @@ def test_large_fleet_canonical_encoders_and_gnn_masks_remain_consistent(
 def test_repository_network_at_standard_battery_capacity(
     make_routing_env, variant, trucks
 ):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     env = make_routing_env(
         variant,

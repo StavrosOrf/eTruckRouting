@@ -138,3 +138,41 @@ def test_delivery_seed_changes_service_time() -> None:
     assert first._get_uncertainty_value(5, 11.0) != second._get_uncertainty_value(
         5, 11.0
     )
+
+
+def test_future_journey_queries_match_execution_without_consuming_streams():
+    simulator = _traffic_simulator(123)
+    for occurrence in range(3):
+        realization = simulator.realize_journey(
+            from_node=3,
+            to_node=8,
+            current_time=8.0,
+            travel_time=1.5,
+            base_energy=80.0,
+            occurrence=occurrence,
+        )
+        # The query has not advanced or cached any live random draws.
+        assert simulator._journey_counters.get((3, 8), 0) == occurrence
+        actual_time, multiplier = simulator.apply_traffic(1.5, 8.0, 3, 8)
+        actual_energy = simulator.apply_energy_uncertainty(80.0, multiplier, 8.0, 3, 8)
+        assert realization == {
+            "travel_time_hours": actual_time,
+            "traffic_multiplier": multiplier,
+            "energy_kwh": actual_energy,
+        }
+    assert not simulator._pending_energy
+
+
+def test_future_service_queries_match_execution_without_consuming_streams():
+    simulator = DeliverySimulator(enable_stochastic_unloading=True, seed=123)
+    for occurrence in range(3):
+        realization = simulator.realize_service_time(
+            delivery_node=8,
+            current_time=10.0,
+            base_service_time=0.3,
+            occurrence=occurrence,
+        )
+        assert simulator._delivery_counters.get(8, 0) == occurrence
+        assert realization == simulator.apply_unloading_time(
+            8, 10.0, base_service_time=0.3
+        )

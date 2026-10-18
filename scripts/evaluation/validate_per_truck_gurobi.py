@@ -36,8 +36,8 @@ import math
 from copy import deepcopy
 from pathlib import Path
 
-from EVRoutingEnv.baselines.canonical_baselines import _travel_hours
-from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
+from EVRoutingEnv.baselines.heuristics.canonical_baselines import _travel_hours
+from EVRoutingEnv.baselines.legacy.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.utils.utils import load_config

@@ -1,0 +1,2202 @@
+===== PAGE 1 =====
+Subpath-Based Column Generation for
+Electric Vehicle Routing Problems
+Alexandre Jacquillat and Sean Lo
+Operations Research Center and Sloan School of Management, Massachusetts Institute of Technology, Cambridge, MA.
+Motivated by widespread electrification targets, this paper studies an Electric Vehicle Routing Problem
+with Time Windows and Nonlinear Charging (EVRPTWNL) that jointly optimizes routing decisions and
+charging decisions given vehicle capacities, time windows and nonlinear charging. We develop a column
+generation scheme with a subpath-based label-setting algorithm that decomposes the pricing problem into
+two phases: (i) generating subpaths between charging stations, and (ii) combining subpaths into paths while
+optimizing charging decisions in between. We formalize a domination framework to establish the convergence
+and exactness of the algorithm, and prove that the methodology can solve a range of EVRP variants (e.g.,
+with vehicle capacities, time windows, and nonlinear charging) and relaxation-tightening strategies (e.g.,ng-
+relaxations and subset-row cuts). Computational results show improvements over path-based benchmarks in
+both computational time and solution quality, especially when time windows become wider, when vehicles
+can perform multiple tasks on a single charge and when vehicles still need to recharge several times across
+the planning horizon. Ultimately, the methodology can scale to otherwise intractable instances with up to
+100 customers, thereby enhancing fleet management capabilities across electrified logistics areas.
+Key words: vehicle routing, sustainable operations, column generation, dynamic programming
+1. Introduction
+The share of electricity in energy use is projected to rise from 20% to nearly 30% by 2030 due
+to the deployment of technologies such as electric vehicles, industrial robots and heat pumps
+(International Energy Agency 2020). Electrification can mitigate the reliance on high-cost energy
+sources, but charging requirements and reduced asset utilization can also hinder adoption. Thus,
+large-scale electrification necessitates dedicated analytics and optimization tools to efficiently and
+reliably deploy electrified technologies into operating systems and processes.
+As part of this overarching challenge, this paper studies a capacitated, multi-depot Electric Vehi-
+cle Routing Problem with Time Windows and Nonlinear Charging (EVRPTWNL). This problem
+optimizes the operations of electric vehicles (or machines) that need to visit a set of customers (or
+perform tasks) within pre-defined time windows and with finite capacities. This general environ-
+ment can capture practical requirements arising in several domains, including:
+Example 1 (Middle-mile distribution).In regional distribution, logistics providers trans-
+port goods between consolidation centers, depots, and retail facilities across multi-city service areas.
+Electric medium-duty trucks often cannot complete extended multi-stop routes on a single charge,
+1
+arXiv:2407.02640v3  [math.OC]  22 Sep 2026
+
+===== PAGE 2 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+2
+and therefore need to recharge at logistics facilities during loading and unloading activities or at
+shared public infrastructure (International Council on Clean Transportation 2022).
+Example 2 (Industrial logistics).Industrial vehicles circulate repeatedly to support
+tightly coupled production or infrastructure activities across geographically dispersed industrial
+sites, such as container ports, batching plants, construction sites, distribution centers, and recy-
+cling locations. (Boysen et al. 2025). Electrified equipment can reduce total costs of ownership but
+high-payload requirements require charging between loading, staging, or waiting periods.
+Example 3 (Energy-constrained last-mile distribution).Delivery requests material-
+ize across a service region with varying timing requirements. Emerging last-mile deliveries based on
+light electric vehicles (e.g., bicycles, scooters, drones, robots) operate under strict load and energy
+limitations (Boysen et al. 2021). Each trip consumes a significant portion of battery capacity,
+requiring intermediate charging at charging pads or micro-depots (Boston Region MPO 2025).
+Example 4 (Robotic fleet management).Autonomous electric robots are increasingly
+deployed over spatially distributed environments, spanning baggage handling and aircraft servicing
+at airports (Changi Airport Group 2026), deliveries of medical supplies and samples at hospitals
+(Valner et al. 2022), and field monitoring or harvesting in agriculture (Harik 2021). These systems
+operate over long horizons with finite battery capacity, requiring frequent recharging between tasks.
+Across these applications, fleet operators must coordinate the assignment of tasks to vehicles,
+the sequence of tasks performed by each vehicle, and the charging schedule to sustain throughput
+while avoiding service delays and preventing energy shortages. Accordingly, the EVRPTWNL
+jointly optimizes discrete routing decisions and continuous charging decisions. By design, the model
+can capture complexities arising in various domains, such as heterogeneous travel or switching
+costs, vehicle capacities, time window requirements, and nonlinear battery charging dynamics.
+In particular, the charging decisions introduce an additional degree of freedom in that multiple
+charging schedules can be feasible for the same same routing decisions, as depicted in Figure 1.
+We formulate the EVRPTWNL via a path-based set-partitioning model. The model assigns each
+vehicle to a path that encapsulates a sequence of customer visits and charging stations—but no
+charging schedule. For any sequence, there may be an infinite number of charging combinations
+that would guarantee feasibility in view of battery requirements and time windows. For instance,
+all solutions between the two depicted in Figure 1 could be considered as part of the same path.
+This paper develops a column generation algorithm armed with a novel two-phase, subpath-based
+label-setting algorithm for the pricing problem. Column generation iterates between a master prob-
+lem that seeks a path-based solution, and a pricing problem that seeks a path of negative reduced
+cost or proves that none exists. In the EVRPTWNL, the pricing problem features an NP-hard
+elementary resource-constrained shortest path structure, and is typically solved via label-setting
+
+===== PAGE 3 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+3
+1
+2
+3
+4
+5
+6 7
+8 Time
+Charge
+1
+2
+3
+4
+5
+6
+7
+8 Time
+Charge
+Figure 1 Sample sequences of routing and charging decisions, with customers (squares), charging stations or
+depots (circles), charging actions (dashed curves); travel (solid lines) and waiting due to time windows
+(solid horizontal lines). The thin dotted lines reproduce the alternative solution on each figure.
+algorithms that construct paths iteratively from depot to depot (see Section 2). Instead, we develop
+an exact subpath-based label-setting that further decomposes the pricing problem into subpaths,
+defined as a sequence of customer visits between charging stations. We find that the algorithm can
+result in significant computational improvements; along with a master problem heuristic, it yields
+high-quality solutions and tight optimality gaps in large-scale problems, outperforming path-based
+label-setting benchmarks. Specifically, this paper makes the following contributions:
+1. We develop a new column generation algorithm via a subpath-based label-setting algorithm
+that decomposes the (path-based) pricing problem into two phases. In the first phase, the
+algorithm extends subpaths along arcs between depots or charging stations. In the second
+phase, it extends paths along subpaths, optimizing charging decisions in-between. This algo-
+rithm provides a new decomposition scheme for column generation in hierarchical settings
+with discrete routing decisions and continuous resource management decisions.
+2. We show the exactness of our subpath-based label-setting algorithm via a novel domination
+framework. We demonstrate that existing label-setting concepts are not sufficient, leading to
+arbitrarily large optimality gaps. We therefore design a new domination framework relying
+on traditional forward domination concepts to extend subpaths along arcs, but on forward
+andbackward domination concepts to extend paths along subpaths (Property 2). We prove
+that these new domination properties are sufficient to establish the exactness of the subpath-
+based label-setting algorithm in the pricing problem (Theorem 2). This result is enabled by
+the separation of routing and charging decisions in our two-phase subpath-based label-setting
+procedure, which circumvents the infinite number of possible charging sequences.
+3. We apply our subpath-based label-setting algorithm to handle a range of electric vehicle
+routing variants and relaxation-tightening strategies. Specifically, we show how our algorithm
+can handle vehicle capacities, time windows, nonlinear charging dynamics, as well asng-
+relaxations and subset-row cuts. For each one, we define appropriate label-setting resources,
+
+===== PAGE 4 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+4
+along with resource extension functions and dominance criteria. The main technical result is to
+prove that these elements satisfy the subpath-level and path-level domination criteria elicited
+in Property 2. This implies the exactness of the subpath-based label-setting algorithm in the
+pricing problem, hence the exactness of the column generation procedure for the corresponding
+relaxations of the EVRPTWNL (Theorem 1, Propositions 8 and 11 and Corollaries 1–2).
+4. We perform extensive computational benchmarking of our two-phase, subpath-based label-
+setting algorithm against traditional path-based label-setting benchmarks, using both publicly
+available instances and new instances inspired by our motivating examples. Results show that
+our subpath-based label-setting algorithm can significantly accelerate the pricing subproblem,
+and thereby provide improvements in downstream computation time and solution quality.
+These benefits become stronger as time windows become wider, battery capacities become
+smaller, paths become longer (many customers within the planning horizon) and paths are
+decomposed into more subpaths (charging stations visited frequently). This regime echoes
+our motivating examples in which limited battery capacities, high payload requirements or
+spatial dispersion may require multiple charging stops within the planning horizon. Ultimately,
+the proposed method can scale to otherwise intractable instances with up to 100 customers,
+thereby enhancing the fleet management capabilities in electrified logistics.
+This paper is organized as follows. Section 2 reviews the literature on electric vehicle routing and
+subpath-based decomposition. Section 3 formulates the EVRPTWNL and the column generation
+scheme. Section 4 describes our two-phase subpath-based label-setting algorithm, applies it to the
+EVRPTWNL, and proves its correctness. Section 5 augments the algorithm to handle relaxation-
+tightening strategies—ng-relaxations and subset-row cuts—and retrieve a feasible solution via a
+master problem heuristic. Section 6 presents computational results. Section 7 concludes.
+2. Literature review
+One thread of the literature on electrified logistics deals with the strategic problem of locating
+charging stations based on users’ routing choices (Arslan et al. 2019), traffic congestion (Kınay
+et al. 2023), car-sharing (Brandst¨ atter et al. 2020), electricity markets (He et al. 2013), and battery
+swapping (Mak et al. 2013, Qi et al. 2023). Another branch optimizes routing operations for a
+vehicle given the availability of charging stations (Sweda et al. 2017), speed-dependent operations
+(Nejad et al. 2017), or queuing at capacitated charging stations (Kullman et al. 2021). In-between,
+our paper falls into the literature on the electric vehicle routing problem (EVRP).
+Canonical vehicle routing problems with time windows (Kallehauge et al. 2005) and capacitated
+vehicles (Ralphs et al. 2003) link discrete routing decisions and continuous decisions (e.g., timing or
+load upon each customer visit). In these problems, the continuous dynamics are determined by the
+
+===== PAGE 5 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+5
+routing sequence. The EVRP features an extra degree of freedom to determine where, when and for
+how long to charge. Early approaches employed clustering-based heuristics (Erdo˘ gan and Miller-
+Hooks 2012) or assumptions that vehicles always charge to full (Schneider et al. 2014). Recent
+variants include speed-dependent consumption, nonlinear charging (Felipe et al. 2014, Goeke and
+Schneider 2015, Montoya et al. 2017, Fern´ andez et al. 2022), capacitated charging stations (Froger
+et al. 2022), public transit (de Vos et al. 2024), and dial-a-ride (Molenbruch et al. 2023).
+Exact EVRP methodologies rely on set-partitioning formulations and column generation, using
+path-based variables encoding a vehicle’s full sequence of routing and charging decisions (Figure 2a).
+To generate path-based variables, the pricing problem features a strongly NP-hard elementary
+resource-constrained shortest-path structure (Dror 1994). It is typically solved by label-setting
+algorithms with dedicated domination criteria to encode charging decisions (Figure 2b). Desaulniers
+et al. (2016) developed a bidirectional label-setting algorithm for EVRP with time windows, using
+three resources to capture charging requirements. Other resources were used to model the effective
+range of vehicles under battery swapping (Andelmin and Bartolini 2017) and vehicles’ state of
+charge between customer visits (Parmentier et al. 2023). Nafstad et al. (2025) captured non-linear
+charging with pointwise function comparisons due to heterogeneous charging schedules.
+The main bottleneck lies in the exponential growth of the number of paths. Bidirectional label-
+setting approaches extend paths forward from the source and backward from the sink, as in Fig-
+ure 2c (Righini and Salani 2006, Desaulniers et al. 2016). Our two-phase subpath-based label-setting
+algorithm provides an alternative, hierarchical decomposition of the pricing problem. This relates
+to the approach from Gschwind et al. (2019) in multi-commodity split-delivery vehicle routing, who
+first determined bundles of commodities and then constructed routes; and the one from Andelmin
+and Bartolini (2017) and Parmentier et al. (2023) in EVRP, who first generated non-dominated
+charging arcs between consecutive customers separated by a charging station and then generated
+paths. In contrast, our algorithm generates subpaths independently between depots or charging
+stations, and then combines them into paths while determining charging actions (Figure 2d–2e).
+By breaking down a path into smaller subpaths, this approach further quells the rate of exponential
+growth in the pricing problem: rather than scaling exponentially with the number of customers
+(or with approximatelyhalfof it for bidirectional label-setting), our approach scales exponentially
+withthe number of customers per subpathandthe number of candidate subpaths per path.
+At the same time, this approach introduces methodological challenges to guarantee convergence
+and exactness. In response, we formalize new subpath- and path-based domination properties. In
+particular, we prove that Property 2(iii) is critical to propagate domination between subpaths
+(s1 ⪰s 2) into domination between partial paths (p⊕s 1 ⪰p⊕s 2). We also show that this property
+is automatically satisfied when resources satisfy monotonicity conditions (such as the cost and
+
+===== PAGE 6 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+6
+Figure 2 Our two-phase subpath-based label-setting algorithm versus path-based label-setting benchmarks.
+Depot
+Charging station
+Customer
+(a)A path starting and ending at depots, visiting customers and recharging periodically in between.
+p
+a
+a′
+(b)Monodirectional path-based label-setting.
+− →p
+− →a − →a ′
+← −a
+← −a ′
+← −p
+(c)Bi-directional path-based label-setting: extending forward partial paths and backward partial paths.
+s
+a′
+a
+(d)Our two-phase label-setting:
+generating subpaths.
+τ1
+τ2
+τ ′2
+s1
+s2
+p={s 1, s2}
+s3
+s′3
+(e)Our two-phase label-setting: combining subpaths into paths.
+duration of refuel paths in Andelmin and Bartolini (2017), and the weight and cost of multiedges
+in Gschwind et al. (2019)) but necessary in our context to handle non-additive resources capturing
+time windows andng-sets. Altogether, this paper contributes a novel subpath-based decomposition
+of the pricing problem for column generation with hierarchical structure, and a new rigorous domi-
+nation framework establishing the exactness of the resulting subpath-based label-setting algorithm.
+Extended formulations.Our decomposition approach also relates to subpath-based extended for-
+mulations in combinatorial optimization. In pickup-and-delivery, Alyasiry et al. (2019) and Zhang
+et al. (2023) optimized over subpaths encapsulating sequences of pickups and dropoffs between
+points where the vehicle is empty. Rist and Forbes (2021) optimized over subpaths encapsulating
+
+===== PAGE 7 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+7
+sequences of consecutive pickups or dropoffs. Cummings et al. (2024) optimized flexible segments
+between mandatory stops. Recent papers applied column generation to generate subpath-based
+variables iteratively (Hasan and van Hentenryck 2021, Rist and Forbes 2022, Cummings et al.
+2024, Jacquillat et al. 2022). In contrast, our methodology relies on a path-based formulation and
+adds path-based variables iteratively, but further decomposes the pricing problem into subpaths.
+van Rossum et al. (2026) also apply a subpath-based pricing problem decomposition, and avoids
+enumerating non-dominated subpaths through a bucket-based approach.
+In our context, a subpath-based formulation could rely on variables encoding the sequence of
+customer visits between charging stations (Lee 2021), which would require linking constraints to
+optimize charging decisions in the master problem and complicate the column generation algorithm.
+An alternative one would encode the sequence of customer visits between charging stations as
+well as charging times, with flow balance constraints combining subpaths into paths in the master
+problem. Such a formulation would mitigate the exponential growth in the number of variables
+but its benefits may be limited if subpaths cannot be easily shared across paths (Ceselli et al.
+2021, Bezzi et al. 2023). For instance, subpaths 1 could end at a charging station with 80% battery
+whereas subpaths 2 could start with 70% battery, and alleviating such mismatches may require
+extensive column generation iterations. Instead, we retain a path-based formulation, leading to a
+more complex pricing problem—and motivating our subpath-based decomposition algorithm.
+3. Model formulation and column generation preliminaries
+We address a capacitated, multi-depot Electric Vehicle Routing Problem with Time Windows and
+Nonlinear Charging (EVRPTWNL). We define the problem in Section 3.1 and a set partitioning
+formulation in Section 3.2; we also provide an explicit arc-based benchmark in EC.2. Section 3.3
+concludes by outlining a column generation algorithm and highlighting its challenges to manage
+the size of the pricing problem and tighten the relaxation, which motivate our methodology.
+3.1. Problem statement
+We consider a fleet ofKhomogeneous electric vehicles with the same batteryB, the same capacity
+D, the same travel times and costs, and the same battery charging and depletion dynamics. We
+represent operations on a directed graph (V,A) over a time horizonT. Nodes are partitioned
+into sets of depotsV D, customersV C, and charging stationsV S, such thatV=V C ∪ VD ∪ VS. Arcs
+allow self-loops only at depots:A={(i, j)|i, j∈ V D } ∪ {(i, j)|i̸=j∈ V }. Each arc (i, j)∈ Ais
+associated with a travel timet i,j, a costc i,j, and a battery utilizationb i,j (all strictly positive when
+i̸=j). Each customer has a demandd i and needs to be served within a time window [α i, βi]. To
+extend our notation to depots and charging stationsi∈ V D ∪ VS, we letd i = 0,α i = 0 andβ i =T.
+
+===== PAGE 8 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+8
+Each vehicle starts in a depot inV D with full charge, visits customers inV C, recharges in charging
+stations inV S, and ends in a depot. We letvstartj denote the number of vehicles starting at each depot
+j. We also impose a minimum number of vehiclesv endj ending in eachj∈ VD, for instance to enable
+maintenance requirements or facilitate future operations (Gopalan and Talluri 1998, Hemmelmayr
+et al. 2013, Rahimi-Vahed et al. 2015, Birolini and Jacquillat 2023, Jacquillat and Luo 2026). This
+choice can capture single-depot instances from Desaulniers et al. (2016), multi-depot instances
+where each vehicle ends at its starting depot, and more general multi-depot instances in which each
+vehicle can start and end in any depot. We also assume that charging stations are uncapacitated.
+A charging scheduleg:R + →[0, B] defines the charge gained as a function of charging time
+charging from a depleted battery. We assume thatgis concave and increasing, withg(0) = 0 (Lam
+et al. 2022, Lera-Romero et al. 2023, Nafstad et al. 2025). We defineg T (b1, b2) =g −1(b2)−g −1(b1)
+as the amount of time required to charge fromb 1 tob 2. We also define the end state of charge
+gC (b, t) =g(g −1(b) +t) as a function of the current chargeband the charging timet.
+The EVRPTWNL seeks a path for each vehicle to minimize travel costs, while ensuring that
+vehicle loads lie below capacity, that all customers are served within their time windows, and that
+no vehicle runs out of battery. An arc-based integer optimization formulation is provided in EC.2.
+3.2. Path-based set-partitioning formulation
+The core complexity of the EVRPTWNL is to link discrete routing decisions with continuous
+decisions governing the load, time and charge upon each customer visit. In particular, the charging
+dynamics introduce an extra degree of freedom to determine where, when and for how long to
+charge. The arc-based formulation in EC.2 manages these interdependencies via “big-M” coupling
+constraints, which induce weak relaxations and hinder the scalability of branch-and-cut algorithms.
+Instead, we define a path-based formulation using Dantzig-Wolfe decomposition principles.
+We formalize a path in Definition 1 as the sequence of routing decisions for a vehicle through
+the planning horizon. These decisions uniquely determine the load upon each customer visit, which
+determines path feasibility in view of the vehicle capacity constraints. However, the charging sched-
+ule and the resulting timing of each customer visit are not entirely governed by the routing decisions.
+In turn, a path is feasible ifthere existsa charging schedule such that the vehicle does not run out
+of battery and can visit all assigned customers within their time windows.
+Definition 1 (Path).Apathpis defined by a node sequenceN(p) = (n 0, n1, n2, . . . , nm) such
+that (n 0, n1),(n 1, n2), . . . ,(nm−1, nm)∈ A, with starting noden start (p) =n 0 ∈ VD, intermediate
+nodesn 1, . . . , nm−1 ∈ VC ∪ VS, and ending noden end (p) =n m ∈ VD. The binary parametersσ pi,start
+andσ pi,end denote whether pathpstarts and ends at depoti∈ V D respectively. The parameterγ pi
+stores the number of times pathpvisits customeri∈ V C:γ pi =| {k∈ {0, . . . , m} |nk =i} |. The
+
+===== PAGE 9 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+9
+parameterD(p) stores total load:D(p) = Pmk=0 dnk . Its cost is the sum of travel costs of its con-
+stituent arcs:c p := Pm−1ℓ=0 cnℓ,nℓ+1. Apartial pathrelaxes the conditionn end (p) ∈ VD.
+Pathpwith node sequenceN(p) = (n 0, n1, n2, . . . , nm) is feasible if there exist charging times
+{τ k |n k ∈ VS }and of corresponding timing variablest k and charge variablesb k fork∈ {0, . . . , m},
+defined recursively as follows, such that (i)D(p)≤D(vehicle capacity); (ii)b k ∈[0, B] for all
+k∈ {0, . . . , m}(battery); and (iii)tk ∈[α nk , βnk ] for allk∈ {0, . . . , m}(time windows).
+t0 = 0,and∀k∈ {0, . . . , m−1}:tk+1 =
+(
+max{tk +τ k +t nk,nk+1 , αnk+1 }ifn k ∈ VS
+max{tk +t nk,nk+1 , αnk+1 }otherwise. (1)
+b0 =B,and∀k∈ {0, . . . , m−1}:bk+1 =
+(
+gC (bk, τk) −b nk,nk+1 ifn k ∈ VS
+bk −b nk,nk+1 otherwise. (2)
+We letz p be a binary decision variable denoting if pathp∈ Pis selected. The EVRPTWNL
+minimizes costs (Equation (3)) while enforcing vehicles’ start and end location requirements (Equa-
+tions (4) and (5)) and ensuring that each customer is served once (Equation (6)). We refer to this
+problem asEVRP(P), to its optimum asOPT(P), to its linear relaxation as EVRP(P), and to its linear
+bound as OPT(P). Note that this problem is parametrized by a set of feasible pathsP, which can
+depend on the state-space relaxations considered (e.g.ng-routes in Section 5.1).
+min
+X
+p∈P
+cpzp (3)
+s.t.
+X
+p∈P
+σpj,startzp =v startj ∀j∈ VD (4)
+X
+p∈P
+σpj,endzp ≥v endj ∀j∈ VD (5)
+X
+p∈P
+γpi zp = 1∀i∈ V C (6)
+zp ∈ {0,1},∀p∈ P(7)
+3.3. Column generation algorithm
+Column generation (Algorithm 4 in EC.1) solves the linear relaxationEVRP(P). The master problem
+generates a feasible relaxation solution based on a subset of path-based variables, stored inP ℓ at
+iterationℓ. The pricing problem seeks a setP new of variables with negative reduced cost or proves
+that none exists; it minimizes the reduced cost of variablez p across all pathsp∈ P, defined as:
+c (p) :=c p −κ nstart(p) −µ nend(p) − X
+i∈VC
+γpi νi,(8)
+whereκ,µ, andνdenote the dual variables associated with Equations (4), (5) and (6), respectively.
+Column generation converges to the optimal relaxation bound OPT(P) due to the finite number
+of path-based variables. This hinges on the definition of a path as a sequence of nodes that excludes
+
+===== PAGE 10 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+10
+charging decisions (Definition 1), which retrieves a discrete path-based structure. In turn, the main
+difficulty in the EVRPTWNL lies in the pricing problem, which needs to jointly optimize over the
+routing decisions and identify a charging schedule to maintain feasibility in view of the battery
+and time window constraints. To circumvent the exponential growth in the number of paths, we
+propose a subpath-based label-setting algorithm that first generates subpaths between charging
+stations and then combines subpaths into paths while optimizing charging decisions in between.
+Upon termination of column generation, we augment the subpath-based label-setting algorithm
+tighten the relaxation bound via adaptiveng-relaxations (Baldacci et al. 2011) and subset-row cuts
+(Jepsen et al. 2008), which requires new label-setting resources, new resource extension functions,
+and new dominance criteria. We also retrieve a feasible primal solution by solving the terminal
+master problem with integrality constraints. The overall framework (described in Algorithm 3 in
+Section 5) is evaluated heuristically because no branching scheme is implemented. However, it can
+be easily embedded into a branch-and-price-and-cut scheme (Barnhart et al. 1998) to recover an
+exact solution using the same branching rules as in Desaulniers et al. (2016), or into alternative
+heuristic approaches (Eveborn and R¨ onnberg 2026). Nonetheless, our computational results yield
+provably high-quality solutions upon termination with narrow optimality gaps.
+4. A subpath-based pricing problem decomposition
+The pricing problem in Step 2 of Algorithm 4 seeks a shortest path from depot to depot subject
+to path feasibility requirements, with modified edge costs{ ci,j (i, j)∈ A}given as follows. By
+construction, the reduced cost c (p) of pathpis the sum of ci,j over the arcs inN(p), with:
+ci,j =c i,j −1 (i∈ VD) κi −1 (j∈ VD) µj −1 (j∈ VC) νj (9)
+The pricing problem can be solved with label-setting algorithms by extending partial paths along
+arcs, and applying dominance criteria to prune partial paths that can no longer be extended into
+a path of minimal reduced cost (Irnich and Desaulniers 2005). The extension is defined as follows.
+Definition 2 (Arc extensions of paths).Letpbe a partial path. An arca= (n, n′)∈ Ais
+an arc extension ofpifn end (p) =n. The extended partial path is denotedp⊕a.
+A domination criterion would ideally encode the fact that partial pathp 2 is dominated byp 1 (writ-
+tenp 1 ⪰p 2) if every possible completionqofp 2 could instead be applied top 1 and lead to a weakly
+lower reduced cost. Label-setting algorithms relax that requirement by merely ensuring that any
+arc extension ofp 2 remains dominated by the same extension ofp 1. Thus, the following domination
+property is sufficient to establish the correctness of (path-based) label-setting algorithms.
+Property 1 (Domination for paths).Letp1, p2 be feasible partial paths withp 1 ⪰p 2, and
+a∈ Aextendp1 andp 2. Supposep 2 ⊕ais feasible. Thenp 1 ⊕ais feasible too, andp 1 ⊕a⪰p 2 ⊕a.
+
+===== PAGE 11 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+11
+Desaulniers et al. (2016) and Nafstad et al. (2025) develop path-based label-setting algorithms
+(Figure 2b) for the EVRPTW and the EVRPTWNL, respectively, by associating each partial path
+pwith a set of resources, propagating them along arcs via resource extension functions (REFs),
+and defining dominance criteria from pairwise resource comparisons. The main element to prove
+the correctness of the algorithm is to show that these resources and REFs satisfy Property 1.
+Instead, our methodology first generates subpaths between charging stations and then combines
+them into paths while optimizing charging decisions in between. As we shall see, a naive extension of
+Property 1 no longer guarantees optimality of the pricing problem, and can lead to arbitrarily large
+optimality gaps (Proposition 5). In response, we define new domination properties for subpaths
+and paths in our subpath-based label-setting algorithm (Section 4.1). We apply this domination
+framework to handle the EVRPTWNL elements—namely, vehicle capacities, time windows, and
+nonlinear charging—by defining corresponding resources, REFs and domination criteria at the
+subpath level in the first phase of the algorithm (Section 4.2) and at the path level in the second
+phase (Section 4.3). The main technical results in Section 4.4 show that these resources satisfy the
+domination properties, and that these properties are sufficient to guarantee the exactness of our
+subpath-based label-setting algorithm in the pricing problem. All proofs are provided in EC.3.
+4.1. F rom subpaths to paths: domination properties
+We define a subpath as the customer visits between two consecutive non-customer nodes (depots
+or charging stations). Thus, a subpath is constituted by a sequence of arcs, and each path is
+constituted by a sequence of subpaths along with charging decisions in between.
+Definition 3 (Subpath).A subpathsis defined by a node sequenceN(s) = (n 0, n1, n2, . . . , nm)
+such that (n0, n1),(n 1, n2), . . . ,(nm−1, nm)∈ A, with starting nodenstart (s) =n 0 ∈ VD ∪ VS, interme-
+diate nodesn 1, . . . , nm−1 ∈ VC, and ending noden end (s) =n m ∈ VD ∪V S. The parameterγ si stores the
+number of times subpathsvisits customeri∈ V C:γ si =| {k∈ {0, . . . , m} |nk =i} |. The parameter
+D(s) stores total load:D(s) = Pmk=0 dnk . Apartial subpathrelaxes the conditionn end (s) ∈ VD ∪ VS.
+Subpathswith node sequenceN(s) = (n 0, n1, n2, . . . , nm) is feasible, if there exist (t 0, b0) such
+that, defining timing variablest k and charge variablesb k fork∈ {1, . . . , m}recursively fromt0 and
+b0 according to Equations (1)–(2), we have (i)D(s)≤D(vehicle capacity); (ii)b k ∈[0, B] for all
+k∈ {0, . . . , m}(battery); and (iii)tk ∈[α nk , βnk ] for allk∈ {0, . . . , m}(time windows).
+The algorithm first extends partial subpaths along arcs, and then extends partial paths along
+subpaths. These extensions are written as follows.
+Definition 4 (Arc extensions of subpaths).Letsbe a partial subpath. An arca=
+(n, n′)∈ Ais an arc extension ofsifn end (s) =n. The extended partial subpath is denoteds⊕a.
+Definition 5 (Subpath extensions of paths).Letpbe a partial path. A subpathsis a
+subpath extension ofpifn end (p) =n start (s) ∈ VS. The extended partial path is denotedp⊕s.
+
+===== PAGE 12 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+12
+Per Bellman’s principle of optimality, if a pathp=s 1 ⊕ · · · ⊕sm is non-dominated, so are each
+of its constituting subpathss 1, . . . , sm and each partial pathp k =s 1 ⊕ · · · ⊕sk (Lemmas EC.5
+and EC.6). This motivates our approach to find non-dominated subpaths and extend them toward
+paths; we writes 1 ⪰s 2 andp 1 ⪰p 2 to indicate that partial subpaths 1 dominatess 2 and that
+partial pathp 1 dominatesp 2. We define the following three domination properties, which provide
+the fundamental criteria to prune dominated partial subpaths and dominated partial paths.
+Property 2 (Dominance for paths and subpaths).
+(i) Lets 1, s2 be feasible partial subpaths withs 1 ⪰s 2, and leta∈ Abe an arc extendings 1 and
+s2. Supposes 2 ⊕ais feasible. Thens 1 ⊕ais feasible too, ands 1 ⊕a⪰s 2 ⊕a.
+(ii) Letp 1, p2 be feasible partial paths withp 1 ⪰p 2, and letsbe a subpath extendingp 1 andp 2.
+Supposep 2 ⊕sis feasible. Thenp 1 ⊕sis feasible too, andp 1 ⊕s⪰p 2 ⊕s.
+(iii) Lets 1, s2 be feasible subpaths withs 1 ⪰s 2, both extending a feasible partial pathp. Suppose
+p⊕s 2 is feasible. Thenp⊕s 1 is feasible too, andp⊕s 1 ⪰p⊕s 2.
+These domination properties augment Property 1 in our subpath-based label-setting algorithm.
+Properties 2(i) and 2(ii) generalize Property 1 by propagating domination patterns forward along
+arc extensions of subpaths and along subpath extensions of paths. Property 2(iii) is new to our
+subpath-based label-setting algorithm to propagate domination patterns “backward” along sub-
+path extensions of paths. In the context of EVRPTWNL, our main contribution is to develop
+resources, REFs and domination criteria that satisfy Property 2 (Theorem 1, Corollary 1). In the
+context of the subpath-based label-setting algorithm, our main contribution is to demonstrate that
+Property 2 is sufficient to solve the pricing problem to optimality (Theorem 2). In particular, the
+new backward domination property (Property 2(iii)) is necessary to establish the exactness of the
+methodology, and merely extending forward domination concepts (Properties 2(i) and 2(ii)) could
+lead to arbitrarily large errors in the pricing problem (Proposition 5).
+4.2. First phase: generating non-dominated subpaths
+In the first phase of the algorithm, partial subpaths are iteratively extended along arcs from one
+non-customer node (charging station or depot) to another. Definition 6 specifies the subpath-level
+resources: the first one tracks the reduced cost; the second one handles charging requirements; the
+third one handles capacity constraints; and the last three handle time window constraints. Note
+that our subpath-based decomposition enables us to focus on routing decisions between charging
+actions, so our first-phase subpath-level resources do not consider charging decisions and the non-
+linear charging dynamics, which will be treated in the second phase of the algorithm.
+Definition 6 (Subpath resources).For a partial subpathswith node sequence (n0, . . . , nm),
+we define the following resources:
+
+===== PAGE 13 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+13
+(i) c (s) = Pm−1ℓ=0 cnℓ,nℓ+1: reduced cost contribution;
+(ii)B(s) = Pm−1ℓ=0 bnℓ,nℓ+1: charge consumption;
+(iii)D(s) = Pmℓ=0 dnℓ: load served to customers;
+(iv)T travel (s) = Pm−1ℓ=0 tnℓ,nℓ+1: the travel time;
+(v)T endmin (s): earliest end time given time windows; it is defined with the recursive definition:
+T E0 =α n0;∀ℓ∈ {0, . . . , m−1}, TEℓ+1 = maxT Eℓ +t nℓ,nℓ+1, αnℓ+1	 ;T endmin (s) =T Em .(10)
+(vi)T startmax (s): latest start time given time windows; it is defined with the recursive definition:
+T Lm =β nm;∀ℓ∈ {0, . . . , m−1}, TLℓ = minT Lℓ+1 −t nℓ,nℓ+1, βnℓ	 ;T startmax (s) =T L0 .(11)
+The initial label forswith node sequence (n 0,) is (c (s) , B(s), D(s), Ttravel (s) , Tendmin (s) , Tstartmax (s)) =
+(0,0,0,0, αn0, βn0). Below, Proposition 1 updates the resources recursively along arc extensions.
+The main challenge is define a forward update forT startmax (s) consistent with backward updates in
+Definition 6 (Proposition 1(vi)).
+Proposition 1.Letsbe a feasible partial subpath anda= (n, n ′)an arc extension. The fol-
+lowing holds: (i) c (s⊕a ) = c (s) + cn,n′; (ii)D(s⊕a) =D(s) +d n′; (iii)B(s⊕a) =B(s) +b n,n′;
+(iv)T travel (s⊕a ) =T travel (s) +t n,n′; (v)T endmin (s⊕a ) = max T endmin (s) +t n,n′, αn′	; and
+(vi)T startmax (s⊕a ) = min T startmax (s) , βn′ −T travel (s⊕a )	. This extensions⊕ais feasible if:
+(a)D(s⊕a)≤D(vehicle capacity); (b)B(s⊕a)≤B(battery); and (c)T endmin (s⊕a ) ≤β n′ and
+T startmax (s⊕a ) ≥α n0 (time windows).
+Note that each subpath is defined by a sequence of customer visits but not by its departure
+time. Each subpath can therefore be moved to start or end at different times given by time window
+requirements—different subpaths induce different sets of feasible start times. In turn, we define
+subpath domination criteria that tracks reduced costs, vehicle loads, battery capacities but also
+timing resources. As indicated in the following definition, the correct domination criteria involve
+non-linear transformations of the timing resources from Definition 6, via the functionQ(·).
+Definition 7 (Subpath domination).Lets1,s 2 be feasible partial subpaths starting and
+ending at the same nodes. If the following hold: (i) c (s1) ≤ c (s2); (ii)D(s 1)≤D(s 2);
+(iii)B(s 1)≤B(s 2); (iv)T endmin (s1) ≤T endmin (s2); (v)T startmax (s1) ≥T startmax (s2); and (vi)Q(s 1)≤Q(s 2),
+whereQ(s) := max
+
+T travel (s) , Tendmin (s) −T startmax (s)	; thens 1 ⪰s 2.
+We interpret criteria (iv)–(vi) by lettingf s(t) denote the end time of subpathsif it starts at
+timet≥0 (given time windows). The results below show that the full functionf s(·) is encapsulated
+through the three resourcesT travel (s),T endmin (s), andT startmax (s), and the domination criteria express
+that one subpath can end earlier than another for any possible start time. Therefore, although the
+
+===== PAGE 14 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+14
+path-based resources from Desaulniers et al. (2016) do not apply in our setting, we have derived
+a compact, low-dimensional representation of time windows in our subpath-based label-setting
+algorithm that determines the feasibility of each subpath and characterizes its possible end times.
+Lemma 1.Letsbe a feasible partial subpath, andP(s) = min
+
+T startmax (s) , Tendmin (s) −T travel (s)	.
+Then:
+fs(t) = max
+
+T endmin (s) , Q(s) +t	 =
+(
+T endmin (s) t∈[0, P(s)]
+Q(s) +t t∈[P(s), T startmax (s)] (12)
+Proposition 2.Definition 7(iv)–(vi) is equivalent to:
+dom(fs2)⊆dom(f s1),and∀t∈dom(f s2) :f s1(t)≤f s2(t).(13)
+These temporal dynamics are shown in Figure 3. Figure 3a shows that the functionfs is piecewise
+linear with breakpointP(s), and is fully characterized by the three resources from Definition 7(iv)–
+(vi). Figure 3b illustrates the domination patterns elicited in Proposition 2. Figure 3c shows that
+domination patterns based on the three resources from Definition 6(iv)–(vi) alone are insufficient,
+and require the non-linear transformation encapsulated in the functionQfrom Definition 7.
+5 10
+5
+10
+15
+fs1
+T travel (s1) = 5
+T startmax (s1) = 9
+T endmin (s1) = 8
+Start time
+Current time
+(a)Illustration of Lemma 1.
+5 10
+5
+10
+15
+fs2
+fs1
+Start time
+Current time
+(b)Illustration of Proposition 2.
+5 10
+5
+10
+15
+fs2
+Q(s2)
+T travel (s2)
+fs1
+Q(s1) =T travel (s1)
+Start time
+Current time
+(c)Necessity of Definition 7(vi).
+Figure 3 Mapping betweenf s and subpath resources.(T endmin (s2), Tstartmax (s2), Ttravel (s2)) = (12,5,3.5)and
+(T endmin (s1), Tstartmax (s1), Ttravel (s1)) = (8,9,5). (a) Construction off s1 fromT travel (s1),T endmin (s1)and
+T startmax (s1); (b) Visualization that Definition 7(iv)–(vi) is equivalent tof s2 ≥f s1 ; (c) Necessity of the
+non-linear transformationQ:f s1 ≤f s2 on the domain off s2 althoughT travel (s1)> Ttravel (s2).
+Algorithm 1 presents the first-phase label-setting procedure to find non-dominated subpaths.
+Starting at a non-customer node, it iteratively extends partial subpaths along arcs while checking
+feasibility and pruning dominated partial subpaths, until reaching a non-customer node.
+
+===== PAGE 15 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+15
+Algorithm 1FindNonDominatedSubpaths.
+Initialization:S gen =∅; store inS queue all single-node partial subpaths starting at nodesi∈ V D ∪ VS.
+Step 1.Selects∈ S queue with smallest end time:s∈arg min
+
+T endmin (s)  s∈ Squeue 	. Removesfrom
+Squeue, and add it toS gen. Ifsis a (complete) subpath,GOTOStep 3. Else,GOTOStep 2.
+Step 2.For each arc extensiona∈ Aofs:
+1. Ifs⊕ais not feasible, or dominated by somes ′ ∈ Squeue ∪ Sgen,CONTINUE.
+2. Otherwise, remove anys ′ ∈ Squeue such thats⊕a⪰s ′, and adds⊕atoS queue.
+Step 3.IfS queue =∅,STOP: returnS result ={s∈ Sgen |sis a subpath}. Otherwise,GOTOStep 1.
+4.3. Second phase: combining subpaths into paths
+In the second phase, partial paths are iteratively extended along non-dominated subpaths from one
+depot to another. The main challenge involves determining timing resources and charge resources
+that can be easily computed recursively via REFs, and that can be leveraged to prune infeasible and
+dominated paths via appropriate domination criteria. We formalize the set of path-level resources
+in the following definition: the first one tracks the reduced cost; the second one handles capacity
+constraints; the last two characterize the “best” ending time and ending charge of a partial path,
+which requires optimizing the charging sequence for a given sequence of subpaths.
+Definition 8 (Path resources).Letpbe a partial path with subpath sequence (s 1, . . . , sm),
+where each subpaths k has node sequence (n k,0, nk,1, . . . , nk,mk ). We define the following resources:
+(i) c (p) = Pmk=1 Pmk−1ℓ=0 cnk,ℓ,nk,ℓ+1 : reduced cost contribution;
+(ii)D(p) = Pmk=1 Pmk−1ℓ=0 dnk,ℓ : load served to customers;
+(iii)T endmin (p): earliest arrival time, defined as the solution of the following problem CS T (p);
+minT endm (14)
+s.t.T start1 = 0 (15)
+T startk ≤T startmax (sk) ∀k∈ {1, . . . , m}(16)
+T endm ≤T(17)
+T startk+1 =T endk +τ k ∀k∈ {1, . . . , m−1}(18)
+T endk = maxT startk +T travel (sk) , Tendmin (sk)	 ∀k∈ {1, . . . , m}(19)
+Bstart1 =B(20)
+Bendk =B startk −B(s k)∀k∈ {1, . . . , m}(21)
+Bstartk+1 =g C  Bendk , τk ∀k∈ {1, . . . , m−1}(22)
+T startk , Tendk , Bstartk , Bendk ≥0∀k∈ {1, . . . , m}(23)
+τk ≥0∀k∈ {1, . . . , m−1}(24)
+
+===== PAGE 16 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+16
+(iv)B endmax (p): maximum ending charge at the minimum ending timeTendmin (p), defined as the solution
+of the following problem CS B(p):
+maxB endm ; s.t. Equations (15)–(24); andT endm =T endmin (p) (25)
+This definition involves a non-linear optimization problem—where the non-linearities stem from
+charging dynamics—to determine the feasibility of a partial path and the corresponding resources.
+We prove in Proposition 3 that we can characterize the optimal charging sequence for each subpath
+sequence via a greedy procedure. This result exploits the concavity of the charging scheduleg(·),
+which guarantees that it is at least as fast to gain some amount of charge when starting with a
+lower charge, i.e.: ifb 1 ≤b 2, theng T (b1, b1 +b ) ≤g T (b2, b2 +b ) (Proposition 2.1 of Lee (2021)).
+Proposition 3.Letpbe a feasible partial path with subpath sequence(s 1, . . . , sm). The fol-
+lowing recursive updates produce a feasible solution and return optimal valuesT endk andB endk for
+CST (s1, . . . , sk)and CS B(s1, . . . , sk)respectively, for allk∈ {1, . . . , m}.
+InitializeT end1 =f s1(0)andB end1 =B−B(s 1). Repeat, fork∈ {1, . . . , m−1}:
+eτk ←max
+
+0, gT
+ 
+Bendk , B(sk+1)	 (26)
+τk ←max
+
+eτk, P(sk+1)−T endk 	 (27)
+T startk+1 ←T endk +τ k (28)
+Bstartk+1 ←g C  Bendk , τk (29)
+T endk+1 ←f sk+1 (T startk+1 ) = max{Tstartk+1 +T travel (sk+1) , Tendmin (sk+1)}(30)
+Bendk+1 ←B startk+1 −B(s k+1) (31)
+Specifically, for any subpath sequence (s1, . . . , sm), Proposition 3 computes the minimum charging
+timeeτk at the end of each subpaths k to ensure the feasibility of the subsequent subpaths k+1.
+In the absence of time windows, it would be without loss of generality to always charge to the
+minimum requiredeτk (Figure 4a). However, with time windows, it might be beneficial to charge
+for longer than necessary and avoid wasteful waiting along subpaths k+1, and the corresponding
+optimal charging time is denoted byτ k ≥eτk (Figure 4b). These charging times can then be plugged
+into the definition of the timing and charge resources (Definition 8), as guaranteed by Proposition 3.
+Proposition 4 leverages these insights to define recursive updates of the path-based resources
+along subpath extensions. This follows from Proposition 3, which shows that the definition ofτ
+recovers the “best” charging time between partial pathpand subpathsto computeT endmin (p⊕s )
+andB endmax (p⊕s ) as a function ofT endmin (p) andB endmax (p), regardless of the future subpaths.
+
+===== PAGE 17 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+17
+s1
+(T endmin (p1), Bendmin (p1))
+eτ
+s2
+(T endmin (p2), Bendmin (p2)) Time
+Charge
+(a)Without time windows: charging to minimumeτ
+s1
+(T endmin (p1), Bendmin (p1))
+eτ
+τ
+P(s 2)
+s2
+(T endmin (p2), Bendmin (p2))Time
+Charge
+(b)With time windows: charging toτwhile waiting
+Figure 4 Extension ofp={s 1}along subpaths 2. Without time windows, charging to minimum,eτ, is optimal
+due to concavity of charging schedule. With time windows, waiting time might be forced ons 2 and it
+would be optimal to charge forτ >eτuntil timeP(s 2) = min{Tendmin (s2)−T travel (s2), Tstartmax (s2)}.
+Proposition 4.Letpbe a feasible partial path andsa subpath extendingp.
+Defineeτ= max
+
+0, gT (Bendmax (p) , B(s))	 andτ= max{eτ , P(s)−T endmin (p)}. Then:
+(i) c (p⊕s ) = c (p) + c (s); (ii)D(p⊕s) =D(p) +D(s); (iii)T endmin (p⊕s ) =f s (T endmin (p) +τ ); and
+(iv)B endmax (p⊕s ) =g C (Bendmax (p) , τ) −B(s). This extension is feasible if: (a)D(p⊕s)≤D(vehicle
+capacity); (b)T endmin (p) +τ≤T startmax (s) (battery); and (c)T endmin (p⊕s ) ≤T(time horizon).
+This allows us to define path-level domination criteria, again using non-linear transformations
+of the resources from Definition 8. Interestingly, criterion (iii) allows the maximum charge ofp 1 to
+be smaller than that ofp 2, as long as there is sufficient time to charge toB endmax (p2) (Figure 5).
+Definition 9 (Path domination).Letp 1,p 2 be feasible partial paths starting and end-
+ing at the same nodes. If the following hold: (i) c (p1) ≤ c (p2); (ii)D(p 1)≤D(p 2); and
+(iii)T endmin (p1) +g T  Bendmax (p1) ,max Bendmax (p1) , Bendmax (p2)	 ≤T endmin (p2); thenp 1 ⪰p 2.
+(T endmin (p1), Bendmin (p1))
+Time
+Charge
+Figure 5 Domination criteria (Definition 9(iii)): ifp 1 ⪰p 2, then(T endmin (p2), Bendmax (p2))falls in the shaded area.
+Algorithm 2 presents the second-phase label-setting procedure to find non-dominated paths.
+Starting at a depot, it iteratively extends partial paths along subpaths while checking feasibility
+and pruning dominated partial paths, until reaching a depot. It is analogous to Algorithm 1, except
+
+===== PAGE 18 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+18
+that it takes place on a multigraph due to multiple non-dominated subpaths extending the same
+partial pathpto the next noden ′ ∈ VS ∪ VD, each covering different sets of customers.
+Algorithm 2FindNonDominatedPaths(S∗)
+Initialization:P gen =∅; store inP queue all single-node partial paths starting ini∈ VD.
+Step 1.Selectp∈arg min
+
+T endmin (p)  p∈ Pqueue 	. RemovepfromP queue, and add it toP gen. Ifpis a
+(complete) path,GOTOStep 3. Else,GOTOStep 2.
+Step 2.For each subpaths∈ S∗ extendingp:
+1. Ifp⊕sis not feasible, or dominated by somep ′ ∈ Pqueue ∪ Pgen,CONTINUE.
+2. Otherwise, remove anyp ′ ∈ Pqueue such thatp⊕s⪰p ′, and addp⊕stoP queue.
+Step 3.IfP queue =∅,STOP: returnP result ={p∈ Pgen |pis a path}. Otherwise,GOTOStep 1.
+4.4. Correctness of the subpath-based label-setting algorithm for the EVRPTWNL
+We now prove the correctness of the subpath-based label-setting algorothm, both in general terms
+and in the context of the EVRPTWNL. We first show the critical result in the context of the
+EVRPTWNL, that is, that the resources, REFs and dominance criteria defined in Section 4.2 at
+the subpath level and in Section 4.3 at the path level satisfy Property 2.
+Theorem 1.The resources (Definitions 6 and 9), REFs (Propositions 1 and 4) and domination
+criteria (Definitions 7 and 9) satisfy Property 2 for the EVRPTWNL.
+Next, Theorem 2 provides the main result on our subpath-based label-setting algorithm, by
+showing that Property 2 is sufficient to establish its exactness in the pricing problem. This result
+makes use of two technical assumptions stating that one resource tracks the reduced cost and
+one resource is nonnegative and increasing to guarantee finite termination. In practice, these two
+conditions are immediately satisfied by including reduced cost and arrival time in the resources.
+Assumption 1.For both subpaths and paths, one resource must sum to the reduced cost, and
+one resource must be nonnegative, bounded above, and strictly increasing along extensions.
+Theorem 2.Under Property 2 and Assumption 1, Algorithms 1 and 2 together find paths of
+negative reduced cost in the pricing problem of the EVRPTWNL, or proves that none exists.
+In fact, this result hinges on Property 2(iii) to propagate domination from subpaths (s 1 ⪰s 2)
+to paths (p⊕s 1 ⪰p⊕s 2). In fact, if we defined resources and REFs that merely satisfied Proper-
+ties 2(i)–(ii), then our subpath-based label-setting algorithm would no longer be exact and could
+lead to arbitrarily large errors in the pricing problem. This is proved in Proposition 5.
+Proposition 5.Under Properties 2(i)–(ii), Algorithms 1 and 2 can fail to find paths of arbi-
+trarily large negative reduced cost in the pricing problem of the EVRPTWNL.
+
+===== PAGE 19 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+19
+Note, also, that this property is only needed for “complex” resources and REFs in the pricing
+problem. In the case where subpath-level and path-level resources satisfy monotonicity conditions,
+Properties 2(i)–(ii) are sufficient and Property 2(iii) is automatically satisfied (Remark 1). This
+would be the case for instance for the capacitated EVRP, as reduced costs, travel times and vehicle
+loads are additive and monotonic along each extension. However, Properties 2(i)–(ii) are no longer
+sufficient to handle time windows—as well asng-sets, as discussed in the next section.
+Remark 1.Property 2(iii) is automatically satisfied under monotonicity assumptions on
+subpath-level and path-level resources.
+Altogether, our domination framework in Property 2 establishes the exactness of the subpath-
+based label-setting algorithm for hierarchical problems combining discrete routing decisions and
+continuous resource management decisions. Guided by Property 2, Theorems 1 and 2 imply the
+correctness of our subpath-based label-setting algorithm in the pricing problem. Given the finite
+number of paths (Definition 1), this implies the correctness of the resulting column generation
+algorithm to solve the EVRPTWNL linear relaxation. This is stated in the corollary below.
+Corollary 1.Algorithm 4 converges finitely to an optimal solution of EVRP(P), when Step 2.
+is solved via the subpath-based label-setting algorithm (Algorithms 1 and 2) with the corresponding
+resources (Definitions 6, 9), REFs (Propositions 1, 4) and domination criteria (Definitions 7, 9).
+5. Tighter relaxations via adaptive ng-relaxations and cutting planes
+We augment the algorithm with adaptiveng-relaxations and subset-row cuts (Algorithm 3) to
+tighten the linear relaxation. For both extensions, we develop dedicated domination criteria in our
+two-phase label-setting algorithm and prove the convergence of the resulting column generation
+schemes—again, by showing that Property 2 is satisfied. We also add a restricted master heuristic
+(RMH) to retrieve a feasible integer solution. The full procedure is detailed in Algorithm 3.
+5.1. Adaptiveng-relaxations for elementarity constraints
+The linear relaxation EVRP(P) depends on the path setP. Considering the full set of pathsP all
+would lead to a weaker linear relaxation, with short cycles. Vice versa, considering the set of
+elementary pathsP elem would tighten the relaxation but would require one resource per customer
+(Beasley and Christofides 1989). In between, solving EVRP(P) over a restricted set of pathsP all ⊆
+P ⊆ Pelem tightens the relaxation without imposing full elementarity.
+Definition 10 (ng-neighborhood).Anng-neighborhood is a collection of subsetsN=
+{N i ⊆ V |i∈ V }where: (i)i∈Ni,∀i∈ V; (ii)N i ⊆ VC,∀i∈ VC; and (iii)N i ⊆ VC ∪ {i},∀i∈ VD ∪ VS.
+Definition 11 (ng-feasibility).A (partial) path or subpath isng-feasible if its node sequence
+(n0, . . . , nm) isng-feasible, i.e.,: for everyj < kwithn j =n k, there existsj < ℓ < kwithnj /∈Nnℓ.
+LetP(N) store theng-feasible paths with respect toN.
+
+===== PAGE 20 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+20
+Algorithm 3Augmented column generation with adaptiveng-relaxations and subset-row cuts.
+Initialization:ng-neighborhoodN 0; set of cutsQ=∅; set of pathsP 0init ⊆ P(N0);t= 0.
+Iterate between Steps 1-4.
+Step 1: Column generation.Solve EVRP(P(N t)) viaColumnGeneration(P(N t)) with cutsQ,
+starting withP tinit. Obtain solutionz t, set ofng-feasible pathsP t ⊆ P(Nt) with respect toN t, and
+objective OPT(P(N t)) = OPT(P t).
+Step 2: Solve RMH.SolveEVRP(Pt) with integrality. Obtain solutionz tI, objectiveOPT(P t).
+Step 3: T ermination.Ifzt uses elementary paths and no subset-row cut is violated,STOP; return dual
+and primal solutions and bounds (z t,z tI, OPT(P t),OPT(P t)) respectively.
+Step 4: Elementarity .If the support ofzt uses non-elementary paths: for each such pathp, and for
+all cycles{i, n1,· · ·, nm, i}(withi∈ VC) in its node sequence, defineN t+1 by addingito the subsets
+Nn1 ,· · ·, Nnm. DefineP t+1init =P t ∩ P(Nt+1), incrementt←t+ 1, andGOTOStep 1. ElseGOTOStep 5.
+Step 5: Integrality .FindS⊆ VC and{w i |i∈S}such thatz t violates Equation (32) overP t. Add
+(S,w) toQ, defineP t+1init =P t, incrementt←t+ 1, andGOTOStep 1.
+Intuitively,ng-feasible paths are “locally elementary”, in that customerican only be visited
+multiple times if a node whoseng-neighborhood does not containiis visited in between. Largerng-
+neighborhoods therefore make paths with small cyclesng-infeasible, thus tightening the EVRP(P)
+relaxation (Baldacci et al. 2011). We adopt the adaptiveng-relaxation approach from Martinelli
+et al. (2014), which alternates between solving EVRP(P(N)) and expandingNto eliminate non-
+elementary paths (Steps 1–4 of Algorithm 3). This solves EVRP(Pelem) without imposing elementar-
+ity. The main challenge involves defining resources, REFs and domination criteria to incorporate
+theng-relaxations into our two-phase label-setting algorithm. We address this question below.
+ng-relaxations in our two-phase label-setting algorithm.In path-based label-setting algo-
+rithms,ng-feasible paths are computed by tracking the forwardng-set Π(p), defined as the set of
+nodes that cannot be appended to a pathpwhile retainingng-feasibility. Specifically, a partial
+pathpcan be extended along arca= (n end (p) , nnext) ifn next /∈Π(p). However, Π(p) is no longer
+sufficient to propagate domination patterns in our subpath-based label-setting algorithm.
+We augment our algorithm with three resource definitions, formalized in Definition 12: (i) forward
+ng-set Π, (ii) backwardng-set Π −1, and (iii)ng-residue Ω. Whereas the forward and backward
+ng-sets were initially introduced in the context of bidirectional path-based label-setting, we prove
+in this paper that they are necessary for the correctness of our (uni-directional) two-phase label-
+setting algorithm, together with the third resource termedng-residue.
+Definition 12 (ng-route resources).For a node sequenceN= (n 0, . . . , nm), we define:
+(i) its forwardng-set: Π(N) :=
+n
+nr
+ nr ∈ Tmρ=r+1 Nnρ, r∈ {0, . . . , m−1}o ∪ {nm};
+(ii) its backwardsng-set: Π −1(N) :={n 0} ∪n nr  nr ∈ Tr−1ρ=0 Nnρ, r∈ {1, . . . , m}o; and
+
+===== PAGE 21 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+21
+(iii) itsng-residue: Ω(N) := Tmρ=0 Nnρ.
+All three resources apply to subpaths in the first phase of our algorithm, while only the forward
+ng-set applies to paths in the second phase. Specifically, forwardng-sets extend domination forward
+for subpath extensions or path extensions (Properties 2(i) and (ii)) but backwardng-sets are needed
+to extend domination backward in our second phase (Property 2(iii)). Finally, theng-residue Ω(·)
+is required to update Π(p⊕s) recursively from Π(s) along subpath extensions.
+Proposition 6.Letsbe a feasible partial subpath anda= (n end (s) , nnext)be an arc extend-
+ings. Then: (i)Π(s⊕a) =
+ 
+Π(s)∩N nnext
+
+∪ {nnext}; (ii)Π −1(s⊕a) = Π −1(s)∪  {nnext} ∩Ω(s);
+(iii)Ω(s⊕a) = Ω(s)∩N nnext. This extension is ng-feasible ifn next /∈Π(s).
+Definition 13 (Subpathng-domination).Lets 1, s2 be partial subpaths between the same
+nodes.s 1 dominatess 2 if, additionally, (i) Π(s1)⊆Π(s 2); (ii) Π−1(s1)⊆Π −1(s2); (iii) Ω(s1)⊆Ω(s 2).
+Proposition 7.Letpbe a feasible partial path andsbe a subpath extendingp. Then:Π(p⊕s) =
+ 
+Π(p)∩Ω(s)
+
+∪Π(s). This extension is ng-feasible ifΠ(p)∩Π −1(s)⊆ {nstart (s)}.
+Definition 14 (Pathng-domination).Letp 1, p2 be feasible partial paths starting and ending
+at the same nodes.p 1 dominatesp 2 if, additionally, Π(p1)⊆Π(p 2).
+These characterizations enable to verify that Property 2 is satisfied, and to thereby establish the
+exactness of the two-phase label-setting algorithm and the resulting column generation scheme.
+Proposition 8.The definitions and propositions in Theorem 1, together with Definitions 13,
+14, and Propositions 6, 7, satisfy Property 2 for the EVRPTWNL with ng-relaxationN.
+a
+1
+2
+b
+5
+3
+4
+c 6
+p
+s: Π −1(s) ={b,3}
+Π(p) ={b,5,3}
+(a) Example wherep⊕sisng-infeasible.
+a
+1
+2
+b
+5
+3
+4
+c 6
+p
+s: Π −1(s) ={b,3}
+Π(p) ={b,5,2}
+(b) Example wherep⊕sisng-feasible.
+Figure 6 Illustration of ng-feasibility along subpath extensions of partial paths. Numbered and lettered nodes
+denote customers and non-customers;N b ={b,2,3,5},N 3 ={3,4,5},N 4 ={3,4,5},N 5 ={2,3,5}.
+In summary, although our two-phase label-setting algorithm is uni-directional, it requires domi-
+nation criteria based on forward and backwardng-sets to guaranteeng-feasibility. This stems from
+the fact that multiple non-dominated subpaths can extend subpath sequences between the same
+
+===== PAGE 22 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+22
+pair of nodes in our second-level procedure. Computationally, since Π(s)⊆N i, Π −1(s)⊆N i, and
+Ω(s)⊆N i, the state space ofng-resources is at most 2 3|Ni| forng-feasible partial subpaths ending
+in nodei, versus 2 |VC| with full elementarity, thus alleviating computational requirements.
+5.2. Tightened relaxations via subset-row cuts
+Subset-row cuts.Jepsen et al. (2008) defined subset-row cuts (SRCs) as rank-1 Chv´ atal-
+Gomory cuts from elementarity constraints (Equation (6)). Specifically, for any subsetS⊆ VC and
+weights{w i ∈[0,1)|i∈S}, the following constraints define valid inequalities forEVRP(P):
+X
+i∈S
+X
+p∈P
+wiγpi zp ≤ X
+i∈S
+wi =⇒
+X
+p∈P
+αS,w(p)zp ≤
+$X
+i∈S
+wi
+%
+withα S,w(p) =
+$X
+i∈S
+wiγpi
+%
+(32)
+In our implementation, to simplify the separation problem, we restrict our attention to SRCs
+with|S|= 3 andw i = 12 for alli∈ |S|(as in Pecin et al. (2017)).
+We index the SRCs byq∈ Q, and let{(S q,w q, λq)|q∈ Q }store the setsSq ⊆ VC, the weight
+vectorsw q, and the dual variablesλ q ≤0 of Equation (32). The reduced cost of a path becomes:
+c (p) =c p −κ nstart(p) −µ nend(p) − X
+i∈VC
+γpi νi − X
+q∈Q
+λq ·α Sq ,wq (p) (33)
+Note that SRCs are non-robust, as they alter the structure of the pricing problem. Yet, they can
+be incorporated by tracking the fractional part of Pi∈Sq wqi γpi , which we denote byα q:
+Definition 15.Let (S q,w q, λq) be a SRC. The SRC resource for a (partial) path or subpath is
+the one for its node sequenceN= (n 0, . . . , nm):α q(N) =
+DP
+i∈Sq wqi γpi
+E
+, where⟨x⟩:=x− ⌊x⌋.
+Sinceα q tracks the (weighted) number of visits to customers inS q, this can be aggregated at the
+subpath level and at the path level. Propositions 9–10 define the resources in our subpath-based
+label-setting algorithm, with domination criteria from Definition 16. Note that whenα q exceeds 1,
+γq is deducted from the reduced cost andα q is decremented by 1, keeping it in [0,1).
+Proposition 9.Letsbe a feasible partial subpath anda= (n, n ′)be an arc exten-
+sion. Then: c (s⊕a ) = c (s) + cn,n′ − Pq∈Q λq ·1 (αq(s) +1 (n′ ∈S q) wqn′ ≥1 ) andα q(s⊕a) =
+⟨αq(s) +1 (n′ ∈S q) wqn′⟩,∀q∈ Q.
+Proposition 10.Letpbe a feasible partial path andsbe a subpath extendingp. Then:
+c (p⊕s ) = c (p) + c (s) − Pq∈Q λq ·1 (αq(p) +αq(s)≥1 ) andα q(p⊕s) =⟨α q(p) +αq(s)⟩,∀q∈ Q.
+Definition 16.Letp 1, p2 be feasible partial paths (resp.s 1, s2 feasible partial subpaths) starting
+and ending at the same nodes.p 1 ⪰p 2 (resp.s 1 ⪰s 2) with subset-row cutsQif the condition
+c (p1) ≤ c (p2) (resp. c (s1) ≤ c (s2)) is replaced with c (p1) − c (p2) ≤ Pq∈Q λq1 (αq(p1)> αq(p2))
+(resp. c (s1) − c (s2) ≤ Pq∈Q λq1 (αq(s1)> αq(s2))).
+Proposition 11.The definitions and propositions in Theorem 1, together with Definition 16
+and Propositions 9–10 satisfy Property 2 for the EVRPTWNL with subset-row cutsQ.
+
+===== PAGE 23 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+23
+5.3. Summary
+Algorithm 3 tightens the EVRP relaxation using adaptiveng-relaxations to enforce elementarity
+and subset-row cuts to eliminate fractional solutions. We have developed appropriate resources,
+REFs, and domination criteria to ensure the validity of our two-phase label-setting algorithm
+to solve the resulting pricing problems. In particular, resources in traditional (path-based) label-
+setting algorithms needed to be augmented to propagate domination patterns when combining
+subpaths into full paths, per Property 2. Leveraging these results (Propositions 8 and 11) and
+those from Section 4 (Theorem 1), we obtain the correctness of the overall algorithm below:
+Corollary 2.Algorithm 3 terminates finitely. Steps 1–4 return OPT(Pelem), and Steps 1–5
+return a solutionOPTsuch that OPT(Pelem)≤OPT≤OPT(P elem).
+6. Computational results
+We now implement our methodology to identify and delineate the benefits of the subpath-based
+label-setting algorithm against path-based benchmarks. We consider both benchmark instances
+from the literature and new instances developed in this paper to introduce variability across num-
+bers of customers, geographic layouts, charging requirements, and time windows (Section 6.1).
+The results are reported in Sections 6.2 and 6.3. All models are solved with Gurobi v12.0,
+using the JuMP package in Julia v1.11 (Dunning et al. 2017). All runs are performed using
+a single thread, on a computing cluster hosting Intel Xeon Platinum 8260 processors (Reuther
+et al. 2018), with a one-hour limit. All instances, code and results are made available online at
+github.com/sean-lo/ElectricRouting.jlto enable replication.
+6.1. Experimental setup
+We first use benchmark single-depot instances of the EVRPTW from Schneider et al. (2014), also
+used by Desaulniers et al. (2016). We consider the 25-, 50- and 100-customer instances of types C1,
+R1, and RC1, which correspond to clustered, random, and hybrid locations. We set a fleet of 10, 15
+and 25 vehicles, respectively. These instances are typical of last-mile urban logistics, with a dense
+geographic layout, tight time windows and limited recharging needs. We also scale the width of the
+time windows and the battery capacity to identify the drivers of performance of the algorithms.
+We also create multi-depot EVRPTW instances, inspired by our motivating examples in middle-
+mile logistics, industrial logistics, and robotic fleet management. We consider a rectangularx-by-y
+grid, withdcustomers per unit area, depots in the four corners, and charging stations on integer
+grid points. A fleet ofK= 10 vehicles starts on the left side (v start1 =v start2 = 5), with some vehicles
+required to end on the right side (v end3 =v end4 = 1). We consider both tight and loose time windows,
+both of which increase with thex-coordinate. Other parameters are specified as in Schneider et al.
+
+===== PAGE 24 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+24
+(a)C101 instance with 100 customers
+ (b)Our 100-customer instance100 20 small 01
+Figure 7 Examples of instances from Schneider et al. (2014) and our new multi-depot instances.
+(2014). This environment define instances where vehicles traverse a widespread service area, with
+up to 100 customers. We generate five instances for each parameter setting. For both instance types,
+we consider linear recharging functions:g(t) =t(after rescaling); however, our method applies
+more generally to nonlinear charging as well.
+Table 1 Parameter settings for the EVRPTW instances from Schneider et al. (2014) and our new multi-depot
+EVRPTW instances.
+Parameter EVRPTW (Schneider et al. 2014) Multi-depot EVRPTW
+Customer distribution
+C1 (clustered): 9 instances
+R1 (uniformly random): 12 instances
+RC1 (mixed): 8 instances
+uniformly random
+Number of vehiclesK{10,15,25}10
+Number of depots|V D|1 4
+Densityd–{2,3,4,5}
+Grid size (x, y) (1,1){2,3,4,5} × {4}
+Number of customers|V C| {25,50,100}dxy
+Number of charging stations|V S|21 (x+ 1)(y+ 1)−4
+Time window widths varied{narrow,wide}
+Number of random instances 1 5
+Total number of instances 87 160
+Table 1 and Figure 7 provide details on these instances. For each one, we apply Algorithm 3 and
+a corresponding version with a monodirectional implementation of the path-based label setting
+
+===== PAGE 25 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+25
+algorithm from Desaulniers et al. (2016) to solve the pricing problem. We define the initialng-
+relaxation with ang-neighborhood for each customericontaining the 5 closest ones inclusive ofi
+(orionly for a charging stationi). As Desaulniers et al. (2016), we first solve the pricing problem
+over a restricted graph and resolve it on the full graph if no path of negative reduced cost is found.
+We evaluate computational time and solution quality acrorss three increasingly tight relaxations:
+(1) after column generation on the initialng-relaxation (end of Step 1), (2) upon solving the linear
+relaxation with elementary paths by tightening theng-relaxation (end of Step 4), and (3) upon
+optimizing over the SRC closure (end of the algorithm or time limit).
+6.2. Results on benchmark instances
+Table 2 reports results in the EVRPTW instances from Schneider et al. (2014). Our two-phase
+label-setting algorithm is 50% faster than the path-based benchmark on 25-customer instances,
+while achieving similar integrality gaps. These benefits are consistent across the initial relaxation,
+the tighterng-relaxation, and the SRC closure. In turn, 27 out of the 29 instances can be solved to
+optimality. In contrast, our two-phase label-setting algorithm is competitive but no longer provides
+significant improvements in 50- and 100-customer EVRPTW instances. As described below, this
+stems from large battery capacity and tight time windows.
+To better understand and characterize these effects, we conduct a sensitivity analysis on battery
+capacity and time window widths. In each instance, we scale the battery capacity down by a
+multiplicative factor; smaller battery capacities are also equivalent to longer distances between
+customers and therefore fewer customer visits per subpath. We also stretch the time windows by
+a factorλin [0,1], transforming [α, β] into [(1−λ)α,(1−λ)β+λT]; wider time windows enable
+less pruning in the label-setting algorithms. Figure 8 shows the ratio of the computational times
+between subpath-based label-setting algorithm and the path-based label-setting benchmark as a
+function of these two factors. As noted in Table 2, our method can lead to performance deterioration
+with large numbers of customers, large battery capacity and tight time windows. In other settings,
+our subpath-based label-setting algorithm can lead to significant speedups as:
+– Battery capacity becomes smaller (or travel distances become longer): in the 100-customer
+instance, as the battery is scaled down from 100% to 50% of its original capacity, our method
+becomes more than 50% faster than the path-based benchmark on the initialng-relaxation.
+Due to more frequent recharging, each path is composed of more subpaths, which strengthens
+the impact of the subpath-based decomposition in the pricing problem.
+– Time windows become wider: as the stretch factorλvaries from 0 to 0.5, the instance
+becomes more challenging due to more limited pruning in the pricing problem; both methods
+incur longer computational times, but our subpath-based label-setting algorithm maintains
+
+===== PAGE 26 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+26
+Table 2 Comparison of our two-phase label-setting (2-LS) against the path-based subpath-based label-setting
+benchmark (LS) across the C1, R1 and RC1 instances: (1) after the initial relaxation, (2) after ng-relaxation
+tightening, and (3) after adding subset-row cuts. We record the number of instances solved to optimality and the
+geometric means of the computational time, the dual and primal bounds, and the integrality gap.
+LS 2-LS
+StageNType # Opt.t(s) Opt. (D) Opt. (P) Gap (%) # Opt.t(s) Opt. (D) Opt. (P) Gap (%)
+(1) 25 C1 9 2 10.9 4.43×10 4 5.64×104 19.82% 9 2 6.60 4.43×10 4 5.54×104 18.68%
+R1 12 1 14.0 3.91×10 4 5.32×104 24.12% 12 1 7.34 3.91×10 4 5.27×104 23.39%
+RC1 8 0 11.1 4.85×10 4 6.33×104 23.05% 8 0 4.64 4.85×10 4 6.61×104 25.79%
+50 C1 9 1 75.0 6.61×10 4 7.21×104 7.79% 9 1 75.4 6.61×10 4 7.23×104 8.01%
+R1 12 0 110 6.73×10 4 7.95×104 14.87% 12 0 97.0 6.73×10 4 7.96×104 14.90%
+RC1 8 0 96.1 7.84×10 4 8.83×104 10.95% 8 0 62.0 7.84×10 4 8.98×104 12.33%
+100 C1 7 1 844 9.62×10 4 1.02×105 5.52% 6 1 1160 9.72×10 4 1.03×105 5.65%
+R1 8 0 632 1.20×10 5 1.30×105 7.85% 6 0 695 1.27×10 5 1.35×105 6.37%
+RC1 4 0 992 1.41×10 5 1.53×105 7.99% 4 0 884 1.41×10 5 1.54×105 8.03%
+(2) 25 C1 9 5 32.8 4.86×10 4 4.89×104 0.60% 9 5 21.6 4.86×10 4 4.89×104 0.56%
+R1 12 3 38.7 4.42×10 4 4.47×104 1.23% 12 3 27.1 4.42×10 4 4.48×104 1.43%
+RC1 8 3 35.6 5.58×10 4 5.65×104 1.26% 8 3 19.7 5.58×10 4 5.64×104 1.14%
+50 C1 9 5 174 6.92×10 4 6.97×104 0.69% 9 5 219 6.92×10 4 6.98×104 0.79%
+R1 12 0 333 7.13×10 4 7.31×104 2.52% 12 0 318 7.05×10 4 7.43×104 4.69%
+RC1 8 1 260 8.19×10 4 8.50×104 3.61% 8 1 224 8.19×10 4 8.49×104 3.41%
+100 C1 7 1 1210 9.65×10 4 1.02×105 5.16% 6 1 1450 9.75×10 4 1.03×105 5.28%
+R1 8 0 1080 1.22×10 5 1.28×105 4.79% 6 0 907 1.27×10 5 1.34×105 4.84%
+RC1 4 0 1920 1.43×10 5 1.51×105 5.21% 4 0 2100 1.43×10 5 1.50×105 4.78%
+(3) 25 C1 9 9 41.3 4.88×10 4 4.88×104 0.00% 9 9 29.0 4.88×10 4 4.88×104 0.00%
+R1 12 10 113 4.46×10 4 4.47×104 0.12% 12 10 74.0 4.46×10 4 4.47×104 0.14%
+RC1 8 8 55.1 5.63×10 4 5.63×104 0.00% 8 8 29.8 5.63×10 4 5.63×104 0.00%
+50 C1 9 7 252 6.93×10 4 6.96×104 0.38% 9 7 289 6.93×10 4 6.97×104 0.48%
+R1 12 4 1160 7.18×10 4 7.25×104 0.89% 12 2 818 7.09×10 4 7.40×104 3.74%
+RC1 8 2 1250 8.31×10 4 8.43×104 1.32% 8 2 851 8.31×10 4 8.42×104 1.32%
+100 C1 7 1 1970 9.69×10 4 1.02×105 4.88% 6 1 1930 9.77×10 4 1.03×105 5.00%
+R1 8 3 1780 1.22×10 5 1.28×105 4.27% 6 1 1630 1.28×10 5 1.34×105 4.45%
+RC1 4 0 2840 1.44×10 5 1.50×105 4.22% 4 0 3030 1.44×10 5 1.50×105 3.85%
+or grows its relative advantage compared to the path-based benchmark. Indeed, generating
+non-dominated subpaths between charging stations quells the rate of exponential growth, and
+wider time windows makes subpaths more “reusable” in the second phase of the algorithm.
+6.3. Results on new multi-depot EVRPTW instances
+Figure 9 reports the computational speedup of our subpath-based label-setting algorithm versus
+the path-based benchmark on our new multi-depot EVRPTW instances, upon solving the initial
+ng-relaxation (end of Step 1 in the algorithm). Note that our method terminates 5–7 faster than
+the benchmark with narrower time windows, and 5-15 faster with wider time windows. These ben-
+efits increase as the problem size—encoded by customer density—becomes larger. The path-based
+label-setting benchmark remains tractable with narrow time windows due to extensive pruning, but
+becomes much more computationally intensive as the number of paths increases due to more cus-
+tomers or wider time windows. In comparison, our subpath-based label-setting algorithm remains
+
+===== PAGE 27 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+27
+(a) 25 customers
+ (b) 50 customers
+ (c) 100 customers
+Figure 8 Ratio of computational times for the initial ng-relaxation between our subpath-based label-setting
+algorithm and the path-based label-setting benchmark, in the C101 instances.
+much more scalable in challenging instances, underscoring the role of subpath-based decomposition
+to retain a tractable structure when the number of paths grows exponentially.
+(a) Wider time windows
+ (b) Narrower time windows
+Figure 9 Computational speedup for the initial ng-relaxation between our subpath-based label-setting algorithm
+and the path-based label-setting benchmark (values higher than one indicate faster solutions).
+Finally, we implement the full column generation algorithm to solve the initialng-relaxation, the
+tighterng-relaxation, and the SRC closure. Results are summarized in Figure 10 and detailed in
+Tables EC.2–EC.3. As expected from Figure 9, our method results in a significant speedup in the
+first step of the algorithm to solve the initialng-relaxation. These benefits translate into stronger
+eventual performance. Upon tightening theng-relaxation and adding SRCs, computational times
+remain faster in smaller instances. In larger instances, the speedups enable more iterations and
+therefore more progress toward tighter primal and dual bounds, leading to a much tighter optimality
+gap. In particular, our method leads to up to a 11 percentage-point improvement with narrower time
+
+===== PAGE 28 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+28
+windows and to a 25 percentage-point improvement with wider time windows. Importantly, these
+benefits are driven by both improvements in primal solutions (up to 9% and 18% cost reductions,
+respectively) and dual bounds (3% and 13% tighter bounds, respectively).
+These benefits are further observed in Figure 11, which tracks the evolution of the primal and
+dual bounds over time with both methods. These visualizations underscore the speedups from our
+subpath-based label-setting algorithm in the smaller 40-customer instances, and the improvements
+in the primal solutions and dual bounds—hence, in optimality gaps—in the 100-customer instances.
+(a)Computational speedup (narrower time windows)
+ (b)Optimality gap difference (narrower time windows)
+(c)Computational speedup (wider time windows)
+ (d)Optimality gap difference (wider time windows)
+Figure 10 Computational speedup and difference in optimality gap upon convergence with our subpath-based
+label-setting algorithm and the path-based label-setting benchmark.
+6.4. Summary
+These computational results compare our subpath-based label-setting method against the path-
+based label-setting benchmark from Desaulniers et al. (2016). Our method is competitive in the
+original EVRPTW instances from Schneider et al. (2014) in both computational time and solution
+quality. At the same time, these instances featured limited recharging (e.g., a vehicle can perform its
+
+===== PAGE 29 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+29
+(a) 40 customers (narrower time windows)
+ (b) 100 customers (narrower time windows)
+(c) 40 customers (wider time windows)
+ (d) 100 customers (wider time windows)
+Figure 11 Convergence of the subpath-based label-setting algorithm and the path-based label-setting benchmark,
+normalized to the best known dual bound.
+daily duty with one or two recharging stops) and narrow time windows (e.g., urban logistics where
+each customer can be served during a short interval), which leads to extensive pruning in path-based
+label-setting algorithms. Our method becomes more beneficial with smaller battery capacities—or,
+equivalently, with a lower spatial density—and wider time windows. Finally, our new multi-depot
+instances underscore that our method substantially outperforms the benchmark in both runtime
+and solution quality when customers’ spatial locations are more dispersed and time windows allow
+subpaths to be reused across paths—e.g., to travel from one area to another with charging stations
+in between. Altogether, the proposed method can lead to performance improvements and scales to
+otherwise intractable instances with up to 100 customers (Table EC.1).
+Altogether, our method generates strongest comparative benefits when time windows become
+wider, paths become longer (many customers within the planning horizon), each path is consti-
+tuted by a large enough number of subpaths (charging stations visited frequently), and subpaths
+become more “reusable” across paths. These conditions arise in emerging electrified operations
+
+===== PAGE 30 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+30
+from our motivating examples. For instance, regional distribution and industrial logistics typi-
+cally feature geographically dispersed facilities, limited charging infrastructure, and loose delivery
+windows, allowing routing decisions to interact strongly with charging opportunities. Similarly,
+energy-constrained last-mile systems and autonomous robotic fleets operate under tight battery
+limitations, requiring frequent recharging. Ultimately, our two-phase label-setting algorithm can
+provide a scalable solution method across multiple EVRP regimes, and support electrified logistics
+and robotic fleet management systems where routing and charging decisions must be optimized
+jointly.
+7. Conclusion
+This paper considers a multi-depot electric vehicle routing problem with time windows and nonlin-
+ear charging (EVRPTWNL). The problem jointly optimizes routing and charging decisions for an
+electric fleet with flexibility regarding where, when and for how long to charge. We develop a col-
+umn generation methodology based on a two-phase, subpath-based label-setting algorithm for the
+pricing problem. In the first phase, subpaths are generated between charging stations; in the second
+phase, subpaths are combined into full paths while optimizing charging decisions in between. We
+design a new framework of subpath and path domination through the design of resources, REFs,
+and domination criteria to accommodate elements such as customer time windows and nonlinear
+charging, as well as relaxation-tightening strategies such asng-routes and subset-row cuts. We
+prove that the resulting subpath-based label-setting algorithm solves the pricing problem exactly,
+thanks in part to the new domination framework developed in this paper, thereby enabling finite
+convergence of the column generation algorithm for EVRPTWNL relaxations.
+We perform extensive computational experiments on publicly available benchmark instances and
+new multi-depot instances. First, the two-phase label-setting algorithm can provide improvements
+in both computation time and solution quality over a path-based label-setting benchmark. Second,
+improvements are stronger as time windows become wider, battery capacities become smaller, paths
+become longer, and paths are decomposed into more subpaths. Third, our proposed method can
+scale to otherwise intractable instances with up to 100 customers. In turn, the proposed method-
+ology can support emerging electrified operations across logistics domains and robotics systems.
+This paper also opens opportunities for future research to extend the subpath-based label-setting
+algorithm to broader classes of problems with hierarchical structures. In particular, the algorithm
+could be augmented with various acceleration strategies, such as bidirectional label-setting (both
+in the first phase and the second phase) and multi-threading, as well as with branch-and-price-and-
+cut schemes. It could also be applied to other vehicle routing and machine scheduling problems to
+capture, for instance, load-dependent or speed-dependent charge consumptions, capacitated charg-
+ing stations, hybrid fleets of electric and gasoline vehicles, or heterogeneity in charging technologies
+
+===== PAGE 31 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+31
+across charging stations. More broadly, the electric routing algorithms developed in this paper
+could also be integrated into upstream strategic planning to support the development of charg-
+ing infrastructure or the acquisition of electrified fleets. The subpath-based decomposition method
+developed in this paper provides methodological foundations to address these broader problems.
+Acknowledgments
+The authors would like to thank the review team for their comprehensive comments, as well as Xinwu Qian
+and Bart van Rossum for their helpful suggestions.
+References
+Alyasiry AM, Forbes M, Bulmer M (2019) An exact algorithm for the pickup and delivery problem with
+time windows and last-in-first-out loading.Transportation Science53(6):1695–1705.
+Andelmin J, Bartolini E (2017) An exact algorithm for the green vehicle routing problem.Transportation
+Science51(4):1288–1303.
+Arslan O, Kara¸ san OE, Mahjoub AR, Yaman H (2019) A branch-and-cut algorithm for the alternative fuel
+refueling station location problem with routing.Transportation Science53(4):1107–1125.
+Baldacci R, Mingozzi A, Roberti R (2011) New route relaxation and pricing strategies for the vehicle routing
+problem.Operations Research59(5):1269–1283.
+Barnhart C, Johnson EL, Nemhauser GL, Savelsbergh MWP, Vance PH (1998) Branch-and-price: Column
+generation for solving huge integer programs.Operations Research46(3):316–329.
+Beasley JE, Christofides N (1989) An algorithm for the resource constrained shortest path problem.Networks
+19(4):379–394.
+Bezzi D, Ceselli A, Righini G (2023) A route-based algorithm for the electric vehicle routing problem with
+multiple technologies.Transportation Research Part C: Emerging Technologies157:104374, ISSN 0968-
+090X, URLhttp://dx.doi.org/10.1016/j.trc.2023.104374.
+Birolini S, Jacquillat A (2023) Day-ahead aircraft routing with data-driven primary delay predictions.Euro-
+pean Journal of Operational Research310(1):379–396.
+Boston Region MPO (2025) Exploring cargo e-bikes for last-mile deliveries. Technical report, Boston MPO,
+URLhttps://test.bostonmpo.org/data/pdf/studies/bikeped/Cargo-Ebikes-Report.pdf.
+Boysen N, Fedtke S, Schwerdfeger S (2021) Last-mile delivery concepts: a survey from an operational
+research perspective.OR Spectrum43(1):1–58, ISSN 1436-6304, URLhttp://dx.doi.org/10.1007/
+s00291-020-00607-8.
+Boysen N, Schneider M, ˇZulj I (2025) Energy management for electric vehicles in facility logistics: A survey
+from an operational research perspective.European Journal of Operational ResearchISSN 0377-2217,
+URLhttp://dx.doi.org/10.1016/j.ejor.2025.12.031.
+
+===== PAGE 32 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+32
+Brandst¨ atter G, Leitner M, Ljubi´ c I (2020) Location of charging stations in electric car sharing systems.
+Transportation Science54(5):1408–1438.
+Ceselli A, Felipe A, Ortu no MT, Righini G, Tirado G (2021) A Branch-and-Cut-and-Price Algorithm for
+the Electric Vehicle Routing Problem with Multiple Technologies.Operations Research Forum2(1):8,
+ISSN 2662-2556, URLhttp://dx.doi.org/10.1007/s43069-020-00052-x.
+Changi Airport Group (2026) Changi airport rolls out autonomous tractors in major step towards air-
+side automation. URLhttps://www.changiairport.com/en/corporate/our-media-hub/newsroom/
+press-releases.autonomous-tractors.2026.all.html.
+Cummings K, Jacquillat A, Martin-Iradi B (2024) Deviated fixed-route microtransit: Design and operations.
+arXiv preprint arXiv:2402.01265.
+de Vos MH, van Lieshout RN, Dollevoet T (2024) Electric vehicle scheduling in public transit with capacitated
+charging stations.Transportation Science58(2):279–294.
+Desaulniers G, Errico F, Irnich S, Schneider M (2016) Exact algorithms for electric vehicle-routing problems
+with time windows.Operations Research64(6):1388–1405.
+Dror M (1994) Note on the complexity of the shortest path models for column generation in vrptw.Operations
+Research42(5):977–978.
+Dunning I, Huchette J, Lubin M (2017) JuMP: A modeling language for mathematical optimization.SIAM
+Review59(2):295–320.
+Erdo˘ gan S, Miller-Hooks E (2012) A green vehicle routing problem.Transportation Research Part E: Logistics
+and Transportation Review48(1):100–114.
+Eveborn L, R¨ onnberg E (2026) Branch-Price-and-Cut Accelerated with a Pricing for Integrality Heuristic
+for the Electrical Vehicle Routing Problem with Time Windows and Charging Time Slots. URLhttp:
+//dx.doi.org/10.48550/arXiv.2602.08673, arXiv:2602.08673 [math].
+Felipe ´A, Ortu˜ no MT, Righini G, Tirado G (2014) A heuristic approach for the green vehicle routing prob-
+lem with multiple technologies and partial recharges.Transportation Research Part E: Logistics and
+Transportation Review71:111–128.
+Fern´ andez E, Leitner M, Ljubi´ c I, Ruthmair M (2022) Arc routing with electric vehicles: Dynamic charging
+and speed-dependent energy consumption.Transportation Science56(5):1219–1237.
+Froger A, Jabali O, Mendoza JE, Laporte G (2022) The electric vehicle routing problem with capacitated
+charging stations.Transportation Science56(2):460–482.
+Goeke D, Schneider M (2015) Routing a mixed fleet of electric and conventional vehicles.European Journal
+of Operational Research245(1):81–99.
+Gopalan R, Talluri KT (1998) The Aircraft Maintenance Routing Problem.Operations Research46(2):260–
+271, ISSN 0030-364X, URLhttps://www.jstor.org/stable/222864.
+
+===== PAGE 33 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+33
+Gschwind T, Bianchessi N, Irnich S (2019) Stabilized branch-price-and-cut for the commodity-constrained
+split delivery vehicle routing problem.European Journal of Operational Research278(1):91–104, ISSN
+0377-2217, URLhttp://dx.doi.org/https://doi.org/10.1016/j.ejor.2019.04.008.
+Harik EHC (2021) Design and Implementation of an Autonomous Charging Station for Agricultural Electrical
+Vehicles.Applied Sciences11(13), ISSN 2076-3417, URLhttp://dx.doi.org/10.3390/app11136168.
+Hasan MH, van Hentenryck P (2021) The benefits of autonomous vehicles for community-based trip sharing.
+Transportation Research Part C: Emerging Technologies124:102929.
+He F, Wu D, Yin Y, Guan Y (2013) Optimal deployment of public charging stations for plug-in hybrid
+electric vehicles.Transportation Research Part B: Methodological47:87–101.
+Hemmelmayr V, Doerner KF, Hartl RF, Rath S (2013) A heuristic solution method for node routing based
+solid waste collection problems.Journal of Heuristics19:129–156, URLhttp://dx.doi.org/10.1007/
+s10732-011-9188-9.
+International Council on Clean Transportation (2022) Charging solutions for battery-electric
+trucks. Technical report, Washington, DC, URLhttps://theicct.org/publication/
+charging-infrastructure-trucks-zeva-dec22/.
+International Energy Agency (2020) Energy Technology Perspectives 2020.https://iea.blob.
+core.windows.net/assets/7f8aed40-89af-4348-be19-c8a67df0b9ea/Energy_Technology_
+Perspectives_2020_PDF.pdf.
+Irnich S (2008) Resource extension functions: properties, inversion, and generalization to segments.OR
+Spectrum30(1):113–148, ISSN 1436-6304, URLhttp://dx.doi.org/10.1007/s00291-007-0083-6.
+Irnich S, Desaulniers G (2005)Shortest Path Problems with Resource Constraints, 33–65 (Boston, MA:
+Springer US).
+Jacquillat A, Luo J (2026) An iterative network flow algorithm for online pickup and delivery.Proceedings
+of the 2026 INFORMS Optimization Society Conference.
+Jacquillat A, Schmid A, Wang K (2022) Optimizing relay operations toward sustainable logistics.Available
+at SSRN 4241031.
+Jepsen M, Petersen B, Spoorendonk S, Pisinger D (2008) Subset-row inequalities applied to the vehicle-
+routing problem with time windows.Operations Research56(2):497–511.
+Kallehauge B, Larsen J, Madsen OB, Solomon MM (2005)Vehicle Routing Problem with Time Windows,
+67–98 (Boston, MA: Springer US).
+Kullman ND, Goodson JC, Mendoza JE (2021) Electric vehicle routing with public charging stations.Trans-
+portation Science55(3):637–659.
+Kınay ¨OB, Gzara F, Alumur SA (2023) Charging station location and sizing for electric vehicles under
+congestion.Transportation Science57:1433–1451.
+
+===== PAGE 34 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+34
+Lam E, Desaulniers G, Stuckey PJ (2022) Branch-and-cut-and-price for the Electric Vehicle Routing Problem
+with Time Windows, Piecewise-Linear Recharging and Capacitated Recharging Stations.Computers &
+Operations Research145:105870, ISSN 0305-0548, URLhttp://dx.doi.org/https://doi.org/10.
+1016/j.cor.2022.105870.
+Lee C (2021) An exact algorithm for the electric-vehicle routing problem with nonlinear charging time.
+Journal of the Operational Research Society72(7):1461–1485, ISSN 0160-5682, URLhttp://dx.doi.
+org/10.1080/01605682.2020.1730250, eprint: https://doi.org/10.1080/01605682.2020.1730250.
+Lera-Romero G, Bront J, Soulignac F (2023) A Branch-Cut-and-Price Algorithm for the Time-Dependent
+Electric Vehicle Routing Problem with Time Windows.European Journal of Operational Research312,
+URLhttp://dx.doi.org/10.1016/j.ejor.2023.06.037.
+Mak HY, Rong Y, Shen ZJM (2013) Infrastructure planning for electric vehicles with battery swapping.
+Management Science59(7):1557–1575.
+Martinelli R, Pecin D, Poggi M (2014) Efficient elementary and restricted non-elementary route pricing.
+European Journal of Operational Research239(1):102–111.
+Molenbruch Y, Braekers K, Eisenhandler O, Kaspi M (2023) The electric dial-a-ride problem on a fixed
+circuit.Transportation Science57:594–612.
+Montoya A, Gu´ eret C, Mendoza JE, Villegas JG (2017) The electric vehicle routing problem with nonlinear
+charging function.Transportation Research Part B: Methodological103:87–110.
+Nafstad GM, Desaulniers G, St ˚ alhane M (2025) Branch-Price-and-Cut for the Electric Vehicle Routing Prob-
+lem with Heterogeneous Recharging Technologies and Nonlinear Recharging Functions.Transportation
+Science59(3):628–646, ISSN 0041-1655, URLhttp://dx.doi.org/10.1287/trsc.2024.0725.
+Nejad MM, Mashayekhy L, Grosu D, Chinnam RB (2017) Optimal routing for plug-in hybrid electric vehicles.
+Transportation Science51(4):1304–1325.
+Parmentier A, Martinelli R, Vidal T (2023) Electric vehicle fleets: Scalable route and recharge scheduling
+through column generation.Transportation Science57(3):631–646.
+Pecin D, Pessoa A, Poggi M, Uchoa E, Santos H (2017) Limited memory Rank-1 Cuts for Vehicle Routing
+Problems.Operations Research Letters45(3):206–209, ISSN 0167-6377, URLhttp://dx.doi.org/10.
+1016/j.orl.2017.02.006.
+Qi W, Zhang Y, Zhang N (2023) Scaling up electric-vehicle battery swapping services in cities: A joint
+location and repairable-inventory model.Management Science69(11):6855–6875.
+Rahimi-Vahed A, Crainic TG, Gendreau M, Rei W (2015) Fleet-sizing for multi-depot and periodic vehicle
+routing problems using a modular heuristic algorithm.Computers & Operations Research53:9–23, URL
+http://dx.doi.org/10.1016/j.cor.2014.07.004.
+Ralphs TK, Kopman L, Pulleyblank WR, Trotter LE (2003) On the capacitated vehicle routing problem.
+Mathematical programming94:343–359.
+
+===== PAGE 35 =====
+Jacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+35
+Reuther A, Kepner J, Byun C, Samsi S, Arcand W, Bestor D, Bergeron B, Gadepally V, Houle M, Hubbell
+M, Jones M, Klein A, Milechin L, Mullen J, Prout A, Rosa A, Yee C, Michaleas P (2018) Interactive
+supercomputing on 40,000 cores for machine learning and data analysis.2018 IEEE High Performance
+extreme Computing Conference (HPEC), 1–6 (IEEE).
+Righini G, Salani M (2006) Symmetry helps: Bounded bi-directional dynamic programming for the elemen-
+tary shortest path problem with resource constraints.Discrete Optimization3(3):255–273.
+Rist Y, Forbes MA (2021) A new formulation for the dial-a-ride problem.Transportation Science55(5):1113–
+1135.
+Rist Y, Forbes MA (2022) A column generation and combinatorial benders decomposition algorithm for the
+selective dial-a-ride-problem.Computers & Operations Research140:105649.
+Schneider M, Stenger A, Goeke D (2014) The electric vehicle-routing problem with time windows and
+recharging stations.Transportation Science48(4):500–520.
+Sweda TM, Dolinskaya IS, Klabjan D (2017) Adaptive routing and recharging policies for electric vehicles.
+Transportation Science51(4):1326–1348.
+Valner R, Masnavi H, Rybalskii I, P˜ ollu¨ a¨ ar R, K˜ oiv E, Aabloo A, Kruusam¨ ae K, Singh AK (2022) Scalable
+and heterogenous mobile robot fleet-based task automation in crowded hospital environments—a field
+test.Frontiers in Robotics and AI9:922835, ISSN 2296-9144, URLhttp://dx.doi.org/10.3389/
+frobt.2022.922835.
+van Rossum B, van Lieshout R, Jacquillat A (2026) Adaptive Partitioning in Column Generation for Nested
+Paths. URLhttp://dx.doi.org/10.48550/arXiv.2605.28692, arXiv:2605.28692 [math.OC].
+Zhang W, Jacquillat A, Wang K, Wang S (2023) Routing optimization with vehicle–customer coordination.
+Management Science69(11):6876–6897.
+
+===== PAGE 36 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec1
+Subpath-Based Column Generation for Electric V ehicle
+Routing Problems: Electronic Companion
+EC.1. Column generation for the EVRPTWNL
+Algorithm 4 solves the linear relaxation of the EVRPTWNL, parameterized by a set of pathsP. This
+parameterization allows us to express the linear relaxation solution afterng-relaxations and subset-row cuts,
+both which affect the feasible pathsP.
+Algorithm 4ColumnGeneration(P).
+Initialization:Construct a set of pathsP 0 ⊂ Psuch thatEVRP(P0) is feasible. Initializeℓ= 0.
+Iterate between Steps 1-3, until termination.
+Step 1.Solve EVRP(P ℓ), obtaining primal solutionz ℓ and dual variablesκ,µ, andν.
+Step 2.Solve pricing problem to generate pathsp∈ Pnew ⊆ Pwith negative reduced cost (Equation (8)).
+Step 3.If|P new|= 0,STOP: return solutionz ℓ. Otherwise, updateP ℓ+1 ← Pℓ ∪ Pnew andℓ←ℓ+ 1.
+EC.2. Arc-based optimization formulation for the EVRPTWNL
+We provide the arc-based integer optimization formulation for the EVRPTWNL. We defineV startD andV endD
+as two copies of the set of depotsV D. We define the following decision variables:
+•x ki,j: binary variable denoting if arc (i, j)∈ Ais traversed by vehiclek∈[K].
+•T ki denoting the time that vehiclek∈[K] arrives at nodei∈ V;
+•B ki denoting the charge that vehiclek∈[K] arrives at nodei∈ Vwith;
+•D ki denoting the load that vehiclek∈[K] arrives at nodei∈ Vwith;
+•τ ki denoting the time spent charging at nodei∈ Vfor vehiclek∈[K] (0 for non-charging stationsi /∈ VS)
+Equation (EC.1) minimizes travel costs, subject to start and end requirements (Equations (EC.2)–(EC.5)),
+flow conservation for each vehicle (Equation (EC.6)), and customer service requirements (Equation (EC.7)).
+Equations (EC.8)–(EC.10) track the accumulated load for each vehicle at each node. Equations (EC.11)–
+(EC.13) track the arrival time for each vehicle at each node, and Equations (EC.14)–(EC.15) impose time
+window requirements. Equations (EC.16)–(EC.18) track the arrival state-of-charge for each vehicle at each
+node. Note that Equations (EC.11) and (EC.16) are coupled via the charging time decisionτ ki .
+min
+X
+k∈[K]
+X
+(i,j)∈A
+ci,jxki,j (EC.1)
+such that
+X
+k∈[K]
+X
+j:(i,j)∈A
+xki,j =v starti ∀i∈ VstartD (EC.2)
+X
+k∈[K]
+X
+i:(i,j)∈A
+xki,j ≥v endj ∀j∈ VendD (EC.3)
+X
+i∈V startD
+X
+j:(i,j)∈A
+xki,j = 1∀k∈[K] (EC.4)
+
+===== PAGE 37 =====
+ec2e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+X
+j∈V endD
+X
+i:(i,j)∈A
+xki,j = 1∀k∈[K] (EC.5)
+X
+j:(j,i)∈A
+xkj,i = X
+j:(i,j)∈A
+xki,j ∀k∈[K],∀i∈ V C ∪ VS (EC.6)
+X
+k∈[K]
+X
+j:(i,j)∈A
+xki,j = 1∀i∈ V C (EC.7)
+Dkj ≥D ki +d i −M·(1−x ki,j)∀k∈[K],∀(i, j)∈ A(EC.8)
+Dki = 0∀k∈[K],∀i∈ V startD (EC.9)
+Dki ≤D∀k∈[K],∀i∈ V(EC.10)
+T kj ≥T ki +t i,j +τ ki −M·(1−x ki,j)∀k∈[K],∀(i, j)∈ A(EC.11)
+τ ki = 0∀k∈[K],∀i∈ V \ V S (EC.12)
+T ki = 0∀k∈[K],∀i∈ V startD (EC.13)
+T ki ≥α i ∀k∈[K],∀i∈ V(EC.14)
+T ki ≤β i ∀k∈[K],∀i∈ V(EC.15)
+Bkj ≤g C  Bki , τki  −b i,j +M·(1−x ki,j)∀k∈[K],∀(i, j)∈ A(EC.16)
+Bki =B∀k∈[K],∀i∈ V startD (EC.17)
+Bki ≤B∀k∈[K],∀i∈ V(EC.18)
+xki,j ∈ {0,1} ∀k∈[K],∀(i, j)∈ A(EC.19)
+Dki ≥0∀k∈[K],∀i∈ V(EC.20)
+τ ki ≥0∀k∈[K],∀i∈ V S (EC.21)
+T ki ≥0∀k∈[K],∀i∈ V(EC.22)
+Bki ≥0∀k∈[K],∀i∈ V(EC.23)
+Note that this formulation cannot model a vehicle visiting the same charging station more than once; this
+can be mitigated by duplicating charging station nodes.
+Computational results.We consider EVRPTW instance C101 from Schneider et al. (2014) with 25
+customers, and investigate the scalability of the arc-based formulation. We consider the following variants:
+(1) Equations (EC.1)–(EC.7), (EC.11)–(EC.13), (EC.19), (EC.21)–(EC.22), modeling the core VRP;
+(2) All previous constraints, and Equations (EC.14)–(EC.15), modeling the VRPTW;
+(3) All previous constraints, and Equations (EC.16)–(EC.18) and (EC.23), modeling the EVRPTW;
+(4) The full formulation, modeling the capacitated EVRPTW (as in Section 6).
+All runs are conducted with a 1-hour time limit with a 1% optimality tolerance. Table EC.1 shows that
+even the smallest (N= 6) instances have large computational times, and the full problem does not terminate
+within the one-hour limit, leaving large optimality gap, with as few as 12 customers. The results also show
+the impact of the electric vehicle routing problem—which requires jointly optimizing routing and charging
+variables—as compared to traditional vehicle routing problems, resulting in orders of magnitude increases in
+
+===== PAGE 38 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec3
+computational times. Ultimately, these results show that the—capacitated—EVRPTW is a highly challenging
+optimization problem for which off-the-shelf methods exhibit limited tractability.
+Table EC.1 Computation times and optimality gaps for arc-based formulations incorporating various problem
+elements of the EVRPTW and varying the number of customers.
+Computation time (s) Optimality gap (%)
+N(1) (2) (3) (4) (1) (2) (3) (4)
+6 18.05 42.57 956.21 1217.66<1.00<1.00<1.00<1.00
+8 53.41 898.54 2624.24>3600.0<1.00<1.00<1.00 4.18
+10 20.95 306.03>3600.0 2048.21<1.00<1.00 6.09<1.00
+12>3600.0 544.96>3600.0>3600.0 8.27<1.00 9.04 9.96
+15>3600.0>3600.0>3600.0>3600.0 15.31 8.05 14.85 14.54
+18>3600.0>3600.0>3600.0>3600.0 11.96 8.72 22.24 19.82
+20>3600.0>3600.0>3600.0>3600.0 22.74 9.47 23.44 24.22
+25>3600.0>3600.0 – – 21.35 25.81 – –
+EC.3. Proofs in Section 4
+Throughout the appendix, we denote by (x) + := max{0, x}the positive part ofx, and by⟨x⟩=x− ⌊x⌋its
+fractional part.
+EC.3.1. Section 4.2
+We first provide a characterization of subpath-level timing resourcesT endmin (s), Tstartmax (s). Letshave node
+sequence (n0, . . . , nm). Define cumulative travel times:
+A0 = 0, A k =
+k−1X
+ℓ=0
+tnℓ,nℓ+1 ∀k∈ {1, . . . , m}(EC.24)
+Then, (T E0 , . . . , TEm) and (T L0 , . . . , TLm) in Definition 6(v)–(vi) can be expressed by unrolling the forward and
+backward recursions:
+∀k∈ {0, . . . , m}, TEk = max0≤i≤k {αni +A k −A i}, T Lk = mink≤i≤m {βni −A i +A k}.(EC.25)
+This allows us to show:
+Lemma EC.1.Letsbe a partial subpath with node sequence(n 0, . . . , nm). Define(T E0 , . . . , TEm)and
+(T L0 , . . . , TLm)per Definition 6(v)–(vi). Supposesis feasible and has service time sequence(t 0, . . . , tm). Then,
+αnk ≤T Ek ≤t k ≤T Lk ≤β nk for allk∈ {0, . . . , m}.
+Proof of Lemma EC.1. Feasibility of the service time sequence implies, for anyk∈ {0, . . . , m}:
+tk ≥α ni +A k −A i ∀i∈ {0, . . . , k}(EC.26)
+tk ≤β ni −A i +A k ∀i∈ {k, . . . , m}(EC.27)
+Taking the maximum and minimum respectively overigivesT Ek ≤t k ≤T Lk . Takingi=kin Equation (EC.25)
+givesα nk ≤T Ek andT Lk ≤β nk . □
+For a node sequence (n0, . . . , nm), (T E0 , . . . , TEm) and (TL0 , . . . , TLm) can be viewed as “effective time windows”,
+that is, the earliest and latest times each node can be visited while maintaining time-window feasibility.
+Feasibility of a node sequence (without charging) would be equivalent to ensuringT Ek ≤T Lk for eachk.
+
+===== PAGE 39 =====
+ec4e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+Proof of Proposition 1.The correctness of extension rules (i)–(v) follow directly from the definitions.
+We show that rule (vi) is consistent with Definition 6(vi). Lets= (n 0, . . . , nm) anda= (n m, nm+1). By
+definition,T startmax (s) =T L0 andT startmax (s⊕a) = bT L0 , where:
+T Lm =β nm,∀ℓ∈ {0, . . . , m−1}, TLℓ = minT Lℓ+1 −t nℓ,nℓ+1 , βnℓ 	
+bT Lm+1 =β nm+1 ,∀ℓ∈ {0, . . . , m},bT Lℓ = minn bT Lℓ+1 −t nℓ,nℓ+1 , βnℓ o
+If there exists someℓ∈ {0, . . . , m}for whichTLℓ = bT Lℓ , this must hold for all 0≤k≤ℓper the recursive def-
+inition. This means that bT L0 =T L0 , henceT startmax (s⊕a) =T startmax (s). Otherwise, bT Lℓ < TLℓ for allℓ∈ {0, . . . , m}.
+This implies:
+βnm+1 −
+mX
+ℓ=k
+tnℓ,nℓ+1 < βnk ,∀k∈ {0, . . . , m}
+These two cases can be captured succinctly as follows, which shows rule (vi).
+T startmax (s⊕a) = min nβnm+1 − mX
+ℓ=0
+tnℓ,nℓ+1 , Tstartmax (s) o = minβnm+1 −T travel (s⊕a), T startmax (s)	
+We next show the criteria fors⊕ato be feasible. Criteria (a)–(b) are obvious. Both parts of (c) are
+equivalent due to symmetry. The first requires that starting at noden m atT endmin (s), one must reachn m+1
+beforeβ nm+1 ; equivalently, the second requires that reaching noden m atβ nm+1 must not force one to start
+subpaths⊕abeforeα n0 , the start of the time window at the start ofs.□
+Proof of Lemma 1.Suppose that one starts subpathsat timet. Then by unrolling Equation (1):
+fs(t) = max{Tendmin (s), t+T travel (s)}(t∈[0, T startmax (s)]) (EC.28)
+The two cases can be explained as follows: if some nodenis reached before or at the start of its time
+windowα n, then the subpath must arrive at each subsequent node at the earliest possible time, and there-
+fore terminate at timeT endmin (s). Otherwise no waiting is incurred andsterminates at timet+T travel (s).
+The domain off s is [0, Tstartmax (s)] by definition. From the definition ofQ(s),f s(t) is equivalently equal to
+max{T endmin (s), t+Q(s)}:
+max{T endmin (s), t+Q(s)}= max{T endmin (s), t+T travel (s), T endmin (s) +t−T startmax (s)}(EC.29)
+= max{Tendmin (s), t+T travel (s)}(sincet∈[0, T startmax (s)])□(EC.30)
+Remark EC.1.We also note the helpful identityP(s) +Q(s) =T endmin (s).
+Remark EC.2.This lemma is also from Irnich (2008) (see Proposition 6); however, as far as we are aware
+we are the first to use this result to directly define label-setting resources.
+Proof of Proposition 2.We show thats 1, s2 satisfy Definition 7(iv)–(vi),if and only if dom(f s2 )⊆
+dom(fs1 ) and, for anyt∈dom(f s2 ), we havef s1 (t)≤f s2 (t).
+(⇒) Supposes 1, s2 satisfies Definition 7(iv)–(vi). ThenT endmin (s1)≤T endmin (s2),T startmax (s1)≥T startmax (s2), and
+Q(s1)≤Q(s 2), so Equation (12) gives dom(f s2 )⊆dom(f s1 ) andf s1 ≤f s2 on the domain.
+(⇐) Suppose the latter. Then, dom(f s2 )⊆dom(f s1 ) implies (v)T startmax (s1)≥T startmax (s2). Also,f s1 (0)≤f s2 (0)
+implies (iv)T endmin (s1)≤T endmin (s2). Finally:
+Q(s1)≤f s1 (T startmax (s2))−T startmax (s2) (evaluatingf s1 atT startmax (s2)) (EC.31)
+≤f s2 (T startmax (s2))−T startmax (s2) =Q(s 2).(sincef s1 ≤f s2 )□(EC.32)
+
+===== PAGE 40 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec5
+EC.3.2. Section 4.3
+Nonlinear charging preliminariesWe note the following lemma (Proposition 2.1 of Lee (2021)):
+Lemma EC.2.If0≤b 1 ≤b 2 and0≤b≤B−b 2, theng T (b1, b1 +b)≤g T (b2, b2 +b).
+Path dominationWe first observe that the nonlinear comparison of path resources for domination
+can be restated as two componentwise comparisons:
+Lemma EC.3.Letp 1, p2 be two feasible partial paths starting and ending at the same nodes. Define
+T eff (p) :=T endmin (p)−g T (0, Bendmax (p)). Then Definition 9(iii) is equivalent to: (a)T endmin (p1)≤T endmin (p2); and
+(b)T eff (p1)≤T eff (p2).
+Proof of Lemma EC.3.
+(⇒) Assume Definition 9(iii). Then:
+T endmin (p1) +gT  Bendmax (p1),max Bendmax (p1), Bendmax (p2)	 ≤T endmin (p2) (EC.33)
+⇐ ⇒T endmin (p1) +g −1(max Bendmax (p1), Bendmax (p2)	)−g −1(Bendmax (p1))≤T endmin (p2) (EC.34)
+⇐ ⇒T endmin (p1) + g−1(Bendmax (p2))−g −1(Bendmax (p1))+ ≤T endmin (p2) (EC.35)
+(a) and (b) follow from the fact that the second term is greater than or equal to 0 andg −1(Bendmax (p2))−
+g−1(Bendmax (p1)) respectively.
+(⇐) Assume (a) and (b). ThenT endmin (p1) + g−1(Bendmax (p2))−g −1(Bendmax (p1))+ ≤T endmin (p2), from which Def-
+inition 9(iii) holds. □
+To aid in the proofs that follow, we generalizeT eff (·) to time-charge pairs that might not be equal to
+(T endmin (p), Bendmax (p)) (such thatT eff (p) =η(T endmin (p), Bendmax (p))):
+Definition EC.1.Defineη(t, b) as the charge-adjusted time:η(t, b) :=t−g −1(b).
+We show the following lemma:
+Lemma EC.4.Let(t 1, b1)and(t 2, b2)be two time-charge pairs arriving at the start of subpaths. Assume:
+(a)t 1 ≤t 2; and (b)η(t 1, b1)≤η(t 2, b2). Suppose charging forτ 2 ≥0at(t 2, b2)allows feasible service of
+subpaths, i.e.g C (b2, τ2)≥B(s)andt 2 +τ 2 ≤T startmax (s). Define:
+τ1 := max
+
+0, g−1(B(s))−g −1(b1), P(s)−t 1	 (EC.36)
+Then, charging forτ 1 at(t 1, b1)allows feasible service of subpaths. The resulting states at the end ofs,
+given by(t ′1, b′1)and(t ′2, b′2), satisfy (a)t ′1 ≤t ′2; and (b)η(t ′1, b′1)≤η(t ′2, b′2).
+t′1 :=f s(t1 +τ 1), b ′1 :=g C (b1, τ1)−B(s) (EC.37)
+t′2 :=f s(t2 +τ 2), b ′2 :=g C (b2, τ2)−B(s) (EC.38)
+Proof of Lemma EC.4. First, charging feasibility: by definition ofτ 1 and the fact thatgis nondecreasing,
+gC (b1, τ1) =g
+ 
+g−1(b1) +τ1 ≥g  g−1(B(s)) =B(s) (EC.39)
+Second, time window feasibility. We wish to show
+t1 +τ 1 = max
+
+t1, η(t1, b1) +g −1(B(s)), P(s)	 ≤T startmax (s) (EC.40)
+
+===== PAGE 41 =====
+ec6e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+The first is true sincet 1 ≤t 2 ≤t 2 +τ 2 ≤T startmax (s). The third is true sinceP(s) :=
+min
+
+T startmax (s), Tendmin (s)−T travel (s)	 ≤T startmax (s) by definition. To show the second:
+η(t1, b1) +g −1(B(s))≤η(t 2, b2) +g −1(B(s)) (EC.41)
+=t 2 +g −1(B(s))−g −1(b2) (becauseg C (b2, τ2)≥B(s)) (EC.42)
+≤t 2 +τ 2 ≤T startmax (s) (EC.43)
+Indeed, from the above, we can conclude that whilet 1 +τ 1 might be greater thant 2 +τ 2, it is not greater
+than max{t2 +τ 2, P(s)}.
+Third,t ′1 ≤t ′2. Sincet 1 +τ 1 ≥P(s),f s(t1 +τ 1) =t 1 +τ 1 +Q(s). Then:
+t′1 =f s(t1 +τ 1) =t 1 +τ 1 +Q(s)≤max{t 2 +τ 2, P(s)}+Q(s) (i)=f s(max{t 2 +τ 2, P(s)})(ii)=f s(t2 +τ 2) =t ′2
+(EC.44)
+where (i) is because max{t 2 +τ 2, P(s)} ≥P(s) and (ii) is by definition offs and the fact thatP(s) +Q(s) =
+T endmin (s).
+Fourth,η(t ′1, b′1)≤η(t ′2, b′2). We define:r(x) :=g −1(g(x)−B(s)) forx≥g −1(B(s)). Sincegis nondecreasing
+and concave,g −1(·) is nondecreasing and convex, and forg −1(B(s))≤x≤y:
+0≤r(y)−r(x) =g −1(g(y)−B(s))−g −1(g(x)−B(s)) (EC.45)
+≤g −1(g(y))−g −1(g(x)) (by Lemma EC.2) (EC.46)
+≤y−x(EC.47)
+Therefore our defined functionris nondecreasing and 1-Lipschitz. Therefore, Φ(d, η) :=d+Q(s)−r(d−η)
+is nondecreasing in each argument on its domaind−η≥g −1(B(s)). We therefore have:
+η(t′1, b′1) =t 1 +τ 1 +Q(s)−g −1(b′1) (EC.48)
+=t 1 +τ 1 +Q(s)−g −1(g  g−1(b1) +τ1 −B(s)) (EC.49)
+= Φ(t1 +τ 1, η(t1, b1)) (sincet 1 +τ 1 −η(t 1, b1) =g −1(b1) +τ1) (EC.50)
+≤Φ(max{t 2 +τ 2, P(s)}, η(t1, b1)) (EC.51)
+≤Φ(max{t 2 +τ 2, P(s)}, η(t2, b2)) (since Φ nondecreasing) (EC.52)
+= max{t2 +τ 2, P(s)}+Q(s)−r(max{t 2 +τ 2, P(s)} −η(t2, b2)) (EC.53)
+≤max{t 2 +τ 2, P(s)}+Q(s)−r(t 2 +τ 2 −η(t 2, b2)) (sincernondecreasing) (EC.54)
+=t ′2 −g −1(g(g −1(b2) +τ2)−B(s)) =η(t ′2, b′2).□(EC.55)
+The statement of Lemma EC.4 serves two purposes. On one hand, it justifies the definition ofτin
+Equation (27) as dominating any other choice ofτ, in terms of the two conditions in Lemma EC.3—by setting
+(t1, b1) = (t2, b2). On the other hand, whent 1 ≤t 2 andη(t 1, b1)≤η(t 2, b2), it shows that this relationship
+propagates along subpath extensions, using the greedy charging time rule for (t 1, b1) andanycharging time
+rule for (t 2, b2). This allows us to prove Proposition 3 (and subsequently Theorem 1).
+
+===== PAGE 42 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec7
+Proof of Proposition 3.We prove the following by induction. For feasible partial pathpwith sub-
+path sequence (s 1, . . . , sm), let (T endk , Bendk ) be generated by Equations (26)–(31) after subpaths k, and let
+( ˆT endk , ˆBendk ) denote any other feasible charging schedule up tos k. We show by induction that for allk∈
+{1, . . . , m}:
+T endk ≤ ˆT endk ,andη(T endk , Bendk )≤η( ˆT endk , ˆBendk ) (EC.56)
+The base casek= 1 is true, since ˆT end1 =T end1 =f s1 (0) and ˆBend1 =B end1 =B−B(s 1).
+Suppose Equation (EC.56) holds fork. Let ( ˆT endk , ˆBendk ) be the end time and charge of some feasible
+charging schedule after subpaths k, and ˆτk be the amount charged before subpaths k+1. By the induction
+hypothesis,T endk ≤ ˆT endk andT endk −g −1(Bendk )≤ ˆT endk −g −1( ˆBendk ). Applying Lemma EC.4 with (t 1, b1) =
+(T endk , Bendk ), (t2, b2) = ( ˆT endk , ˆBendk ),τ 2 = ˆτk ands=s k+1 gives:
+τk = max
+
+0, g−1(B(sk+1))−g −1(Bendk ), P(sk+1)−T endk 	 (EC.57)
+This coincides withτ k defined in Equations (26)–(27). The lemma therefore showsT endk+1 ≤ ˆT endk+1 and
+η(T endk+1, Bendk+1)≤η( ˆT endk+1, ˆBendk+1) and the induction is complete.
+Finally, from the induction, we get:
+(a)T endk is optimal for CS T (s1, . . . , sk) (from the first part of Equation (EC.56));
+(b)B endk is optimal for CS B(s1, . . . , sk), since for any feasible solution with ˆT endk =T endk , the second part of
+Equation (EC.56) givesg −1(Bendk )≥g −1( ˆBendk ) =⇒B endk ≥ ˆBendk .
+This completes the proof. □
+Proof of Proposition 4.Extension rules (i) and (ii) are obvious. Extension rules (iii) and (iv) are
+shown in Proposition 3.
+Suppose feasibility criteria (a)–(c). (a) implies load feasibility ofp⊕s(Definition 1(i)). (b) givesT endmin (p) +
+τ≤T startmax (s), so Lemma 1 and the feasibility of subpathsgive the feasibility of all intermediate service
+times (Definition 1(iii)). Also, by construction, charging forτgives sufficient charge to perform subpaths
+thereafter requiring chargeB(s):
+gC
+ 
+Bendmax (p), τ ≥g C  Bendmax (p),˜τ = maxBendmax (p), gC  Bendmax (p), gT  Bendmax (p), B(s)	 (EC.58)
+= max
+
+Bendmax (p), B(s)	 ∈[B(s), B] (sinceg C (b, gT (b, b′)) =b ′ forb, b′ ∈[0, B]) (EC.59)
+Hence all intermediate battery levels are feasible (Definition 1(ii)). This shows feasibility ofp⊕s.□
+EC.3.3. Section 4.4
+Proof of Theorem 1.
+Property 2(i).Lets 1 ⪰s 2 be feasible partial subpaths,a= (n, n ′) be a common arc extension, and
+supposes 2 ⊕ais feasible. We verify criteria (i)–(vi) of Definition 7 fors 1 ⊕a⪰s 2 ⊕a:
+(i)–(iii) These are trivially true by Proposition 1(i)–(iii) and Definition 7(i)–(iii).
+
+===== PAGE 43 =====
+ec8e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+(iv)–(vi) We prove thats 1 ⊕aands 2 ⊕asatisfy the equivalent Proposition 2. We have the following expressions
+and domains off s1⊕a andf s2⊕a:
+dom(fs1⊕a) ={u∈dom(f s1 )|f s1 (u) +tn,n′ ≤β n′ }; (EC.60)
+∀u∈dom(f s1⊕a), f s1⊕a(u) = max{fs1 (u) +tn,n′, αn′}(EC.61)
+dom(fs2⊕a) ={u∈dom(f s2 )|f s2 (u) +tn,n′ ≤β n′ }; (EC.62)
+∀u∈dom(f s2⊕a), f s2⊕a(u) = max{fs2 (u) +tn,n′, αn′}(EC.63)
+Sinces 1 ⪰s 2, by Proposition 2, dom(f s2 ) = [0, Tstartmax (s2)]⊆dom(f s1 ) = [0, Tstartmax (s1)] andf s1 (u)≤
+fs2 (u) for allu∈dom(f s2 ). These two facts together show dom(fs2⊕a)⊆dom(f s1⊕a). Additionally, since
+the functionx7→max{x+t n,n′, αn′}is increasing, andf s1 (u)≤f s2 (u), we havef s1⊕a(u)≤f s2⊕a(u) too
+for allu∈dom(f s2⊕a). Therefores 1 ⊕aands 2 ⊕asatisfy Proposition 2.
+Finally, feasibility criteria (a), (b), (c) of Proposition 1 fors 1 ⊕aare implied by Definition 7(ii), (iii), (iv),
+and (v) respectively fors 1 ⊕a⪰s 2 ⊕a.
+Property 2(ii).Letp 1 ⪰p 2 be feasible partial paths,sbe a common subpath extension, and suppose
+p2 ⊕sis feasible. We aim to show thatp 1 ⊕sis also feasible (according to Proposition 4(a)–(c)) andp 1 ⊕s⪰
+p2 ⊕s(according to Definition 9(i)–(iii)).
+Reduced cost.Definition 9(i) holds forp 1 ⊕s⪰p 2 ⊕s, based on the additive update rule (Proposition 4(i))
+and Definition 9(i) forp 1 ⪰p 2.
+Load.Proposition 4(a) forp 1 ⊕sand Definition 9(ii) forp 1 ⊕s⪰p 2 ⊕sare shown by the additive update
+rule (Proposition 4(ii)) and Definition 9(ii) forp 1 ⪰p 2.
+Time and charge.By Lemma EC.3 onp 1 ⪰p 2, we have:
+T endmin (p1)≤T endmin (p2), T endmin (p1)−g −1(Bendmax (p1))≤T endmin (p2)−g −1(Bendmax (p2)) (EC.64)
+Apply Lemma EC.4 with (t 1, b1) = (Tendmin (p1), Bendmax (p1)), (t2, b2) = (Tendmin (p2), Bendmax (p2)), andτ 1, τ2 defined
+by the greedy charging rule onp 1, p2 respectively (Equations (26)–(27)). This implies thatp 1 ⊕sis time-
+charge feasible (Proposition 4(b)–(c)), and satisfies:
+T endmin (p1 ⊕s)≤T endmin (p2 ⊕s), T endmin (p1 ⊕s)−g −1(Bendmax (p1 ⊕s))≤T endmin (p2 ⊕s)−g −1(Bendmax (p2 ⊕s))
+(EC.65)
+Therefore Lemma EC.3 is satisfied forp 1 ⊕s⪰p 2 ⊕s, which is equivalent to Definition 9(iii).
+Property 2(iii).Letpbe a feasible partial path, ands 1, s2 be feasible subpaths both extendingp
+such thats 1 ⪰s 2. Supposep⊕s 2 is feasible. We aim to show thatp⊕s 1 is also feasible (according to
+Proposition 4(a)–(c)) andp⊕s 1 ⪰p⊕s 2 (according to Definition 9(i)–(iii)).
+Reduced cost.Definition 9(i) holds forp⊕s 1 ⪰p⊕s 2, based on the additive update rule (Proposition 4(i))
+and Definition 7(i) fors 1 ⪰s 2.
+Load.Proposition 4(a) forp⊕s 1 and Definition 9(ii) forp⊕s 1 ⪰p⊕s 2 are shown by the additive update
+rule (Proposition 4(ii)) and Definition 7(ii) fors 1 ⪰s 2.
+
+===== PAGE 44 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec9
+Time and charge.Defineτ 1 (respectivelyτ 2) the charging times determined in Proposition 4 when
+extendingpalong subpaths 1 ands 2 respectively. We define the following candidate partial paths:
+•p ′1 =p⊕s 1, which charges forτ 1 before performings 1;
+•ˆp, which performs the same charging inp, then charges forτ 2 before performings 1;
+•p ′2 =p⊕s 2, which charges forτ 2 before performings 2;
+By Lemma EC.3, the goal is to show:
+T endmin (p′1)≤T endmin (p′2), T endmin (p′1)−g −1(Bendmax (p′1))≤T endmin (p′2)−g −1(Bendmax (p′2)) (EC.66)
+We first compare ˆptop ′2. Sinces 1 ⪰s 2, by Definition 7:
+T endmin (p) +τ2 ∈dom(f s2 )⊆dom(f s1 ),(EC.67)
+fs1 (T endmin (p) +τ2)≤f s2 (T endmin (p) +τ2) =T endmin (p′2) ; (Proposition 2) (EC.68)
+B(s1)≤B(s 2)≤g C
+ 
+Bendmax (p), τ2 .(Definition 7(iii)) (EC.69)
+Therefore ˆpis time-charge feasible (Proposition 4(b)–(c)). It completess 1 at time-charge pair ( ˆt, ˆb) := 
+fs1 (T endmin (p) +τ2), gC  Bendmax (p), τ2 −B(s 1). The above yields:
+ˆt≤T endmin (p′2), ˆb≥B endmax (p′2) =⇒η( ˆt, ˆb)≤η(T endmin (p′2), Bendmax (p′2)).(EC.70)
+We next comparep ′1 to ˆp. By Lemma EC.4, using identical incoming states (T endmin (p), Bendmax (p)) and the
+benchmark charging timeτ 2 against the greedy charging timeτ 1, we obtain thatp ′1 is time-charge feasible
+and satisfies:
+T endmin (p′1)≤ ˆt, η(T endmin (p′1), Bendmax (p′1))≤η( ˆt, ˆb) (EC.71)
+Putting Equations (EC.70)–(EC.71) together yields
+T endmin (p′1)≤T endmin (p′2), η(T endmin (p′1), Bendmax (p′1))≤η(T endmin (p′2), Bendmax (p′2)).(EC.72)
+proving Lemma EC.3 forp ′1 ⪰p ′2 which is equivalent to Definition 9(iii). Also, the time-charge feasibility of
+p′1 establishes Proposition 4(b)–(c). This completes the proof.□
+Proof of Theorem 2.
+We make use of the following lemmas, using Bellman’s principle of optimality. In particular, Lemma EC.6
+underscores the need for Property 2(iii) in our two-phase label-setting algorithm.
+Lemma EC.5.Under Property 2, ifs=s ′ ⊕ais a non-dominated partial subpath thens ′ is non-dominated.
+Proof of Lemma EC.5. Ifs ′ is infeasible, thensis infeasible too. Ifs ′ is feasible but dominated by s,
+then by Property 2(i) and the feasibility ofs ′ ⊕a, s⊕ais also feasible and dominatess ′ ⊕a. Therefores ′ is
+non-dominated. □
+Lemma EC.6.Under Property 2, ifp=p ′ ⊕sis a non-dominated partial path, then bothp ′ andsare
+non-dominated.
+
+===== PAGE 45 =====
+ec10e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+Proof of Lemma EC.6. Ifp ′ orsare infeasible, thenpis infeasible too. Ifsis feasible but dominated by
+s, then by Property 2(iii) and the feasibility ofp ′ ⊕s,p ′ ⊕ sis also feasible and dominatesp ′ ⊕s. Likewise,
+ifp ′ is feasible but dominated by p, then by Property 2(ii) and the feasibility ofp ′ ⊕s, p⊕sis also feasible
+and dominatesp ′ ⊕s. Therefore bothp ′ andsmust be non-dominated.□
+Proof of Theorem 2. Finite termination of Algorithms 1 and 2 is guaranteed per Assumption 1. At
+the subpath level, the resourceT endmin (s) is nonnegative, strictly increasing along extensions (sincet i,j >0),
+and bounded above byT. At the path level, the resourceT endmin (p) is nonnegative, strictly increasing along
+extensions (sinceT travel (s)>0 for allsconsisting of more than 1 node), and bounded above byT.
+We show thatS gen =S nd, the set of non-dominated partial subpaths, up to dominance equivalence (i.e.
+when two labels dominate each other, one is retained). SinceS result is the subset of partial subpaths in
+Sgen that are also full subpaths, it automatically implies that Algorithm 1 returnsS result =S ∗, the set of
+non-dominated subpaths, up to dominance equivalence.
+•S gen ⊇ Snd. Suppose for contradiction that there existss∈ S nd \ Sgen. Chooseswith the smallest
+T endmin (s). Defines ′ such thats=s ′ ⊕a; by Lemma EC.5, we have thats ′ ∈ Snd. By Assumption 1,
+T endmin (s′)< Tendmin (s), so our construction implies thats ′ ∈ Sgen. ConsiderS gen andS queue at the point
+in the algorithm wheres ′ is moved fromS queue toS gen. Then,s=s ′ ⊕ais explored in Step 2 of the
+algorithm, and added toS queue, a contradiction.
+•S gen ⊆ Snd. Suppose for contradiction that there existss∈ Sgen \ Snd, i.e. there exists a non-dominated
+partial subpaths ′ ∈ Snd such thats ′ ⪰s. As seen earlier,s ′ is added toS queue at some point of the
+algorithm and remains in it until it gets added toS gen. Expresss ′ :=s ′′ ⊕a; then we haveT endmin (s)≥
+T endmin (s′) (by domination) andT endmin (s′)> Tendmin (s′′) (by Assumption 1). At the iteration wheres ′ is
+added toS queue, arg min
+
+T endmin (s)  s∈ Squeue 	 =T endmin (s′′); at the iteration wheresis added toS gen,
+arg min
+
+T endmin (s)  s∈ Squeue 	 =T endmin (s). By Assumption 1, arg min  T endmin (s)  s∈ Squeue 	 is nonde-
+creasing over the algorithm, sos ′ is added toS queue beforesis added toS gen. This contradicts that
+s∈ Sgen, sinces ′ ⪰swould either removesfromS queue or preventsfrom being added toS queue.
+Next, Algorithm 2, when initialized withS ∗ (the set of non-dominated subpaths from Algorithm 1),
+returnsP result =P ∗, the set of non-dominated paths, up to dominance equivalence. Again, we show the
+stronger claim:P gen =P nd, the set of non-dominated partial paths ending at non-customer nodes, up to dom-
+inance equivalence. The proof proceeds exactly as before, usingT endmin (p) as the path-level resource satisfying
+Assumption 1, and replacing Lemma EC.5 with Lemma EC.6.
+Finally, we show thatP result =P ∗ contains paths of negative reduced cost if any exist. Supposepis a path
+with negative reduced cost. If it is dominated, there exists a non-dominated pathp ′ ∈ P∗ such thatp ′ ⪰p.
+This implies that c(p ′)≤ c(p)<0. ThereforeP ∗ finds paths of negative reduced cost, if any exist.□
+Proof of Proposition 5.
+Consider our two-phase label-setting approach for the pricing problem, and assume that we define subpath
+dominance based on Definitions 7(i)–(iv), thus excluding (v) and (vi). From the proof of Theorem 1, we can
+prove that Properties 2(i)–(ii) are satisfied but Property 2(iii) is not.
+
+===== PAGE 46 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec11
+Consider now a problem with linear charging,T= 10,B= 3 andD= 5 where there is a sin-
+gle non-dominated partial pathpfrom depot 0 to charging station 1, and two subpathss 1, s2 start-
+ing at 1 and ending at another depot 4. The node sequence ofs 1 is (1,2,3,4), while the node
+sequence ofs 2 is (1,3,2,4). Customers 2 and 3 have time windows [6,9] and [7,8] respectively,
+and a load of 1 each. Travel times and charge requirements along arcs are given in Figure EC.1.
+Reduced costs are given as ci,j = 0 for (i, j)∈ {(1,2),(1,3),(2,3),(3,2),(2,4),(3,4)}. We can compute
+the resources fors 1 ands 2: ( c(s 1), D(s1), B(s1), Tendmin (s1), Tstartmax (s1), Ttravel (s1)) = (0,2,3,8,6,3) and
+(c(s 2), D(s2), B(s2), Tendmin (s2), Tstartmax (s2), Ttravel (s2)) = (0,2,3,9,7,3). Sinces 1 dominatess 2 under Defini-
+tions 7(i)–(iv),s 2 would be pruned in the first phase under Properties 2(i)–(ii).
+0 1
+[0,10]
+2
+[6,9]
+3
+[7,8]
+4
+[0,10]
+Depot
+Charger
+Customer
+p
+1
+1 1
+1
+1
+Figure EC.1 An instance where the absence of Property 2(iii) results in an incorrect algorithm.
+Suppose ( c(p), D(p), Tendmin (p), Bendmax (p)) = (−M,1,5,1). We remark thatp⊕s 1 is not feasible, since
+T endmin (p) +gT  Bendmax (p),max{B endmax (p), B(s1)} = 5 + (3−1) = 7>6 =T startmax (s1), thus violating condition (b)
+in Proposition 4. Therefore, under Properties 2(i)–(ii) alone, there would be no feasible paths from depot to
+depot, and the column generation algorithm would then terminate at that iteration.
+Let us now assume that we apply the two-phase label-setting algorithm with the full Property 2, including
+Property 2(iii). Then, none of the subpathss 1 ands 2 is dominated in the first phase, andp⊕s 2 is feasible
+with reduced cost−Min the second phase. Note, in particular, that in this examples 1 ⪰s 2 no longer implies
+p⊕s 1 ⪰p⊕s 2. Therefore, the two-phase label-setting algorithm returns a path of reduced cost−M, and the
+column generation algorithm continues. AsMbecomes arbitrarily large, this means that a pricing algorithm
+that uses only Properties 2(i)–(ii) can fail to find paths of arbitrarily negative reduced cost.□
+Proof of Remark 1.
+We prove that Property 2(iii) is automatically satisfied if:
+(i) (Domination implies feasibility) Given feasible subpathss 1 ⪰s 2 both extending feasible partial pathp,
+the feasibility ofp⊕s 2 implies the feasibility ofp⊕s 1;
+(ii) (Subpath domination) Domination at the subpath level is given bys 1 ⪰s 2 ⇐ ⇒rS(s1)≤r S(s2) for a
+set of subpath-level resourcesr S ∈ RS;
+(iii) (Path domination) domination at the path level is given byp 1 ⪰p 2 ⇐ ⇒rP(p1)≤r P(p2) for a set of
+path-level resourcesr P ∈ RP;
+
+===== PAGE 47 =====
+ec12e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+(iv) (Monotonicity of path REFs along subpath extensions) For each path-level resourcer P, its REF along
+subpath extensions is a monotonic function of the set of subpath-level resourcesr S ∈ RS(rP) involved.
+Formally,r P(p⊕s) is a functionfofr P(p), possible other path-level resourcesr ′P(p) forr ′P ∈ RP, and
+some subpath-level resourcesr S(s) forr S ∈ RS(rP), and:
+rP(p⊕s) =f
+
+rP(p),{r ′P(p)}r′P∈RP ,{r S(s)}rS∈RS(rP)
+
+is increasing in eachr S(s),forr S ∈ RS(rP).
+(EC.73)
+Suppose that subpathss 1 ⪰s 2 both extend feasible partial pathpand thatp⊕s 2 is feasible. This gives
+feasibility ofp⊕s 1 by (i). For each path-level resourcer P, by monotonicity (iv) ands 1 ⪰s 2 (ii):
+rP(p⊕s 1) =f
+
+rP(p),{r ′P(p)}r′P∈RP,{r S(s1)}rS∈RS(rP)
+
+(EC.74)
+≤f
+
+rP(p),{r ′P(p)}r′P∈RP,{r S(s2)}rS∈RS(rP)
+
+(EC.75)
+=r P(p⊕s 2) (EC.76)
+Therefore by (iii)p⊕s 1 ⪰p⊕s 2.□
+We next provide examples where the conditions are satisfied. Consider the pricing problem for the EVRP
+with nonlinear charging, no customer time windows, and no elementarity restrictions. LetRS be the resources
+c(·),D(·),B(·), andT travel (·). LetR P be the resources c(·),D(·),T endmin (·), andT eff (·). Recall thatT endmin (·)
+andT eff (·) are so defined, so thatT endmin (p1)≤T endmin (p2) andT eff (p1)≤T eff (p2) together are equivalent to
+Definition 9(iii) (Lemma EC.3).
+Condition (ii) and (iii) are satisfied by construction. The REFs forp⊕sin terms ofpareT endmin (p⊕s) :=
+T endmin (p) +τ+T travel (s) andB endmax (p⊕s) :=  Bendmax (p)−B(s) +, withτ:= max 0, gT  Bendmax (p), B(s)	.
+After some algebra we also have:
+T eff (p⊕s) =T eff (p) +T travel (s) +gT
+ 
+Bendmax (p)−B(s) + ,  Bendmax (p)−B(s) + +B(s)  (EC.77)
+The path-level REFs c(p⊕s),D(p⊕s) are monotonic in terms of subpath-level resources c(s) andD(s)
+respectively. The path-level REFsT endmin (p⊕s) andT eff (p⊕s) are also both monotonic in terms of the
+subpath-level resources{B(s), Ttravel (s)}. This proves Condition (iv). Finally, feasibility ofp⊕s 1 is satisfied
+automatically for conditions (a), (c) (by monotonicity ofTendmin (p⊕s)), and (b) (which now readsT endmin (p)+τ≤
+T−T travel (s), by monotonicity ofT endmin (p⊕s)). This proves (i).
+EC.4. Proofs in Section 5
+EC.4.1. Proofs in Section 5.1
+We first state a preparatory lemma:
+Lemma EC.7.Consider an ng-neighborhoodN, a node sequenceN= (n 0, . . . , nm), and an arc
+(nm, nm+1)∈ A. Then:
+(n0, . . . , nm+1)is ng-feasible w.r.t.N ⇐ ⇒Nis ng-feasible w.r.t.N, andn m+1 /∈Π(N).
+Proof of Lemma EC.7.
+
+===== PAGE 48 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec13
+(⇐) Let 0≤j < k≤m+ 1 be such thatn j =n k. Ifk̸=m+ 1, then there existsℓwithj < ℓ < kwith
+nj /∈Nnℓ , becauseNisng-feasible with respect toN. Ifk=m+ 1, thenn j =n m+1 andn j /∈Π(N),
+son j /∈Tmρ=j+1 Nnρ . Therefore, there existsℓsuch thatj+ 1≤l≤m(i.e.,j < ℓ < m+ 1) such that
+nj /∈Nnℓ . Thus, (n 0, . . . , nm+1) isng-feasible with respect toN.
+(⇒)Nis clearlyng-feasible with respect toN. Assume by contradiction thatn m+1 ∈Π(N). There exists
+r≤m−1 such thatn r =n m+1 andn r ∈ Tmρ=r+1 Nnρ . Hence forj=randk=m+ 1, there does not
+exist anyj < ℓ < ksuch thatnj /∈Nnℓ . This implies that (n 0, . . . , nm+1) is notng-feasible with respect
+toN, leading to a contradiction.□
+Proof of Proposition 6.
+Letsbe ang-feasible partial subpath with node sequence (n 0, . . . , nm) anda= (n m, nm+1) be an arc extension
+ofs. Sincen m+1 /∈Π(s), Lemma EC.7 implies thats⊕aisng-feasible. We extend the forwardng-set,
+backwardng-set, andng-residue as follows:
+Π(s⊕a) =
+n
+nr
+ nr ∈ Tm+1ρ=r+1 Nnρ , r∈ {0, . . . , m}o ∪ {nm+1}(EC.78)
+=
+n
+nr
+ nr ∈ Tmρ=r+1 Nnρ , r∈ {0, . . . , m−1}o ∩N nm+1  ∪ {nm+1}= (Π(s)∩N nm+1 )∪ {nm+1}
+(EC.79)
+Ω(s⊕a) = Tm+1ρ=0 Nnρ = Tmρ=0 Nnρ ∩N nm+1 = Ω(s)∩N nm+1 (EC.80)
+Π−1(s⊕a) ={n 0} ∪n nr  nr ∈ Tr−1ρ=0 Nnρ , r∈ {1, . . . , m+ 1}o (EC.81)
+=
+
+
+
+{n0} ∪
+n
+nr
+ nr ∈ Tr−1ρ=0 Nnρ , r∈ {1, . . . , m}o ∪ {nm+1}ifn m+1 ∈ Tmρ=0 Nnρ ,
+{n0} ∪
+n
+nr
+ nr ∈ Tr−1ρ=0 Nnρ , r∈ {1, . . . , m}o otherwise. (EC.82)
+= Π−1(s)∪({n m+1} ∩Ω(s))□(EC.83)
+Proof of Proposition 7.
+Letphave node sequence (n 0, . . . , nm) andshave node sequence (n m, . . . , nM ). First suppose Π(p)∩Π −1(s)̸⊆
+{nm}, i.e. there exists n∈Π(p)∩Π −1(s) with n̸=n m. Letj < mandk > mbe such thatn j =n k = n. Since
+nj ∈Π(p),n j ∈N nℓ for alll∈ {j+ 1, . . . , m}. Similarly, sincenk ∈Π −1(s),n k ∈N nℓ for alll∈ {m, . . . , k−1}.
+Therefore,n j =n k andn j ∈N nℓ for alll∈ {j+ 1, . . . , k−1}, which proves thatp⊕sis notng-feasible.
+Therefore,p⊕sisng-feasible iff Π(p)∩Π −1(s)⊆ {nm}.
+We next characterize Π(p⊕s). By the definition of Π(·):
+Π(p⊕s) =
+n
+nr
+ nr ∈ TMρ=r+1 Nnρ , r∈ {0, . . . , m}o ∪ n nr  nr ∈ TMρ=r+1 Nnρ , r∈ {m, . . . , M−1}o ∪ {nM }
+(EC.84)
+=
+n
+nr
+ nr ∈ TMρ=r+1 Nnρ , r∈ {0, . . . , m}o ∪Π(s) (by Proposition 6) (EC.85)
+=
+n
+nr
+ nr ∈ Tmρ=r+1 Nnρ , r∈ {0, . . . , m−1}o ∪ {nm} ∩ TMρ=m Nnρ  ∪Π(s) (EC.86)
+= (Π(p)∩Ω(s))∪Π(s)□(EC.87)
+Proof of Proposition 8.
+We focus on the new elements of the proof. All other parts follow Theorem 1.
+
+===== PAGE 49 =====
+ec14e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+Property 2(i).Lets 1 ⪰s 2 beng-feasible partial subpaths. Therefore, from Definition 13 we have:
+Π(s1)⊆Π(s 2), Ω(s1)⊆Ω(s 2), and Π−1(s1)⊆Π −1(s2). Leta= (n, n′) be a common arc extension and suppose
+thats 2 ⊕aisng-feasible. Thenn ′ /∈Π(s2) by Lemma EC.7. This impliesn ′ /∈Π(s1) too ands 1 ⊕ais also
+ng-feasible. Moreover, the three updates in Proposition 6 preserve set inclusion:
+Π(s1 ⊕a) = (Π(s1)∩N n′)∪ {n′} ⊆(Π(s2)∩N n′)∪ {n′}= Π(s 2 ⊕a) (EC.88)
+Ω(s1 ⊕a) = Ω(s1)∩N n′ ⊆Ω(s 2)∩N n′ = Ω(s2 ⊕a) (EC.89)
+Π−1(s1 ⊕a) = Π−1(s1)∪({n ′} ∩Ω(s1))⊆Π −1(s2)∪({n ′} ∩Ω(s2)) = Π−1(s2 ⊕a) (EC.90)
+Property 2(ii).Letp 1 ⪰p 2 beng-feasible partial paths ending at noden. Therefore, from Definition 14,
+we have: Π(p1)⊆Π(p 2). Letsbe a common subpath extension and suppose thatp 2 ⊕sisng-feasible. Then
+Π(p2)∩Π −1(s)⊆ {n}by Proposition 7. Therefore Π(p1)∩Π −1(s)⊆Π(p 2)∩Π −1(s)⊆ {n}, andp1 ⊕sis also
+ng-feasible. Moreover, per Proposition 7:
+Π(p1 ⊕s) = Π(s)∪(Π(p 1)∩Ω(s))⊆Π(s)∪(Π(p 2)∩Ω(s)) = Π(p 2 ⊕s) (EC.91)
+Property 2(iii).Lets 1 ⪰s 2 beng-feasible subpaths. Therefore, from Definition 13 we have: Π(s 1)⊆
+Π(s2), Ω(s1)⊆Ω(s 2), and Π−1(s1)⊆Π −1(s2). Letpbe ang-feasible partial path ending at noden, ands 1, s2
+both extendp, and supposep⊕s 2 isng-feasible. Then, Π(p)∩Π −1(s2)⊆ {n}, by Proposition 7. Therefore
+Π(p)∩Π −1(s1)⊆Π(p)∩Π −1(s2)⊆ {n}, andp⊕s 1 is alsong-feasible. Moreover, per Proposition 7:
+Π(p⊕s 1) = Π(s1)∪(Π(p)∩Ω(s 1))⊆Π(s 2)∪(Π(p)∩Ω(s 2)) = Π(p⊕s 2)□(EC.92)
+EC.4.2. Proofs in Section 5.2
+Before we prove the results in this section, we first note that the reduced cost resource for a (partial) subpath
+or path with node sequenceN= (n 0, . . . , nm) is given by:
+c(N) =
+m−1X
+ℓ=0
+cnℓ,nℓ+1 −
+X
+q∈Q
+λq ·α Sq ,wq (N) (EC.93)
+where∀q∈ Q, α Sq ,wq (N) = Pmℓ=0 wqnℓ 1(n ℓ ∈S q) (EC.94)
+αq(N) =
+
+Pm
+ℓ=0 wqnℓ 1(n ℓ ∈S q) (EC.95)
+Lemma EC.8.For two node sequencesN= (n 0, . . . , nm)andN ′ = (nm+1, . . . , nM ), we have:
+c(n 0, . . . , nM ) = c(N) + cnm,nm+1 + c(N ′)− X
+q∈Q
+λq ·1(α q(N) +α q(N ′)≥1) (EC.96)
+αSq ,wq (n0, . . . , nM ) =α Sq ,wq (N) +α Sq ,wq (N ′) +1(α q(N) +α q(N ′)≥1) (EC.97)
+αq(n0, . . . , nM ) =⟨α q(N) +α q(N ′)⟩(EC.98)
+Proof of Lemma EC.8. This is true by definingx= Pmℓ=0 wqnℓ 1(n ℓ ∈S q),y= PMℓ=m+1 wqnℓ 1(n ℓ ∈S q),
+and the identities:
+⌊x+y⌋=⌊x⌋+⌊y⌋+1(⟨x⟩+⟨y⟩ ≥1) ;⟨x+y⟩=⟨⟨x⟩+⟨y⟩⟩□
+
+===== PAGE 50 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec15
+Proof of Propositions 9 and 10.Apply Lemma EC.8:
+•Proposition 9: Ifshas node sequence (n 0, . . . , nm) anda= (n m, nm+1), setNas the node sequence of
+sandN ′ = (nm+1,). Note thatα Sq ,wq (N ′) = 0 since it is the floor of a single summand less than 1.
+•Proposition 10: Ifphas node sequence (n 0, . . . , nm) andshas node sequence (n m, . . . , nM ), setNas the
+node sequence ofpandN ′ = (nm+1, . . . , nM ). Note that c(s) = cnm,nm+1 + c(N ′). Also,α q(s) =α q(N ′)
+andα Sq ,wq (s) =α Sq ,wq (N ′) sincesstarts at charging stationn m which must not belong inS q.□
+Proof of Proposition 11.
+Lemma EC.9.Leta, b, c∈[0,1). Then:1(a > b)−1(a+c≥1) +1(b+c≥1) =1(⟨a+c⟩>⟨b+c⟩).
+Proof of Lemma EC.9 We consider cases ona, b, c, summarized in the table below:□
+a > b c∈[0,1−a)c∈[1−a,1−b)c∈[1−b,1)
+1−0 + 0 = 1 1−1 + 0 = 0 1−1 + 1 = 1
+a≤b c∈[0,1−b)c∈[1−b,1−a)c∈[1−a,1)
+0−0 + 0 = 0 0−0 + 1 = 1 0−1 + 1 = 0
+Proof of Proposition 11.
+We focus on the new elements of the proof. All other parts follow Theorem 1.
+Property 2(i).Lets 1 ⪰s 2 be feasible partial subpaths. Letabe a common arc extension, and suppose
+thats 2 ⊕ais feasible.s 1 ⊕ais automatically feasible by Theorem 1. We wish to show:
+c(s 1)− c(s 2)≤
+X
+q∈Q
+λq1(α q(s1)> αq(s2)) =⇒ c(s 1 ⊕a)− c(s 2 ⊕a)≤
+X
+q∈Q
+λq1(α q(s1 ⊕a)> αq(s2 ⊕a))
+We have:
+c(s 1 ⊕a)− c(s 2 ⊕a)
+= c(s 1)− c(s 2)−
+X
+q∈Q
+λq1(α q(s1) +w qn′1(n ′ ∈S q)≥1) + X
+q∈Q
+λq1(α q(s2) +w qn′1(n ′ ∈S q)≥1)
+≤
+X
+q∈Q
+λq
+h
+1(α q(s1)> αq(s2))−1(α q(s1) +w qn′1(n ′ ∈S q)≥1) +1(α q(s2) +w qn′1(n ′ ∈S q)≥1) i
+=
+X
+q∈Q
+λq1(α q(s1 ⊕a)> αq(s2 ⊕a))
+as desired. The first equality is by Proposition 9, and the second inequality by Definition 16. The third
+equality is by Lemma EC.9 (lettinga=α q(s1), b=αq(s2), c=wqn′1(n ′ ∈S q)) and Equation (EC.98).
+Property 2(ii).Letp 1 ⪰p 2 be feasible partial paths. Letsbe a common subpath extension, and
+suppose thatp 2 ⊕sis feasible.p 1 ⊕sis automatically feasible by Theorem 1. We wish to show:
+c(p 1)− c(p 2)≤
+X
+q∈Q
+λq1(α q(p1)> αq(p2)) =⇒ c(p 1 ⊕s)− c(p 2 ⊕s)≤
+X
+q∈Q
+λq1(α q(p1 ⊕s)> αq(p2 ⊕s))
+The proof is identical to that for Property 2(i), except that Proposition 10 is applied instead of Proposition 9,
+and Lemma EC.9 is applied by lettinga=α q(p1), b=αq(p2), c=αq(s) for eachq.
+
+===== PAGE 51 =====
+ec16e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+Property 2(iii).Letpbe a feasible partial paths, and lets 1 ⪰s 2 be subpaths both extendingp. Suppose
+thatp⊕s 2 is feasible.p⊕s 1 is automatically feasible by Theorem 1. We wish to show:
+c(s 1)− c(s 2)≤
+X
+q∈Q
+λq1(α q(s1)> αq(s2)) =⇒ c(p⊕s 1)− c(p⊕s 2)≤
+X
+q∈Q
+λq1(α q(p⊕s 1)> αq(p⊕s 2))
+The proof is identical to that for Property 2(ii), except that Lemma EC.9 is applied by lettinga=α q(s1), b=
+αq(s2), c=αq(p) for eachq. □
+We finally remark that the proof for Property 2(i) was first shown in Proposition 5 of Jepsen et al. (2008).
+We show the hidden additive structure of this REF and domination criteria through Lemma EC.9, and make
+the natural generalization to sequences of visits (concatenation of REFs).
+EC.4.3. Proofs in Section 5.3
+We first show the following lemma:
+Lemma EC.10.LetN 1 andN 2 be two ng-neighborhoods such thatN 1i ⊆N 2i for alli∈ V. Then,P(N 1)⊇
+P(N 2), and OPT(P(N 1))≤ OPT(P(N 2)).
+Proof of Lemma EC.10. Suppose thatp∈ P(N 2). Thenpis a feasible path, sop∈ P all. Additionally,
+letN= (n 0, . . . , nm) be the node sequence ofp. Suppose thatj < kwithn j =n k. SinceNisng-feasible
+with respect toN 2, there exists aℓwithj < ℓ < ksuch thatn j /∈N2nℓ . SinceN 1nℓ ⊆N 2nℓ ,n j /∈N1nℓ . This
+shows thatNisng-feasible with respect toN 1, and thatpisng-feasible with respect toN 1. Therefore,
+P(N 2)⊆ P(N1), and OPT(P(N 1))≤ OPT(P(N 2)).□
+Proof of Corollary 2.
+We first show that Steps 1–4 of Algorithm 3 returns an optimal solution to EVRP(Pelem) in a finite number
+of iterations. Note that in Algorithm 3, theng-neighborhoodsN t used across iterations are nested: for allt,
+N t andN t+1 satisfyN ti ⊆N t+1i for alli∈ V, and the inclusion is strict for at least onei. Per Lemma EC.10,
+P(N t)⊇ P(Nt+1) and OPT(P(N t))≤ OPT(P(N t+1)). Next, consider a non-elementary pathpin the support
+of the incumbent solutionz t. That path admits a cycle{i, n 0, . . . , nm, i}inN(p), withi∈ V C. Then, the
+addition ofitoN n0 , . . . , Nnm results inpno longer beingng-feasible forN t+1 and hence for any subsequent
+ng-neighborhood. Therefore, the quantity Pi∈V |N ti |takes integer values, strictly increases whenever Step 4
+is reached, and is upper-bounded by|V| 2. This proves that there exists some iterationt 1 at which all paths
+in the support ofz t1 are elementary, so thatz t1 is a feasible solution to EVRP(Pelem) with optimal value
+OPT(Pelem).
+Next, lett 1, t2, . . .indicate the iterations in which Step 5 is reached. Since each cut separatesz tk from
+the feasible set of the relaxation, the sequence of cuts defines a sequence of nested relaxations with objective
+values OPT(Pelem) =OPT t1 ≤OPT t2 ≤ · · · ≤OPT(Pelem). Furthermore, the family of subset-row cuts such that
+|S|= 3 andw i = 12 ∀i∈Sis finite. Thus, Algorithm 3 terminates in a finite number of iterations and its
+optimumOPTsatisfies OPT(Pelem)≤OPT≤OPT(P elem).□
+
+===== PAGE 52 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec17
+EC.5. Computational results
+EC.5.1. Supplementary results on new multi-depot instances
+Tables EC.2–EC.3 present results on the full column generation algorithm (Steps 1–5 of Algorithm 3) on
+our new multi-depot instances, varying the number of customersN=dxyalong the customer densityd
+and the grid size (x, y). Each row is the geometric mean of the 5 random instances generated with those
+parameters. For the instances where both our method and the path-based label-setting benchmark terminate
+within the 1-hour time limit, our method is 60%–80% faster and achieves near-zero optimality gaps. For the
+more challenging instances where our method and the path-based benchmark do not terminate within the
+1-hour time limit, our method achieves significantly better primal bounds and dual bounds compared to the
+benchmark; as Figure 11 demonstrates, this is due to more column generation iterations enabled by the faster
+computational times. Our method is more advantageous with wider time windows (comparing Table EC.3
+to Table EC.2, larger customer densityd, and larger service area (x, y).
+
+===== PAGE 53 =====
+ec18e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problems
+Table EC.2 Geometric means of the computational time, the dual and primal bounds, and the integrality gap.
+for multi-depot instances with narrower time windows. The values in parentheses indicate the percentage change
+of 2-LS with respect to LS (or the percentage point change for “Gap”).
+LS 2-LS
+N x y d t(s) (D) (P) Gapt(s) (D) (P) Gap
+16 2 4 2 25.59 131063 131063 0.00% 6.75 131063 131063 0.00%
+(−73.62%) (0.00%) (0.00%) (0.00%)
+24 3 4 2 54.34 192509 192509 0.00% 13.20 192509 192509 0.00%
+(−75.71%) (0.00%) (0.00%) (0.00%)
+32 4 4 2 232.92 265381 265404 0.01% 39.58 265381 265966 0.22%
+(−83.01%) (0.00%) (0.21%) (0.21%)
+40 5 4 2 503.19 319728 319728 0.00% 93.45 319728 319728 0.00%
+(−81.43%) (0.00%) (0.00%) (0.00%)
+24 2 4 3 88.37 159117 159117 0.00% 17.75 159117 159117 0.00%
+(−79.91%) (0.00%) (0.00%) (0.00%)
+36 3 4 3 363.90 239308 239308 0.00% 95.76 239308 239308 0.00%
+(−73.69%) (0.00%) (0.00%) (0.00%)
+48 4 4 3 741.40 326128 326758 0.19% 232.78 325958 327297 0.40%
+(−68.60%) (−0.05%) (0.16%) (0.21%)
+60 5 4 3 1270.03 393665 393756 0.02% 269.47 393756 393756 0.00%
+(−78.78%) (0.02%) (0.00%) (−0.02%)
+32 2 4 4 544.97 188054 188054 0.00% 115.89 188054 188054 0.00%
+(−78.74%) (0.00%) (0.00%) (0.00%)
+48 3 4 4 1394.32 273942 275276 0.48% 379.86 273942 275276 0.48%
+(−72.76%) (0.00%) (0.00%) (0.00%)
+64 4 4 4 2462.83 363931 368628 1.23% 713.40 364568 364568 0.00%
+(−71.03%) (0.17%) (−1.10%) (−1.23%)
+80 5 4 4 3189.44 469417 481779 2.49% 1654.25 470614 480031 1.91%
+(−48.13%) (0.26%) (−0.36%) (−0.58%)
+40 2 4 5 1458.52 200791 200929 0.07% 494.58 200929 200929 0.00%
+(−66.09%) (0.07%) (0.00%) (−0.07%)
+60 3 4 5 3264.05 308430 322286 4.27% 2619.04 310187 320016 3.03%
+(−19.76%) (0.57%) (−0.70%) (−1.24%)
+80 4 4 5 3037.97 409314 435965 6.07% 2754.91 411808 429839 4.14%
+(−9.32%) (0.61%) (−1.41%) (−1.93%)
+100 5 4 5 2865.91 524102 612108 13.97% 2938.66 540740 555879 2.65%
+(2.54%) (3.17%) (−9.19%) (−11.31%)
+
+===== PAGE 54 =====
+e-companion toJacquillat and Lo:Subpath-Based Column Generation for Electric Vehicle Routing Problemsec19
+Table EC.3 Geometric means of the computational time, the dual and primal bounds, and the integrality gap.
+for multi-depot instances with wider time windows. The values in parentheses indicate the percentage change of
+2-LS with respect to LS (or the percentage point change for “Gap”).
+LS 2-LS
+N x y d t(s) (D) (P) Gapt(s) (D) (P) Gap
+16 2 4 2 44.13 124033 124542 0.40% 7.76 124033 124542 0.40%
+(−82.41%) (0.00%) (0.00%) (0.00%)
+24 3 4 2 204.37 182950 182950 0.00% 37.37 182950 182950 0.00%
+(−81.72%) (0.00%) (0.00%) (0.00%)
+32 4 4 2 486.02 240030 240030 0.00% 64.22 240030 240030 0.00%
+(−86.79%) (0.00%) (0.00%) (0.00%)
+40 5 4 2 769.64 287360 287495 0.05% 124.34 287360 287495 0.05%
+(−83.85%) (0.00%) (0.00%) (0.00%)
+24 2 4 3 338.45 147283 147724 0.30% 66.51 147498 147692 0.13%
+(−80.35%) (0.15%) (−0.02%) (−0.17%)
+36 3 4 3 1198.88 216347 218653 1.01% 334.54 216805 216828 0.01%
+(−72.10%) (0.21%) (−0.83%) (−1.00%)
+48 4 4 3 2113.85 291105 297193 2.00% 861.45 292262 292805 0.18%
+(−59.25%) (0.40%) (−1.48%) (−1.82%)
+60 5 4 3 3308.28 348739 363604 3.96% 1261.50 349875 351954 0.58%
+(−61.87%) (0.33%) (−3.20%) (−3.38%)
+32 2 4 4 1719.34 162740 166302 2.11% 935.07 163838 164773 0.56%
+(−45.61%) (0.67%) (−0.92%) (−1.55%)
+48 3 4 4 2953.17 243147 253454 3.99% 1999.61 245006 247778 1.10%
+(−32.29%) (0.76%) (−2.24%) (−2.90%)
+64 4 4 4 3335.99 310804 356480 11.57% 2565.19 318837 328307 2.82%
+(−23.11%) (2.58%) (−7.90%) (−8.75%)
+80 5 4 4 2926.38 374185 526957 28.51% 3738.04 405763 450957 9.84%
+(27.74%) (8.44%) (−14.42%) (−18.67%)
+40 2 4 5 2619.24 174948 187018 6.29% 2097.62 176845 182850 3.18%
+(−19.92%) (1.08%) (−2.23%) (−3.11%)
+60 3 4 5 2302.65 250593 312472 18.33% 2340.47 259769 281828 7.76%
+(1.64%) (3.66%) (−9.81%) (−10.57%)
+80 4 4 5 3145.27 312714 472223 33.68% 3123.98 353265 385035 8.18%
+(−0.68%) (12.97%) (−18.46%) (−25.49%)
+100 5 4 5 – – – – 3397.09 444600 498598 10.74%
+– – – –
+A “–” denotes parameter settings where no results were obtained within the 1-hour time limit.

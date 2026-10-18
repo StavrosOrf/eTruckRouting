@@ -234,7 +234,7 @@ def test_default_action_budget_scales_with_customer_count(make_env):
 
 @pytest.mark.parametrize("seed", [1_000_000_000, 1_000_000_001, 1_000_000_002])
 def test_energy_path_reference_finishes_real_stochastic_400kwh_instances(seed):
-    from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
     config = deepcopy(load_config("EVRoutingEnv/config_files/config_joint.yaml"))
     config["environment"].update(num_trucks=2, num_stops=8)

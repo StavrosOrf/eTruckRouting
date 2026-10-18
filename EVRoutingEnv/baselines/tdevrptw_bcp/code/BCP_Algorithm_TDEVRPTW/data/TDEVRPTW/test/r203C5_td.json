@@ -1,0 +1,419 @@
+{
+    "name": "r203C5_TD",
+    "parameters": {
+        "vehicle_capacity": 1000.0,
+        "battery_capacity": 60.63,
+        "energy_consumption_rate": 1.0,
+        "planning_horizon_T": 1000.0
+    },
+    "nodes": [
+        {
+            "id": 0,
+            "string_id": "D0",
+            "type": 2,
+            "coords": {
+                "x": 35.0,
+                "y": 35.0
+            },
+            "demand": 0.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 1000.0
+            },
+            "service_time": 0.0
+        },
+        {
+            "id": 1,
+            "string_id": "S0",
+            "type": 1,
+            "coords": {
+                "x": 35.0,
+                "y": 35.0
+            },
+            "demand": 0.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 1000.0
+            },
+            "service_time": 0.0
+        },
+        {
+            "id": 2,
+            "string_id": "S1",
+            "type": 1,
+            "coords": {
+                "x": 64.0,
+                "y": 37.0
+            },
+            "demand": 0.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 1000.0
+            },
+            "service_time": 0.0
+        },
+        {
+            "id": 3,
+            "string_id": "S7",
+            "type": 1,
+            "coords": {
+                "x": 20.0,
+                "y": 61.0
+            },
+            "demand": 0.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 1000.0
+            },
+            "service_time": 0.0
+        },
+        {
+            "id": 4,
+            "string_id": "S9",
+            "type": 1,
+            "coords": {
+                "x": 15.0,
+                "y": 42.0
+            },
+            "demand": 0.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 1000.0
+            },
+            "service_time": 0.0
+        },
+        {
+            "id": 5,
+            "string_id": "C50",
+            "type": 0,
+            "coords": {
+                "x": 47.0,
+                "y": 47.0
+            },
+            "demand": 13.0,
+            "time_window": {
+                "start": 507.0,
+                "end": 599.0
+            },
+            "service_time": 10.0
+        },
+        {
+            "id": 6,
+            "string_id": "C96",
+            "type": 0,
+            "coords": {
+                "x": 22.0,
+                "y": 27.0
+            },
+            "demand": 11.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 974.0
+            },
+            "service_time": 10.0
+        },
+        {
+            "id": 7,
+            "string_id": "C79",
+            "type": 0,
+            "coords": {
+                "x": 57.0,
+                "y": 48.0
+            },
+            "demand": 23.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 964.0
+            },
+            "service_time": 10.0
+        },
+        {
+            "id": 8,
+            "string_id": "C25",
+            "type": 0,
+            "coords": {
+                "x": 65.0,
+                "y": 20.0
+            },
+            "demand": 6.0,
+            "time_window": {
+                "start": 418.0,
+                "end": 532.0
+            },
+            "service_time": 10.0
+        },
+        {
+            "id": 9,
+            "string_id": "C49",
+            "type": 0,
+            "coords": {
+                "x": 6.0,
+                "y": 68.0
+            },
+            "demand": 30.0,
+            "time_window": {
+                "start": 0.0,
+                "end": 946.0
+            },
+            "service_time": 10.0
+        }
+    ],
+    "time_dependent_definitions": {
+        "speed_profiles": {
+            "time_intervals_factors": [
+                0.0,
+                0.2,
+                0.4,
+                0.6,
+                0.8,
+                1.0
+            ],
+            "profiles": {
+                "high": [
+                    1.5,
+                    0.5,
+                    0.5,
+                    1.7,
+                    0.8
+                ],
+                "normal": [
+                    1.3,
+                    0.7,
+                    0.7,
+                    1.2,
+                    0.9
+                ],
+                "low": [
+                    1.1,
+                    0.9,
+                    1.0,
+                    0.9,
+                    1.1
+                ]
+            }
+        },
+        "recharge_functions": {
+            "fast": [
+                [
+                    0,
+                    0
+                ],
+                [
+                    8.912609999999999,
+                    51.5355
+                ],
+                [
+                    11.88348,
+                    57.5985
+                ],
+                [
+                    14.85435,
+                    60.63
+                ]
+            ],
+            "medium": [
+                [
+                    0,
+                    0
+                ],
+                [
+                    17.825219999999998,
+                    51.5355
+                ],
+                [
+                    23.76696,
+                    57.5985
+                ],
+                [
+                    29.7087,
+                    60.63
+                ]
+            ],
+            "slow": [
+                [
+                    0,
+                    0
+                ],
+                [
+                    35.650439999999996,
+                    51.5355
+                ],
+                [
+                    47.53392,
+                    57.5985
+                ],
+                [
+                    59.4174,
+                    60.63
+                ]
+            ]
+        },
+        "waiting_function": {
+            "pattern": "TD-Smooth-Long",
+            "points": [
+                [
+                    0.0,
+                    27.777777777777775
+                ],
+                [
+                    400.0,
+                    27.777777777777775
+                ],
+                [
+                    500.0,
+                    55.55555555555555
+                ],
+                [
+                    600.0,
+                    55.55555555555555
+                ],
+                [
+                    700.0,
+                    27.777777777777775
+                ],
+                [
+                    800.0,
+                    27.777777777777775
+                ],
+                [
+                    900.0,
+                    13.888888888888888
+                ],
+                [
+                    1000.0,
+                    13.888888888888888
+                ]
+            ]
+        }
+    },
+    "time_dependent_assignments": {
+        "station_recharge_modes": {
+            "1": "slow",
+            "2": "fast",
+            "3": "medium",
+            "4": "fast"
+        },
+        "arc_speed_profiles": [
+            [
+                "high",
+                "high",
+                "high",
+                "high",
+                "low",
+                "high",
+                "high",
+                "high",
+                "high",
+                "low"
+            ],
+            [
+                "normal",
+                "low",
+                "high",
+                "high",
+                "normal",
+                "normal",
+                "low",
+                "high",
+                "normal",
+                "low"
+            ],
+            [
+                "high",
+                "normal",
+                "low",
+                "high",
+                "normal",
+                "high",
+                "high",
+                "normal",
+                "low",
+                "low"
+            ],
+            [
+                "normal",
+                "low",
+                "high",
+                "high",
+                "high",
+                "low",
+                "normal",
+                "high",
+                "normal",
+                "high"
+            ],
+            [
+                "low",
+                "low",
+                "high",
+                "normal",
+                "normal",
+                "high",
+                "normal",
+                "low",
+                "high",
+                "high"
+            ],
+            [
+                "normal",
+                "high",
+                "low",
+                "high",
+                "high",
+                "high",
+                "normal",
+                "low",
+                "high",
+                "low"
+            ],
+            [
+                "normal",
+                "normal",
+                "normal",
+                "normal",
+                "normal",
+                "normal",
+                "high",
+                "normal",
+                "low",
+                "low"
+            ],
+            [
+                "low",
+                "normal",
+                "high",
+                "low",
+                "high",
+                "low",
+                "normal",
+                "low",
+                "low",
+                "low"
+            ],
+            [
+                "low",
+                "normal",
+                "low",
+                "high",
+                "normal",
+                "low",
+                "normal",
+                "low",
+                "low",
+                "normal"
+            ],
+            [
+                "high",
+                "high",
+                "normal",
+                "low",
+                "low",
+                "normal",
+                "normal",
+                "normal",
+                "low",
+                "low"
+            ]
+        ]
+    }
+}

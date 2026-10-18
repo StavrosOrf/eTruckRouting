@@ -4,6 +4,7 @@ Traffic simulation module for electric vehicle routing environment.
 Provides time-of-day dependent traffic modeling with rush hour effects.
 """
 
+import copy
 import math
 from collections import defaultdict, deque
 
@@ -67,9 +68,7 @@ class TrafficSimulator:
             or not math.isfinite(max_energy_multiplier)
             or not 0.0 < min_energy_multiplier <= 1.0 <= max_energy_multiplier
         ):
-            raise ValueError(
-                "energy multipliers must satisfy 0 < min <= 1 <= max"
-            )
+            raise ValueError("energy multipliers must satisfy 0 < min <= 1 <= max")
 
         self.enable_traffic = enable_traffic
         self.std_dev_factor = std_dev_factor
@@ -95,6 +94,57 @@ class TrafficSimulator:
         self._pending_energy: dict[tuple[int, int, int], deque[float]] = defaultdict(
             deque
         )
+
+    def realize_journey(
+        self,
+        *,
+        from_node: int,
+        to_node: int,
+        current_time: float,
+        travel_time: float,
+        base_energy: float,
+        occurrence: int = 0,
+    ) -> dict[str, float]:
+        """Query one future realization without consuming live traversal state.
+
+        ``occurrence`` is the directed edge's traversal index across the fleet,
+        not its index within the time bucket. The same seed, inputs, and index
+        yield exactly the values used by normal execution.
+        """
+        if (
+            isinstance(occurrence, bool)
+            or not isinstance(occurrence, int)
+            or occurrence < 0
+        ):
+            raise ValueError("occurrence must be a non-negative integer")
+        shadow = copy.copy(self)
+        shadow.random_streams = ScenarioRandomStreams(
+            self.random_streams.seed, self.random_streams.descriptor.version
+        )
+        shadow._uncertainty_cache = {}
+        shadow._journey_counters = {}
+        shadow._pending_energy = defaultdict(deque)
+        shadow._anonymous_counter = 0
+        shadow.verbose = False
+        shadow._journey_counters[(int(from_node), int(to_node))] = occurrence
+        actual_time, multiplier = shadow.apply_traffic(
+            travel_time,
+            current_time,
+            from_node,
+            to_node,
+        )
+        energy = shadow.apply_energy_uncertainty(
+            base_energy,
+            multiplier,
+            current_time,
+            from_node,
+            to_node,
+        )
+        return {
+            "travel_time_hours": actual_time,
+            "traffic_multiplier": multiplier,
+            "energy_kwh": energy,
+        }
 
     def apply_traffic(
         self,

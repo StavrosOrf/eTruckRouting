@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
-from EVRoutingEnv.baselines.alns import (
+from EVRoutingEnv.baselines.heuristics.alns import (
     ALNSParameters,
     ALNSPolicy,
     solve_alns_plan,

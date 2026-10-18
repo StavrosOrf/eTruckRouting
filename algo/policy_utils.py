@@ -9,8 +9,8 @@ import os
 from typing import Dict, Optional, Tuple
 
 from algo.PPO_VariableActionGNN import PPOVariableActionGNN
-from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
-from EVRoutingEnv.baselines.classic_vrp_heuristics import (
+from EVRoutingEnv.baselines.heuristics.heuristic_policy import HeuristicPolicy
+from EVRoutingEnv.baselines.heuristics.classic_vrp_heuristics import (
     ClarkeWrightEVPolicy,
     NearestNeighbor2OptEVPolicy,
 )

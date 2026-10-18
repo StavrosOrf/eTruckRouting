@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import psutil
 
-from EVRoutingEnv.baselines.canonical_baselines import (
+from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     GreedyHeuristicPolicy,
     HeuristicParameters,
 )
@@ -101,7 +101,7 @@ def worker(
         env = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
         construct = time.perf_counter() - start
         if policy_parameters.get("policy") == "energy_path":
-            from EVRoutingEnv.baselines.energy_path import EnergyPathHeuristicPolicy
+            from EVRoutingEnv.baselines.heuristics.energy_path import EnergyPathHeuristicPolicy
 
             policy = EnergyPathHeuristicPolicy()
         else:

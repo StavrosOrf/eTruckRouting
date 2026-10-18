@@ -129,7 +129,7 @@ def test_untrained_policy_still_only_emits_feasible_actions(config):
 
 @pytest.mark.integration
 def test_behaviour_cloning_moves_the_policy_toward_the_demonstrator(config):
-    from EVRoutingEnv.baselines.canonical_baselines import (
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
         GreedyHeuristicPolicy,
         HeuristicParameters,
     )

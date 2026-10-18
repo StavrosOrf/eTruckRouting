@@ -23,8 +23,8 @@ from scripts.evaluation.canonical_harness import split_seeds, summarize
 
 
 def _run(job: tuple) -> dict:
-    from EVRoutingEnv.baselines.alns import ALNSParameters, ALNSPolicy
-    from EVRoutingEnv.baselines.exact_optimization import (
+    from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, ALNSPolicy
+    from EVRoutingEnv.baselines.optimization.exact_optimization import (
         ExactPlannerParameters,
         MathematicalProgrammingPolicy,
     )

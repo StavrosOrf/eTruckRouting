@@ -51,9 +51,7 @@ def _route(target: int, **overrides):
         "truck": _truck(),
         "truck_state": "ready",
         "target_node": target,
-        "transport_graph": _EnergyGraph(
-            {(1, 10): 20.0, (1, 11): 20.0, (1, 20): 30.0}
-        ),
+        "transport_graph": _EnergyGraph({(1, 10): 20.0, (1, 11): 20.0, (1, 20): 30.0}),
         "charging_nodes": [20],
         "task_registry": _registry(),
         "depot_node": 1,
@@ -274,3 +272,32 @@ def test_hard_time_window_allows_early_wait_but_rejects_late_arrival() -> None:
 
     assert early.feasible
     assert late.reason is FeasibilityReason.TIME_WINDOW_EXPIRED
+
+
+def test_clairvoyant_energy_uses_known_draw_instead_of_worst_case():
+    kwargs = {"truck": _truck(battery=19.0), "energy_multiplier": 1.2}
+    assert not _route(10, **kwargs).feasible
+    result = _route(
+        10, **kwargs, realized_leg={"energy_kwh": 18.0, "travel_time_hours": 0.9}
+    )
+    assert result.feasible and result.required_energy == 18.0
+
+
+def test_clairvoyant_windows_use_actual_arrival_in_both_directions():
+    registry = FleetTaskRegistry(
+        [CustomerTask(0, 10, demand=2.0, base_service_time=0.25, latest_service=0.95)]
+    )
+    assert not _route(10, task_registry=registry).feasible
+    assert _route(
+        10,
+        task_registry=registry,
+        realized_leg={"energy_kwh": 20.0, "travel_time_hours": 0.9},
+    ).feasible
+    registry.task_for_node(10).latest_service = 1.05
+    assert _route(10, task_registry=registry).feasible
+    result = _route(
+        10,
+        task_registry=registry,
+        realized_leg={"energy_kwh": 20.0, "travel_time_hours": 1.1},
+    )
+    assert result.reason is FeasibilityReason.TIME_WINDOW_EXPIRED

@@ -20,7 +20,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 import numpy as np  # noqa: E402
 
-from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy  # noqa: E402
+from EVRoutingEnv.baselines.heuristics.heuristic_policy import HeuristicPolicy  # noqa: E402
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv  # noqa: E402
 from EVRoutingEnv.utils.utils import load_config, resolve_network_data_dir  # noqa: E402
 

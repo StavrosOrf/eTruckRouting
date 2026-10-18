@@ -72,7 +72,7 @@ def _combinations(grid: dict) -> list[dict]:
 
 def _build(method: str, overrides: dict):
     """Instantiate one baseline at one grid point, inside the worker process."""
-    from EVRoutingEnv.baselines.canonical_baselines import (
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
         GreedyHeuristicPolicy,
         HeuristicParameters,
         MPCParameters,
@@ -86,7 +86,7 @@ def _build(method: str, overrides: dict):
         parameters = replace(MPCParameters(), **overrides)
         return RollingHorizonMPCPolicy(parameters), parameters
     if method == "cpsat":
-        from EVRoutingEnv.baselines.exact_optimization import (
+        from EVRoutingEnv.baselines.optimization.exact_optimization import (
             ExactPlannerParameters,
             MathematicalProgrammingPolicy,
         )
@@ -96,7 +96,7 @@ def _build(method: str, overrides: dict):
         )
         return MathematicalProgrammingPolicy(parameters), parameters
     if method == "alns":
-        from EVRoutingEnv.baselines.alns import ALNSParameters, ALNSPolicy
+        from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, ALNSPolicy
 
         parameters = replace(
             ALNSParameters(time_limit_seconds=15.0), **overrides

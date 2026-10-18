@@ -27,8 +27,8 @@ import math
 from copy import deepcopy
 from pathlib import Path
 
-from EVRoutingEnv.baselines.alns import ALNSParameters, solve_alns_plan
-from EVRoutingEnv.baselines.exact_optimization import (
+from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, solve_alns_plan
+from EVRoutingEnv.baselines.optimization.exact_optimization import (
     _TIME_SCALE,
     ExactPlannerParameters,
     solve_nominal_plan,
@@ -40,7 +40,7 @@ from scripts.evaluation.canonical_harness import split_seeds
 
 def _arc_hours(env, source: int, target: int, charging_power_kw: float) -> float:
     """The planners' nominal arc cost, recomputed here independently."""
-    from EVRoutingEnv.baselines.canonical_baselines import _energy, _travel_hours
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import _energy, _travel_hours
 
     travel = _travel_hours(env, source, target)
     energy = _energy(env, source, target)

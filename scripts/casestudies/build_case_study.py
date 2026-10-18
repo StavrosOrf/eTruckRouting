@@ -155,34 +155,62 @@ class Snapper:
 _OD: dict = {}
 
 
+def _tree_sums(pk, s, terminals, keys, t_u, e_u, l_u, n):
+    """Time, energy and length summed along the predecessor-tree path s -> each terminal (NaN if unreachable).
+
+    Walking back from every terminal costs (terminals x path length) lookups per source, which made the
+    routing quadratic in the number of terminals. Instead collect the union of the paths (they share
+    trunks, so it is far smaller), give every union node the cost of its parent edge, and add the costs up
+    the tree by pointer doubling: O(|union| log depth), independent of how many terminals share a trunk.
+    """
+    scratch = _OD.get("scratch")
+    if scratch is None:
+        scratch = _OD["scratch"] = (np.zeros(n, bool), np.empty(n, np.int32))
+    visited, loc = scratch
+    tn = terminals.astype(np.int64)
+    front = np.unique(tn)
+    parts = [front]
+    visited[front] = True
+    while True:
+        p = pk[front]
+        p = np.unique(p[p >= 0].astype(np.int64))
+        p = p[~visited[p]]
+        if p.size == 0:
+            break
+        visited[p] = True
+        parts.append(p)
+        front = p
+    U = np.concatenate(parts)
+    visited[U] = False
+    loc[U] = np.arange(len(U), dtype=np.int32)
+    par = pk[U].astype(np.int64)
+    has = par >= 0
+    anc = np.arange(len(U), dtype=np.int64)
+    anc[has] = loc[par[has]]
+    wt, we, wl = np.zeros(len(U)), np.zeros(len(U)), np.zeros(len(U))
+    ei = np.searchsorted(keys, par[has] * n + U[has])
+    wt[has], we[has], wl[has] = t_u[ei], e_u[ei], l_u[ei]
+    while True:
+        nxt = anc[anc]
+        if np.array_equal(nxt, anc):
+            break
+        wt = wt + wt[anc]; we = we + we[anc]; wl = wl + wl[anc]
+        anc = nxt
+    li = loc[tn]
+    ok = U[anc[li]] == s            # the tree path ends at the source: reachable
+    nan = np.where(ok, 0.0, np.nan)
+    return wt[li] + nan, we[li] + nan, wl[li] + nan
+
+
 def _od_rows(args):
-    """Dijkstra from a few sources, then walk the predecessor tree back from every terminal."""
+    """Dijkstra from a few sources, then sum time/energy/length along the predecessor tree to every terminal."""
     c0, src = args
     csr, keys, e_u, t_u, l_u = _OD["csr"], _OD["keys"], _OD["e"], _OD["t"], _OD["l"]
     terminals, kappa, elev, n = _OD["terminals"], _OD["kappa"], _OD["elev"], _OD["n"]
     D, P = dijkstra(csr, directed=True, indices=src, return_predecessors=True)
     rows = []
     for k, s in enumerate(src):
-        cur = terminals.astype(np.int64).copy()
-        at = np.zeros(len(cur)); ae = np.zeros(len(cur)); al = np.zeros(len(cur))
-        pk = P[k]
-        while True:
-            act = np.nonzero(cur != s)[0]
-            if act.size == 0:
-                break
-            c = cur[act]
-            p = pk[c].astype(np.int64)
-            if (p < 0).any():            # unreachable target
-                bad = act[p < 0]
-                at[bad] = ae[bad] = al[bad] = np.nan
-                cur[bad] = s
-                keep = p >= 0
-                act, c, p = act[keep], c[keep], p[keep]
-                if act.size == 0:
-                    continue
-            ei = np.searchsorted(keys, p * n + c)
-            at[act] += t_u[ei]; ae[act] += e_u[ei]; al[act] += l_u[ei]
-            cur[act] = p
+        at, ae, al = _tree_sums(P[k], int(s), terminals, keys, t_u, e_u, l_u, n)
         e_red = D[k, terminals] + kappa * (elev[terminals] - elev[s])
         rows.append((e_red, at, ae, al))
     return c0, rows

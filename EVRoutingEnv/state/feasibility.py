@@ -102,8 +102,9 @@ def evaluate_joint_route(
     energy_multiplier: float = 1.0,
     unavailable_charging_nodes: set[int] | None = None,
     current_time: float = 0.0,
+    realized_leg: dict[str, float] | None = None,
 ) -> FeasibilityResult:
-    """Evaluate one routing destination using hard, observable constraints."""
+    """Evaluate a destination, optionally using a clairvoyant leg realization."""
     target_node = int(target_node)
     depot_node = int(depot_node)
     charging_set = {int(node) for node in charging_nodes}
@@ -148,10 +149,7 @@ def evaluate_joint_route(
 
     if action_kind is ActionKind.CUSTOMER:
         task = task_registry.task_for_node(target_node)
-        if (
-            task.preassigned_to is not None
-            and task.preassigned_to != truck.truck_id
-        ):
+        if task.preassigned_to is not None and task.preassigned_to != truck.truck_id:
             # eTFRP variant: this customer belongs to another truck, so it is
             # not merely taken but was never this truck's to take.
             return FeasibilityResult.reject(
@@ -179,10 +177,13 @@ def evaluate_joint_route(
             )
         if math.isfinite(task.latest_service):
             try:
-                nominal_travel_time = float(
-                    transport_graph.get_time_distance(
-                        int(truck.current_node),
-                        target_node,
+                nominal_travel_time = (
+                    realized_leg["travel_time_hours"]
+                    if realized_leg is not None
+                    else float(
+                        transport_graph.get_time_distance(
+                            int(truck.current_node), target_node
+                        )
                     )
                 )
             except (AttributeError, KeyError, TypeError, ValueError):
@@ -221,7 +222,13 @@ def evaluate_joint_route(
             target_node=target_node,
             required_energy=math.inf,
         )
-    required_energy = nominal_energy * float(energy_multiplier)
+    required_energy = (
+        float(realized_leg["energy_kwh"])
+        if realized_leg is not None
+        else nominal_energy * float(energy_multiplier)
+    )
+    if not math.isfinite(required_energy) or required_energy < 0:
+        raise ValueError("realized energy must be finite and non-negative")
     if required_energy > float(truck.current_battery) + 1e-9:
         return FeasibilityResult.reject(
             FeasibilityReason.INSUFFICIENT_ENERGY,
@@ -350,6 +357,34 @@ def evaluate_target_soc_charge(
     return FeasibilityResult.allow(ActionKind.CHARGE, target_node=charger_node)
 
 
+def realized_route_costs(
+    env: Any, truck: Any, target_node: int
+) -> dict[str, float] | None:
+    """Query the next leg only on private perfect-information planning states.
+
+    Masks and execution use the same query; evaluating alternatives never
+    changes which traversal draw normal execution subsequently consumes.
+    """
+    if not getattr(env, "_perfect_information", False):
+        return None
+    source, target = int(truck.current_node), int(target_node)
+    try:
+        energy = float(env.transport_graph.get_path_energy(source, target))
+        hours = float(env.transport_graph.get_time_distance(source, target))
+    except (KeyError, ValueError):
+        return None  # The ordinary reachability validator rejects this leg.
+    if not math.isfinite(energy) or not math.isfinite(hours):
+        return None
+    return env.traffic_simulator.realize_journey(
+        from_node=source,
+        to_node=target,
+        current_time=float(env.global_clock),
+        travel_time=hours,
+        base_energy=energy,
+        occurrence=env.traffic_simulator._journey_counters.get((source, target), 0),
+    )
+
+
 def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
     """Evaluate every discrete action of a configured joint-routing environment."""
     if env.active_truck_id is None:
@@ -387,6 +422,7 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
                 truck=truck,
                 truck_state=truck_state,
                 target_node=charger_node,
+                realized_leg=realized_route_costs(env, truck, charger_node),
                 transport_graph=env.transport_graph,
                 charging_nodes=env.charging_nodes,
                 task_registry=env.task_registry,
@@ -411,6 +447,9 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
                 truck=truck,
                 truck_state=truck_state,
                 target_node=env.joint_instance.tasks[offset].node_id,
+                realized_leg=realized_route_costs(
+                    env, truck, env.joint_instance.tasks[offset].node_id
+                ),
                 transport_graph=env.transport_graph,
                 charging_nodes=env.charging_nodes,
                 task_registry=env.task_registry,
@@ -426,6 +465,9 @@ def joint_action_feasibility(env: Any) -> list[FeasibilityResult]:
             truck=truck,
             truck_state=truck_state,
             target_node=env.joint_instance.depot_node,
+            realized_leg=realized_route_costs(
+                env, truck, env.joint_instance.depot_node
+            ),
             transport_graph=env.transport_graph,
             charging_nodes=env.charging_nodes,
             task_registry=env.task_registry,

@@ -1,0 +1,30 @@
+[09:14:21] === de_nl_be
+[09:14:21]   region bbox (47.2, 2.5, 55.15, 15.1)
+[09:14:21] using cached road network de_nl_be_3de9ce2d0d.pkl
+[09:17:38]   DC-fast: 6854 stations (22828 ports) -> 2275 merged sites -> 2273 road-snapped nodes -> 2273 charger nodes (22824 ports)
+[09:18:21]   terminals: 2273 chargers, 4 depots, 230 customers
+[09:18:23]   computing all-pairs minimum-energy routes between terminals
+[09:20:06]   OD rows 40/2507
+[09:21:20]   OD rows 80/2507
+[09:22:17]   OD rows 120/2507
+[09:22:46]   OD rows 160/2507
+[09:24:01]   OD rows 200/2507
+[09:25:06]   OD rows 240/2507
+[09:25:39]   OD rows 280/2507
+[09:26:48]   OD rows 320/2507
+[09:27:34]   OD rows 360/2507
+[09:28:30]   OD rows 400/2507
+[09:29:28]   OD rows 440/2507
+[09:30:21]   OD rows 480/2507
+[09:31:01]   OD rows 520/2507
+[09:32:05]   OD rows 560/2507
+[09:33:11]   OD rows 600/2507
+[09:33:42]   OD rows 640/2507
+[09:34:53]   OD rows 680/2507
+[09:36:06]   OD rows 720/2507
+[09:36:54]   OD rows 760/2507
+[09:37:52]   OD rows 800/2507
+[09:39:15]   OD rows 840/2507
+[09:40:07]   OD rows 880/2507
+[09:40:59]   OD rows 920/2507
+[09:42:15]   OD rows 960/2507

@@ -1,0 +1,90 @@
+# ============================================================
+# Default configuration for uncertainty-aware EVRPTW framework
+# Paper: Abdulelah et al. (2025)
+# ============================================================
+
+# ---- Problem definition ----
+problem:
+  num_customers_min: 10       # curriculum start
+  num_customers_max: 100      # curriculum end
+  battery_capacity: 150.0     # kWh
+  vehicle_capacity: 3.0       # tons
+  num_vehicles: 25
+  service_horizon: 480        # minutes (8-hour window)
+  service_time: 15            # minutes per customer
+  charging_rate_min: 50.0     # kW
+  charging_rate_max: 150.0    # kW
+  station_density: 0.15       # stations per km²
+
+# ---- Stochastic energy model ----
+energy:
+  # Gaussian N(mu_ij, sigma²_ij); sigma calibrated for 30-40% CV
+  cv_min: 0.30
+  cv_max: 0.40
+  confidence_level: 0.95      # alpha; Phi^-1(0.95) ≈ 1.645
+  min_battery_reserve: 0.05   # 5% of B as hard floor
+
+# ---- GAT Encoder (Section 4.2, Eq. 2-5) ----
+gat:
+  num_layers: 4               # L = 4
+  num_heads: 8                # K = 8
+  embedding_dim: 128          # d = 128
+  node_feature_dim: 7         # Eq. 2: [q,e,l,s,depot_flag,cust_flag,visited]
+  edge_feature_dim: 4         # Eq. 3: [d/D, t/T, mu/B, sigma/sqrt(B)]
+  dropout: 0.1
+  leaky_relu_slope: 0.2
+
+# ---- LSTM Energy Predictor (Section 4.3, Eq. 6) ----
+lstm:
+  input_dim: 24               # 24-dimensional segment feature vector
+  hidden_dim: 64
+  num_layers: 2
+  bidirectional: true
+  dropout: 0.1
+  training_segments: 50000    # historical route segments
+
+# ---- PPO Policy (Section 4.4, Eq. 8-9) ----
+ppo:
+  learning_rate: 3.0e-4
+  gamma: 0.99                 # discount factor
+  gae_lambda: 0.95            # GAE lambda
+  clip_epsilon: 0.2           # PPO clip range
+  entropy_coeff: 0.01
+  value_loss_coeff: 0.5
+  max_grad_norm: 0.5
+  ppo_epochs: 4               # update epochs per rollout
+  temperature: 1.0            # tau in softmax policy
+
+# ---- Reward function (Eq. 7) ----
+reward:
+  routing_cost_coeff: 1.0     # c_ij * d_ij
+  charging_cost_coeff: 1.0    # c_c * g
+  infeasibility_penalty: 1000 # lambda_1
+  tardiness_penalty: 50       # lambda_2
+
+# ---- Training (Phase 1) ----
+training:
+  total_episodes: 35000
+  batch_size: 64
+  rollout_steps: 2048
+  warmup_episodes: 1000
+  eval_interval: 500
+  save_interval: 1000
+  curriculum_start_ep: 0
+  curriculum_end_ep: 20000    # full curriculum range
+  num_workers: 4
+  seed: 42
+
+# ---- MILP Refinement (Phase 4) ----
+milp:
+  enabled: true
+  time_limit: 1200            # seconds (300–1200 in paper)
+  mip_gap: 0.01               # 1% optimality gap
+  warm_start: true
+  solver: "gurobi"
+
+# ---- Logging ----
+logging:
+  tensorboard: true
+  log_dir: "runs/"
+  verbose: true

@@ -396,6 +396,74 @@ Common metrics include:
 - terminal state-of-charge
 - execution time
 
+### Reproducible scenarios and perfect-information routing
+
+To optimize a seed with traffic, energy consumption, service durations, charging
+curves, and fleet queues known to the planner:
+
+```bash
+uv run python -m scripts.evaluation.solve_perfect_information \
+  --seed 7 --customers 3 --trucks 1 --objective makespan \
+  --time-limit 60 --max-nodes 100000 \
+  --output results/perfect_information/seed7.json
+
+uv run python -m scripts.evaluation.solve_perfect_information \
+  --replay results/perfect_information/seed7.json
+```
+
+The JSON artifact contains the resolved config, scenario identity, action plan,
+per-truck routes, realized event/queue histories, operational metrics, incumbent,
+lower bound, and replay hash. Replay regenerates the scenario from its saved seed
+and config and checks the entire realized schedule, including energy and waits.
+Use the same source code, dependencies, and network data. Scenario fingerprints
+include effective road costs, station properties, the external queue lookup,
+RNG/generator versions, and NumPy version; data changes invalidate scenario caches.
+
+`OPTIMAL` means branch-and-bound exhausted all improving plans under the
+**configured simulator's discrete action model**. This includes its fixed road
+paths, assignment/order constraints, realized energy and arrival-time feasibility,
+charging levels (or duration choices), and episode time/step limits. It does not
+certify a continuous-charge or unrestricted-road EVRP optimum. The default
+`--information-mode realized` lets private planning states use known energy and
+arrival times, including trips that normal worst-case/nominal checks refuse.
+Use `--information-mode simulator` to certify the optimum subject to the normal
+conservative checks. Online environments retain their normal behavior.
+`FEASIBLE` means a budget stopped the search with a replay-verified incumbent; `UNKNOWN` means no
+incumbent was found, and `INFEASIBLE` requires an exhausted search. The exact
+search is intended for tiny instances and can grow exponentially. Larger runs
+may finish with a bound and an incumbent instead of a proof.
+`--objective total_time` minimizes total fleet operating hours. To make
+budget-limited search repeatable by node count, use `--no-time-limit --max-nodes 100000`; wall-time
+limits can stop at different nodes on different machines.
+
+The seed defines a complete conditional uncertainty field: directed edge,
+half-hour departure bucket, and fleet traversal occurrence identify traffic and
+energy draws; node, half-hour service-start bucket, and occurrence identify
+service draws. Different plans can encounter different events within that same
+field. `TrafficSimulator.realize_journey(...)` and
+`DeliverySimulator.realize_service_time(...)` query future values with an explicit
+`occurrence` index without consuming live simulator state. Charger queues are
+computed jointly from each candidate fleet schedule using the existing port and
+FCFS rules. There is currently no separate stochastic external-arrival process
+at chargers. Freezing queue waits from a different policy would change the
+optimization problem.
+
+To profile increasing customer counts with the same compute budget:
+
+```bash
+uv run python -m scripts.analysis.profile_perfect_information \
+  --customers 1 2 4 8 16 --trucks 2 --seeds 7 31 59 --time-limit 10 \
+  --output results/perfect_information/profile/customer_sweep
+uv run python -m scripts.analysis.summarize_perfect_information_profile \
+  results/perfect_information/profile
+```
+
+The profiler records construction/reset time, time to replay the initial feasible
+plan, branch throughput, incumbent/bound gaps, sampled resident memory, and an
+independent replay check. `--profile --time-limit 0 --max-nodes 100` creates CPU
+profiles; compare them with matching unprofiled fixed-node runs because cProfile
+adds overhead. The report includes CSV data and standalone PNG/PDF plots.
+
 ## Analysis
 
 The current analysis utilities focus on inspecting the environment, generated

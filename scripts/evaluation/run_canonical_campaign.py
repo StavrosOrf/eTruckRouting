@@ -20,15 +20,15 @@ import numpy as np
 import torch
 
 from algo.canonical_policy import CanonicalActorCritic
-from EVRoutingEnv.baselines.alns import ALNSParameters, ALNSPolicy
-from EVRoutingEnv.baselines.canonical_baselines import (
+from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, ALNSPolicy
+from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     GreedyHeuristicPolicy,
     HeuristicParameters,
     MPCParameters,
     RandomFeasiblePolicy,
     RollingHorizonMPCPolicy,
 )
-from EVRoutingEnv.baselines.exact_optimization import (
+from EVRoutingEnv.baselines.optimization.exact_optimization import (
     ExactPlannerParameters,
     MathematicalProgrammingPolicy,
 )

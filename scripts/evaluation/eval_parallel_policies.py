@@ -25,9 +25,9 @@ from tqdm import tqdm
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, project_root)
 
-from EVRoutingEnv.baselines.optimal_gurobi import OptimalGurobiPolicy
-from EVRoutingEnv.baselines.optimal_gurobi_simple import OptimalGurobiSimplePolicy
-from EVRoutingEnv.baselines.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
+from EVRoutingEnv.baselines.legacy.optimal_gurobi import OptimalGurobiPolicy
+from EVRoutingEnv.baselines.legacy.optimal_gurobi_simple import OptimalGurobiSimplePolicy
+from EVRoutingEnv.baselines.legacy.optimal_vrp_single_truck import OptimalVRPSingleTruckPolicy
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.evaluation.actions import validate_discrete_action
 from EVRoutingEnv.state.gnn_utils import create_default_gnn_space

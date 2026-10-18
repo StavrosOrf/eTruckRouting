@@ -1,0 +1,41 @@
+# ============================================================
+# Transfer learning configuration — Phases 2 & 3
+# Paper: Section 4.5 (three-stage protocol)
+# ============================================================
+
+# Inherit all base settings from default.yaml
+defaults:
+  - default
+
+# ---- Stage 1: Energy predictor calibration ----
+stage1_lstm_calibration:
+  local_routes_min: 400       # minimum local routes required
+  local_routes_max: 600
+  fine_tune_epochs: 50
+  learning_rate: 1.0e-4       # lower lr for fine-tuning
+  freeze_gat: true
+  freeze_policy: true
+  early_stopping_patience: 10
+
+# ---- Stage 2: Policy adaptation ----
+stage2_policy_adaptation:
+  adaptation_episodes: 2000
+  bc_lambda: 0.3              # lambda_BC / lambda_RL ratio
+  rl_lambda: 1.0              # lambda_RL
+  learning_rate: 1.0e-4
+  freeze_gat: true            # GAT encoder stays frozen
+  freeze_lstm: false
+
+# ---- Stage 3: Uncertainty recalibration ----
+stage3_recalibration:
+  validation_routes: 100
+  target_coverage: 0.95       # must achieve 95% empirical coverage
+  temperature_scaling: true   # apply temperature scaling if needed
+  coverage_tolerance: 0.02    # ± 2% tolerance before recalibration
+
+# ---- General transfer settings ----
+transfer:
+  source_checkpoint: null     # path to pre-trained Phase 1 checkpoint
+  output_dir: "runs/transfer"
+  seed: 42
+  total_time_budget_hours: 5  # hard ceiling on transfer time

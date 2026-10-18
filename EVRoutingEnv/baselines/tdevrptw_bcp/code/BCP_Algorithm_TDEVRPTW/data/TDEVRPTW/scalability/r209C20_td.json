@@ -1,0 +1,1268 @@
+{
+  "name": "r209C20_TD",
+  "parameters": {
+    "vehicle_capacity": 1000.0,
+    "battery_capacity": 60.63,
+    "energy_consumption_rate": 1.0,
+    "planning_horizon_T": 1000.0
+  },
+  "nodes": [
+    {
+      "id": 0,
+      "string_id": "D0",
+      "type": 2,
+      "coords": {
+        "x": 35.0,
+        "y": 35.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 1,
+      "string_id": "S0",
+      "type": 1,
+      "coords": {
+        "x": 35.0,
+        "y": 35.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 2,
+      "string_id": "S1",
+      "type": 1,
+      "coords": {
+        "x": 64.0,
+        "y": 37.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 3,
+      "string_id": "S3",
+      "type": 1,
+      "coords": {
+        "x": 48.0,
+        "y": 60.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 4,
+      "string_id": "S7",
+      "type": 1,
+      "coords": {
+        "x": 20.0,
+        "y": 61.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 5,
+      "string_id": "S13",
+      "type": 1,
+      "coords": {
+        "x": 21.0,
+        "y": 22.0
+      },
+      "demand": 0.0,
+      "time_window": {
+        "start": 0.0,
+        "end": 1000.0
+      },
+      "service_time": 0.0
+    },
+    {
+      "id": 6,
+      "string_id": "C47",
+      "type": 0,
+      "coords": {
+        "x": 8.0,
+        "y": 56.0
+      },
+      "demand": 27.0,
+      "time_window": {
+        "start": 371.0,
+        "end": 819.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 7,
+      "string_id": "C87",
+      "type": 0,
+      "coords": {
+        "x": 28.0,
+        "y": 18.0
+      },
+      "demand": 26.0,
+      "time_window": {
+        "start": 535.0,
+        "end": 563.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 8,
+      "string_id": "C9",
+      "type": 0,
+      "coords": {
+        "x": 55.0,
+        "y": 60.0
+      },
+      "demand": 16.0,
+      "time_window": {
+        "start": 395.0,
+        "end": 835.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 9,
+      "string_id": "C88",
+      "type": 0,
+      "coords": {
+        "x": 26.0,
+        "y": 52.0
+      },
+      "demand": 9.0,
+      "time_window": {
+        "start": 165.0,
+        "end": 617.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 10,
+      "string_id": "C46",
+      "type": 0,
+      "coords": {
+        "x": 2.0,
+        "y": 48.0
+      },
+      "demand": 1.0,
+      "time_window": {
+        "start": 46.0,
+        "end": 460.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 11,
+      "string_id": "C27",
+      "type": 0,
+      "coords": {
+        "x": 35.0,
+        "y": 40.0
+      },
+      "demand": 16.0,
+      "time_window": {
+        "start": 97.0,
+        "end": 679.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 12,
+      "string_id": "C10",
+      "type": 0,
+      "coords": {
+        "x": 30.0,
+        "y": 60.0
+      },
+      "demand": 16.0,
+      "time_window": {
+        "start": 489.0,
+        "end": 787.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 13,
+      "string_id": "C70",
+      "type": 0,
+      "coords": {
+        "x": 37.0,
+        "y": 56.0
+      },
+      "demand": 5.0,
+      "time_window": {
+        "start": 22.0,
+        "end": 286.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 14,
+      "string_id": "C30",
+      "type": 0,
+      "coords": {
+        "x": 40.0,
+        "y": 60.0
+      },
+      "demand": 21.0,
+      "time_window": {
+        "start": 422.0,
+        "end": 726.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 15,
+      "string_id": "C5",
+      "type": 0,
+      "coords": {
+        "x": 15.0,
+        "y": 30.0
+      },
+      "demand": 26.0,
+      "time_window": {
+        "start": 21.0,
+        "end": 535.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 16,
+      "string_id": "C22",
+      "type": 0,
+      "coords": {
+        "x": 45.0,
+        "y": 10.0
+      },
+      "demand": 18.0,
+      "time_window": {
+        "start": 607.0,
+        "end": 963.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 17,
+      "string_id": "C79",
+      "type": 0,
+      "coords": {
+        "x": 57.0,
+        "y": 48.0
+      },
+      "demand": 23.0,
+      "time_window": {
+        "start": 26.0,
+        "end": 389.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 18,
+      "string_id": "C4",
+      "type": 0,
+      "coords": {
+        "x": 55.0,
+        "y": 20.0
+      },
+      "demand": 19.0,
+      "time_window": {
+        "start": 701.0,
+        "end": 883.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 19,
+      "string_id": "C63",
+      "type": 0,
+      "coords": {
+        "x": 27.0,
+        "y": 69.0
+      },
+      "demand": 10.0,
+      "time_window": {
+        "start": 360.0,
+        "end": 890.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 20,
+      "string_id": "C34",
+      "type": 0,
+      "coords": {
+        "x": 65.0,
+        "y": 55.0
+      },
+      "demand": 14.0,
+      "time_window": {
+        "start": 116.0,
+        "end": 502.0
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 21,
+      "string_id": "CNEW01",
+      "type": 0,
+      "coords": {
+        "x": 5.032635948956448,
+        "y": 54.89664004559635
+      },
+      "demand": 27.0,
+      "time_window": {
+        "start": 337.44318473271335,
+        "end": 785.4431847327133
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 22,
+      "string_id": "CNEW02",
+      "type": 0,
+      "coords": {
+        "x": 28.58192325739784,
+        "y": 20.76069269891957
+      },
+      "demand": 26.0,
+      "time_window": {
+        "start": 572.4513407986929,
+        "end": 600.4513407986929
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 23,
+      "string_id": "CNEW03",
+      "type": 0,
+      "coords": {
+        "x": 53.09060906088706,
+        "y": 61.62585666123088
+      },
+      "demand": 16.0,
+      "time_window": {
+        "start": 433.37054739116024,
+        "end": 873.3705473911602
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 24,
+      "string_id": "CNEW04",
+      "type": 0,
+      "coords": {
+        "x": 25.03283265152312,
+        "y": 52.29150195601137
+      },
+      "demand": 9.0,
+      "time_window": {
+        "start": 134.39575212825557,
+        "end": 586.3957521282556
+      },
+      "service_time": 10.0
+    },
+    {
+      "id": 25,
+      "string_id": "CNEW05",
+      "type": 0,
+      "coords": {
+        "x": 5.576498312304976,
+        "y": 45.98673097447767
+      },
+      "demand": 1.0,
+      "time_window": {
+        "start": 74.97604626816516,
+        "end": 488.9760462681652
+      },
+      "service_time": 10.0
+    }
+  ],
+  "time_dependent_definitions": {
+    "speed_profiles": {
+      "time_intervals_factors": [
+        0.0,
+        0.2,
+        0.4,
+        0.6,
+        0.8,
+        1.0
+      ],
+      "profiles": {
+        "high": [
+          1.5,
+          0.5,
+          0.5,
+          1.7,
+          0.8
+        ],
+        "normal": [
+          1.3,
+          0.7,
+          0.7,
+          1.2,
+          0.9
+        ],
+        "low": [
+          1.1,
+          0.9,
+          1.0,
+          0.9,
+          1.1
+        ]
+      }
+    },
+    "recharge_functions": {
+      "fast": [
+        [
+          0,
+          0
+        ],
+        [
+          8.912609999999999,
+          51.5355
+        ],
+        [
+          11.88348,
+          57.5985
+        ],
+        [
+          14.85435,
+          60.63
+        ]
+      ],
+      "medium": [
+        [
+          0,
+          0
+        ],
+        [
+          17.825219999999998,
+          51.5355
+        ],
+        [
+          23.76696,
+          57.5985
+        ],
+        [
+          29.7087,
+          60.63
+        ]
+      ],
+      "slow": [
+        [
+          0,
+          0
+        ],
+        [
+          35.650439999999996,
+          51.5355
+        ],
+        [
+          47.53392,
+          57.5985
+        ],
+        [
+          59.4174,
+          60.63
+        ]
+      ]
+    },
+    "waiting_function": {
+      "pattern": "TD-Smooth-Long",
+      "points": [
+        [
+          0.0,
+          27.777777777777775
+        ],
+        [
+          400.0,
+          27.777777777777775
+        ],
+        [
+          500.0,
+          55.55555555555555
+        ],
+        [
+          600.0,
+          55.55555555555555
+        ],
+        [
+          700.0,
+          27.777777777777775
+        ],
+        [
+          800.0,
+          27.777777777777775
+        ],
+        [
+          900.0,
+          13.888888888888888
+        ],
+        [
+          1000.0,
+          13.888888888888888
+        ]
+      ]
+    }
+  },
+  "time_dependent_assignments": {
+    "station_recharge_modes": {
+      "1": "slow",
+      "2": "slow",
+      "3": "slow",
+      "4": "medium",
+      "5": "medium"
+    },
+    "arc_speed_profiles": [
+      [
+        "low",
+        "low",
+        "low",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "low",
+        "normal",
+        "high",
+        "normal",
+        "high",
+        "low",
+        "low",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "high",
+        "low",
+        "high",
+        "normal",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "normal",
+        "high",
+        "normal",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "normal",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "low",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "normal",
+        "high",
+        "low",
+        "low",
+        "high",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "high",
+        "low",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "high",
+        "normal",
+        "low",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "normal",
+        "high",
+        "high",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "low",
+        "low",
+        "low",
+        "low",
+        "high",
+        "high",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "high",
+        "low",
+        "high",
+        "low",
+        "low",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "high",
+        "high",
+        "high",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "low",
+        "high",
+        "high",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "high",
+        "low",
+        "low",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "low",
+        "low",
+        "low",
+        "low",
+        "low",
+        "normal",
+        "high",
+        "high",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "high",
+        "low",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "high",
+        "high",
+        "low",
+        "low",
+        "normal",
+        "high",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "high",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "low",
+        "low",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "high",
+        "low",
+        "low",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "low",
+        "normal",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "high",
+        "low",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "high",
+        "high",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "low",
+        "low",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "low",
+        "high",
+        "low",
+        "low",
+        "high",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "high",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "high",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "normal",
+        "high",
+        "low",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "high",
+        "high",
+        "low",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "high",
+        "high",
+        "high",
+        "high",
+        "low",
+        "low",
+        "high",
+        "normal",
+        "low",
+        "normal",
+        "high",
+        "low",
+        "high",
+        "high",
+        "high",
+        "normal",
+        "low",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ],
+      [
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal",
+        "normal"
+      ]
+    ]
+  }
+}

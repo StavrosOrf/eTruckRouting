@@ -27,7 +27,10 @@ from gymnasium import spaces
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from EVRoutingEnv.evaluation.artifacts import build_scenario_descriptor
+from EVRoutingEnv.evaluation.artifacts import (
+    build_scenario_descriptor,
+    scenario_static_inputs,
+)
 from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
 from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.core.truck import Truck
@@ -57,6 +60,7 @@ from EVRoutingEnv.state.feasibility import (
     evaluate_joint_route,
     evaluate_target_soc_charge,
     joint_action_feasibility,
+    realized_route_costs,
 )
 from EVRoutingEnv.state.features import SCHEMA_VERSION, extract_canonical_features
 from EVRoutingEnv.state.representations import (
@@ -760,18 +764,9 @@ class EventDrivenTruckEnv(gym.Env):
         directory = self.config["environment"].get("scenario_cache_dir") or os.environ.get("EVRP_SCENARIO_CACHE")
         if not directory:
             return None
-        graph = self.transport_graph
-        matrices = graph.cost_matrices()
-        digest = getattr(self, "_scenario_graph_digest", None)
-        if digest is None or digest[0] is not matrices:
-            node_ids = [int(graph.graph.nodes[n].get("original_id", n)) for n in sorted(graph.graph.nodes())]
-            digest = (matrices, hashlib.sha1(
-                matrices[1].tobytes() + matrices[2].tobytes() + json.dumps(node_ids).encode()
-                + json.dumps(sorted(int(c) for c in self.charging_nodes)).encode()
-            ).hexdigest())
-            self._scenario_graph_digest = digest
+        static_inputs = scenario_static_inputs(self)
         key = hashlib.sha1(json.dumps({
-            "version": self.SCENARIO_CACHE_VERSION, "graph": digest[1], "seed": self.scenario_seed,
+            "version": self.SCENARIO_CACHE_VERSION, "static_inputs": static_inputs, "seed": self.scenario_seed,
             "stops": self.num_stops, "initial_batteries": [float(b) for b in initial_batteries],
             "config": self.config, "mode": [self.sequential_routing, self.preassigned_customers],
         }, sort_keys=True, default=str).encode()).hexdigest()
@@ -1663,6 +1658,7 @@ class EventDrivenTruckEnv(gym.Env):
             truck=truck,
             truck_state=self.truck_states[truck.truck_id],
             target_node=target_node,
+            realized_leg=realized_route_costs(self, truck, target_node),
             transport_graph=self.transport_graph,
             charging_nodes=self.charging_nodes,
             task_registry=self.task_registry,
@@ -1931,7 +1927,6 @@ class EventDrivenTruckEnv(gym.Env):
         )
 
         if not can_proceed:
-            print(f"  !!!WARNING: Charger gating - no free port at node {charger_node}!!!!!!!\n\n")
             # Port not available: move to waiting state and let wake_waiting_trucks handle it.
             if self.verbose:
                 print(f"  WARNING: Cannot charge - no free port at node {charger_node}")

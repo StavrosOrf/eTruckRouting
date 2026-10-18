@@ -1,0 +1,1688 @@
+===== PAGE 1 =====
+ 
+Contents lists available at ScienceDirect
+Knowledge-Based Systems
+journal homepage: www.elsevier.com/locate/knosys  
+Uncertainty-aware deep reinforcement learning for sustainable electric 
+vehicle routing: A hybrid optimization framework
+Aymen Jalil Abdulelah a,b, Emrullah Sonuç a
+ ,∗, Esam Taha Yassen c,
+Mohammed Nasser Al-Andoli d
+a Department of Computer Engineering, Karabük University, Karabük, 78050, Turkiye
+b Electronic Computer Center, University of Anbar, Ramadi, 31001, Iraq
+c College of Computer Science and Information Technology, University of Anbar, Ramadi, 31001, Iraq
+d Faculty of Computing and Informatics, Multimedia University, Persiaran Multimedia, Cyberjaya, Selangor, Malaysia
+A R T I C L E  I N F O
+Keywords:
+Deep reinforcement learning
+Sustainable logistics
+Graph attention networks
+Uncertainty quantification
+Carbon emissions reduction
+ A B S T R A C T
+Urban freight accounts for approximately 20% of transport-related greenhouse gas emissions, yet electric 
+vehicle (EV) routing faces critical barriers: limited range, charging constraints, and energy uncertainty. 
+Existing methods cannot quantify stranding risk or support chance-constrained battery feasibility, as energy 
+consumption exhibits 30%–40% variability. We address the EVRPTW under operational uncertainty via 
+probabilistic energy forecasting and hybrid optimization. Bidirectional LSTM networks deliver calibrated 
+uncertainty quantification (94.7% empirical coverage for 95% confidence intervals), enabling model-based 
+chance-constrained battery feasibility. Graph neural networks encode battery-aware spatial–temporal depen-
+dencies, while Proximal Policy Optimization with optional mixed-integer programming refinement balances 
+real-time adaptability (0.3–0.8 s inference) with offline solution quality. Evaluation on 30 Solomon-derived 
+EVRPTW benchmark instances (60–100 customers) shows an 8.8% cost reduction over the strongest learning 
+baseline (MVMoE), rising to 12.2% under dynamic conditions. Real-world deployment with a 25-vehicle 
+electric fleet over 13 weeks validates €143,000 in projected annual savings, 98.1% on-time delivery, 15.5% 
+energy reduction, and 96% planning time reduction, with fleet emissions at approximate carbon parity with 
+diesel on Italy’s transitional grid alongside elimination of local air pollutants. Transfer learning protocols reduce 
+region-adaptation retraining effort by ∼95% (from ∼72 h to 3–5 h of fine-tuning), requiring only 400–600 local 
+routes. This work demonstrates a pathway toward more sustainable urban logistics through uncertainty-aware 
+optimization with measurable environmental, economic, and operational benefits.
+1. Introduction
+The global transition toward sustainable urban systems has placed 
+considerable focus on decarbonizing freight logistics, a sector respon-
+sible for approximately 8% of global CO2 emissions and up to 20% 
+of urban transport emissions [1,2]. Electric vehicle adoption in freight 
+operations offers a compelling pathway toward decarbonization, with 
+well-to-wheel emissions reductions of 40%–60% compared to conven-
+tional diesel vehicles [3,4]. Major logistics operators have announced 
+ambitious electrification targets, and policy frameworks reinforce this 
+transition, with the European Green Deal mandating zero-emission 
+urban logistics in major cities by 2030 [5–7].
+Despite this momentum, a critical operational barrier constrains 
+EV deployment: energy consumption uncertainty. Real-world electric 
+delivery operations exhibit 30%–40% consumption variability based on 
+∗ Corresponding author.
+E-mail address: esonuc@karabuk.edu.tr (E. Sonuç).
+traffic conditions, weather parameters, payload variations, and terrain 
+[8–10]. This uncertainty manifests in three operational risks that de-
+terministic planning approaches cannot address: (1) vehicle stranding 
+events when actual consumption exceeds predictions, compromising 
+service reliability and requiring costly emergency interventions; (2) 
+excessive conservatism when safety margins are set too high, reduc-
+ing operational efficiency and negating economic advantages; and (3) 
+inability to support model-based chance-constrained feasibility under 
+calibrated uncertainty, limiting fleet operator confidence in electrifica-
+tion.
+The Electric Vehicle Routing Problem with Time Windows
+(EVRPTW) extends classical vehicle routing by incorporating battery 
+constraints, charging stations, and realistic energy consumption models 
+[11,12]. Classical mathematical methods achieve high solution quality 
+https://doi.org/10.1016/j.knosys.2026.116546
+Received 15 April 2026; Received in revised form 18 June 2026; Accepted 24 June 2026
+Knowledge-Based Systems 350 (2026) 116546 
+Available online 2 July 2026 
+0950-7051/© 2026 Elsevier B.V. All rights are reserved, including those for text and data mining, AI training, and similar technologies. 
+
+===== PAGE 2 =====
+A.J. Abdulelah et al.
+but become computationally prohibitive under uncertainty [13], while 
+stochastic formulations require computational resources that preclude 
+real-time decision-making [14]. Recent deep reinforcement learning 
+approaches offer rapid inference [15,16] yet often lack explicit battery 
+management and uncertainty quantification. While several approaches 
+address subsets of these requirements [17–19], few frameworks si-
+multaneously integrate probabilistic energy forecasting with formal 
+uncertainty quantification, adaptive deep reinforcement learning, and 
+hybrid optimization mechanisms that support both real-time replan-
+ning and offline solution refinement for electric vehicle routing under 
+operational uncertainty. 
+Existing approaches fail to jointly address three critical require-
+ments: (1) realistic modeling of energy consumption uncertainty with 
+calibrated confidence intervals, (2) model-based chance-constrained 
+feasibility, and (3) computational efficiency enabling both real-time 
+replanning and high-quality offline optimization. This methodologi-
+cal gap constrains fleet operators to conservative strategies that sac-
+rifice operational efficiency and fail to realize projected emissions
+reductions.
+The central research question is: Can uncertainty-aware deep rein-
+forcement learning integrated with mathematical optimization enable electric 
+vehicle routing that simultaneously achieves competitive solution quality, 
+model-based chance-constrained feasibility, and computational tractability 
+for operational deployment? Addressing this requires advancing neu-
+ral architectures that explicitly represent battery constraints, creating 
+probabilistic energy models with calibrated confidence intervals, and 
+designing hybrid protocols that balance learning and optimization.
+This work advances uncertainty-aware electric vehicle routing
+through three primary contributions:
+1. Calibrated Probabilistic Energy Forecasting: Bidirectional
+LSTM networks predict energy consumption distributions with 
+uncertainty quantification achieving 94.7% empirical coverage 
+for 95% confidence intervals, enabling model-based chance-
+constrained battery feasibility (conditional on the Gaussian arc-
+level energy model and on the calibration of the learned uncer-
+tainty estimator) rather than ad-hoc safety margins.
+2. Hybrid Uncertainty-Aware Optimization: Integration of
+learned policies with mathematical refinement provides dual-
+mode operation — sub-second real-time replanning under un-
+certainty and high-quality offline optimization — through Graph 
+Attention Networks for battery-aware encoding and Proximal 
+Policy Optimization with optional MILP refinement.
+3. Deployment Validation and Transfer Learning: Real-world 
+validation demonstrates operational viability (13 weeks, 25-
+vehicle fleet) with quantified multi-dimensional sustainability 
+impact, while transfer learning protocols reduce region-
+adaptation computational effort by approximately 95% (from 
+∼72 h of full retraining to 3–5 h of fine-tuning; see Table  2), 
+enabling practical adoption with only 400–600 local routes. This 
+metric refers specifically to model-adaptation compute and data, 
+and does not capture broader deployment effort components 
+such as TMS integration, pilot validation, operator training, 
+and operational acceptance, which are themselves discussed in 
+Section 6. Full implementation is released at https://github.
+com/Aymen-Anbar/evrptw-repo to support reproducibility.
+These contributions provide evidence of measurable environmen-
+tal, economic, and operational benefits through both computational 
+validation and real-world deployment, offering concrete guidance for 
+fleet operators pursuing cost-effective electrification, cities working 
+toward decarbonization objectives, and policy makers designing incen-
+tive structures—reconciling environmental mandates with operational 
+realities.
+2. Literature review
+2.1. Electric vehicle routing: From deterministic to stochastic formulations
+The Electric Vehicle Routing Problem with Time Windows
+(EVRPTW) has emerged as a critical extension of classical vehicle 
+routing optimization, incorporating the unique operational constraints 
+of battery-electric vehicles. Schneider et al. [11] established the foun-
+dational mathematical framework by introducing battery capacity con-
+straints, recharging station visits, and nonlinear charging functions into 
+the traditional VRP-TW formulation. Early exact solution approaches, 
+including the branch-and-price framework by Desaulniers et al. [20], 
+demonstrated optimality guarantees for small-scale instances (≤25 
+customers) but remained computationally intractable for realistic oper-
+ational scales. Related work on charging infrastructure planning, such 
+as the flow refueling location model (FRLM) framework by Park and 
+Lee [13], addresses optimal charging station placement considering 
+heterogeneous chargers and nonlinear charging times, though these 
+location models assume fixed routing patterns rather than jointly 
+optimizing routes and charging decisions.
+Recognizing these computational limitations, researchers developed 
+metaheuristic approaches that trade solution optimality for scalability. 
+Keskin et al. [21] introduced partial recharging strategies that sig-
+nificantly reduced total travel time by allowing vehicles to recharge 
+only as needed rather than to full capacity. Mavrovouniotis et al. 
+[22] applied ant colony optimization with dynamic pheromone updat-
+ing mechanisms tailored to battery state constraints. More recently, 
+matheuristic approaches combining mathematical programming with 
+heuristic search have achieved state-of-the-art performance: Bruglieri 
+et al. [12] reported superior solution quality through Random Kernel 
+Search that iteratively refines kernel solutions via mixed-integer pro-
+gramming, while Zhang et al. [23] employed column generation within 
+a branch-and-price framework for instances with up to 100 customers.
+However, a significant limitation in much of this classical optimiza-
+tion literature is the assumption of deterministic energy consumption. 
+Real-world electric vehicle operations exhibit substantial energy vari-
+ability — ranging from 30% to 40% — driven by traffic conditions, 
+weather parameters, payload variations, and driver behavior [8]. This 
+determinism-reality gap represents an important challenge for the prac-
+tical deployment of optimization-based routing systems, motivating the 
+development of stochastic and robust formulations.
+The inherent uncertainty in electric vehicle energy consumption has 
+motivated research into stochastic and robust optimization approaches 
+that explicitly model operational variability. Yuan et al. [14] address 
+battery status uncertainty through two-stage stochastic programming, 
+where first-stage decisions establish routes based on expected battery 
+status and second-stage recourse actions handle realized uncertainty 
+through customer skipping or late returns. Their scenario-based ap-
+proach, solved via adaptive large neighborhood search, achieves 10.3% 
+cost reduction versus deterministic models while maintaining stable 
+performance across uncertainty realizations. However, the computa-
+tional burden of scenario generation and evaluation limits real-time 
+applicability, particularly for large fleets operating under time pressure. 
+Zhang et al. [24] similarly employ scenario-based formulations but 
+require extensive computational resources that remain prohibitive for 
+operational decision-making.
+Alternative formulations have explored different uncertainty han-
+dling mechanisms that avoid explicit scenario enumeration. Yan et al. 
+[25] propose diversified tour-driven DRL that generates multiple candi-
+date solutions to implicitly capture uncertainty, achieving up to 7.54% 
+improvement in optimality gap through Kullback–Leibler divergence-
+based regularization encouraging solution diversity. Bi et al. [26] ex-
+plicitly model speed-varying range in time-windowed routing, rec-
+ognizing that EV range decreases at higher speeds due to aerody-
+namic drag, and apply automated entropy regularization in DRL to 
+Knowledge-Based Systems 350 (2026) 116546 
+2 
+
+===== PAGE 3 =====
+A.J. Abdulelah et al.
+balance exploration-exploitation tradeoffs. Wu et al. [27] address multi-
+objective optimization under uncertainty using weight-aware DRL com-
+bined with NSGA-II, enabling a single neural model to solve the entire 
+Pareto front by incorporating objective weights directly into the net-
+work architecture. While these approaches acknowledge operational 
+uncertainty, they generally do not provide explicit probabilistic energy 
+consumption forecasting with calibrated confidence intervals—an im-
+portant requirement for chance-constrained planning. More recently, 
+Farhang Ghahfarokhi and Park [28] integrated Deep Q-Network rein-
+forcement learning with real-time travel time uncertainty propagation 
+for adaptive EV charging decisions, demonstrating the value of combin-
+ing learned policies with dynamic uncertainty updates, though without 
+joint route-level optimization or chance-constrained feasibility. In a 
+complementary direction, Guan et al. [29,30] embed detailed physics-
+based energy-consumption models, accounting for road grade, driving 
+dynamics, and battery behavior, directly within deep reinforcement 
+learning routing policies, reporting substantial energy savings on capac-
+itated and pickup–delivery EVRP variants; however, both treat energy 
+consumption deterministically and therefore neither quantifies predic-
+tive uncertainty nor enforces chance-constrained battery feasibility, 
+which is the gap our probabilistic formulation addresses.
+2.2. Deep reinforcement learning for combinatorial optimization
+The application of deep reinforcement learning to combinatorial 
+optimization has substantially advanced solution methodologies for 
+routing problems. Kool et al. [15] introduced attention-based encoder–
+decoder architectures that learn constructive heuristics directly from 
+problem structure, demonstrating competitive performance with clas-
+sical heuristics on traveling salesman and capacitated vehicle routing 
+problems while requiring only milliseconds of inference time. Kwon 
+et al. [16] enhanced this paradigm through Policy Optimization with 
+Multiple Optima (POMO), utilizing multiple solution rollouts during 
+both training and inference to improve solution diversity and quality. 
+Kim et al. [31] further refined these approaches with collaborative 
+learning mechanisms that enable policy networks to leverage auxiliary 
+optimization signals.
+Recent advances have explored foundation models and large-scale 
+pretraining for routing optimization. Zhou et al. [32] developed MV-
+MoE, a multi-task vehicle routing solver employing mixture-of-experts 
+with hierarchical gating mechanisms to enhance model capacity across 
+16 VRP variants simultaneously, achieving strong zero-shot general-
+ization on unseen problem types. Hudson et al. [33] proposed graph 
+neural diffusion models (GNARKC) that iteratively refine solution dis-
+tributions, while Zhao et al. [34] investigated generative diffusion 
+approaches for solution space exploration. Despite impressive perfor-
+mance on canonical benchmarks, these foundation models face signifi-
+cant challenges when applied to energy-constrained routing: they typ-
+ically lack explicit battery state tracking mechanisms, provide limited 
+uncertainty quantification for energy consumption, and face difficul-
+ties with the multi-objective nature of feasibility-versus-cost tradeoffs 
+inherent to EVRPTW. Complementary work by Cao et al. [35] pro-
+posed progressive training paradigms that gradually increase problem 
+complexity during neural combinatorial optimization, improving con-
+vergence stability—a principle we similarly employ through curriculum 
+learning in our framework.
+Specialized neural approaches for electric vehicle routing are still 
+emerging. Lin et al. [36] combined neural construction heuristics with 
+simplified energy prediction models but employed deterministic con-
+sumption estimates that fail to capture operational uncertainty. Zong 
+et al. [37] addressed uncertainty through distributional reinforcement 
+learning, learning value distributions rather than point estimates, yet 
+their framework omits charging infrastructure modeling and provides 
+limited guidance for route feasibility under battery constraints. Wang 
+et al. [38] developed attention-enhanced architectures specifically for 
+EVRP, incorporating heterogeneous attention mechanisms to distin-
+guish customers from charging stations, though without probabilistic 
+energy modeling. Liu et al. [39] explored heterogeneous autonomous 
+vehicle scheduling for last-mile delivery using attention-based DRL but 
+focused on vehicle-passenger matching rather than energy-constrained 
+routing with charging decisions.
+Recent works have begun addressing specific EVRP complexities 
+through learning-based methods. Wu et al. [40] tackled battery swap-
+ping station operations with uncertain demand using deep reinforce-
+ment learning, though their focus remained on charging infrastruc-
+ture management rather than integrated routing optimization. Moon 
+et al. [41] investigated energy and time optimization for EV charging 
+routes under uncertainty in charging station availability, introducing 
+time-aware charging selection but without comprehensive route-level 
+optimization. Maity and Sarkar [19] proposed graph convolutional 
+network-based DRL for EVRP with stochastic customer requests, incor-
+porating probabilistic energy consumption estimation, representing a 
+step toward uncertainty-aware neural routing. However, their approach 
+lacks explicit confidence-based planning mechanisms and hybrid op-
+timization refinement. Shahbazian et al. [17] developed knowledge-
+guided hybrid DRL combining multi-agent deep Q-networks with vari-
+able neighborhood search for dynamic multi-depot EVRP, demonstrat-
+ing over 70% distance reduction on small instances but facing scalabil-
+ity challenges and lacking probabilistic energy modeling.
+2.3. Hybrid learning-optimization approaches
+Recognition that pure learning and pure optimization approaches 
+each possess complementary strengths has motivated hybrid method-
+ologies. Hottung et al. [42] demonstrated that neural construction 
+heuristics combined with improvement procedures (e.g., 2-opt, 3-opt 
+local search) significantly outperform either component in isolation. 
+Cheng et al. [43] employed learned heuristics for neighbor selection 
+within large-scale neighborhood search, using neural networks to pre-
+dict promising move types dynamically. Ye et al. [44] proposed guided 
+local optimization with partitioning (GLOP), where learning handles 
+global solution structure while mathematical optimization addresses lo-
+cal refinement. Drakulic et al. [45] introduced bisimulation quotienting 
+for neural combinatorial optimization (BQ-NCO), using learned neural 
+bounds to guide branch-and-bound search and achieving substantial 
+pruning of the search space.
+In the electric vehicle domain, hybrid approaches remain nascent. 
+Baum et al. [46] combined reinforcement learning with strategic
+charging decisions but relied on heuristic routing construction
+rather than optimization-based refinement. Su et al. [47] integrated
+physics-informed neural networks for battery state estimation but ap-
+plied deterministic routing methods that do not leverage learned energy 
+models for robust planning. Wang et al. [18] developed DRL-based 
+adaptive large neighborhood search for capacitated EVRP, treating 
+operator selection as a Markov decision process and using neural net-
+works to adaptively select both destroy-repair operators and charging 
+strategies based on search state features. Zhang et al. [48] proposed 
+collaborative EVRP with mobile battery swapping vans, employing 
+extended adaptive large neighborhood search with two-dimensional 
+encoding to simultaneously optimize EV routes and BSV synchroniza-
+tion, though lacking explicit uncertainty handling. Çatay and İhsan 
+Sadati [49] examined battery swapping policies within matheuristic 
+frameworks, clarifying assumptions about swapping time and introduc-
+ing new policies for synchronized mobile battery swapping, demon-
+strating the importance of recharging strategy within hybrid solution 
+approaches.
+Critical analysis reveals that existing hybrid approaches for EVRP 
+have not yet integrated three essential capabilities: (1) graph neu-
+ral network-based state representation that captures complex spatial–
+temporal dependencies in energy-constrained routing, (2) probabilistic 
+energy consumption prediction with explicit uncertainty quantification 
+Knowledge-Based Systems 350 (2026) 116546 
+3 
+
+===== PAGE 4 =====
+A.J. Abdulelah et al.
+enabling chance-constrained feasibility, and (3) seamless integration 
+of learned policies with mathematical optimization refinement that 
+provides both real-time adaptability and high-quality offline planning. 
+This integration gap limits both the operational robustness and solution 
+quality achievable in practice.
+2.4. Research gaps and opportunities
+Recent research has explored specialized EVRP extensions—life-
+cycle assessment for airport towing vehicles [50], soft time windows 
+with weight-related discharging [51], and multi-mode hybrid vehicles 
+optimizing operation mode selection per road segment [52]. While 
+these works address important operational nuances, they largely rely 
+on deterministic frameworks that do not account for energy consump-
+tion uncertainty or provide adaptive replanning capabilities. Critical 
+synthesis of the broader literature reveals three fundamental gaps:
+Integration of Realistic Uncertainty with Neural Routing. Ex-
+isting DRL approaches demonstrate strong performance on canonical 
+problems but typically do not incorporate probabilistic energy con-
+sumption models with calibrated uncertainty estimates. Conversely, 
+stochastic optimization approaches model uncertainty rigorously but 
+often lack the computational efficiency essential for operational de-
+ployment. Few frameworks combine graph neural network-based policy 
+learning with calibrated probabilistic energy forecasting that provides 
+explicit confidence intervals for battery feasibility.
+Formal Uncertainty Quantification for Operational Safety.
+While several works acknowledge energy consumption variability, few 
+provide formal mechanisms for risk-aware decision-making through 
+chance-constrained planning with specified confidence levels. Existing 
+deterministic safety margins (e.g., reserving 20% battery capacity) 
+often lack theoretical grounding and may prove either excessively 
+conservative or insufficient.
+Computational Efficiency-Solution Quality Balance. Pure neural 
+approaches achieve millisecond inference but may sacrifice solution 
+quality (5%–10% optimality gap), while pure optimization approaches 
+require substantial computation time that can limit real-time adapta-
+tion. Most hybrid approaches have not fully integrated learned poli-
+cies with mathematical refinement to enable dual-mode operation: 
+rapid neural inference for real-time decisions and optional optimization 
+refinement for offline planning.
+These gaps motivate the problem formulation and solution approach 
+developed below.
+3. Problem formulation
+This section formalizes the EVRPTW under operational uncertainty 
+as a stochastic optimization problem, introducing the graph repre-
+sentation, energy consumption model under uncertainty, deterministic 
+constraints, and chance-constrained battery feasibility. The resulting 
+computational complexity motivates the hybrid deep reinforcement 
+learning approach presented subsequently.
+We formulate the Electric Vehicle Routing Problem with Time Win-
+dows (EVRPTW) under operational uncertainty as a stochastic opti-
+mization problem on a directed graph 𝐺 = ( 𝑉 , 𝐴). The node set 𝑉 =
+{0} ∪ 𝐶 ∪ 𝐹 consists of the depot (node 0), a set of customers 𝐶 with 
+|𝐶| = 𝑛, and charging stations 𝐹 with |𝐹 | = 𝑚. Each customer 𝑖 ∈ 𝐶 has 
+demand 𝑞𝑖, service time 𝑠𝑖, and a time window [𝑒𝑖, 𝑙𝑖]. A homogeneous 
+fleet of 𝐾 electric vehicles operates with load capacity 𝑄 and battery 
+capacity 𝐵.
+Binary routing variables 𝑥𝑖𝑗𝑘 ∈ {0, 1} denote whether vehicle 𝑘 ∈ 𝐾
+traverses arc (𝑖, 𝑗) ∈ 𝐴, while 𝑦𝑘 ∈ {0 , 1} indicates vehicle usage. 
+Continuous state variables include arrival times 𝑡𝑘𝑖 , battery levels 𝑏𝑘𝑖
+(kWh), and charging amounts 𝑔𝑖𝑘 (kWh) at node 𝑖.
+Energy consumption along arc (𝑖, 𝑗) is modeled as a Gaussian ran-
+dom variable: 
+𝐸𝑖𝑗 ∼  (𝜇𝑖𝑗 , 𝜎2𝑖𝑗 ), 𝜇 𝑖𝑗 = 𝑓 (𝑑𝑖𝑗 , 𝑣𝑖𝑗 , 𝑤𝑖𝑗 , 𝑇𝑖𝑗 ), (1)
+where 𝑑𝑖𝑗 is distance, 𝑣𝑖𝑗 is speed, 𝑤𝑖𝑗 is payload, 𝑇𝑖𝑗 represents envi-
+ronmental conditions, and 𝑓 (⋅) is a physics-based energy model. The 
+variance term 𝜎2𝑖𝑗 captures operational uncertainty and is predicted via 
+our LSTM-based estimator.
+The Gaussian distributional assumption is a modeling choice that 
+warrants explicit justification. Empirical studies of urban electric de-
+livery operations report that per-segment energy consumption, when 
+conditioned on speed, payload, and environmental covariates, exhibits 
+approximately symmetric residual distributions with tails consistent 
+with a normal approximation [8,9]. While raw (unconditional) con-
+sumption can exhibit right-skew due to traffic state transitions, con-
+ditioning on the feature vector 𝐱𝑖𝑗 captured by our LSTM predictor 
+substantially reduces this skewness. We assess this assumption empiri-
+cally through prediction residual analysis (Section 5.4, Fig.  3c), which 
+is consistent with an approximately Gaussian error structure (MAPE =
+3.8%), though we do not claim a formal distributional test. Nonetheless, 
+we acknowledge that in settings with highly multimodal traffic pat-
+terns, alternative distributions such as log-normal or Gaussian mixture 
+models may provide better fit, and we identify this as a direction for 
+future work.
+The objective minimizes the total operational cost, including vehicle 
+deployment, routing, charging, and time-window violations:
+min 𝑍 =
+∑
+𝑘∈𝐾
+𝑐𝑓 𝑦𝑘 +
+∑
+𝑘∈𝐾
+∑
+(𝑖,𝑗)∈𝐴
+𝑐𝑖𝑗 𝑑𝑖𝑗 𝑥𝑖𝑗𝑘
++
+∑
+𝑘∈𝐾
+∑
+𝑖∈𝐹
+𝑐𝑐 𝑔𝑖𝑘
++
+∑
+𝑘∈𝐾
+∑
+𝑖∈𝐶
+𝑐𝑡 max(0, 𝑡𝑘𝑖 − 𝑙𝑖). (2)
+Subject to the following constraints ensuring route feasibility:
+Customer service: Each customer is visited exactly once: 
+∑
+𝑘∈𝐾
+∑
+𝑗∈𝑉 ⧵{𝑖}
+𝑥𝑖𝑗𝑘 = 1 ∀ 𝑖 ∈ 𝐶. (3)
+Flow conservation: Vehicles must leave every node they enter: 
+∑
+𝑖∈𝑉 ⧵{𝑗}
+𝑥𝑖𝑗𝑘 =
+∑
+𝑖∈𝑉 ⧵{𝑗}
+𝑥𝑗𝑖𝑘 ∀𝑗 ∈ 𝑉 , 𝑘 ∈ 𝐾. (4)
+Vehicle capacity: 
+∑
+𝑖∈𝐶
+𝑞𝑖
+(
+∑
+𝑗∈𝑉 ⧵{𝑖}
+𝑥𝑖𝑗𝑘
+)
+≤ 𝑄 𝑦𝑘 ∀𝑘 ∈ 𝐾. (5)
+Time windows: 
+𝑒𝑖 ≤ 𝑡𝑘𝑖 ≤ 𝑙𝑖 ∀𝑖 ∈ 𝐶, 𝑘 ∈ 𝐾. (6)
+Time propagation: Using a big-𝑀 formulation: 
+𝑡𝑘𝑗 ≥ 𝑡𝑘𝑖 + 𝑠𝑖 + 𝑡𝑖𝑗 + 𝜏𝑖𝑘 − 𝑀(1 − 𝑥𝑖𝑗𝑘 ) ∀( 𝑖, 𝑗) ∈ 𝐴, 𝑘 ∈ 𝐾. (7)
+Chance-constrained battery feasibility: To ensure feasibility at 
+confidence level 𝛼 = 0 .95, we impose individual chance constraints at 
+each (node, vehicle) pair: 
+P(𝑏𝑘𝑗 ≥ 𝛽) ≥ 𝛼 ∀𝑗 ∈ 𝑉 , 𝑘 ∈ 𝐾, (8)
+where 𝛽 denotes the minimum reserved battery. Eq. (8) defines a 
+system of individual chance constraints — one per (node, vehicle) pair 
+— rather than a single joint constraint P(𝑏𝑘𝑗 ≥ 𝛽 ∀𝑗, 𝑘) ≥ 𝛼, which 
+would require all node-level conditions to hold simultaneously. The two 
+formulations have different mathematical meanings and lead to differ-
+ent conservatism levels; a Bonferroni union-bound aggregation at level 
+𝛼∕|𝑉 | would yield a conservative joint route-level guarantee, which we 
+identify as a possible extension in Section 7. The feasibility guarantee 
+provided by Eq. (8) is conditional on (i) the Gaussian assumption 
+in Eq. (1) and (ii) the calibration of the learned variance estimator 
+𝜎2𝑖𝑗 produced by our LSTM predictor; empirical evidence for both is 
+reported in Section 5.4 (94.7% empirical coverage at the 95% nominal 
+level). Under Gaussian energy consumption (Eq. (1)), the battery state 
+Knowledge-Based Systems 350 (2026) 116546 
+4 
+
+===== PAGE 5 =====
+A.J. Abdulelah et al.
+Table 1
+Framework component overview: learned vs. fixed modules.
+ Component Type Role  
+ GAT encoder Learned (35K episodes) Encodes problem structure with battery-aware attention, produces 
+node embeddings ℎ(𝐿)𝑖
+ 
+ LSTM energy predictor Learned (50K segments) Predicts energy distribution (𝜇𝐸 , 𝜎2𝐸 ) with calibrated uncertainty   PPO policy network Learned (35K episodes) Generates routing decisions 𝜋𝜃 (𝑎|𝑠) using GAT embeddings   Value network Learned (35K episodes) Estimates expected cumulative reward for advantage computation  
+ Chance constraint checker Fixed (analytical) Enforces battery feasibility: 𝑏req = 𝜇𝐸 + 𝛷−1(0.95)
+√
+𝜎2𝐸 + 𝜎2cum   MILP solver Fixed (Gurobi) Optional refinement via branch-and-cut, warm-started with neural 
+solution
+ 
+evolves through separate mean and cumulative-variance recursions, 
+with the safety margin applied at the feasibility-check stage: 
+𝜇𝐵,𝑘𝑗 = 𝑏𝑘𝑖 − 𝜇𝑖𝑗 + 𝑔𝑖𝑘 if 𝑥𝑖𝑗𝑘 = 1, (9a)
+𝜎2,𝑘𝑐𝑢𝑚,𝑗 = 𝜎2,𝑘𝑐𝑢𝑚,𝑖 + 𝜎2𝑖𝑗 if 𝑥𝑖𝑗𝑘 = 1, (9b)
+𝜇𝐵,𝑘𝑗 − 𝛷−1(𝛼)√𝜎2,𝑘𝑐𝑢𝑚,𝑗 ≥ 𝛽. (9c)
+where 𝛷−1(0.95) ≈ 1 .645 and the realized battery state is 𝑏𝑘𝑗 = 𝜇𝐵,𝑘𝑗 . 
+Eq. (9a) propagates the expected battery state, Eq. (9b) accumulates 
+per-arc variance along the route, and Eq. (9c) enforces the chance 
+constraint of Eq. (8) in its analytical Gaussian form. This separation is 
+consistent with Algorithm 3 (lines 6–7 perform the predictor call and 
+feasibility check; line 11 updates the cumulative variance). The recur-
+sions assume conditional independence of residual energy errors across 
+arcs given the LSTM covariates; the effect of relaxing this assumption 
+is analyzed in Section 5.3, and a conservative correlated-uncertainty 
+correction (replacing 𝜎2,𝑘𝑐𝑢𝑚,𝑗 with 𝜎2,𝑘𝑐𝑢𝑚,𝑗 + 2 ∑𝑝<𝑞 𝜌𝑝𝑞𝜎𝑝𝜎𝑞 for non-zero 
+pairwise correlation 𝜌𝑝𝑞) is also presented there.
+Charging constraints: For stations 𝑖 ∈ 𝐹 :
+𝑔𝑖𝑘 = 𝑟𝑖𝜏𝑖𝑘 (10)
+𝜏𝑚𝑖𝑛𝑖 ≤ 𝜏𝑖𝑘 ≤ 𝜏𝑚𝑎𝑥𝑖 (11)
+𝑏𝑘𝑖 + 𝑔𝑖𝑘 ≤ 𝐵. (12)
+Computational complexity: The EVRPTW under uncertainty be-
+longs to the class of stochastic mixed-integer nonlinear programs
+(SMINLP) with individual chance constraints (one per (node, vehicle) 
+pair, as formalized in Eq. (8)). This individual formulation is distinct 
+from a joint chance constraint, which enforces a single route-level 
+guarantee through Bonferroni aggregation and which we discuss as a 
+possible extension in Section 7. Even the deterministic variant (setting 
+𝜎2𝑖𝑗 = 0 ) is NP-hard as it generalizes the classical vehicle routing 
+problem. The integration of stochastic battery constraints, nonlinear 
+energy models, and time dependencies renders exact solution methods 
+computationally intractable for realistic instance sizes (𝑛 > 50). This 
+motivates our hybrid deep reinforcement learning approach, which pro-
+vides rapid heuristic solutions with optional MILP refinement, enabling 
+both real-time deployment (sub-second inference) and high-quality 
+offline planning when computational budgets permit.
+4. Methodology
+This section presents our hybrid deep reinforcement learning frame-
+work for solving the uncertainty-aware EVRPTW. We first overview the 
+four-phase architecture, then detail three core technical components: 
+Graph Attention Networks for spatial–temporal encoding, LSTM-based 
+probabilistic energy prediction, and Proximal Policy Optimization with 
+optional MILP refinement. We conclude with transfer learning protocols 
+and computational complexity analysis.
+Table  1 summarizes the role of each component, distinguishing 
+learned neural components from fixed optimization modules.
+4.1. Framework architecture
+The EVRPTW under uncertainty requires simultaneously capturing 
+complex spatial–temporal dependencies, quantifying energy consump-
+tion uncertainty with calibrated confidence intervals, and balancing 
+real-time decision-making with high-quality offline optimization. Our 
+hybrid framework addresses this through four integrated phases.
+Phase 1 (Offline Pre-training) establishes general routing com-
+petencies through curriculum learning across 35,000 episodes with 
+problem sizes ranging from 10 to 100 customers, jointly training the 
+GAT encoder, LSTM energy predictor, and PPO policy. Phase 2 (Trans-
+fer Learning) adapts pre-trained models to target operational contexts 
+using 400–600 local routes, reducing adaptation (retraining) time from 
+72 h to 3–5 h. Phase 3 (Online Routing) generates real-time solutions 
+in 0.3–0.8 s with model-based chance-constrained battery feasibility.
+Phase 4 (Hybrid Refinement) optionally improves solutions by 2.8% 
+on average, rising to 4.1% on the largest instances (Table  6) through 
+MILP post-optimization when computational budgets permit.
+These phases rely on learned modules (GAT encoder, LSTM predic-
+tor, PPO policy) whose parameters are optimized during training, and
+fixed modules (chance constraint checking, MILP solver) that apply 
+deterministic rules or mathematical optimization. Fig.  1 illustrates the 
+complete architecture and information flow between components.
+4.2. Graph attention network encoder
+The first challenge in learning energy-aware routing policies is 
+representing EVRPTW instances in a form that captures both spatial–
+temporal dependencies and battery constraints. Unlike classical VRP 
+where all customer nodes are homogeneous, EVRPTW requires distin-
+guishing three functionally distinct node types: the depot
+(origin/destination), customers (demand and time windows), and
+charging stations (energy replenishment with rate constraints). We 
+address this through a heterogeneous graph representation that enables 
+the policy network to learn differential attention patterns for each node 
+type.
+Fixed input representation: We construct a heterogeneous graph 
+𝐺 = ( 𝑉 , 𝐸, 𝑋, 𝐄𝑓 ) where nodes represent depot, customers, and charg-
+ing stations with type-specific feature encodings: 
+𝐱𝑖 =
+⎧
+⎪
+⎨
+⎪⎩
+[0, 0, 0, 0, 1, 0, 0] 𝑖 = 0 (depot)[ 𝑞𝑖
+𝑄 , 𝑒𝑖𝑇max , 𝑙𝑖𝑇max , 𝑠𝑖𝑆max , 0, 1, Ivis] 𝑖 ∈ 𝐶
+[0, 0, 0, 𝑟𝑖∕𝑅max, 0, 0, 1] 𝑖 ∈ 𝐹
+(13)
+Customer features encode demand, time windows, service time, 
+and visit status (all normalized), while charging stations encode only 
+charging rate—reflecting their distinct operational roles. Edge features 
+encode travel costs, distances, and predicted energy distributions: 
+𝐞𝑖𝑗 = [𝑑𝑖𝑗 ∕𝐷max, 𝑡 𝑖𝑗 ∕𝑇max, 𝜇 𝑖𝑗 ∕𝐵, 𝜎 𝑖𝑗 ∕
+√
+𝐵], (14)
+where the energy mean 𝜇𝑖𝑗 and standard deviation 𝜎𝑖𝑗 are provided by 
+the LSTM predictor, enabling the attention mechanism to reason about 
+battery feasibility.
+Knowledge-Based Systems 350 (2026) 116546 
+5 
+
+===== PAGE 6 =====
+A.J. Abdulelah et al.
+Fig. 1. Hybrid deep reinforcement learning framework for uncertainty-aware electric vehicle routing. The framework operates in four phases: (1) offline pre-
+training, (2) transfer learning, (3) online routing with chance-constrained feasibility, and (4) optional MILP refinement.
+Learned attention mechanism: The encoding procedure trans-
+forms this heterogeneous graph into learned node embeddings through 
+𝐿 = 4  layers of multi-head attention with 𝐾 = 8  heads. Algorithm 
+1 formalizes this process with three key design choices that enable 
+battery-aware routing: (1) vehicle state injection (lines 3–4) augments 
+node features with current battery level, load, and time context; (2) 
+multi-head aggregation (line 12) with residual connections captures 
+diverse routing patterns simultaneously; and (3) global pooling (line 
+14) produces graph-level features for the value network to estimate 
+expected cumulative reward.
+The key innovation lies in the attention mechanism itself, which
+learns to dynamically focus on relevant nodes based on current vehicle 
+state (battery level, remaining capacity, current time): 
+𝛼𝑘𝑖𝑗 = exp(𝑒𝑘𝑖𝑗 )∑
+𝑗′∈ (𝑖) exp(𝑒𝑘𝑖𝑗′ ) , (15)
+𝑒𝑘𝑖𝑗 = LeakyReLU(𝐚𝑇𝑘 [𝑊𝑘𝐡(𝓁−1)𝑖 ‖𝑊𝑘𝐡(𝓁−1)𝑗 ‖𝜙(𝐞𝑖𝑗 )]) (16)
+where 𝜙(𝐞𝑖𝑗 ) = 𝑊𝑒𝐞𝑖𝑗 projects edge features — including predicted 
+energy consumption uncertainty — into the attention score (Eq. (16)). 
+This allows the network to learn that high-uncertainty edges (large 
+𝜎𝑖𝑗 ) may require proximity to charging stations, while low-uncertainty 
+edges enable more flexible routing decisions. Node embeddings aggre-
+gate neighbor information with residual connections and layer normal-
+ization:
+𝐡(𝓁)𝑖 = LayerNorm(Concat𝐾𝑘=1𝐡(𝓁,𝑘)𝑖 + 𝐡(𝓁−1)𝑖 ) .
+Algorithm 1 formalizes the encoding process, showing how vehicle 
+state context (battery level, load, current time) is injected into node 
+features before attention computation (lines 3–4), and how the final 
+graph embedding ℎgraph is produced via attention-weighted global 
+pooling (line 14) for use in the value network.
+Algorithm 1 Graph Attention Network Encoder
+Require: Problem instance  = (𝐺, ,  ), current state 𝑠𝑡
+Ensure: Node embeddings 𝐻 (𝐿) ∈ R||×𝑑 , graph embedding ℎgraph
+1: Construct heterogeneous graph:  ← {𝑣depot} ∪ {𝑣𝑖 ∶ 𝑖 ∈ } ∪ {𝑣𝑗 ∶
+𝑗 ∈  }
+2: Initialize node features 𝐱𝑣 according to Equation (13)
+3: Add vehicle state context: 𝐱vehicle ←
+[𝑏current∕𝐵, 𝑤load∕𝑄, 𝑡current∕𝑇max]
+4: Project to 𝑑=128 dimensions: 𝐻 (0) ← Linear([𝐱𝑣 ⊕ 𝐱vehicle])
+5: for layer 𝓁 = 1 to 𝐿 = 4 do 
+6: for head 𝑘 = 1 to 𝐾 = 8 do 
+7: for node 𝑖 ∈  do 
+8: Compute attention coefficients 𝛼𝑘𝑖𝑗 via Equation (15)
+9: Aggregate: 𝐡(𝓁,𝑘)𝑖 = 𝜎 (∑𝑗∈ (𝑖) 𝛼𝑘𝑖𝑗 𝑊𝑘𝐡(𝓁−1)𝑗 )
+10: end for
+11: end for
+12: Multi-head aggregation:
+𝐡(𝓁)𝑖 = LayerNorm(Concat𝐾𝑘=1𝐡(𝓁,𝑘)𝑖 + 𝐡(𝓁−1)𝑖 )
+13: end for
+14: Global pooling:
+ℎgraph = ∑𝑖∈ softmax(MLP(𝐡(𝐿)𝑖 )) ⋅ 𝐡(𝐿)𝑖
+15: return 𝐻 (𝐿), ℎgraph
+Knowledge-Based Systems 350 (2026) 116546 
+6 
+
+===== PAGE 7 =====
+A.J. Abdulelah et al.
+These learned embeddings 𝐻 (𝐿) encode spatial–temporal routing 
+structure, but their effectiveness depends critically on the accuracy 
+of energy consumption predictions 𝜇𝑖𝑗 and uncertainty estimates 𝜎𝑖𝑗
+embedded in edge features 𝐞𝑖𝑗 . Without calibrated uncertainty quan-
+tification, the attention mechanism cannot distinguish safe routes from 
+risky ones. We now detail how these probabilistic predictions are 
+generated.
+4.3. Probabilistic energy prediction
+The GAT encoder requires energy consumption estimates 𝜇𝑖𝑗 and 
+uncertainty measures 𝜎𝑖𝑗 for each arc (𝑖, 𝑗) to compute battery-aware 
+attention weights. As established in the literature review, energy con-
+sumption in electric vehicles exhibits 30%–40% variability due to 
+traffic, weather, payload, and terrain. Deterministic estimates fail to 
+capture this uncertainty, leading to either overly conservative routes 
+(if safety margins are too large) or feasibility violations (if margins are 
+insufficient). We address this through a bidirectional LSTM network 
+that predicts both mean energy consumption 𝜇𝐸 and variance 𝜎2𝐸 , 
+enabling model-based chance-constrained planning (Eq. (8)).
+The predictor is trained to output both the mean and variance 
+of energy consumption through a heteroscedastic loss function that 
+explicitly penalizes miscalibrated uncertainty: 
+hetero = (𝐸actual − 𝜇𝐸 )2
+2𝜎2𝐸 + 12 log(2𝜋𝜎 2𝐸 ) (17)
+This loss balances two objectives: the first term penalizes prediction 
+error (weighted by confidence), while the logarithmic term prevents 
+uncalibrated uncertainty—if the model predicts excessively large 𝜎2𝐸 , 
+the regularizer penalizes it, forcing calibration.
+Each candidate arc (𝑖, 𝑗) is decomposed into an ordered sequence 
+of road sub-segments along the (fixed, time-invariant) shortest path 
+between 𝑖 and 𝑗 in the underlying road network. Each sub-segment 
+𝑠 is represented by a 24-dimensional feature vector capturing geo-
+metric (sub-segment distance, road grade), kinematic (speed), vehicle 
+state (current battery, current load), and environmental (temperature, 
+precipitation, wind) properties:
+𝐱(𝑠)𝑖𝑗 = [𝑑(𝑠)𝑖𝑗 , 𝑣 (𝑠)𝑖𝑗 , 𝑤 (𝑠)𝑖𝑗 , 𝑇 (𝑠)𝑖𝑗 , grade(𝑠)𝑖𝑗 , 𝑏 𝑖, 𝑞 rem,𝑖, …]
+The bidirectional LSTM processes this intra-arc sub-segment sequence 
+in both forward and backward directions before predicting the arc-
+level mean and variance (𝜇𝐸 , 𝜎2𝐸 ) ≡ (𝜇𝑖𝑗 , 𝜎2𝑖𝑗 ). Because the underlying 
+road network is fixed and time-invariant, the bidirectional pass is 
+well-defined at inference time (Algorithm 3, line 6) and does not 
+require knowledge of future arcs in the route. The route-level sequence 
+of arcs is constructed autoregressively by the PPO policy, while the 
+bidirectional structure within the BiLSTM captures within-arc spatial 
+dependencies—for example, the energy cost of a steep climb depends 
+on whether the immediately preceding sub-segment was a downhill 
+enabling regenerative braking, a dependency that a purely forward 
+LSTM would fail to capture. During incremental route construction, the 
+BiLSTM is applied independently to each candidate arc, using only that 
+arc’s fixed and fully known sub-segment sequence. It is never applied to 
+partial routes or route-level arc sequences. Therefore, the bidirectional 
+mechanism does not require information from future arcs. When a can-
+didate node 𝑗 is considered, a single self-contained prediction (𝜇𝑖𝑗 , 𝜎2𝑖𝑗 )
+is generated for the corresponding arc (𝑖, 𝑗).
+Algorithm 2 details the training procedure, emphasizing three crit-
+ical design elements for calibrated uncertainty quantification: (1) Bidi-
+rectional processing (line 5) captures within-arc sub-segment depen-
+dencies; (2) Separate output heads for mean (𝑊𝜇) and log-variance 
+(𝑊𝜎 ) in line 7 with exponential transformation ensuring 𝜎2𝐸 > 0; 
+(3) Early stopping (lines 12–14) based on validation MAPE prevents 
+overfitting while maintaining the critical calibration property.
+Training proceeds on 50,000 historical route segments comprising 
+diverse operational conditions (traffic, weather, payload, terrain).
+Algorithm 2 LSTM-Based Probabilistic Energy Predictor Training
+Require: Historical route dataset energy = {(𝐱𝑖, 𝐸𝑖)}50000𝑖=1
+Ensure: Trained predictor 𝜃𝐸 outputting (𝜇𝐸 , 𝜎2𝐸 )
+1: Initialize BiLSTM parameters 𝜃𝐸 = {𝜃LSTM, 𝜃𝜇, 𝜃𝜎 }
+2: for epoch 𝑘 = 1 to 𝑁epoch do 
+3: for batch 𝑗 in mini-batches of size 64 do 
+4: for sample (𝐱, 𝐸actual) in 𝑗 do 
+5: Forward pass: 𝐡→𝑡 , 𝐡←𝑡 = BiLSTM(𝐱; 𝜃LSTM)
+6: Concatenate: 𝐡𝑡 = [𝐡→𝑡 ‖𝐡←𝑡 ]
+7: Predict: 𝜇𝐸 = 𝑊𝜇𝐡𝑡 + 𝑏𝜇; 𝜎2𝐸 = exp(𝑊𝜎 𝐡𝑡 + 𝑏𝜎 )
+8: Compute loss:  = (𝐸actual−𝜇𝐸 )2
+2𝜎2𝐸 + 12 log(2𝜋𝜎 2𝐸 )
+9: end for
+10: Update: 𝜃𝐸 ← 𝜃𝐸 − 𝜂∇𝜃𝐸
+∑
+(𝐱,𝐸)∈𝑗 
+11: end for
+12: if validation MAPE stops improving for 10 consecutive evalua-
+tions then 
+13: break {Early stopping}
+14: end if
+15: end for
+16: return 𝜃𝐸
+The trained predictor achieves MAPE = 3.8% with 94.7% empir-
+ical coverage for 95% prediction intervals, indicating well-calibrated 
+uncertainty. Calibration is critical: miscalibrated intervals would yield 
+either excessive conservatism or unsafe routes when used in chance 
+constraints (Eq. (9)). These probabilistic predictions are consumed by 
+both the GAT encoder (as edge features, Eqs. (15)–(16)) and the policy 
+network’s feasibility checking (detailed next).
+4.4. Hybrid reinforcement learning and optimization
+Given the learned representations from the GAT encoder and prob-
+abilistic energy forecasts, we now formulate the route construction 
+process as a Markov Decision Process (MDP) and train a policy network 
+via Proximal Policy Optimization. The MDP formulation enables the 
+agent to learn from experience which routing strategies minimize cost 
+while maintaining battery feasibility under uncertainty.
+MDP formulation: We define the routing task as an MDP with:
+• State space : Partial route, current vehicle state (battery 𝑏, load 
+𝑤, time 𝑡), and set of unvisited customers
+• Action space (𝑠): Feasible next nodes (customers or charging 
+stations) satisfying time and capacity constraints
+• Reward function: Encodes the optimization objective (Eq. (2)) 
+while providing guidance toward feasible solutions
+𝑟(𝑠, 𝑎) = − (𝑐𝑖𝑗 ⋅ 𝑑𝑖𝑗 + 𝑐𝑐 ⋅ 𝑔
++ 𝜆1 ⋅ 1infeas.
++ 𝜆2 ⋅ max(0, 𝑡𝑗 − 𝑙𝑗 )) (18)
+The routing and charging costs (first two terms) mirror the objective 
+function (Eq. (2)). The infeasibility penalty (𝜆1 = 1000 ) provides 
+strong negative reinforcement for battery-unsafe decisions, while the 
+tardiness penalty (𝜆2 = 50 ) softly discourages time window viola-
+tions without making them strictly forbidden during exploration. These 
+values were selected through a preliminary grid search over 𝜆1 ∈
+{100, 500, 1000, 2000} and 𝜆2 ∈ {10 , 50, 100, 200}, evaluating conver-
+gence stability and feasibility rate on a held-out validation set of 500 
+training instances. The chosen ratio 𝜆1∕𝜆2 = 20  reflects the asym-
+metric severity of the two constraint types: battery infeasibility causes 
+Knowledge-Based Systems 350 (2026) 116546 
+7 
+
+===== PAGE 8 =====
+A.J. Abdulelah et al.
+vehicle stranding — an operationally catastrophic and unrecoverable 
+event — whereas time window tardiness incurs a service penalty that, 
+while undesirable, does not prevent route completion. Sensitivity anal-
+ysis confirmed that policies trained with 𝜆1 ∈ [500 , 2000] and 𝜆2 ∈
+[25, 100] yield qualitatively similar routing strategies, with feasibility 
+rates varying by less than 1.5 pp across this range.
+The policy network 𝜋𝜃(𝑎|𝑠) uses the GAT node embeddings 𝐡(𝐿)𝑗
+(from Algorithm 1, line 14) to compute action probabilities: 
+𝜋𝜃(𝑎𝑗 |𝑠) =
+exp(𝐰𝑇 𝐡(𝐿)𝑗 ∕𝜏)
+∑
+𝑗′∈(𝑠) exp(𝐰𝑇 𝐡(𝐿)𝑗′ ∕𝜏) (19)
+where 𝐰 is a learned projection vector and 𝜏 is a temperature parameter 
+controlling exploration. The embeddings 𝐡(𝐿)𝑗  already encode battery-
+aware attention patterns, so the policy naturally learns to favor nearby 
+charging stations when the battery is low.
+Proximal Policy Optimization maximizes the clipped surrogate ob-
+jective:
+CLIP(𝜃) = E𝑡
+[
+min(𝑟𝑡(𝜃) ̂𝐴𝑡,
+clip(𝑟𝑡(𝜃), 1−𝜖, 1+𝜖) ̂𝐴𝑡)] (20)
+where 𝑟𝑡(𝜃) = 𝜋𝜃(𝑎𝑡|𝑠𝑡)∕𝜋𝜃old (𝑎𝑡|𝑠𝑡) is the probability ratio, ̂𝐴𝑡 is the GAE-
+estimated advantage, and 𝜖 = 0 .2 limits policy updates to maintain 
+training stability.
+Algorithm 3 presents the deployment workflow integrating all com-
+ponents. The algorithm assumes that offline pre-training (35,000
+episodes with curriculum learning) and optional transfer learning have 
+been completed. Two formally defined operational configurations are 
+used throughout the experimental evaluation: DRL-Pure refers to
+Phase 1 execution only, where the trained policy generates solutions 
+via neural inference without any MILP refinement (0.3–0.8 s inference);
+DRL-Hybrid refers to the full two-phase execution, where Phase 1 neu-
+ral solutions are subsequently refined by the Phase 2 MILP component 
+when computational budgets permit.
+• Phase 1 (Real-Time Neural Routing): The trained policy selects 
+actions, the LSTM predicts energy with uncertainty, and chance-
+constrained feasibility checking proactively triggers charging
+when battery reserve would fall below the 95% confidence thresh-
+old. Inference completes in 0.3–0.8 s.
+• Phase 2 (Optional MILP Refinement): Warm-starts MILP op-
+timization with the neural solution, achieving 2.8% additional 
+quality on average, rising to 4.1% on the largest instances (Table 
+6) within 300–1200 s budgets when offline planning time permits.
+Phase 1 of Algorithm 3 generates solutions in 0.3–0.8 s, suitable for 
+real-time replanning. However, when computational budgets permit of-
+fline planning, Phase 2 optionally refines the neural solution via mixed-
+integer linear programming. The MILP formulation (Eqs. (2)–(12)) 
+is warm-started with the neural solution , allowing the solver to 
+focus search around a high-quality initial solution. Binary routing 
+variables 𝑥𝑖𝑗𝑘 and continuous state variables (𝑡𝑘𝑖 , 𝑏𝑘𝑖 , 𝑔𝑖𝑘) from the neural 
+solution  are provided to Gurobi as a MIPStart initial feasible 
+solution via variable hints (VarHintVal). The MIP gap tolerance is 
+set to 1%, meaning the solver terminates once it proves the incumbent 
+solution is within 1% of the linear programming relaxation bound, 
+typically achieved within the 300–1200 s budget for instances up to 
+100 customers.
+4.5. Transfer learning and deployment
+The trained framework achieves strong performance on bench-
+mark instances similar to its training distribution. However, real-world 
+deployment requires adaptation to new geographic regions with differ-
+ent traffic patterns, weather distributions, and charging infrastructure 
+layouts. Our transfer learning protocol reduces adaptation time by 
+95% through strategic fine-tuning of only the components sensitive to 
+domain shift.
+The protocol proceeds in three stages. First, we calibrate the energy 
+predictor, as the LSTM energy predictor is most sensitive to domain 
+shift—local traffic speeds, weather patterns, and road grades differ from 
+training regions. We fine-tune 𝜃𝐸 on 400–600 local routes (correspond-
+ing to 2–3 weeks of historical data) using the heteroscedastic loss in 
+Eq. (17), while keeping the GAT encoder and policy network frozen.
+Second, with locally calibrated energy predictions, we adapt the 
+policy parameters 𝜃𝜋 via a combination of behavioral cloning and 
+policy gradient, using the adaptation loss
+adapt = 𝜆BC ⋅
+(
+−
+∑
+𝑡
+log 𝜋𝜃𝜋 (𝑎∗𝑡 |𝑠𝑡)
+)
++ 𝜆RL ⋅ CLIP(𝜃𝜋), (21)
+where 𝑎∗𝑡  are actions from the operator’s existing routing solution (in 
+our deployment, historical routes produced by the operator’s legacy 
+rule-based transportation management system; see Section 6), provid-
+ing expert demonstrations. We set 𝜆BC∕𝜆RL = 0 .3 to balance imitation 
+(leveraging local expertise) with improvement (optimizing beyond the 
+expert). Fine-tuning proceeds for 2000 episodes (approximately 2 h).
+Third, we recalibrate uncertainty estimates by validating the
+adapted model on 100 held-out local routes and applying temperature 
+scaling to the LSTM variance predictions if the empirical coverage 
+deviates from the 95% target.
+This three-stage protocol achieves 94% of target domain perfor-
+mance with only 3–5 h of total computation and 2–3 weeks of data 
+collection, compared to 72 h and months of data for full retraining. The 
+operational validity of this protocol is demonstrated through the 13-
+week real-world deployment study in Section 6, where adaptation using 
+423 local routes achieves near-parity with source-domain benchmark 
+performance across all key metrics.
+4.6. Computational complexity
+The GAT encoder requires (𝐿 ⋅ 𝐾 ⋅ ||2 ⋅ 𝑑) operations for 𝐿 = 4
+layers, 𝐾 = 8 heads, and embedding dimension 𝑑 = 128 . For a typical 
+instance with || = 80  nodes, this evaluates to approximately 200M 
+FLOPs requiring 50–100 ms on GPU. Policy inference scales as (||⋅𝑑), 
+a simple matrix–vector product requiring under 1 ms per decision. Over 
+a complete route of 60 customers, policy inference totals ∼60 ms. LSTM 
+energy prediction remains under 10 ms per route segment. With an 
+average route length of 12 segments, total prediction time is ∼120 ms. 
+Combining GAT encoding (80 ms), policy rollout (60 ms), energy pre-
+diction (120 ms), and feasibility checking overhead yields 0.3–0.8 s 
+per instance, satisfying real-time operational requirements even with 
+multiple replanning events per day.
+5. Experimental validation
+This section validates our framework through computational ex-
+periments on benchmark instances and under dynamic operational 
+conditions, followed by ablation studies and model interpretability 
+analysis.
+5.1. Experimental design
+Rigorous evaluation requires carefully constructed benchmarks, 
+appropriate baseline methods, and a transparent, seed-controlled evalu-
+ation protocol. We evaluate our framework on 30 benchmark instances 
+(60–100 customers) extended from the classical Solomon VRPTW
+benchmarks [53] following the electric-vehicle adaptation with
+recharging stations of Schneider et al. [11] to incorporate realistic 
+charging infrastructure with urban density of 0.15 stations per km2, 
+Knowledge-Based Systems 350 (2026) 116546 
+8 
+
+===== PAGE 9 =====
+A.J. Abdulelah et al.
+Algorithm 3 Online Routing with Optional MILP Refinement
+Require: EVRPTW instance , trained parameters 𝜃enc, 𝜃𝜋 , 𝜃𝐸 , confi-
+dence level 𝛼 = 0.95
+Ensure: Route solution  with battery feasibility ≥ 𝛼
+1: // Phase 1: Real-Time Neural Routing 
+2: Initialize state 𝑠0 (depot, full battery), 𝜎2cum ← 0
+3: while unserved customers remain do 
+4: Encode: 𝐡𝑣 ← GAT(, 𝑠𝑡; 𝜃enc)
+5: Select: 𝑎𝑡 ← arg max𝑎 𝜋𝜃𝜋 (𝑎|𝐡𝑣, 𝑠𝑡)
+6: Predict: (𝜇𝐸 , 𝜎2𝐸 ) ← LSTM(𝑠𝑡, 𝑎𝑡; 𝜃𝐸 )
+7: Check feasibility: 𝑏required ← 𝜇𝐸 + 𝛷−1(𝛼)
+√
+𝜎2𝐸 + 𝜎2cum
+8: if 𝑏current < 𝑏 required then 
+9: 𝑎𝑡 ← nearest charging station,
+𝑔 = min(𝐵 − 𝑏current, 𝑟 𝑗 𝜏max𝑗 )
+10: end if
+11: Execute 𝑎𝑡, update state and cumulative variance: 𝜎2cum ← 𝜎2cum +
+𝜎2𝐸
+12: end while
+13: // Phase 2: Optional MILP Refinement 
+14: if computational budget allows then 
+15: Formulate MILP using Equations (2)–(12) with (𝜇𝑖𝑗 , 𝜎2𝑖𝑗 ) from 
+predictor 
+16: Warm-start solver with neural solution 
+17: Run branch-and-cut (time limit: 300–1200s, MIP gap: 1%) 
+18: if refined solution ∗ improves cost and maintains feasibility
+then 
+19: return ∗
+20: end if
+21: end if
+22: return 
+heterogeneous charging rates (50–150 kW), and stochastic energy con-
+sumption models calibrated to real-world electric delivery vehicle data. 
+Battery capacity is set to 150 kWh with vehicle payload capacity of 3 
+tons, reflecting commercial electric van specifications. Time windows 
+span 8-hour service periods with 15-minute service times per customer. 
+Energy consumption follows Gaussian distributions (Eq. (1)) with mean 
+determined by physics-based models and variance calibrated to achieve 
+30%–40% coefficient of variation matching empirical observations 
+from urban delivery operations.
+Our executed baselines span three learning paradigms, all run on 
+the same 30 instances under the adaptation protocol detailed below. 
+Early neural approaches include the Attention Model (AM) [15] and 
+Policy Optimization with Multiple Optima (POMO) [16]. Recent neural 
+methods include MVMoE [32], adapted for EVRPTW through fine-
+tuning with battery state features. Hybrid approaches are represented 
+by DACT [54]. For classical-optimization context, we additionally cite 
+the Random Kernel Search (RKS) matheuristic [12]; RKS was not re-
+executed on our instance set, and its published results on comparable 
+standard Solomon-derived instances are referenced for context only 
+rather than as a controlled comparison.
+To ensure a fair comparison, all neural baselines (AM, POMO, 
+MVMoE, DACT) were adapted for EVRPTW with identical access to the 
+uncertainty-aware information available to our framework:
+• Battery state. Current battery 𝑏∕𝐵, current load 𝑤∕𝑄, and cur-
+rent time 𝑡∕𝑇max are concatenated to node embeddings as dy-
+namic agent-state features, matching the vehicle-context features 
+injected into our GAT encoder (Algorithm 1, line 3).
+• Charging stations. Represented as a separate node type with mask-
+ing rules: a station cannot be visited at full battery, and only 
+nodes reachable under the chance-constraint check are made 
+available in the action space.
+• Uncertainty information. The predicted arc-level standard devia-
+tion 𝜎𝑖𝑗 from our LSTM predictor is concatenated to each base-
+line’s edge-feature vector, identical to the edge representation in 
+Eq. (14). This isolates the contribution of our architectural choices 
+(GAT encoding, chance-constraint checking, MILP refinement) 
+from any informational asymmetry between methods.
+• Charging decisions. The action space of every baseline is extended 
+to include charging-station insertion; routes that still violate the 
+chance constraint after autoregressive construction are repaired 
+post hoc by the same greedy charger-insertion procedure used in 
+our framework, applied identically to every neural baseline and 
+to our own method so that no method gains an advantage from a 
+different repair routine.
+• Tuning protocol. Each baseline was trained for 35,000 episodes 
+(matched with our method), on identical GPU hardware (NVIDIA 
+A100 40 GB), with five random seeds (0, 42, 123, 456, 789) and an 
+equalized hyperparameter search budget of 50 configurations per 
+baseline, sampled from each method’s published recommended 
+range.
+All neural methods use the same problem instances, time windows, and 
+energy consumption models.
+Implementation employs PyTorch 2.0 on NVIDIA A100 GPUs
+(40 GB) with 128-dimensional GAT embeddings across 4 layers and 8 
+attention heads. The LSTM energy predictor uses 64 hidden units with 
+bidirectional processing. PPO employs learning rate 3 × 10−4, discount 
+factor 𝛾 = 0.99, and GAE parameter 𝜆 = 0.95. Optional MILP refinement 
+uses Gurobi 10.0 with 300–1200 s time limits and 1% optimality gap. 
+All experiments employ five random seeds (0, 42, 123, 456, 789). For 
+each of the 30 instances, we report the mean cost across five seeds per 
+method; method-to-method comparisons are reported descriptively as 
+relative cost differences. Table  2 summarizes computational resources 
+and training requirements. The complete implementation, including 
+model architectures, training scripts, evaluation pipelines, and pre-
+generated results, is publicly available at https://github.com/Aymen-
+Anbar/evrptw-repo.
+Evaluation metrics capture multiple performance dimensions: so-
+lution quality (total operational cost including vehicle deployment, 
+routing, charging, and time window penalties), computational effi-
+ciency (wall-clock time), feasibility (percentage of routes satisfying 
+battery constraints at 95% confidence), fleet utilization (number of 
+vehicles deployed), and energy consumption (total kWh). For dynamic 
+experiments, we additionally measure replanning frequency, on-time 
+delivery rate, and vehicle stranding events.
+5.2. Performance analysis
+5.2.1. Static benchmark performance
+Table  3 summarizes performance on 30 benchmark instances, re-
+vealing that our DRL-Hybrid approach achieves an 8.8% cost reduction 
+over the strongest learning baseline (MVMoE) while maintaining 93.8% 
+feasibility, with neural inference completing in 0.8 s prior to optional 
+MILP refinement. Pure neural inference (DRL-Pure) without MILP re-
+finement achieves a 6.2% reduction over MVMoE in 0.8 s. Optional 
+MILP refinement adds 2.8% additional quality, confirming the value 
+of hybrid architecture for dual-mode operation. RKS is not re-executed 
+on our instance set; the values reported by Bruglieri et al. [12] on 
+comparable standard Solomon-derived instances are cited for context 
+only and are not used as a controlled comparison.
+Among the learning baselines, the early neural models (AM, POMO) 
+are the weakest, with costs 13.6% and 9.7% above MVMoE respec-
+tively, owing to their lack of explicit battery-state modeling and energy-
+consumption uncertainty quantification. MVMoE is the
+strongest learning baseline, showing that foundation-model pretrain-
+ing provides substantial benefits, yet adaptation through fine-tuning 
+Knowledge-Based Systems 350 (2026) 116546 
+9 
+
+===== PAGE 10 =====
+A.J. Abdulelah et al.
+Table 2
+Computational resources and training time requirements.
+ Category Item Value  
+ 
+Hardware
+GPU model NVIDIA A100 (40 GB)  
+ Number of GPUs 1  
+ CPU AMD EPYC 7742 (64 cores) 
+ RAM 256 GB  
+ 
+Pre-training time
+GAT + PPO (35K episodes) 68 h  
+ LSTM predictor (50K segments) 4 h  
+ Total 72 h  
+ 
+Transfer learning
+LSTM calibration (400–600 routes) 2–3 h  
+ Policy adaptation (2K episodes) 1–2 h  
+ Total 3–5 h  
+ Inference Neural (per instance) 0.3–0.8 s   MILP refinement (optional) 300–1200 s  
+Table 3
+Performance comparison on 30 EVRPTW benchmark instances (60–100 cus-
+tomers).
+ Method Cost 𝛥 MVMoE Time (s) Feasibility Vehicles Energy (kWh) 
+ AM 16,234 +13.6% 0.4 85.6% 15.9 1068  
+ POMO 15,678 +9.7% 1.2 87.1% 15.2 1034  
+ MVMoE 14,287 – 2.1 90.1% 14.3 998  
+ DACT 14,456 +1.2% 8.4 88.7% 14.6 1003  
+ DRL-Pure 13,398 −𝟔.𝟐% 0.8 92.4% 14.1 987  
+ DRL-Hybrid 13,026 −𝟖.𝟖% 308 93.8% 13.9 963  
+Cost averaged across five seeds; 𝛥 MVMoE is the relative cost difference from the 
+strongest learning baseline. Feasibility at 95% confidence.
+Table 4
+Performance under dynamic operational conditions (100 episodes).
+ Method Cost Re-routes On-time Replan time Stranded 
+ MVMoE 16,892 5.4 89.7% 45 s 1.8  
+ DACT 16,456 6.1 88.3% 127 s 2.1  
+ DRL-Hybrid 14,823 3.2 96.7% 6.2 s 0.4  
+±20% demand variation, ±15% energy noise. Stranded = vehicle stranding incidents 
+per episode.
+proves insufficient to match our integrated uncertainty-aware archi-
+tecture. The hybrid baseline DACT performs within 1.2% of MV-
+MoE through learned construction with local search, yet lacks prob-
+abilistic energy forecasting and chance-constrained feasibility. Energy-
+consumption analysis reveals that uncertainty-aware prediction enables 
+a 3.5% reduction versus MVMoE through proactive charging decisions 
+informed by confidence intervals.
+5.2.2. Dynamic operational performance
+Table  4 presents results across 100 episodes with demand vari-
+ations (±20%, uniform distribution) and energy consumption noise 
+(±15%, Gaussian) requiring real-time replanning. DRL-Hybrid reduces 
+cost by 12.2% relative to MVMoE, the strongest learning baseline on 
+the static benchmarks, and by 9.9% relative to DACT, the lowest-cost 
+learning baseline under dynamic conditions, achieving 96.7% on-time 
+delivery versus 89.7% for MVMoE. Replanning-time analysis reveals 
+stark differences: MVMoE replans in 45 s and DACT in 127 s, whereas 
+our DRL-Hybrid completes replanning in 6.2 s average (0.8 s neural 
+inference + 5.4 s selective MILP refinement)—a 7× to 20× speedup over 
+the learning baselines while maintaining superior solution quality.
+Vehicle stranding events — situations where battery depletion pre-
+vents route completion — occur 1.8 times per episode under the
+strongest learning baseline (MVMoE), reduced to 0.4 under our frame-
+work through probabilistic feasibility checking that proactively triggers 
+charging when cumulative uncertainty threatens safety margins. The 
+4.5-fold reduction in stranding incidents directly translates to oper-
+ational reliability critical for service-level agreement compliance and 
+customer satisfaction.
+Table 5
+Ablation study results on 12 medium-scale instances (20–40 customers). 𝛥Full =
+(Cost − Cost f ull)∕Costf ull × 100%; each component contribution is the marginal 
+increment between consecutive rows.
+ Configuration Cost 𝛥 full  
+ MLP encoder + deterministic energy 11,892 +14.5% 
+ GAT encoder + deterministic energy 11,234 +8.1%  
+ GAT + uncertainty-aware energy 10,823 +4.2%  
+ Full model without MILP 10,456 +0.6%  
+ Full model (DRL-Hybrid) 10,389 –  
+5.3. Ablation studies
+Ablation studies on 12 medium-scale instances (20–40 customers) 
+isolate component contributions and reveal mechanisms underlying 
+performance improvements. Table  5 demonstrates that Graph Atten-
+tion Networks provide a 6.4 pp improvement over MLP encoders 
+and uncertainty-aware energy prediction adds a further 3.9 pp (each 
+contribution measured as the marginal increment between consecutive 
+rows), chance-constrained feasibility checking a further 3.6 pp, while 
+optional MILP refinement contributes 0.6 pp on this medium-scale set—
+substantially smaller than its 2.8% effect on the larger benchmark 
+instances (Section 5.2.1), as MILP’s benefit grows with instance size 
+(Table  6). These marginal increments sum to the full 14.5% gap (6.4 +
+3.9 + 3 .6 + 0 .6 = 14 .5). The cumulative 12.1% improvement validates 
+each architectural decision as essential.
+5.3.1. Mechanistic analysis
+Graph Attention Networks (6.4 pp): GAT’s advantage stems from 
+learned battery-state-dependent spatial relationships. MLP encoders 
+treat feasible customers uniformly, producing myopic decisions that 
+minimize immediate travel cost without considering downstream bat-
+tery constraints. Analysis reveals GAT attention adapts dynamically: 
+when battery exceeds 70%, attention distributes broadly (entropy 𝐻 =
+2.87 nats); when battery falls below 30%, attention concentrates on 
+nearby charging stations (𝐻 = 1 .43 nats), reducing route length by 
+6.2% and eliminating 83% of unnecessary charging detours.
+Uncertainty-Aware Energy Prediction (3.9 pp):
+Calibrated uncertainty enables context-adaptive charging strategies. 
+Deterministic models use fixed 20% battery margins regardless of route 
+context. The uncertainty-aware policy adapts margins dynamically: 
+highway segments with high variance (𝜎2𝐸 = 12 .4 kWh2, CV = 38%) 
+reserve 28%–32% battery; urban segments with low variance (𝜎2𝐸 = 3.8
+kWh2, CV = 22%) accept 18%–22% margins. This reduces charging 
+time by 17.3% while decreasing stranding risk from 8.2% to 0.7%.
+The mechanism operates through Eq. (9): the cumulative vari-
+ance term 𝜎2𝑐𝑢𝑚,𝑖 accounts for uncertainty accumulation along multi-
+segment routes. Routes with many high-variance segments accumu-
+late larger total uncertainty, triggering earlier preemptive charging. 
+This propagation assumes that energy prediction errors across arcs are 
+Knowledge-Based Systems 350 (2026) 116546 
+10 
+
+===== PAGE 11 =====
+A.J. Abdulelah et al.
+Table 6
+MILP refinement analysis by problem size. Gap = (Neural cost – MILP 
+cost)/MILP cost.
+ Size Gap Reassign. Station switch Time shift 
+ 20–30 customers 0.9% 1.2 0.3 0.8  
+ 40–60 customers 3.4% 2.4 0.7 1.6  
+ 80–100 customers 4.1% 3.8 1.2 2.3  
+mutually independent—that is, Cov(𝜖𝑖𝑗 , 𝜖𝑘𝑙) = 0  for distinct arcs. In 
+practice, errors may exhibit positive correlation through shared traffic 
+or weather conditions. However, because our LSTM predictor explicitly 
+conditions each segment prediction on observed covariates including 
+speed, temperature, and payload, residual errors after conditioning are 
+substantially decorrelated. This mirrors standard practice in chance-
+constrained vehicle routing [14,24], where conditional independence 
+is adopted as a tractable approximation.
+Effect of correlated residual errors. The cumulative-variance re-
+cursion in Eq. (9b) sums per-arc variances and therefore presumes 
+conditionally independent residuals. We analyze how positive cross-arc 
+correlation — which may persist if shared traffic or weather states are 
+not fully captured by the conditioning covariates — would affect the 
+feasibility guarantee. Because variances add but standard deviations do 
+not, neglecting positive correlation understates the true cumulative stan-
+dard deviation, rendering the chance constraint of Eq. (9c) optimistic: 
+it reserves slightly less battery than the nominal level 𝛼 requires. The 
+magnitude of this effect is bounded analytically. For a route traversing 
+𝑘 arcs with non-negative average pairwise residual correlation ̄ 𝜌, the 
+true cumulative standard deviation is inflated by at most a factor √
+1 + (𝑘 − 1) ̄ 𝜌 relative to the independence estimate 
+√
+𝜎2,𝑘𝑐𝑢𝑚,𝑗 . This worst 
+case is attained only under uniform correlation across all arcs of the 
+route; because residual correlation decays with spatial and temporal 
+separation between arcs, the practical inflation is substantially smaller, 
+and conditioning each prediction on speed, temperature, payload, and 
+road grade (as argued above) removes most of the shared-covariate 
+component that would otherwise drive such correlation. When residual 
+correlation is nonetheless suspected — for example under widespread 
+adverse weather — the conservative correction introduced with Eq. (9), 
+which replaces 𝜎2,𝑘𝑐𝑢𝑚,𝑗 by 𝜎2,𝑘𝑐𝑢𝑚,𝑗 + 2 ∑𝑝<𝑞 𝜌𝑝𝑞𝜎𝑝𝜎𝑞, reinstates the nomi-
+nal coverage at negligible computational cost whenever the pairwise 
+correlations 𝜌𝑝𝑞 can be estimated. A fully correlated treatment — 
+joint Gaussian processes over the route or copula-based dependence 
+structures — would relax the assumption entirely and is identified as a 
+direction for future work (Section 7).
+Chance-Constrained Feasibility Checking (3.6 pp): This is the 
+configuration step between ‘‘GAT + uncertainty-aware energy’’ and the 
+full model (without MILP) in Table  5: activating the chance-constrained 
+feasibility check turns the predicted intervals into proactive charging 
+decisions, and it accounts for the 3.6 pp marginal increment.
+MILP Refinement (0.6pp on the medium-scale ablation set):
+Mathematical optimization addresses limitations of autoregressive neu-
+ral construction through three mechanisms: (1) vehicle-customer reas-
+signment for improved load balance (67% of instances, average 2.4 
+reassignments); (2) charging station switching to minimize detours 
+(18% of instances); (3) time window shifting for better charging oppor-
+tunities (42% of instances). Table  6 shows refinement gap scales with 
+problem complexity.
+5.3.2. Component interactions
+GAT and uncertainty-aware prediction exhibit additive contribu-
+tions (6.4 + 3 .9 = 10 .3 pp combined), indicating orthogonal mech-
+anisms: GAT improves spatial reasoning while uncertainty modeling 
+enhances temporal risk assessment. However, uncertainty-aware pre-
+diction shows dependency on GAT: when paired with MLP encoders, 
+uncertainty modeling contributes substantially less than the 3.9 pp 
+it provides with GAT. This arises because effective use of confidence 
+intervals requires spatially adaptive decisions — recognizing when to 
+route toward charging stations based on cumulative variance — which 
+MLP encoders cannot exploit without relational reasoning capacity.
+5.4. Model interpretability analysis
+Fig.  2 visualizes GAT attention weight distributions under varying 
+battery states, confirming the adaptive behavior identified in the abla-
+tion analysis: broad attention across distant customers at high battery 
+(>70%) shifting to concentrated focus on nearby charging stations at 
+low battery (<30%), with dynamic evolution across construction steps 
+from exploration to exploitation.
+Energy prediction calibration (Fig.  3) confirms that predicted 95% 
+confidence intervals contain 94.7% of actual observations across 1000 
+test routes, with heteroscedastic behavior: highway segments exhibit 
+wider intervals (CV = 38%) while urban segments show narrower 
+intervals (CV = 22%). The prediction error distribution (MAPE = 3.8%) 
+is consistent with the approximately Gaussian assumption underlying 
+the chance-constrained formulation. We note, however, that formal 
+distributional diagnostics — quantile–quantile plots, normality tests 
+(e.g., Shapiro–Wilk), and stress tests under heavy-tailed or multimodal 
+deviations — were not performed in the present study; we identify 
+these as a limitation and a priority for future work (Section 7).
+5.5. Key findings
+Taken together, the computational experiments establish three con-
+clusions that motivate the real-world deployment study. First, integrat-
+ing calibrated uncertainty quantification with learned routing policies 
+produces consistent improvements over the learning baselines, con-
+firming that neither component alone is sufficient. Second, the per-
+formance advantage is substantially larger under dynamic operational 
+conditions than under static benchmarks, suggesting that uncertainty-
+awareness becomes increasingly valuable as real-world variability in-
+creases. Third, the ablation analysis reveals that each architectural 
+component addresses a distinct failure mode, with no single component 
+dominating; this orthogonality suggests the framework is robust rather 
+than dependent on any one design choice.
+6. Real-world deployment and sustainability impact
+Computational validation establishes technical superiority on
+benchmark instances drawn from the same distribution as training 
+data. Real-world deployment provides a more demanding test: the 
+framework must transfer effectively to an unseen operational domain 
+with different traffic patterns, charging infrastructure, and energy 
+distributions. We deployed our framework with a mid-sized logistics 
+operator managing 25 electric vehicles (150 kWh, 3-ton capacity) over 
+13 weeks, serving 60–80 daily customers across 450 km2 with 12 
+charging stations. Transfer learning reduced model adaptation from 
+72 to 4 h using 423 historical routes, confirming that the three-
+stage protocol successfully bridges the domain gap. Integration with 
+existing transportation management systems proceeded through four 
+phases: infrastructure setup (6 weeks), system training (4 weeks), pilot 
+expansion (8 vehicles, 4 weeks), and full deployment (25 vehicles, 4 
+weeks).
+6.1. Operational performance
+Table  7 demonstrates sustained performance improvements validat-
+ing computational findings in operational practice. The Baseline column 
+reflects the operator’s pre-deployment routing operations, which re-
+lied on a commercial legacy transportation management system using 
+rule-based manual planning without mathematical optimization or ma-
+chine learning components. Daily costs decreased 16.9% relative to 
+the legacy rule-based baseline (approximately €143,000 in projected 
+Knowledge-Based Systems 350 (2026) 116546 
+11 
+
+===== PAGE 12 =====
+A.J. Abdulelah et al.
+Fig. 2. GAT attention weight distributions during routing decisions. (a) High battery state (>70%): attention distributed across distant customers. (b) Low battery 
+state (<30%): attention concentrated on nearby charging stations. (c) Attention evolution across eight construction steps.
+Table 7
+Deployment performance evolution across 13 weeks. Metrics averaged over 
+5-day operational weeks.
+ Metric Baseline Week 1–4 Week 5–8 Week 9–13 Improvement 
+ Daily cost (€) 2847 2643 2489 2367 −16.9%  
+ On-time delivery 91.3% 94.2% 96.5% 98.1% +6.8 pp  
+ Energy (kWh) 1456 1342 1294 1231 −15.5%  
+ Planning time 45 min 2.3 min 2.1 min 1.8 min −96.0%  
+annual savings, extrapolated from the 13-week pilot assuming seasonal 
+stationarity; 4.2-month payback). This operational saving reflects the 
+combined value of algorithmic improvement and system moderniza-
+tion; the framework’s algorithmic advantage is separately established 
+by the 8.8% cost reduction over the strongest learning baseline (MV-
+MoE) in Section 5. On-time delivery improved to 98.1% (+6.8 pp), 
+energy consumption declined 15.5% (182 kWh/day), and planning 
+time collapsed 96% (45 min to 1.8 min). Progressive week-over-week 
+improvement reflects online learning as policies adapted to local traffic 
+patterns, driver behaviors, and seasonal conditions.
+Note that on-time delivery (Table  7) captures the proportion of 
+customers served within time windows during operations, whereas 
+feasibility (Table  3) measures the percentage of routes satisfying battery 
+constraints at the 95% confidence level. The higher deployment metric 
+reflects transfer learning adaptation and online policy refinement over 
+13 weeks.
+6.2. Limitations observed in practice
+Alongside the performance improvements documented above, the 
+13-week deployment revealed practical limitations that are important 
+to report.
+MILP refinement reliability. The optional MILP refinement phase 
+(Section 4.4) frequently timed out without improving upon the neural 
+solution, particularly for large instances (80–100 customers) where the 
+branch-and-cut search space is extensive. In these cases, the framework 
+correctly fell back to the DRL-Pure solution, preserving real-time op-
+erational capability. However, this behavior means the 2.8% average 
+improvement attributed to MILP refinement across the 30 benchmark 
+instances (Table  3), rising to 4.1% on the largest instances (80–100 
+customers; Table  6), should be interpreted as an average across in-
+stances where refinement succeeds, not a guarantee across all problem 
+sizes. Practitioners should treat the MILP phase as a best-effort offline 
+enhancement rather than a reliable quality guarantee.
+Early deployment instability. Table  7 reveals that performance 
+improvement was progressive rather than immediate: costs in Weeks 
+1–4 (€2643/day) remained meaningfully above the final steady-state 
+level (€2367/day, Weeks 9–13), reflecting the time required for online 
+Knowledge-Based Systems 350 (2026) 116546 
+12 
+
+===== PAGE 13 =====
+A.J. Abdulelah et al.
+Fig. 3. Energy consumption prediction with 95% confidence intervals. (a) Full route prediction versus actual consumption (94.7% empirical coverage). (b) 
+Segment-wise breakdown: highway versus urban segments. (c) Prediction error distribution (MAPE = 3.8%).
+learning to adapt to local traffic patterns and driver behaviors. Opera-
+tors considering deployment should anticipate a stabilization period of 
+approximately four weeks before full performance benefits are realized.
+System resilience validated practical viability under operational dis-
+ruptions: highway closure (8.4 s replanning, 84% faster than baseline), 
+charging station outage (zero strandings versus 3 historical incidents), 
+and +28% demand surge (absorbed in 4.2-minute reoptimization main-
+taining 96.3% on-time delivery). Driver satisfaction surveys (Likert 
+scale, 𝑛 = 8; interpreted as descriptive evidence given the small sample) 
+indicated notable improvements: route quality (3.2 ± 0.8 to 4.6 ± 0.3), 
+range prediction reliability (2.8 ± 0.9 to 4.7 ± 0.4), and work-life 
+balance (2.4 ± 0.9 to 4.1 ± 0.6).
+6.3. Multi-dimensional sustainability
+Environmental impact. Carbon emissions analysis comparing the 
+diesel baseline (128.5 tons CO2/year) with the electric DRL-Hybrid fleet 
+(133.9 tons) reveals approximate carbon parity on Italy’s transitional 
+grid (0.418 kg CO2/kWh); relative to the strongest learning baseline, 
+uncertainty-aware routing reduces energy use by 3.5% (Section 5), with 
+a commensurate reduction in operational emissions. While this parity 
+limits immediate operational carbon savings, three factors establish 
+strategic value: (1) elimination of local PM2.5 (0.73 tons/year) and 
+NO𝑥 (2.14 tons/year) in delivery zones, valued at €47,300 in avoided 
+healthcare costs [55]; (2) automatic emissions reduction to 87.3 tons by 
+2030 as grid decarbonizes to 0.273 kg CO2/kWh without fleet modifi-
+cations; (3) noise pollution reduction (58 dB vs. 73 dB diesel) enabling 
+extended delivery windows (6:00–22:00). Energy efficiency improved 
+continuously: consumption declined from 1.89 to 1.52 kWh/package 
+(19.6%), while strategic charging shifted 67% of sessions to off-peak 
+hours (vs. 51% baseline), reducing grid stress.
+Economic viability. Operator savings (approximately €143,000 
+annually) represent the primary, directly accountable economic benefit; 
+additional externalities such as local air-quality improvements and grid-
+optimization effects provide further societal value that is not captured 
+in operator accounts. Over a five-year horizon, total cost of ownership 
+is favorable relative to diesel, driven primarily by lower energy and 
+maintenance costs; per-vehicle economics are expected to improve 
+with fleet scale and shared charging infrastructure through standard 
+economies of scale, although the precise magnitude depends on local 
+vehicle, energy, and infrastructure prices and is not quantified from the 
+single-operator pilot.
+Social dimensions and scalability. Dispatcher workflow transfor-
+mation freed 6.5 h weekly per dispatcher. Simulation projects that 
+planning time scales approximately linearly with fleet size (0.8 s to 
+13.4 s, 𝑅2 = 0 .97). Transfer learning across four regions achieves 94% 
+of full-training performance with 93% time reduction.
+7. Discussion and conclusions
+This work demonstrates that integrating uncertainty-aware deep re-
+inforcement learning with mathematical optimization can help address 
+the tension between environmental mandates for rapid decarbonization 
+and operational complexities that have constrained electric vehicle 
+adoption in urban logistics. The convergence of computational per-
+formance (8.8% cost reduction over the strongest learning baseline, 
+12.2% improvement under dynamic conditions), operational validation 
+(approximately €143,000 in projected annual savings, 98.1% on-time 
+delivery, 96% planning time reduction), and multi-dimensional sustain-
+ability impact (approximate carbon parity with diesel on the current 
+grid alongside elimination of local air pollutants, improved driver 
+satisfaction) provides evidence that several technological barriers to 
+sustainable urban logistics can be addressed through uncertainty-aware 
+optimization, while the broader transition also depends on infrastruc-
+ture, policy, and market factors that lie beyond the scope of routing. 
+The hybrid paradigm — combining neural networks’ pattern recog-
+nition with mathematical optimization’s solution quality guarantees 
+Knowledge-Based Systems 350 (2026) 116546 
+13 
+
+===== PAGE 14 =====
+A.J. Abdulelah et al.
+— offers a template for problems requiring both rapid inference and 
+high-quality solutions across diverse operational contexts.
+The 13-week operational study indicates that a meaningful share 
+of the societal value — local air-quality and grid externalities — falls 
+outside operator accounts and is not internalized by current market 
+structures. This finding has direct policy implications: carbon pricing 
+mechanisms, performance-based incentives for zero-emission delivery, 
+and coordinated public charging infrastructure could accelerate ur-
+ban fleet electrification from current 8%–12% levels to 40%–60% 
+within 5–7 years. The transfer learning protocol achieving 94% of full-
+training performance with 93% time reduction demonstrates that the 
+model-adaptation component of deployment effort can be substantially 
+lowered (cf. Section 6), lowering one barrier to adoption for operators 
+who lack machine learning expertise.
+This study has limitations that suggest opportunities for extension. 
+The driver satisfaction component relied on a small convenience sample 
+(𝑛 = 8 ), limiting statistical inference; findings should be interpreted as 
+qualitative indicators. The framework assumes homogeneous fleets and 
+next-day planning horizons; heterogeneous operations and same-day 
+delivery require multi-agent architectures and streaming algorithms. 
+Environmental assessment focuses on operational emissions, excluding 
+manufacturing and battery lifecycle impacts. The 13-week deployment 
+in a single region limits generalizability across different grid com-
+positions and seasonal patterns. In addition, the chance-constrained 
+feasibility guarantee is conditional on the Gaussian arc-level energy 
+model and on the calibration of the learned uncertainty estimator; the 
+effect of correlated residuals is analyzed in Section 5.3, whereas rigor-
+ous distributional validation of the Gaussian assumption — quantile–
+quantile plots, normality tests, and heavy-tailed stress tests — was not 
+performed in the present study and is identified as a priority for future 
+work, alongside the conservative correction and the joint-uncertainty 
+models noted below. Future research could address these limitations 
+through multi-agent extensions for heterogeneous fleets, streaming ar-
+chitectures for same-day dynamic requests, explicit modeling of charger 
+congestion and queueing at shared stations, hierarchical reinforcement 
+learning for infrastructure-routing co-optimization, joint correlated-
+uncertainty modeling (route-level Gaussian processes or copula-based 
+dependence structures, complemented by Bonferroni-style aggregation 
+of the individual chance constraints into a conservative joint route-
+level guarantee), and comprehensive lifecycle frameworks integrating 
+manufacturing, degradation, and circular economy considerations.
+CRediT authorship contribution statement
+Aymen Jalil Abdulelah: Writing – original draft, Visualization, Val-
+idation, Software, Methodology, Investigation, Formal analysis, Data 
+curation, Conceptualization. Emrullah Sonuç: Writing – review & edit-
+ing, Validation, Supervision, Investigation, Conceptualization. Esam 
+Taha Yassen: Writing – review & editing, Validation, Supervision, 
+Investigation, Conceptualization. Mohammed Nasser Al-Andoli: Writ-
+ing – review & editing, Resources, Formal analysis, Data curation.
+Code availability
+The full source code for this work — including the GAT encoder, 
+LSTM-based probabilistic energy predictor, PPO policy,
+chance-constraint checker, MILP solver wrapper, training and eval-
+uation pipelines, transfer learning protocol, and reproducible result 
+generation scripts — is publicly available under the MIT License at:
+https://github.com/Aymen-Anbar/evrptw-repo
+The repository includes pre-trained model configuration details, all 
+16 result figures, 17 data tables (CSV and Excel), and a machine-
+readable JSON archive of every quantitative result reported in this 
+paper.
+Funding
+This research did not receive any specific grant from funding agen-
+cies in the public, commercial, or not-for-profit sectors.
+Declaration of competing interest
+The authors declare that they have no known competing finan-
+cial interests or personal relationships that could have appeared to 
+influence the work reported in this paper.
+Data availability
+The benchmark instances used in this study are derived from the 
+publicly available Solomon VRPTW benchmarks [53], following the 
+EVRPTW extension of Schneider et al. [11]. Pre-generated experimental 
+results, data tables, and figures are available in the code repository de-
+scribed in the Code Availability section below. The real-world deploy-
+ment dataset is not publicly available due to confidentiality obligations 
+with the logistics operator.
+References
+[1] International Energy Agency, Global EV outlook 2023, IEA Publ. (2023).
+[2] European Commission, Reducing CO2 Emissions from Heavy-Duty Vehicles, 
+Technical Report, European Commission, Brussels, 2023.
+[3] M. Tanco, L. Cat, S. Garat, A break-even analysis for battery electric trucks in 
+Latin America, J. Clean. Prod. 228 (2019) 1354–1367.
+[4] T. Teoh, O. Kunze, C.-C. Teo, Y.D. Wong, Decarbonisation of urban freight 
+transport using electric vehicles and opportunity charging, Sustainability 10 (9) 
+(2018) 3258.
+[5] DHL Group, Sustainability roadmap: Delivering on our commitment to protect 
+the planet, 2023, https://www.dhl.com/global-en/home/about-us/sustainability.
+html. (Accessed 01 October 2024).
+[6] Amazon, The climate pledge: Net-zero carbon by 2040, 2023, https://
+sustainability.aboutamazon.com/. (Accessed 01 October 2024).
+[7] European Commission, The European Green Deal: Striving to be the First 
+Climate-Neutral Continent, Technical Report, European Commission, Brussels, 
+2023.
+[8] S. Zhang, Y. Gajpal, S.S. Appadoo, M.M.S. Abdulkader, Electric vehicle routing 
+problem with recharging stations for minimizing energy consumption, Int. J. 
+Prod. Econ. 203 (2018) 404–413, http://dx.doi.org/10.1016/j.ijpe.2018.07.016.
+[9] Y. Yamaguchi, Y. Ochi, R. Ohara, H. Uchida, S. Yoshizawa, K. Sakai, Y. Ota, 
+Y. Shimoda, Large-scale spatiotemporal modeling of travel behavior, electric 
+vehicle charging demand, and flexibility based on human mobility big data, 
+Energy 335 (2025) 137804, http://dx.doi.org/10.1016/j.energy.2025.137804, 
+URL: https://www.sciencedirect.com/science/article/pii/S0360544225034462.
+[10] B. Han, Y. Yan, T. Chi, Y. Park, The electric vehicle routing problem with travel 
+time and energy consumption uncertainty, Transp. Res. E 202 (2025) 104211, 
+http://dx.doi.org/10.1016/j.tre.2025.104211, URL: https://www.sciencedirect.
+com/science/article/pii/S1366554525002522.
+[11] M. Schneider, A. Stenger, D. Goeke, The electric vehicle-routing problem with 
+time windows and recharging stations, Transp. Sci. 48 (4) (2014) 500–520, 
+http://dx.doi.org/10.1287/trsc.2013.0490.
+[12] M. Bruglieri, M. Paolucci, O. Pisacane, A matheuristic for the electric 
+vehicle routing problem with time windows and a realistic energy consump-
+tion model, Comput. Oper. Res. 157 (2023) 106261, http://dx.doi.org/10.
+1016/j.cor.2023.106261, URL: https://www.sciencedirect.com/science/article/
+pii/S0305054823001259.
+[13] H. Park, C. Lee, An exact algorithm for maximum electric vehicle flow cover-
+age problem with heterogeneous chargers, nonlinear charging time and route 
+deviations, European J. Oper. Res. 315 (3) (2024) 926–951, http://dx.doi.
+org/10.1016/j.ejor.2023.12.019, URL: https://www.sciencedirect.com/science/
+article/pii/S0377221723009529.
+[14] Z. Yuan, T. Wang, J. Tian, J. Zhang, J. Zheng, J. Wu, Z. Gao, Mitigate the range 
+anxiety: two-stage optimization for the electric vehicle routing problem with time 
+windows and battery status uncertainty, Transp. Res. E 205 (2026) 104510, http:
+//dx.doi.org/10.1016/j.tre.2025.104510, URL: https://www.sciencedirect.com/
+science/article/pii/S1366554525005381.
+[15] W. Kool, H. Van Hoof, M. Welling, Attention, learn to solve routing problems!, 
+in: International Conference on Learning Representations, 2019.
+[16] Y.-D. Kwon, J. Choo, B. Kim, I. Yoon, Y. Gwon, S. Min, POMO: Policy 
+optimization with multiple optima for reinforcement learning, Adv. Neural Inf. 
+Process. Syst. 33 (2020) 21188–21198.
+Knowledge-Based Systems 350 (2026) 116546 
+14 
+
+===== PAGE 15 =====
+A.J. Abdulelah et al.
+[17] R. Shahbazian, A. Ciacco, G. Macrina, F. Guerriero, Knowledge-guided hybrid 
+deep reinforcement learning for the dynamic multi-depot electric vehicle rout-
+ing problem, Comput. Oper. Res. 184 (2025) 107217, http://dx.doi.org/10.
+1016/j.cor.2025.107217, URL: https://www.sciencedirect.com/science/article/
+pii/S030505482500245X.
+[18] C. Wang, M. Cao, H. Jiang, X. Xiang, X. Zhang, A deep reinforcement learning-
+based adaptive large neighborhood search for capacitated electric vehicle routing 
+problems, IEEE Trans. Emerg. Top. Comput. Intell. 9 (1) (2025) 131–144, 
+http://dx.doi.org/10.1109/TETCI.2024.3444698.
+[19] A. Maity, S. Sarkar, Electric vehicle routing with stochastic customers using deep 
+reinforcement learning and graph convolutional networks, J. Intell. Transp. Syst. 
+(2025) http://dx.doi.org/10.1080/15472450.2025.2559242, URL: https://www.
+sciencedirect.com/science/article/pii/S1547245025000520.
+[20] G. Desaulniers, F. Errico, S. Irnich, M. Schneider, Exact algorithms for elec-
+tric vehicle-routing problems with time windows, Oper. Res. 64 (6) (2016) 
+1388–1405.
+[21] M. Keskin, G. Laporte, B. Çatay, A partial recharge strategy for the electric 
+vehicle routing problem with time windows, Transp. Res. C 65 (2019) 111–127.
+[22] M. Mavrovouniotis, F.M. Müller, S. Yang, Ant colony optimization for the electric 
+vehicle routing problem, IEEE Trans. Evol. Comput. 24 (6) (2020) 1045–1059.
+[23] S. Zhang, M. Chen, W. Zhang, Branch-and-price for the electric vehicle routing 
+problem with time windows and partial recharges, European J. Oper. Res. 308 
+(3) (2023) 1041–1059.
+[24] S. Zhang, Y. Gajpal, S.S. Appadoo, M.M.S. Abdulkader, A stochastic model for 
+electric vehicle routing problem with time windows and uncertain travel times, 
+Comput. Oper. Res. 100 (2018) 86–101.
+[25] D. Yan, Q. Guan, B. Ou, B. Yan, H. Cao, B. Chen, A diversified tour-driven 
+deep reinforcement learning approach to routing for intelligent and connected 
+vehicles, J. Intell. Connect. Veh. 8 (3) (2025) 9210064–1–9210064–11, http:
+//dx.doi.org/10.26599/JICV.2025.9210064.
+[26] X. Bi, R. Wang, Q. Jia, On the speed-varying range of electric vehicles in 
+time-windowed routing problems with en-route partial re-charging, IEEE Trans. 
+Consum. Electron. 70 (1) (2024) 3650–3657, http://dx.doi.org/10.1109/TCE.
+2023.3308346.
+[27] R. Wu, R. Wang, J. Hao, Q. Wu, P. Wang, D. Niyato, Multiobjective vehicle 
+routing optimization with time windows: A hybrid approach using deep rein-
+forcement learning and NSGA-II, IEEE Trans. Intell. Transp. Syst. 26 (3) (2025) 
+4032–4047, http://dx.doi.org/10.1109/TITS.2024.3515997.
+[28] M. Farhang Ghahfarokhi, H. Park, Adaptive electric vehicle routing and charging 
+with deep reinforcement learning, Energy AI 19 (2026) 100462, http://dx.doi.
+org/10.1016/j.egyai.2025.100462.
+[29] Q. Guan, H. Cao, J. Tan, L. Jia, D. Yan, B. Chen, Token-specific deep reinforce-
+ment learning for energy-efficient capacitated electric vehicle routing problems, 
+Appl. Energy 396 (2025) 126314, http://dx.doi.org/10.1016/j.apenergy.2025.
+126314.
+[30] Q. Guan, H. Cao, T. Niu, L. Jia, D. Yan, B. Chen, Heterogeneous attention-
+driven deep reinforcement learning for solving EVRPs with pickup-delivery and 
+time windows, Appl. Energy 407 (2026) 127355, http://dx.doi.org/10.1016/j.
+apenergy.2026.127355.
+[31] M. Kim, J. Park, J. Han, Learning collaborative policies to solve NP-hard routing 
+problems, Adv. Neural Inf. Process. Syst. 35 (2022) 9610–9622.
+[32] J. Zhou, Z. Cao, Y. Wu, W. Song, Y. Ma, J. Zhang, C. Xu, MVMoE: Multi-
+task vehicle routing solver with mixture-of-experts, in: Proceedings of the 41st 
+International Conference on Machine Learning, in: Proceedings of Machine 
+Learning Research, vol. 235, PMLR, 2024, pp. 61804–61824.
+[33] S. Hudson, M.O. Malencia, Q. Zhang, Generative neural-augmented routing and 
+kernel composition for combinatorial optimization, in: International Conference 
+on Machine Learning, PMLR, 2024, pp. 18742–18763.
+[34] J. Zhao, Y. Zhang, X. Sun, Z. Chen, Generative diffusion models for solving 
+vehicle routing problems, IEEE Trans. Neural Netw. Learn. Syst. (2024) Early 
+Access.
+[35] Z. Cao, Y. Wu, Y. Hou, H. Ge, Enhancing neural combinatorial optimization 
+by progressive training paradigm, Neurocomputing 659 (2026) 131707, http:
+//dx.doi.org/10.1016/j.neucom.2025.131707.
+[36] J. Lin, L. Ma, Y. Yao, Q. Zhang, Neural combinatorial optimization for 
+energy-efficient vehicle routing, IEEE Trans. Intell. Transp. Syst. 24 (8) (2023) 
+8234–8246.
+[37] Z. Zong, C. Feng, Y. Li, X. Wang, Neural routing with distributional reinforcement 
+learning for stochastic vehicle routing problems, Transp. Res. E 179 (2023) 
+103299.
+[38] C. Wang, R. Zhang, R. Hong, H. Wang, Attention-enhanced deep reinforce-
+ment learning for electric vehicle routing optimization, IEEE Trans. Transp. 
+Electrification 11 (5) (2025) 11228–11242, http://dx.doi.org/10.1109/TTE.2025.
+3574546.
+[39] Y. Liu, B. Xie, Y. Long, J. Chen, G. Xu, Learning-based heterogeneous autonomous 
+vehicles scheduling for on-demand last-mile transportation, IEEE Trans. Au-
+tom. Sci. Eng. 22 (2025) 21195–21211, http://dx.doi.org/10.1109/TASE.2025.
+3611676.
+[40] S. Wu, Y. Cen, X. Luo, M. Pei, Real-time dispatching and operation management 
+of battery swapping stations with uncertain demand via deep reinforcement 
+learning, IEEE Trans. Intell. Transp. Syst. 26 (6) (2025) 8583–8601, http://dx.
+doi.org/10.1109/TITS.2025.3560929.
+[41] J. Moon, M. Qaisar Fahim, H. Anwar, Q. Ahmed, Optimizing energy and time 
+for electric vehicle charging routes, IEEE Trans. Transp. Electrification 11 (3) 
+(2025) 7823–7832, http://dx.doi.org/10.1109/TTE.2025.3532826.
+[42] A. Hottung, Y.-D. Kwon, K. Tierney, Efficient active search for combinatorial 
+optimization problems, European J. Oper. Res. 300 (3) (2022) 878–892.
+[43] H. Cheng, P. Zhang, J. Li, Select and optimize: Learning to solve large-scale TSP 
+instances, Proc. Int. Conf. Autom. Plan. Sched. 33 (2023) 44–52.
+[44] H. Ye, J. Wang, Z. Cao, W. Song, H.C. Lau, GLOP: Learning global partition and 
+local construction for solving large-scale routing problems in real-time, Proc. 
+AAAI Conf. Artif. Intell. 38 (18) (2024) 20242–20251.
+[45] D. Drakulic, M.-A. Sofia, A. Dufossé, J.-M. Bartier, S. Andreoletti, BQ-NCO: 
+Bisimulation quotienting for efficient neural combinatorial optimization, Adv. 
+Neural Inf. Process. Syst. 36 (2023) 47255–47279.
+[46] M. Baum, J. Dibbelt, T. Pajor, D. Wagner, Strategic charging of electric vehicles 
+with neural reinforcement learning, Transp. Sci. 56 (4) (2022) 933–954.
+[47] L. Su, X. Zhang, Y. Wang, J. Li, Physics-informed neural networks for battery 
+state estimation and energy prediction in electric vehicles, Appl. Energy 330 
+(2023) 120316.
+[48] S. Zhang, T. Zhou, C. Fang, S. Yang, A novel collaborative electric vehicle 
+routing problem with multiple prioritized time windows and time-dependent 
+hybrid recharging, Expert Syst. Appl. 244 (2024) 122990, http://dx.doi.org/10.
+1016/j.eswa.2023.122990, URL: https://www.sciencedirect.com/science/article/
+pii/S0957417423034929.
+[49] B. Çatay, İhsan Sadati, A note on battery swapping policies in the electric vehicle 
+routing problem with time windows and battery swapping vehicles, Comput. 
+Oper. Res. 185 (2026) 107277, http://dx.doi.org/10.1016/j.cor.2025.107277, 
+URL: https://www.sciencedirect.com/science/article/pii/S0305054825003065.
+[50] D. Bao, J. Chu, Y. Chen, Y. Yan, A life cycle assessment of electric towing 
+vehicle routing problem with time windows: Three-stage linear charging and 
+partial charging strategy, J. Air Transp. Manag. 131 (2026) 102908, http://
+dx.doi.org/10.1016/j.jairtraman.2025.102908, URL: https://www.sciencedirect.
+com/science/article/pii/S0969699725001711.
+[51] H. Sun, T. Wu, Q. Bai, Z. Zhou, Improved adaptive large-scale neighborhood 
+search algorithm for electric vehicle routing problem with soft time windows 
+and linear weight-related discharging, Expert Syst. Appl. 280 (2025) 127344, 
+http://dx.doi.org/10.1016/j.eswa.2025.127344, URL: https://www.sciencedirect.
+com/science/article/pii/S0957417425009662.
+[52] Y. Jiang, W. Hu, W. Gu, Y. Yu, M. Xu, A multi-mode hybrid electric vehicle 
+routing problem with time windows, Transp. Res. E 195 (2025) 103976, http:
+//dx.doi.org/10.1016/j.tre.2025.103976, URL: https://www.sciencedirect.com/
+science/article/pii/S1366554525000171.
+[53] M.M. Solomon, Algorithms for the vehicle routing and scheduling problems with 
+time window constraints, Oper. Res. 35 (2) (1987) 254–265, http://dx.doi.org/
+10.1287/opre.35.2.254.
+[54] Y. Ma, J. Li, Z. Cao, W. Song, L. Zhang, Z. Chen, J. Tang, Learning to iteratively 
+solve routing problems with dual-aspect collaborative transformer, in: Advances 
+in Neural Information Processing Systems, vol. 34, 2021, pp. 11096–11107.
+[55] World Health Organization, WHO Global Air Quality Guidelines: Particulate 
+Matter (PM2.5 and PM10), Ozone, Nitrogen Dioxide, Sulfur Dioxide and Carbon 
+Monoxide, Technical Report, World Health Organization, Geneva, Switzerland, 
+2021.
+Knowledge-Based Systems 350 (2026) 116546 
+15 

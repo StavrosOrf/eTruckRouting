@@ -866,7 +866,7 @@ def visualize_gnn_state(config_path: str, num_steps: int = 5):
     print("GNN State Visualization")
     print("=" * 80)
 
-    from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.heuristic_policy import HeuristicPolicy
 
     # Initialize
     env = EventDrivenTruckEnv(config_path, verbose=True, enable_plotting=True)

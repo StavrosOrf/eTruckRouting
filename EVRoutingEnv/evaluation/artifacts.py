@@ -99,9 +99,7 @@ def build_scenario_descriptor(env) -> dict:
                 "sequence_position": task.sequence_position,
                 "earliest_service": task.earliest_service,
                 "latest_service": (
-                    task.latest_service
-                    if math.isfinite(task.latest_service)
-                    else None
+                    task.latest_service if math.isfinite(task.latest_service) else None
                 ),
             }
             for task in env.joint_instance.tasks
@@ -111,30 +109,24 @@ def build_scenario_descriptor(env) -> dict:
         "seed": int(env.scenario_seed),
         "rng_version": str(rng_metadata["version"]),
         "generator_version": GENERATOR_VERSION,
+        "static_inputs": scenario_static_inputs(env),
         "problem_mode": env.problem_mode,
         "config_sha256": canonical_json_sha256(env.config),
         "num_trucks": env.num_trucks,
         "num_customers": env.num_stops,
         "depot_node": (
-            env.joint_instance.depot_node
-            if env.joint_instance is not None
-            else None
+            env.joint_instance.depot_node if env.joint_instance is not None else None
         ),
         "customers": customers,
-        "initial_battery_kwh": [
-            truck.current_battery for truck in env.trucks
-        ],
-        "truck_routes": [
-            list(truck.delivery_sequence) for truck in env.trucks
-        ],
+        "initial_battery_kwh": [truck.current_battery for truck in env.trucks],
+        "truck_routes": [list(truck.delivery_sequence) for truck in env.trucks],
         "chargers": [
             {
                 "node_id": int(node),
                 "type": env.charging_station.charger_type[node],
                 "power_kw": env.charging_station.charger_power_kw[node],
-                "port_capacity": int(
-                    env.charging_station.charger_capacity[node]
-                ),
+                "efficiency": env.charging_station.charger_efficiency[node],
+                "port_capacity": int(env.charging_station.charger_capacity[node]),
             }
             for node in sorted(env.charging_nodes)
         ],
@@ -145,6 +137,53 @@ def build_scenario_descriptor(env) -> dict:
     }
     _canonical_json(descriptor)
     return descriptor
+
+
+def scenario_static_inputs(env) -> dict:
+    """Fingerprint effective road costs and external station/queue data.
+
+    Paths alone are insufficient: replacing data at the same path must change
+    scenario identity and invalidate certified-instance caches. Matrix identity
+    invalidates the memo when ``scale_network`` changes effective costs.
+    """
+    from EVRoutingEnv.models.core.transportation_graph import ROUTING_POLICY_VERSION
+
+    graph = env.transport_graph
+    matrices = graph.cost_matrices()
+    cached = getattr(env, "_scenario_graph_digest", None)
+    if cached is None or cached[0] is not matrices:
+        nodes = [
+            [int(node), int(graph.graph.nodes[node].get("original_id", node))]
+            for node in sorted(matrices[0])
+        ]
+        digest = hashlib.sha256()
+        digest.update(_canonical_json(nodes).encode("utf-8"))
+        digest.update(ROUTING_POLICY_VERSION.encode("ascii"))
+        for matrix in matrices[1:]:
+            digest.update(matrix.astype("<f8", copy=False).tobytes())
+        cached = (matrices, digest.hexdigest())
+        env._scenario_graph_digest = cached
+    station = env.charging_station
+    return {
+        "network_sha256": cached[1],
+        "charging_node_order": [int(node) for node in env.charging_nodes],
+        "routing_policy": ROUTING_POLICY_VERSION,
+        "queue_lookup_sha256": canonical_json_sha256(station.waiting_time_lookup),
+        "stations_sha256": canonical_json_sha256(
+            [
+                [
+                    int(node),
+                    station.charger_type[node],
+                    station.charger_power_kw[node],
+                    station.charger_efficiency[node],
+                    station.charger_capacity[node],
+                ]
+                for node in sorted(env.charging_nodes)
+            ]
+        ),
+        "numpy_version": importlib.metadata.version("numpy"),
+        "bit_generator": "PCG64",
+    }
 
 
 def collect_run_manifest(

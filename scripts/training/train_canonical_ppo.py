@@ -210,7 +210,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def _build_demonstrator(name: str):
-    from EVRoutingEnv.baselines.canonical_baselines import (
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
         GreedyHeuristicPolicy,
         HeuristicParameters,
         MPCParameters,

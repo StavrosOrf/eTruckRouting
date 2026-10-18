@@ -10,7 +10,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 from copy import deepcopy
 
-from EVRoutingEnv.baselines.exact_optimization import (
+from EVRoutingEnv.baselines.optimization.exact_optimization import (
     ExactPlannerParameters,
     MathematicalProgrammingPolicy,
     solve_nominal_plan,

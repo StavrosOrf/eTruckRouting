@@ -12,7 +12,7 @@ import time
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
-from EVRoutingEnv.baselines.heuristic_policy import HeuristicPolicy  # noqa: E402
+from EVRoutingEnv.baselines.heuristics.heuristic_policy import HeuristicPolicy  # noqa: E402
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv  # noqa: E402
 
 

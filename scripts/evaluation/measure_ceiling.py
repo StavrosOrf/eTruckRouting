@@ -30,7 +30,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from EVRoutingEnv.baselines.optimality_reference import solve_reference
+from EVRoutingEnv.baselines.optimization.optimality_reference import solve_reference
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.utils.utils import load_config
 from scripts.evaluation.canonical_harness import split_seeds

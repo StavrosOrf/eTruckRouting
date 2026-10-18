@@ -30,17 +30,14 @@ charging:
   - 0.8
   - 0.9
   - 1.0
-  station_power_classes_kw:
-  - 150.0
-  - 350.0
-  - 750.0
+  station_power_classes_kw: [150.0]
   station_power_overrides_kw: {}
   use_realistic_curve: true
   level2:
     charge_rate: 150.0
     efficiency: 0.9
   dcfast:
-    charge_rate: 350.0
+    charge_rate: 150.0
     efficiency: 0.9
     taper_start_soc: 0.8
     taper_power_min: 150.0

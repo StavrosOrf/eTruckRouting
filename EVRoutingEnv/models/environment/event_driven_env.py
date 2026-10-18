@@ -320,7 +320,7 @@ class EventDrivenTruckEnv(gym.Env):
         station_charging_config = dict(self.charging_config)
         station_charging_config.setdefault(
             "station_power_classes_kw",
-            [150.0, 350.0, 750.0],
+            [150.0],
         )
         self.charging_station = ChargingStation(
             charging_nodes=self.charging_nodes,

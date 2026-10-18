@@ -142,20 +142,6 @@ REGIMES: dict[str, dict] = {
         },
     },
     # -- charging infrastructure --------------------------------------------
-    "chargers_weak": {
-        "kind": "ood",
-        "description": "slower stations: 50/150/350 kW classes",
-        "overrides": {
-            "charging": {"station_power_classes_kw": [50.0, 150.0, 350.0]},
-        },
-    },
-    "chargers_strong": {
-        "kind": "ood",
-        "description": "faster stations: 350/750/1000 kW classes",
-        "overrides": {
-            "charging": {"station_power_classes_kw": [350.0, 750.0, 1000.0]},
-        },
-    },
     "chargers_inefficient": {
         "kind": "ood",
         "description": "0.80 charging efficiency instead of 0.90",
@@ -163,7 +149,7 @@ REGIMES: dict[str, dict] = {
             "charging": {
                 "level2": {"charge_rate": 150.0, "efficiency": 0.80},
                 "dcfast": {
-                    "charge_rate": 350.0,
+                    "charge_rate": 150.0,
                     "efficiency": 0.80,
                     "taper_start_soc": 0.8,
                     "taper_power_min": 150.0,

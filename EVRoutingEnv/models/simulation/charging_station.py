@@ -107,7 +107,7 @@ class ChargingStation:
             else:
                 charger_type = self.charger_type[node]
                 type_key = "dcfast" if charger_type == "DCFast" else "level2"
-                legacy_default = 50.0 if charger_type == "DCFast" else 7.2
+                legacy_default = 150.0
                 power = float(
                     charging_config.get(type_key, {}).get(
                         "charge_rate",

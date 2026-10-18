@@ -32,9 +32,8 @@ charging:
   action_mode: target_soc
   target_soc_levels: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
-  # Synthetic campaign classes are assigned cyclically to sorted station IDs.
-  # Use station_power_overrides_kw for empirical station-specific assignments.
-  station_power_classes_kw: [150.0, 350.0, 750.0]
+  # All stations use 150 kW unless a station-specific override is set.
+  station_power_classes_kw: [150.0]
   station_power_overrides_kw: {}
 
   use_realistic_curve: true
@@ -42,7 +41,7 @@ charging:
     charge_rate: 150.0
     efficiency: 0.90
   dcfast:
-    charge_rate: 350.0
+    charge_rate: 150.0
     efficiency: 0.90
     taper_start_soc: 0.8
     taper_power_min: 150.0

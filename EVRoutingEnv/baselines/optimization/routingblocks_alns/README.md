@@ -119,18 +119,21 @@ python -m scripts.evaluation.solve_branch_and_price --trucks 128 --customers 200
     --warm-from <rb certificate> --solver-arg lp_solver highs
 ```
 
-Both were submitted to Slurm (`cbuild`, 8 threads) but sat queued behind the
-account's own large concurrent branch-and-price campaign (13+ jobs, one
-running 20+ hours, roughly 870 CPUs in flight) without a resource estimate; a
-20-second smoke run confirmed the pipeline (CLI, warm-start parsing, HiGHS)
-works and reproduces the RB objective exactly, but 20 s is far too short for a
-real root bound. Based on the main branch-and-price README's own logged
-history on these sizes (50 x 100 root bound still 0.07% from the incumbent
-after 100+ minutes; 128 x 200's first exact pricing round alone exceeding 20
-minutes), a bounded run in one session is unlikely to reach `OPTIMAL` on
-128 x 200 even with the warm start, though it should tighten the gap. Check
-`results/branch_and_price/ca_{50x100,128x200}_rbwarm/seed_1.json` for the
-outcome once the jobs run.
+`cbuild` was saturated by the account's own large concurrent branch-and-price
+campaign (13+ jobs, one running 20+ hours, roughly 870 CPUs in flight); `gpu_mig`
+had a free node and ran both immediately. Completed runs (`ca_{50x100,128x200}_rbwarm_mig/seed_1.json`):
+
+| Instance | Budget | Outcome |
+|---|---|---|
+| 50 x 100 (seed 1) | 1500 s | `TIME_LIMIT`: incumbent 354.8878 h (unchanged from the RB plan — the restricted-master heuristic found nothing better), **certified lower bound 349.1021 h, gap 1.63%**. Root node only (no branching). Replay OK. |
+| 128 x 200 (seed 1) | 2000 s | `TIME_LIMIT`: incumbent 859.4911 h, **no certified bound** (`bound=None`) — the root's single exact pricing round alone took 445 s and the node's certification did not finish before the limit. Replay OK (two relaxed-port conflicts noted, non-blocking: queueing adds 13.8 h total but the horizon/windows still hold, so travel time is unaffected, matching the documented port-relaxation semantics). |
+
+The 1.63% figure for 50 x 100 is the first actual certified gap this baseline
+has produced for that seed (earlier "about 350.9 h" was a bound from a
+different, pre-existing run, not this warm-started one). 128 x 200 needed a
+much longer budget once its real per-round cost was known: a second run was
+launched with a 7200 s (2 h) budget once 2000 s proved too short for even one
+certified round; check `ca_128x200_rbwarm_mig2/seed_1.json` for its outcome.
 
 ### Tuning notes
 

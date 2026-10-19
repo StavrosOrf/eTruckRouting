@@ -28,20 +28,39 @@ SCHEMA = "evrp-heur-result/v1"
 
 
 def seed_sequences(problem: Problem) -> list[list[tuple]]:
-    """Customer sequences (local ids) of the instance's warm-start routes."""
+    """Customer sequences (local ids) of the instance's warm-start routes.
+
+    Each independent source (the environment's own witness, and any
+    ``--warm-from`` plan) is its own candidate solution. Earlier this
+    concatenated every source into one combined "solution"; with two sources
+    that both cover every customer, the merge double-covers some customers
+    and leaves a single malformed seed (observed: 15 routes, 428 h, on a
+    10x30 instance whose witness and warm-from plan were each a clean,
+    5-route, 144 h cover on their own).
+    """
     index = {problem.env_node(v): v for v in problem.customers}
     warm = problem.instance.get("warm_start", {})
-    sequences = []
-    for route in list(warm.get("witness", [])) + list(warm.get("extra", [])):
-        seq = tuple(index[int(node)] for node, _, charging in route if not charging and int(node) in index)
-        if seq:
-            sequences.append(seq)
+
+    def witness_routes(entries) -> list[tuple]:
+        routes = []
+        for route in entries:
+            seq = tuple(index[int(node)] for node, _, charging in route if not charging and int(node) in index)
+            if seq:
+                routes.append(seq)
+        return routes
+
+    candidates = []
+    witness = witness_routes(list(warm.get("witness", [])) + list(warm.get("extra", [])))
+    if witness:
+        candidates.append(witness)
+    plan = []
     for seq in warm.get("sequences", []):
         ids = [int(x) for x in seq]
         if ids and all(x in index for x in ids):
-            sequences.append(tuple(index[x] for x in ids))
-    # The witness is one fleet plan: group it back into a single start.
-    return [sequences] if sequences else []
+            plan.append(tuple(index[x] for x in ids))
+    if plan:
+        candidates.append(plan)
+    return candidates
 
 
 def route_record(problem: Problem, sequence: tuple) -> dict:

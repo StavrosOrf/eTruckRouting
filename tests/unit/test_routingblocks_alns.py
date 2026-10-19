@@ -55,6 +55,36 @@ def test_route_dp_matches_brute_force_on_every_subset(tmp_path, config_path, see
     assert result["mismatches"] == []
 
 
+def test_warm_from_seed_is_its_own_candidate_not_merged_with_the_witness(tmp_path) -> None:
+    """Regression: a ``--warm-from`` plan must not be concatenated with the
+    environment's own witness into one double-covering "solution"."""
+    env = make_env("EVRoutingEnv/config_files/config_joint.yaml", 2, 5)
+    env.reset(seed=1)
+    instance = export_nominal_instance(env)
+    instance_path = tmp_path / "instance.json"
+    instance_path.write_text(json.dumps(instance))
+    kind_of = {node["id"]: node["kind"] for node in instance["nodes"]}
+    # Reuse the export's own witness as a stand-in "--warm-from" certificate: a
+    # clean, independently-valid cover of every customer, exactly like a real plan.
+    certificate = {"routes": [
+        {"stops": [{"node": node, "kind": kind_of[node]} for node, _, charging in route if not charging]}
+        for route in instance["warm_start"]["witness"]
+    ]}
+    certificate_path = tmp_path / "certificate.json"
+    certificate_path.write_text(json.dumps(certificate))
+    environment = dict(os.environ, PYTHONPATH=str(ROOT), OMP_NUM_THREADS="1")
+    done = subprocess.run(
+        [str(SOLVER), str(ROOT / "tests/unit/rb_seed_sequences_check.py"), str(instance_path), str(certificate_path)],
+        capture_output=True, text=True, env=environment, check=True)
+    result = json.loads(done.stdout.strip().splitlines()[-1])
+    # Two separate candidates (the witness, and the warm-from plan), each
+    # covering every customer exactly once on its own -- not one merged
+    # candidate that double-covers some customers and misses others.
+    assert len(result["candidates"]) == 2
+    for candidate in result["candidates"]:
+        assert candidate["customers"] == result["n_customers"]
+
+
 @pytest.mark.parametrize("config_path,trucks,customers,seed", [
     ("EVRoutingEnv/config_files/config_joint.yaml", 3, 6, 1),
     ("EVRoutingEnv/config_files/config_joint_time_windows.yaml", 2, 6, 0),

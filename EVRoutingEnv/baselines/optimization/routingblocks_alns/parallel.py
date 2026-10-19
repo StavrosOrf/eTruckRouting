@@ -41,9 +41,19 @@ def _worker_main(conn, instance: dict, parameters: SearchParameters, objective, 
         raise
 
 
-def with_seed(parameters: SearchParameters, seed: int, verbose: bool) -> SearchParameters:
+def with_seed(parameters: SearchParameters, seed: int, verbose: bool, worker: int = 0) -> SearchParameters:
+    """Worker ``worker``'s parameters: odd workers search with larger destroys and a hotter start.
+
+    No single setting wins on every instance (larger destroys and a higher temperature
+    rescue some, lose on others), so the portfolio hedges; the shared pool and the
+    partitioning step recombine what the variants find.
+    """
     values = {f.name: getattr(parameters, f.name) for f in fields(parameters)}
     values.update(seed=seed, verbose=verbose)
+    if parameters.diversify and worker % 2 == 1:
+        values["max_removed_fraction"] = min(0.6, 2 * parameters.max_removed_fraction)
+        values["max_removed"] = 2 * parameters.max_removed
+        values["start_temperature"] = 2 * parameters.start_temperature
     return SearchParameters(**values)
 
 
@@ -55,7 +65,7 @@ def solve_parallel(instance: dict, parameters: SearchParameters, workers: int, o
         parent, child = context.Pipe()
         process = context.Process(
             target=_worker_main,
-            args=(child, instance, with_seed(parameters, parameters.seed + k, parameters.verbose and k == 0),
+            args=(child, instance, with_seed(parameters, parameters.seed + k, parameters.verbose and k == 0, k),
                   objective, seeds),
             daemon=True,
         )

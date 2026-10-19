@@ -51,7 +51,7 @@ class SearchParameters:
     min_largest_destroy: int = 5  # small instances still need destroys big enough to restructure a route
     granularity: int = 30
     delta_local_search: float = 0.5
-    local_search_operators: str = "extended"  # "extended" adds segment swaps 0-3, 1-2, 2-2
+    local_search_operators: str = "extended"  # "extended" adds segment swaps 0-3, 1-2, 2-2; "full" all swaps up to 3x3
     local_search_scope: str = "changed"  # "changed" routes only, or "all"
     adaptive_smoothing: float = 0.2
     adaptive_period: int = 50
@@ -63,6 +63,7 @@ class SearchParameters:
     spare_routes: int = 2
     pool: bool = True
     pool_interval_seconds: float = 120.0
+    diversify: bool = True  # parallel: odd workers use larger destroys and a hotter start
     adopt_fraction: float = 0.5  # parallel: share of workers that restart from the shared best each round
     pool_elite_tolerance: float = 0.03  # routes of candidates within this of the best join the pool
     pool_seconds: float = 20.0  # HiGHS budget per set-partitioning solve; the last one is carved out of the limit
@@ -270,7 +271,12 @@ class Search:
             rb.operators.SwapOperator_1_1(self.instance, arcs),
             rb.operators.InterRouteTwoOptOperator(self.instance, arcs),
         ]
-        if p.local_search_operators == "extended":
+        if p.local_search_operators == "full":
+            self.ls_operators = [rb.operators.InterRouteTwoOptOperator(self.instance, arcs)] + [
+                getattr(rb.operators, f"SwapOperator_{a}_{b}")(self.instance, arcs)
+                for a in range(4) for b in range(1, 4) if (a, b) != (0, 0)
+            ]
+        elif p.local_search_operators == "extended":
             self.ls_operators += [
                 rb.operators.SwapOperator_0_3(self.instance, arcs),
                 rb.operators.SwapOperator_1_2(self.instance, arcs),

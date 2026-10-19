@@ -82,12 +82,21 @@ bound. Nothing the solver returned was ever below a proven optimum.
 | 128 campaign scenarios, 10 x 30 (119 proven optimal, 9 not) | 1 worker, 30 s | 110 of 119 equal the optimum, worst miss 1.8%; 5 of the 9 unproven branch-and-price incumbents beaten; all 128 replay |
 | the same 9 misses | 4 workers, 60 s | 4 now reach the optimum, the rest are within 0.5% |
 | 20 x 50 (seed 0), optimum 132.2842 h (500 s in branch-and-price) | 4 workers, 60 s | optimum on 3 of 3 solver seeds |
-| 50 x 100 (seed 1); bound about 350.9 h, best branch-and-price incumbent 354.2 h | 16 workers, 600 s | 354.89 h (1.1% above the bound) |
-| 128 x 200 (seed 1); bound about 839.3 h | 16 workers, 1200 s of search | 859.49 h (2.4% above the bound) |
+| 50 x 100 (seed 1); bound about 350.9 h, best branch-and-price incumbent 354.2 h | 16 workers, 600 s, pre-column-cap fix | 354.89 h (1.1% above the bound) |
+| 128 x 200 (seed 1); bound about 839.3 h | 16 workers, 1200 s, pre-column-cap fix | 859.49 h (2.4% above the bound); wall time 2348 s (the uncapped partitioning pool stalled the master — the bug the column cap below fixes) |
+| 50 x 100 (seed 1), same instance, **after** the column-cap fix | 8 workers, 250 s | 355.77 h; wall time 272 s, each partitioning solve bounded at ~20 s as designed (no stall) |
+| 128 x 200 (seed 1), same instance, **after** the column-cap fix | 8 workers, 400 s | 868.63 h; wall time 422 s, bounded the same way even as the pool passed 23,000 columns |
 
 The 50 x 100 and 128 x 200 rows are heuristic results with a gap to a bound,
-not optima: branch-and-price could not close them. Reproduce the campaign row
-with `scripts/evaluation/solve_routingblocks.py ... --bound-from <bnp dir>` and
+not optima: branch-and-price could not close them, and this baseline cannot
+produce or improve a certified bound by itself. The post-fix rows above used
+fewer workers and less time than the pre-fix rows (8 workers/cbuild's shared
+CPUs rather than 16, because the cluster's GPU partitions were saturated by a
+large concurrent branch-and-price campaign when this was run), so they are not
+a clean apples-to-apples comparison of solution quality; what they confirm is
+that the column cap removes the multi-thousand-second stall without degrading
+the result. Reproduce the campaign row with
+`scripts/evaluation/solve_routingblocks.py ... --bound-from <bnp dir>` and
 `scripts/analysis/compare_routingblocks_bnp.py`.
 
 ### Tuning notes

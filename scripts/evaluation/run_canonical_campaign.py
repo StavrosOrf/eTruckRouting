@@ -106,9 +106,19 @@ def build_policy(name: str, settings: dict):
             BPParameters(**settings.get("parameters", {})),
             certificate_dir=settings.get("certificate_dir"),
         )
+    if name == "rb_alns":
+        # RoutingBlocks ALNS with exact charging pricing (solver interpreter in
+        # .venv-rb); certificates from solve_routingblocks.py are reused when present.
+        from EVRoutingEnv.baselines.optimization.routingblocks_alns.bridge import RBParameters
+        from EVRoutingEnv.baselines.optimization.routingblocks_alns.policy import RoutingBlocksPolicy
+
+        return RoutingBlocksPolicy(
+            RBParameters(**settings.get("parameters", {})),
+            certificate_dir=settings.get("certificate_dir"),
+        )
     raise ValueError(
         f"unknown method {name!r}; non-learned methods must be one of "
-        "random/heuristic/mpc/cpsat/alns/bnp, and a learned method must supply a checkpoint"
+        "random/heuristic/mpc/cpsat/alns/bnp/rb_alns, and a learned method must supply a checkpoint"
     )
 
 

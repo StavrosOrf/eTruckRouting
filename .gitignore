@@ -234,3 +234,6 @@ latex/*.blg
 /EVRoutingEnv/data/case_studies/*/od_*.npy
 # Slurm job logs from the case-study build scripts (slurm_extract.sh, slurm_stage.sh)
 /slurm-*.out
+
+# solver interpreter of the RoutingBlocks baseline
+.venv-rb/

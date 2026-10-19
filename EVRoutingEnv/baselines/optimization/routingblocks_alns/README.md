@@ -69,14 +69,42 @@ Any `SearchParameters` field can be set with `--param KEY VALUE`.
 
 ## Validation
 
-| Check | Result |
-|---|---|
-| Route DP vs independent brute force (`test_routingblocks_alns.py`, all subsets of 5 customers, default and time-window configs) | no mismatches |
-| 96 small instances (default, time-window, tight-window and slow-charging configs; 2-3 trucks, 4-7 customers), 15 s each | all reach the brute-force optimum; every plan replays in the env at the same travel time |
-| 10 x 30 (seed 0) | 97.7167 h = branch-and-price optimum, in about 2 s |
-| 20 x 50 (seed 0) | 132.2842 h = branch-and-price optimum (500 s there), in about 20 s |
-| 50 x 100 (seed 1), 16 workers, 300 s | 355.87 h; branch-and-price: lower bound about 350.9, best incumbent 354.2 |
-| 128 x 200 (seed 1), 16 workers, 600 s | 878.84 h; branch-and-price lower bound about 839.3 |
+Every plan below was replayed in the environment (`validate.nominal_replay`)
+and reproduced its reported travel time exactly. "Optimum" means proven by the
+brute-force reference or by branch-and-price; "bound" is a branch-and-price lower
+bound. Nothing the solver returned was ever below a proven optimum.
 
-The large-instance rows are heuristic results with a gap to a bound, not
-optima.
+| Instances | Settings | Result |
+|---|---|---|
+| Route DP vs independent brute force (`test_routingblocks_alns.py`; every subset of 5 customers, default and time-window configs) | | no mismatches |
+| 96 small instances (default, time-window, tight-window, slow-charging; 2-3 trucks, 4-7 customers), `validate_routingblocks_alns.py` | 1 worker, 15 s | all 96 reach the brute-force optimum |
+| 10 x 30, seeds 0 and 3 | 1 worker, about 15 s | optimum on all 6 solver seeds each |
+| 128 campaign scenarios, 10 x 30 (119 proven optimal, 9 not) | 1 worker, 30 s | 110 of 119 equal the optimum, worst miss 1.8%; 5 of the 9 unproven branch-and-price incumbents beaten; all 128 replay |
+| the same 9 misses | 4 workers, 60 s | 4 now reach the optimum, the rest are within 0.4% |
+| 20 x 50 (seed 0), optimum 132.2842 h (500 s in branch-and-price) | 4 workers, 60 s | optimum on 3 of 3 solver seeds |
+| 50 x 100 (seed 1); bound about 350.9 h, best branch-and-price incumbent 354.2 h | 16 workers, 600 s | 354.89 h (1.1% above the bound) |
+| 128 x 200 (seed 1); bound about 839.3 h | 16 workers, 1200 s of search | 859.49 h (2.4% above the bound) |
+
+The 50 x 100 and 128 x 200 rows are heuristic results with a gap to a bound,
+not optima: branch-and-price could not close them. Reproduce the campaign row
+with `scripts/evaluation/solve_routingblocks.py ... --bound-from <bnp dir>` and
+`scripts/analysis/compare_routingblocks_bnp.py`.
+
+### Tuning notes
+
+* Local search is what matters. Running it on nearly every iteration
+  (`delta_local_search 0.5`) with the segment-swap operators beat a cheaper
+  schedule by about 3% on 20 x 50 and 2% on 128 x 200; with it off the result is
+  10% worse. Restricting it to the routes the destroy/repair changed
+  (`local_search_scope changed`) gives the same quality much faster than a sweep
+  of all routes.
+* The annealing temperature scales with the cost per customer (`start_temperature`
+  0.5 of it): a fixed fraction of the total cost was too hot at 100 customers and
+  too cold at 50.
+* HiGHS does not honour its time limit inside presolve and the root LP, so the
+  set-partitioning columns are capped (about 40,000, chosen per customer by
+  cost per customer served). An uncapped pool of 370,000 columns stalled the
+  master for minutes.
+* A few 10 x 30 instances stay about 0.3% above the optimum however the
+  parameters are set, because the optimum uses a different route count than the
+  search settles on; the pool and extra workers recover some of them.

@@ -81,6 +81,7 @@ bound. Nothing the solver returned was ever below a proven optimum.
 | 10 x 30, seeds 0 and 3 | 1 worker, about 15 s | optimum on all 6 solver seeds each |
 | 128 campaign scenarios, 10 x 30 (119 proven optimal, 9 not) | 1 worker, 30 s | 110 of 119 equal the optimum, worst miss 1.8%; 5 of the 9 unproven branch-and-price incumbents beaten; all 128 replay |
 | the same 9 misses | 4 workers, 60 s | 4 now reach the optimum, the rest are within 0.5% |
+| the same 9 misses, pushed further | 8 workers, 180 s, then 16 workers/300 s on the 2 still short | 7 of 9 now reach the optimum exactly (including one that needed 16 workers to find the 5-route partition instead of the 4-route one it kept settling on); 1 remains at 0.28% |
 | 20 x 50 (seed 0), optimum 132.2842 h (500 s in branch-and-price) | 4 workers, 60 s | optimum on 3 of 3 solver seeds |
 | 50 x 100 (seed 1); bound about 350.9 h, best branch-and-price incumbent 354.2 h | 16 workers, 600 s, pre-column-cap fix | 354.89 h (1.1% above the bound) |
 | 128 x 200 (seed 1); bound about 839.3 h | 16 workers, 1200 s, pre-column-cap fix | 859.49 h (2.4% above the bound); wall time 2348 s (the uncapped partitioning pool stalled the master — the bug the column cap below fixes) |
@@ -150,8 +151,12 @@ certified round; check `ca_128x200_rbwarm_mig2/seed_1.json` for its outcome.
   set-partitioning columns are capped (about 40,000, chosen per customer by
   cost per customer served). An uncapped pool of 370,000 columns stalled the
   master for minutes.
-* A few 10 x 30 instances stay 0.3-0.4% above the optimum however the
-  parameters are set. In one case the optimum uses a different route count (5
-  routes, one with two customers) than the fully loaded 4-route solution the
-  search settles on; forcing extra routes did not help, so it is left as is.
-  Extra workers and the pool recover some of them.
+* A few 10 x 30 instances stay slightly above the optimum at low worker counts
+  because the search settles on a route count that differs from the optimum's
+  (one case needed a different 5-route partition instead of a fully loaded
+  4-route one); more workers recover most of them (8 of 9 campaign misses are
+  now exact or within 0.04% at up to 16 workers/300 s). One instance still
+  sits at 0.28% even at 16 workers/300 s: its optimum keeps the same route
+  count (5) but a different split of customers across them ([3,6,7,7,7] found
+  vs. [3,5,6,7,9] optimal) that more parallel search of the same kind has not
+  escaped.

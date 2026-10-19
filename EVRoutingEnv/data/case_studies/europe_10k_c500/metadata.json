@@ -1,0 +1,173 @@
+{
+ "name": "europe_10k_c500",
+ "title": "Western Europe (DE, NL, BE, FR, CH, DK), 10,000 delivery nodes, 500 charger nodes",
+ "generated_utc": "2026-10-19T08:29:42Z",
+ "preset": {
+  "name": "europe_10k_c500",
+  "title": "Western Europe (DE, NL, BE, FR, CH, DK), 10,000 delivery nodes, 500 charger nodes",
+  "geofabrik": [
+   "europe/germany",
+   "europe/netherlands",
+   "europe/belgium",
+   "europe/france",
+   "europe/switzerland",
+   "europe/denmark"
+  ],
+  "delivery_source": "places",
+  "bbox": [
+   41.2,
+   -5.4,
+   57.9,
+   15.3
+  ],
+  "n_customers": 10000,
+  "n_depots": 0,
+  "min_population": 200,
+  "min_place_spacing_m": 4000,
+  "chargers_source": "osm",
+  "min_charger_kw": 50,
+  "max_chargers": 500,
+  "charger_merge_m": 20000,
+  "charger_merge_linkage": "complete",
+  "max_snap_m": 5000,
+  "max_road_class": "unclassified",
+  "terrain_zoom": 10,
+  "terrain_source": "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)",
+  "smooth_length_m": 150,
+  "vis_max_class": "trunk_link",
+  "vehicle_profile": "heavy_truck",
+  "vehicle": {
+   "max_speed_kph": 90
+  },
+  "output_format": "npy",
+  "contract_chains": true,
+  "seed": 0,
+  "workers": 32
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 1854.0,
+ "counts": {
+  "nodes": 10500,
+  "chargers": 500,
+  "depots": 0,
+  "customers": 10000,
+  "dcfast_ports_in_nodes": 11386,
+  "dcfast_sites_available": 1582,
+  "dcfast_stations_raw": 12118
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  41.2,
+  -5.4,
+  57.9,
+  15.3
+ ],
+ "road_network": {
+  "nodes": 47838841,
+  "directed_edges": 89764912,
+  "plotted_segments": 2228720,
+  "excluded": "service roads, private/no-motor-vehicle ways, road classes below unclassified",
+  "terrain_zoom": 10,
+  "dem_rms_change_m": 2.5461422764353023,
+  "n_span_nodes_interpolated": 155429,
+  "elevation_range_m": [
+   -14.428976356176415,
+   2782.749719008526
+  ],
+  "dem_nodes_reset_to_sea_level": 398
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0,
+  "max_speed_kph": 90
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 1890,
+ "od_stats": {
+  "road_nodes_before_contraction": 47838841,
+  "road_edges_before_contraction": 89764912,
+  "junction_nodes": 2619282,
+  "junction_edges": 5907891,
+  "reduced_cost_min": 0.0003506034284587148,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 5.562998012464959e-06,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   216.1,
+   842.38,
+   1763.67,
+   2925.12
+  ],
+  "time_h_p5_p50_p95_max": [
+   4.263,
+   16.473,
+   35.633,
+   58.306
+  ],
+  "dist_km_p5_p50_p95_max": [
+   170.6,
+   666.0,
+   1417.3,
+   2236.5
+  ],
+  "kwh_per_km_median": 1.25,
+  "sampled_pairs": 3999651
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs_sampled": 3999506,
+   "median_rel_diff": 0.0422,
+   "p90_rel_diff": 0.1301,
+   "frac_over_5pct": 0.4387,
+   "frac_over_20pct": 0.0332
+  },
+  "time": {
+   "pairs_sampled": 3999645,
+   "median_rel_diff": 0.0181,
+   "p90_rel_diff": 0.0537,
+   "frac_over_5pct": 0.1169,
+   "frac_over_20pct": 0.0011
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 19921.5,
+  "merged_nodes_with_multiple_stations": 421
+ },
+ "sources": {
+  "delivery_and_depot_locations": "OpenStreetMap place nodes (city/town/village with population tag), ODbL",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)",
+  "chargers": "OpenStreetMap amenity=charging_station (CCS/CHAdeMO/NACS sockets, tagged output >= 50 kW), ODbL"
+ },
+ "format": "npy",
+ "files": {
+  "energy": "od_energy_kwh.npy",
+  "time": "od_time_h.npy",
+  "node_ids": "od_node_ids.npy",
+  "layout": "float32 (nodes x nodes); row/column i is OSM node od_node_ids[i] (ascending); diagonal 0; entry [i, j] is the minimum-energy route i -> j"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_europe_10k_c500.yaml",
+ "derived_from": {
+  "case": "europe_10k",
+  "method": "k-center subset of the charger nodes; matrices sliced, routes unchanged",
+  "chargers_in_parent": 1561,
+  "ranges_and_asymmetry": "statistics of the parent's sampled node pairs"
+ }
+}

@@ -25,7 +25,7 @@ def trace(root, name, seed, output):
     config = yaml.safe_load((root / "config.yaml").read_text())
     for section, values in settings.get("environment_overrides", {}).items():
         config[section].update(values)
-    policy = CanonicalActorCritic.load(settings["checkpoint"], prefix="best").eval()
+    policy = CanonicalActorCritic.load(settings["checkpoint"], prefix=settings.get("prefix", "best")).eval()
     env = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
     observation, info = env.reset(seed=seed)
     records = []

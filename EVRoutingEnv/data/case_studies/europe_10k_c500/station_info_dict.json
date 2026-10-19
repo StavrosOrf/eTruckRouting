@@ -1,0 +1,2002 @@
+{
+ "3372003621": {
+  "station_type": "DCFast",
+  "total_capacity": 282.0
+ },
+ "1027385878": {
+  "station_type": "DCFast",
+  "total_capacity": 221.0
+ },
+ "4536074617": {
+  "station_type": "DCFast",
+  "total_capacity": 202.0
+ },
+ "5305845010": {
+  "station_type": "DCFast",
+  "total_capacity": 194.0
+ },
+ "210300145": {
+  "station_type": "DCFast",
+  "total_capacity": 134.0
+ },
+ "26852313": {
+  "station_type": "DCFast",
+  "total_capacity": 124.0
+ },
+ "45378935": {
+  "station_type": "DCFast",
+  "total_capacity": 117.0
+ },
+ "11436628492": {
+  "station_type": "DCFast",
+  "total_capacity": 112.0
+ },
+ "863211276": {
+  "station_type": "DCFast",
+  "total_capacity": 110.0
+ },
+ "13968539812": {
+  "station_type": "DCFast",
+  "total_capacity": 106.0
+ },
+ "307745663": {
+  "station_type": "DCFast",
+  "total_capacity": 105.0
+ },
+ "4655710153": {
+  "station_type": "DCFast",
+  "total_capacity": 103.0
+ },
+ "307543108": {
+  "station_type": "DCFast",
+  "total_capacity": 103.0
+ },
+ "1693115571": {
+  "station_type": "DCFast",
+  "total_capacity": 102.0
+ },
+ "10308591460": {
+  "station_type": "DCFast",
+  "total_capacity": 100.0
+ },
+ "9869970811": {
+  "station_type": "DCFast",
+  "total_capacity": 99.0
+ },
+ "286925069": {
+  "station_type": "DCFast",
+  "total_capacity": 96.0
+ },
+ "2191567131": {
+  "station_type": "DCFast",
+  "total_capacity": 92.0
+ },
+ "248556161": {
+  "station_type": "DCFast",
+  "total_capacity": 90.0
+ },
+ "316090582": {
+  "station_type": "DCFast",
+  "total_capacity": 83.0
+ },
+ "566135828": {
+  "station_type": "DCFast",
+  "total_capacity": 78.0
+ },
+ "4734384378": {
+  "station_type": "DCFast",
+  "total_capacity": 77.0
+ },
+ "32345549": {
+  "station_type": "DCFast",
+  "total_capacity": 76.0
+ },
+ "6328425029": {
+  "station_type": "DCFast",
+  "total_capacity": 75.0
+ },
+ "763098378": {
+  "station_type": "DCFast",
+  "total_capacity": 74.0
+ },
+ "674131318": {
+  "station_type": "DCFast",
+  "total_capacity": 72.0
+ },
+ "218374373": {
+  "station_type": "DCFast",
+  "total_capacity": 72.0
+ },
+ "527835944": {
+  "station_type": "DCFast",
+  "total_capacity": 71.0
+ },
+ "1469906741": {
+  "station_type": "DCFast",
+  "total_capacity": 71.0
+ },
+ "44647244": {
+  "station_type": "DCFast",
+  "total_capacity": 70.0
+ },
+ "9226824661": {
+  "station_type": "DCFast",
+  "total_capacity": 68.0
+ },
+ "476995721": {
+  "station_type": "DCFast",
+  "total_capacity": 68.0
+ },
+ "7546109356": {
+  "station_type": "DCFast",
+  "total_capacity": 68.0
+ },
+ "266529338": {
+  "station_type": "DCFast",
+  "total_capacity": 68.0
+ },
+ "1779125854": {
+  "station_type": "DCFast",
+  "total_capacity": 67.0
+ },
+ "1035049984": {
+  "station_type": "DCFast",
+  "total_capacity": 67.0
+ },
+ "2881978853": {
+  "station_type": "DCFast",
+  "total_capacity": 66.0
+ },
+ "324220224": {
+  "station_type": "DCFast",
+  "total_capacity": 66.0
+ },
+ "1140785232": {
+  "station_type": "DCFast",
+  "total_capacity": 66.0
+ },
+ "1610781626": {
+  "station_type": "DCFast",
+  "total_capacity": 64.0
+ },
+ "462743286": {
+  "station_type": "DCFast",
+  "total_capacity": 63.0
+ },
+ "1572280984": {
+  "station_type": "DCFast",
+  "total_capacity": 63.0
+ },
+ "14216416333": {
+  "station_type": "DCFast",
+  "total_capacity": 62.0
+ },
+ "30961299": {
+  "station_type": "DCFast",
+  "total_capacity": 62.0
+ },
+ "7580450163": {
+  "station_type": "DCFast",
+  "total_capacity": 62.0
+ },
+ "457356207": {
+  "station_type": "DCFast",
+  "total_capacity": 60.0
+ },
+ "244423887": {
+  "station_type": "DCFast",
+  "total_capacity": 59.0
+ },
+ "42828755": {
+  "station_type": "DCFast",
+  "total_capacity": 59.0
+ },
+ "301985948": {
+  "station_type": "DCFast",
+  "total_capacity": 58.0
+ },
+ "313548047": {
+  "station_type": "DCFast",
+  "total_capacity": 58.0
+ },
+ "2372991979": {
+  "station_type": "DCFast",
+  "total_capacity": 58.0
+ },
+ "2699876543": {
+  "station_type": "DCFast",
+  "total_capacity": 57.0
+ },
+ "370950217": {
+  "station_type": "DCFast",
+  "total_capacity": 56.0
+ },
+ "1762599681": {
+  "station_type": "DCFast",
+  "total_capacity": 56.0
+ },
+ "651699": {
+  "station_type": "DCFast",
+  "total_capacity": 56.0
+ },
+ "5684130026": {
+  "station_type": "DCFast",
+  "total_capacity": 55.0
+ },
+ "1872558434": {
+  "station_type": "DCFast",
+  "total_capacity": 55.0
+ },
+ "9567416984": {
+  "station_type": "DCFast",
+  "total_capacity": 54.0
+ },
+ "249297701": {
+  "station_type": "DCFast",
+  "total_capacity": 54.0
+ },
+ "254386386": {
+  "station_type": "DCFast",
+  "total_capacity": 53.0
+ },
+ "2769122462": {
+  "station_type": "DCFast",
+  "total_capacity": 52.0
+ },
+ "10914044556": {
+  "station_type": "DCFast",
+  "total_capacity": 52.0
+ },
+ "13285955576": {
+  "station_type": "DCFast",
+  "total_capacity": 52.0
+ },
+ "2408157670": {
+  "station_type": "DCFast",
+  "total_capacity": 50.0
+ },
+ "265955553": {
+  "station_type": "DCFast",
+  "total_capacity": 50.0
+ },
+ "287995141": {
+  "station_type": "DCFast",
+  "total_capacity": 50.0
+ },
+ "1794362737": {
+  "station_type": "DCFast",
+  "total_capacity": 50.0
+ },
+ "1829868105": {
+  "station_type": "DCFast",
+  "total_capacity": 49.0
+ },
+ "10608857970": {
+  "station_type": "DCFast",
+  "total_capacity": 49.0
+ },
+ "1214908474": {
+  "station_type": "DCFast",
+  "total_capacity": 48.0
+ },
+ "13792480187": {
+  "station_type": "DCFast",
+  "total_capacity": 48.0
+ },
+ "3376608243": {
+  "station_type": "DCFast",
+  "total_capacity": 47.0
+ },
+ "254522030": {
+  "station_type": "DCFast",
+  "total_capacity": 46.0
+ },
+ "6936682397": {
+  "station_type": "DCFast",
+  "total_capacity": 46.0
+ },
+ "6407738431": {
+  "station_type": "DCFast",
+  "total_capacity": 46.0
+ },
+ "291318388": {
+  "station_type": "DCFast",
+  "total_capacity": 44.0
+ },
+ "278764139": {
+  "station_type": "DCFast",
+  "total_capacity": 44.0
+ },
+ "1391316459": {
+  "station_type": "DCFast",
+  "total_capacity": 44.0
+ },
+ "257712482": {
+  "station_type": "DCFast",
+  "total_capacity": 44.0
+ },
+ "1304488279": {
+  "station_type": "DCFast",
+  "total_capacity": 43.0
+ },
+ "2290288419": {
+  "station_type": "DCFast",
+  "total_capacity": 42.0
+ },
+ "385352563": {
+  "station_type": "DCFast",
+  "total_capacity": 42.0
+ },
+ "567431129": {
+  "station_type": "DCFast",
+  "total_capacity": 41.0
+ },
+ "6712112130": {
+  "station_type": "DCFast",
+  "total_capacity": 40.0
+ },
+ "13685152209": {
+  "station_type": "DCFast",
+  "total_capacity": 39.0
+ },
+ "41982357": {
+  "station_type": "DCFast",
+  "total_capacity": 39.0
+ },
+ "3446463294": {
+  "station_type": "DCFast",
+  "total_capacity": 38.0
+ },
+ "1043353635": {
+  "station_type": "DCFast",
+  "total_capacity": 38.0
+ },
+ "301581343": {
+  "station_type": "DCFast",
+  "total_capacity": 38.0
+ },
+ "512194467": {
+  "station_type": "DCFast",
+  "total_capacity": 38.0
+ },
+ "1201775853": {
+  "station_type": "DCFast",
+  "total_capacity": 37.0
+ },
+ "11094104444": {
+  "station_type": "DCFast",
+  "total_capacity": 37.0
+ },
+ "2378555400": {
+  "station_type": "DCFast",
+  "total_capacity": 37.0
+ },
+ "27435662": {
+  "station_type": "DCFast",
+  "total_capacity": 37.0
+ },
+ "1956966349": {
+  "station_type": "DCFast",
+  "total_capacity": 36.0
+ },
+ "43179879": {
+  "station_type": "DCFast",
+  "total_capacity": 36.0
+ },
+ "13052010141": {
+  "station_type": "DCFast",
+  "total_capacity": 36.0
+ },
+ "353882082": {
+  "station_type": "DCFast",
+  "total_capacity": 35.0
+ },
+ "10212433073": {
+  "station_type": "DCFast",
+  "total_capacity": 35.0
+ },
+ "9588889820": {
+  "station_type": "DCFast",
+  "total_capacity": 33.0
+ },
+ "12851086452": {
+  "station_type": "DCFast",
+  "total_capacity": 33.0
+ },
+ "4693317057": {
+  "station_type": "DCFast",
+  "total_capacity": 33.0
+ },
+ "710783219": {
+  "station_type": "DCFast",
+  "total_capacity": 33.0
+ },
+ "366571170": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "2507345917": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "296097012": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "297485615": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "262459948": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "1617092241": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "3200053503": {
+  "station_type": "DCFast",
+  "total_capacity": 32.0
+ },
+ "341293448": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "1942547296": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "8781509393": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "31430005": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "1738201481": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "1585713603": {
+  "station_type": "DCFast",
+  "total_capacity": 31.0
+ },
+ "9043424767": {
+  "station_type": "DCFast",
+  "total_capacity": 30.0
+ },
+ "7292694399": {
+  "station_type": "DCFast",
+  "total_capacity": 30.0
+ },
+ "501552718": {
+  "station_type": "DCFast",
+  "total_capacity": 30.0
+ },
+ "304936571": {
+  "station_type": "DCFast",
+  "total_capacity": 30.0
+ },
+ "244101622": {
+  "station_type": "DCFast",
+  "total_capacity": 30.0
+ },
+ "3354807690": {
+  "station_type": "DCFast",
+  "total_capacity": 29.0
+ },
+ "56334235": {
+  "station_type": "DCFast",
+  "total_capacity": 29.0
+ },
+ "271010346": {
+  "station_type": "DCFast",
+  "total_capacity": 28.0
+ },
+ "6245327333": {
+  "station_type": "DCFast",
+  "total_capacity": 28.0
+ },
+ "9864006852": {
+  "station_type": "DCFast",
+  "total_capacity": 28.0
+ },
+ "1082702429": {
+  "station_type": "DCFast",
+  "total_capacity": 28.0
+ },
+ "339830896": {
+  "station_type": "DCFast",
+  "total_capacity": 28.0
+ },
+ "6490076700": {
+  "station_type": "DCFast",
+  "total_capacity": 27.0
+ },
+ "368281382": {
+  "station_type": "DCFast",
+  "total_capacity": 27.0
+ },
+ "3780847405": {
+  "station_type": "DCFast",
+  "total_capacity": 27.0
+ },
+ "1471438049": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "1424422505": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "8987541502": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "13397581241": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "1314452264": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "495423072": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "2605033556": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "312000002": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "5726090341": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "1109307615": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "251737124": {
+  "station_type": "DCFast",
+  "total_capacity": 26.0
+ },
+ "6179230055": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "2105869324": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "410609363": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "3750362708": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "202911386": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "61290658": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "1843302614": {
+  "station_type": "DCFast",
+  "total_capacity": 25.0
+ },
+ "1098662135": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "6168022813": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "439793507": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "6193737854": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "6994601533": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "3705277656": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "10787309175": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "6096741211": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "1201465637": {
+  "station_type": "DCFast",
+  "total_capacity": 24.0
+ },
+ "573180": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "1755430711": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "2481998970": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "11687358519": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "319257652": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "3226296045": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "2198185229": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "303248092": {
+  "station_type": "DCFast",
+  "total_capacity": 23.0
+ },
+ "413285410": {
+  "station_type": "DCFast",
+  "total_capacity": 22.0
+ },
+ "5860941799": {
+  "station_type": "DCFast",
+  "total_capacity": 22.0
+ },
+ "80126770": {
+  "station_type": "DCFast",
+  "total_capacity": 22.0
+ },
+ "262213263": {
+  "station_type": "DCFast",
+  "total_capacity": 22.0
+ },
+ "3772533930": {
+  "station_type": "DCFast",
+  "total_capacity": 21.0
+ },
+ "1313946050": {
+  "station_type": "DCFast",
+  "total_capacity": 21.0
+ },
+ "1664920186": {
+  "station_type": "DCFast",
+  "total_capacity": 21.0
+ },
+ "332536812": {
+  "station_type": "DCFast",
+  "total_capacity": 21.0
+ },
+ "6080237973": {
+  "station_type": "DCFast",
+  "total_capacity": 21.0
+ },
+ "2936597246": {
+  "station_type": "DCFast",
+  "total_capacity": 20.0
+ },
+ "3223110448": {
+  "station_type": "DCFast",
+  "total_capacity": 20.0
+ },
+ "191995157": {
+  "station_type": "DCFast",
+  "total_capacity": 20.0
+ },
+ "4937957730": {
+  "station_type": "DCFast",
+  "total_capacity": 20.0
+ },
+ "81537411": {
+  "station_type": "DCFast",
+  "total_capacity": 20.0
+ },
+ "11020735": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "475895193": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "8791319159": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "1882171201": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "12232069076": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "55275727": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "30086489": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "7707668237": {
+  "station_type": "DCFast",
+  "total_capacity": 19.0
+ },
+ "2310375070": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "9459107505": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "299482722": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "8660386739": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "4932372621": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "1949781290": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "9733053062": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "850626509": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "7306714765": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "292672115": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "3969333071": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "10746737394": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "6916894314": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "3631539274": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "6160273061": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "3190256436": {
+  "station_type": "DCFast",
+  "total_capacity": 18.0
+ },
+ "2336525679": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "316967976": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "35330192": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "701290843": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "42209089": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "3218093770": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "468150056": {
+  "station_type": "DCFast",
+  "total_capacity": 17.0
+ },
+ "5459371787": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "3128372056": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "9079769716": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "2960132274": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "2071874991": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "476281423": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "386235140": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "6795418586": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "303109236": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "11279472944": {
+  "station_type": "DCFast",
+  "total_capacity": 16.0
+ },
+ "1643151556": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "13740126836": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "842134688": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "5405017747": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "314431269": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "428614455": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "46854600": {
+  "station_type": "DCFast",
+  "total_capacity": 15.0
+ },
+ "5501962791": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "12908619364": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "2355923066": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "1453621278": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "2911602004": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "257739362": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "320182496": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "294117165": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "8039733654": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "588384939": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "6343050144": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "4232999939": {
+  "station_type": "DCFast",
+  "total_capacity": 14.0
+ },
+ "599638704": {
+  "station_type": "DCFast",
+  "total_capacity": 13.0
+ },
+ "410453866": {
+  "station_type": "DCFast",
+  "total_capacity": 13.0
+ },
+ "1365435800": {
+  "station_type": "DCFast",
+  "total_capacity": 13.0
+ },
+ "4585380079": {
+  "station_type": "DCFast",
+  "total_capacity": 13.0
+ },
+ "1297445252": {
+  "station_type": "DCFast",
+  "total_capacity": 13.0
+ },
+ "962957219": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "13950731767": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "1784822033": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "12164380863": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "313143081": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "5550918076": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "4006337906": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "354604398": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "1556237264": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "977359586": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "471053300": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "6683052075": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "13987509962": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "9416442050": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "5700575425": {
+  "station_type": "DCFast",
+  "total_capacity": 12.0
+ },
+ "14098624983": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "1270304401": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "13065516694": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "367369650": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "851407155": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "3341893598": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "36319025": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "4571076360": {
+  "station_type": "DCFast",
+  "total_capacity": 11.0
+ },
+ "11979322803": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "2932556526": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "858298473": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "772019411": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "272841546": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "286044457": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "1976482354": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "429289709": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "1651429867": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "1762111869": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "6447180151": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "6535281737": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "1082572296": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "420201573": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "11187905576": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "11104369472": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "21537342": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "565545772": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "271926712": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "639287729": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "1531478160": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "339247870": {
+  "station_type": "DCFast",
+  "total_capacity": 10.0
+ },
+ "6517919239": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "1532989684": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "1352297735": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "7038700332": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "1830723227": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "300594869": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "54138580": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "13733967515": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "2364039229": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "534124914": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "1864172199": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "270583417": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "2088309187": {
+  "station_type": "DCFast",
+  "total_capacity": 9.0
+ },
+ "1309277821": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "4496849167": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "3716584373": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "315063916": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "10699753167": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "321830653": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "269435428": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "9306839055": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "5308718805": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "3208149292": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "8400167614": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "1134246407": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "4945458605": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "7120456831": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "4561306016": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "4313820718": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "337496549": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "31416467": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "1813207930": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "1699782409": {
+  "station_type": "DCFast",
+  "total_capacity": 8.0
+ },
+ "1401243841": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "2054941714": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "485952617": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "665105780": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "1474014586": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "3886572648": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "9140385665": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "414152014": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "598160696": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "2147436133": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "1837118909": {
+  "station_type": "DCFast",
+  "total_capacity": 7.0
+ },
+ "13192231826": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "6376903749": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "8713100604": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "2239247141": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "69025098": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "3814571093": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "6483304107": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "1916046320": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "268653518": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "897567122": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "1977561800": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "9585948036": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "6363525946": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "603155707": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "2368944641": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "1780671466": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "1314265863": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "2368473857": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "8438874179": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "12641136695": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "35825132": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "840213609": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "8811097468": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "288822913": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "1559770371": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "939166868": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "278797898": {
+  "station_type": "DCFast",
+  "total_capacity": 6.0
+ },
+ "2761173187": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "1581466757": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "2160125294": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "2475328430": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "4942964494": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "1449437402": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "289960317": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "339254237": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "1075645100": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "4812920188": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "2571823187": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "1367538573": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "4751342504": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "314450109": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "358512325": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "1390909275": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "177566576": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "45908019": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "380526655": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "5650421024": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "14097594576": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "283841917": {
+  "station_type": "DCFast",
+  "total_capacity": 5.0
+ },
+ "2545423865": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "10556739029": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "945759993": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "1705069175": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "2271831380": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "5367089411": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "390929571": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "9499383265": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "6244576005": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "13100718896": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "291637959": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "10041434280": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "11752166146": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "3048739857": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "3469068912": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "2023950557": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "1435528411": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "11961394715": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "13119364782": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "1730939664": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "3689235793": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "4743992713": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "12235842693": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "29378313": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "337896625": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "5024533059": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "10683076539": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "391288822": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "2027791523": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "2568634864": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "449765683": {
+  "station_type": "DCFast",
+  "total_capacity": 4.0
+ },
+ "275414791": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "1683617830": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "10633341733": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "948239385": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "3139207866": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "2461790762": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "310638010": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "3838076299": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "9726878335": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "1678505996": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "2132048884": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "2192015599": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "6547928969": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "10951642793": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "13681664796": {
+  "station_type": "DCFast",
+  "total_capacity": 3.0
+ },
+ "315498473": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "8922577163": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1196027183": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2364066029": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1413177707": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2041022123": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1834486017": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2314090471": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2187853697": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "8299650142": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1834714360": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1577022559": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "30982137": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "7331858645": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "600027948": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "11568929190": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "699579331": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1874152809": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "4941757144": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2171825693": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1042813701": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1606731064": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "247445934": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2827461969": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "10126911484": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "936989015": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "7881012195": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "1913404954": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "6469513926": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "30084153": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "30117013": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "4436164307": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "2682088595": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "6074513493": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "300987859": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "9634242662": {
+  "station_type": "DCFast",
+  "total_capacity": 2.0
+ },
+ "11017383511": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "4334558465": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1000726136": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1794261850": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "7868960068": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1675083631": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "264147851": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1394958648": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1771206010": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1397622308": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "631811479": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "9526457062": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1624460994": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "261633633": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "319477319": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "320673927": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "2813369618": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "270918931": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "299303068": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "565484728": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "322136553": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "9897767305": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1942958420": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "11860705052": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "293811823": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "257746029": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "79664216": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "12038108575": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "4158805667": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "2250202969": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "7200120292": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "247308246": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "7205674224": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "7946071967": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ },
+ "1555986535": {
+  "station_type": "DCFast",
+  "total_capacity": 1.0
+ }
+}

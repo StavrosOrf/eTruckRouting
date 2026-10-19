@@ -59,8 +59,11 @@ def verify(root):
             raise ValueError(f"frozen intermediate input changed: {name}")
 
 
-def freeze_run(directory, destination):
-    files = ("best.pt", "best_config.json", "run_config.json", "resolved_config.json", "validation_history.json")
+def freeze_run(directory, destination, *, prefix="best"):
+    if prefix not in ("best", "pretrained"):
+        raise ValueError("checkpoint prefix must be best or pretrained")
+    history_name = "validation_history.json" if prefix == "best" else "pretrain_history.json"
+    files = (f"{prefix}.pt", f"{prefix}_config.json", "run_config.json", "resolved_config.json", history_name)
     destination.mkdir(parents=True)
     for _ in range(5):
         before = {name: digest(directory / name) for name in files}
@@ -72,7 +75,7 @@ def freeze_run(directory, destination):
     raise RuntimeError(f"checkpoint kept changing during freeze: {directory}")
 
 
-def prepare(root, workspace, cohorts=COHORTS, *, include_all_arms=False, source_override=None, helper_directory=None):
+def prepare(root, workspace, cohorts=COHORTS, *, include_all_arms=False, source_override=None, helper_directory=None, checkpoint_prefix="best", method_prefix=""):
     if root.exists():
         raise FileExistsError(f"inspect existing intermediate evaluation before continuing: {root}")
     root.mkdir(parents=True)
@@ -95,10 +98,10 @@ def prepare(root, workspace, cohorts=COHORTS, *, include_all_arms=False, source_
         for run in manifest["runs"]:
             if run["seed"] not in range(3):
                 continue
-            name = run["name"]
+            name = method_prefix + run["name"]
             checkpoint = root / "checkpoints" / name
-            freeze_run(campaign / "training" / name, checkpoint)
-            policy = read(checkpoint / "best_config.json")
+            freeze_run(campaign / "training" / run["name"], checkpoint, prefix=checkpoint_prefix)
+            policy = read(checkpoint / f"{checkpoint_prefix}_config.json")
             expected = {"max_trucks": 10, "max_customers": 30, "state_encoder": "hetero_graph", "action_head": "complete_gcn"}
             if any(policy.get(key) != value for key, value in expected.items()):
                 raise ValueError(f"unexpected policy/task configuration: {name}")
@@ -109,16 +112,27 @@ def prepare(root, workspace, cohorts=COHORTS, *, include_all_arms=False, source_
                 raise ValueError("evaluation source does not support the trained exact-packing restriction")
             if environment.get("completion_work_escape_lookahead", False) and "completion_work_escape_lookahead" not in (source / "EVRoutingEnv/state/action_mask.py").read_text():
                 raise ValueError("evaluation source does not support the trained work-escape restriction")
-            history = read(checkpoint / "validation_history.json")
-            best = min(history, key=lambda row: (-row["success_rate"], row.get("mean_operating_time_successful") or float("inf")))
+            best = None
+            pretraining = None
+            if checkpoint_prefix == "best":
+                history = read(checkpoint / "validation_history.json")
+                best = min(history, key=lambda row: (-row["success_rate"], row.get("mean_operating_time_successful") or float("inf")))
+            else:
+                history = read(checkpoint / "pretrain_history.json")
+                expected_epochs = read(checkpoint / "run_config.json")["arguments"]["pretrain_epochs"]
+                if not history or history[-1]["epoch"] != expected_epochs:
+                    raise ValueError(f"pretraining is incomplete: {name}")
+                pretraining = history[-1]
             if name in methods:
                 raise ValueError(f"duplicate method: {name}")
             methods[name] = {
-                "checkpoint": str(checkpoint), "prefix": "best", "deterministic": True,
+                "checkpoint": str(checkpoint), "prefix": checkpoint_prefix, "deterministic": True,
                 "training_seed": run["seed"], "arm": name.rsplit("_s", 1)[0], "cohort": cohort,
-                "selection_validation": best, "checkpoint_sha256": digest(checkpoint / "best.pt"),
+                "selection_validation": best, "checkpoint_sha256": digest(checkpoint / f"{checkpoint_prefix}.pt"),
                 "environment_overrides": {"environment": {key: bool(environment.get(key, False)) for key in ("completion_shield", "completion_capacity_lookahead", "completion_capacity_exact_lookahead", "completion_work_escape_lookahead")}},
             }
+            if pretraining is not None:
+                methods[name]["pretraining_holdout"] = pretraining
     groups = {}
     for method in methods.values():
         groups.setdefault(method["arm"], set()).add(method["training_seed"])
@@ -145,6 +159,7 @@ def prepare(root, workspace, cohorts=COHORTS, *, include_all_arms=False, source_
         "scenario_count": COUNT, "validation_offset": OFFSET, "training_seeds": [0, 1, 2],
         "reference_methods": REFERENCES, "candidate_methods": list(methods), "goal_achieved": False,
         "cohorts": list(cohorts), "include_all_arms": include_all_arms,
+        "checkpoint_prefix": checkpoint_prefix, "method_prefix": method_prefix,
     })
     files = [path for path in root.rglob("*") if path.is_file()]
     files += [path for path in source.rglob("*.py") if "__pycache__" not in path.parts]
@@ -237,10 +252,12 @@ def main():
     parser.add_argument("--include-all-arms", action="store_true")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--helper-directory", type=Path)
+    parser.add_argument("--checkpoint-prefix", choices=("best", "pretrained"), default="best")
+    parser.add_argument("--method-prefix", default="")
     args = parser.parse_args()
     root = args.directory.resolve()
     if args.action == "prepare":
-        prepare(root, args.workspace.resolve(), args.cohorts, include_all_arms=args.include_all_arms, source_override=args.source.resolve() if args.source else None, helper_directory=args.helper_directory.resolve() if args.helper_directory else None)
+        prepare(root, args.workspace.resolve(), args.cohorts, include_all_arms=args.include_all_arms, source_override=args.source.resolve() if args.source else None, helper_directory=args.helper_directory.resolve() if args.helper_directory else None, checkpoint_prefix=args.checkpoint_prefix, method_prefix=args.method_prefix)
     elif args.action == "submit":
         submit(root)
     elif args.action == "score":

@@ -327,3 +327,126 @@ independent evaluation.
   starts routes at the depot and its initial task ownership uses preassignment,
   so restarting that planner on an arbitrary live state is not automatically
   a valid recovery teacher.
+
+
+## Larger expert-data campaign and recovery (2026-10-19)
+
+The latest 42-policy, three-seed comparison uses the same opened 128-case
+development bank and the six independent reference methods. The leading
+`bc_nonlinear_cost40` recipe averages 97.92% completion, 145.98 successful
+operating hours and 32.50% paired excess. Its hierarchical 95% cost interval
+across training seeds and scenarios is [29.03%, 36.52%]. The completion interval
+is [95.83%, 99.48%]. Neither target is established. Travel contributes about
+31.25 percentage points of pooled successful-pair excess. The recipes were
+frozen at different accumulated budgets, so this is a progress comparison.
+
+Retaining expert loss did not improve completion. At the later frozen
+checkpoints, coefficient 0.1 averages 88.80% completion versus its matched
+control's 96.61%, while successful-only cost decreases. This treatment was
+screened out during the interrupted 4M stage; it is not labelled converged.
+Its final-stage allocation allowance is reassigned to the larger expert study.
+
+Cohort `ca10t3d_large_expert_v14` retains the proposed heterogeneous graph
+encoder, complete variable-action GCN and PPO. Its three recipes compare random
+initialization, a fixed frozen trained-policy parent, and a matched warm-start
+treatment with GAE lambda one and delivery bonus zero. All use identical
+20-epoch BC followed by on-policy PPO. The last treatment combines two changes;
+its earlier matched warm-start screen averaged 36.55% paired excess versus
+40.90% for its control. This motivates a new experiment, not an assumed gain. Gamma is one, the operating-hours weight is 40,
+and nonlinear messages, action/entity links and the exact capacity restriction
+are enabled. No learned graph layers are frozen. Deployment uses the neural
+policy and declared feasibility restrictions, with no ALNS action selector.
+
+The train-only expert archive has 4,007 successful episodes from 4,096 cases
+(seeds 600,000 through 604,095), yielding 183,697 decision labels. The BC split
+is by whole episode; its normalization sees only the BC training portion
+(in addition to previously acquired training statistics for warm starts).
+All warm-start seeds use one seed-zero parent, so their variability is
+conditional on that parent. The fresh arm varies the full model initialization.
+All 183,697 expert labels survive the conservative exact-capacity remasking;
+3,363 other candidate rows are removed. Float32 boundary uncertainty retains
+actions rather than rejecting feasible expert decisions. The teacher and mask
+archives are pinned by SHA-256. No validation/test cases enter this dataset.
+
+The 1M evaluation explicitly compares BC-only, selection-best PPO and final
+PPO policies on the same development cases with three training seeds per
+recipe. This measures whether PPO improves or damages its initialization.
+Its stage driver requires all nine runs to have completed at least 1M decisions
+before scoring. Final selection remains the separate disjoint 512-case bank;
+the locked 1,000-case test still requires both goal metrics and full independent
+reference coverage. Seven cohorts are registered, one is screened out, and the
+six active cohorts require at most 30 final-stage training allocations.
+
+The long-running legacy arrays failed while saving checkpoints around 02:20.
+No specific storage cause was established. Atomic compressed checkpoint I/O
+was introduced through minimal pinned recovery sources, preserving all
+physical transitions, encoder mathematics and optimizer updates. The audit
+validated 55 full states and identified one missing full checkpoint; that
+original seed repeats BC initialization. One corrupt selection-policy file
+was archived and its restored current policy is re-evaluated before learning.
+A real saved-state round trip preserves model, optimizer, simulator and RNG
+values. Live post-resumption files for all ten capacity policies were CRC
+checked and loaded after each advanced by at least 102,400 decisions.
+
+Evidence: `recovery_20261019/checkpoint_audit.json`,
+`recovery_20261019/live_checkpoint_audit.json`,
+`intermediate_20261019_1020/`, and
+`ca10t3d_large_expert_v14/input_preflight.json` under
+`results/california_graphppo/`.
+
+
+### Initial larger-data schedule and mask availability audit
+
+The original six larger-data runs remain in array 28279916. Three additional
+matched cost/credit-assignment runs have disjoint output directories and run
+in supplementary array 28280299 (two packed allocations). Their union uses
+five allocations; the five legacy cohorts use at most 25, giving a maximum
+of 30 training allocations. The first six run definitions were preserved.
+Both arrays must finish before CPU comparison 28280300; coordinator 28280303
+then selects at most two recipes for promotion. Superseded pending CPU
+coordinators were cancelled at zero runtime; no GPU training was restarted.
+
+Observed resumed training throughput is approximately 200–310 decisions/s
+per run, depending on formulation and validation overhead. Future submissions
+request 4 hours for 1M stages, 8 hours for 4M stages and 12 hours for 12M stages,
+with complete-checkpoint resumption after clean early exits. The scheduler
+denied a request to shorten the already pending initial array, so those
+existing allocations retain their original 12-hour requests.
+
+CPU audit 28280487 measures completion-only, relaxed-capacity and exact-capacity
+mask availability along new ALNS/CP-SAT planned-reference executions on all
+128 opened development scenarios. Reference choices are executed unchanged;
+the masks are queried for diagnosis. Initial physical descriptors must match
+the cached reference cases. This checks whether efficient observed routes
+remain expressible under the policy restrictions. These are newly solved
+routes, not exact replays of the earlier time-limited solver outputs. The
+comparison does not establish a restricted optimum or alter the BKS pool.
+
+
+The reference-mask audit completed successfully in 7m41s. Both newly solved
+reference methods completed 126/128 cases, with mean successful operating costs
+111.99 hours (ALNS) and 118.68 hours (CP-SAT). Initial physical descriptors
+match the cached scenarios. Completion-only, relaxed-capacity and exact-capacity
+masks each rejected **zero actions across 252 successful routes and 11,920
+decisions**. Combining the two methods gives an observed admissible successful
+route on all 128 cases. Selecting the cheapest successful route separately for
+each case averages 0.35% excess to the cached six-reference BKS, with paired
+bootstrap interval [-0.61%, 1.29%]. This oracle reference selection is a route
+availability result, not learned-policy performance, an optimality bound, or
+a claim that a single online policy attains those costs. The cached BKS pool
+is unchanged. On this development bank, efficient complete routes are
+expressible under the current masks; this supports prioritizing the new
+initialization and credit-assignment experiments over further mask changes.
+The raw report and independent reference-pool comparison are under
+`reference_mask_audit_20261019/`.
+
+
+All nine larger-data runtime configurations have been inspected. They use
+`hetero_graph` / `complete_gcn`, 16 environments with seven rollout workers,
+nonlinear messages, entity links, the exact capacity mask, gamma one,
+operating-time coefficient 40, and whole-episode BC holdout. The cost/credit
+treatment resolves delivery bonus zero and GAE lambda one; its control resolves
+500 and 0.95. Fresh and warm initializations match the registered recipes.
+`ca10t3d_large_expert_v14/effective_settings_audit.json` records the actual
+settings. Thirty training allocations are now running, including all five
+allocations for the expanded-data study. This establishes startup, not quality.

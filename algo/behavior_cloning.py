@@ -22,6 +22,8 @@ from torch import nn
 
 from algo.canonical_policy import CanonicalActorCritic
 from EVRoutingEnv.state.action_mask import policy_action_mask
+from EVRoutingEnv.state.features import GLOBAL_FEATURES
+from algo.canonical_state import flat_observation_slices
 
 
 # Chunk size for streaming the archive across the CPU/accelerator boundary.
@@ -151,6 +153,7 @@ def pretrain_policy(
     learning_rate: float = 1e-3,
     device: torch.device | str = "cpu",
     validation_fraction: float = 0.1,
+    validation_by_episode: bool = False,
     progress=None,
 ) -> list[dict]:
     """Fit the policy's action distribution to the demonstrator by cross-entropy."""
@@ -162,13 +165,32 @@ def pretrain_policy(
     observations, actions, masks = dataset.as_tensors("cpu")
 
     count = observations.shape[0]
-    for start in range(0, count, _OBSERVE_CHUNK):
-        policy.observe(observations[start : start + _OBSERVE_CHUNK].to(device))
-
     generator = torch.Generator().manual_seed(0)
-    permutation = torch.randperm(count, generator=generator)
-    split = max(1, int(count * (1.0 - validation_fraction)))
-    train_index, holdout_index = permutation[:split], permutation[split:]
+    split_metadata = {"holdout_unit": "transition"}
+    if validation_by_episode:
+        layout = flat_observation_slices(policy.config.shape)
+        column = layout["global_features"].start + GLOBAL_FEATURES.index("episode_steps")
+        starts = observations[:, column] == 0
+        if not bool(starts[0]) or int(starts.sum()) < 2:
+            raise ValueError("whole-episode holdout requires complete demonstration episodes")
+        episode_ids = starts.long().cumsum(0) - 1
+        episodes = int(starts.sum())
+        permutation = torch.randperm(episodes, generator=generator)
+        split = max(1, min(episodes - 1, int(episodes * (1.0 - validation_fraction))))
+        training_episodes = torch.zeros(episodes, dtype=torch.bool)
+        training_episodes[permutation[:split]] = True
+        is_training = training_episodes[episode_ids]
+        train_index = torch.nonzero(is_training).flatten()
+        holdout_index = torch.nonzero(~is_training).flatten()
+        split_metadata = {"holdout_unit": "episode", "train_episodes": split, "holdout_episodes": episodes - split}
+        for start in range(0, train_index.numel(), _OBSERVE_CHUNK):
+            policy.observe(observations[train_index[start:start + _OBSERVE_CHUNK]].to(device))
+    else:
+        for start in range(0, count, _OBSERVE_CHUNK):
+            policy.observe(observations[start : start + _OBSERVE_CHUNK].to(device))
+        permutation = torch.randperm(count, generator=generator)
+        split = max(1, int(count * (1.0 - validation_fraction)))
+        train_index, holdout_index = permutation[:split], permutation[split:]
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=learning_rate)
     history: list[dict] = []
@@ -195,6 +217,9 @@ def pretrain_policy(
         record = {
             "epoch": epoch + 1,
             "train_loss": float(np.mean(losses)) if losses else float("nan"),
+            **split_metadata,
+            "train_transitions": train_index.numel(),
+            "holdout_transitions": holdout_index.numel(),
         }
         if holdout_index.numel() >= 2:
             policy.eval()

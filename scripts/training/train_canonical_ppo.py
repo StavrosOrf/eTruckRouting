@@ -223,6 +223,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--pretrain-epochs", type=int, default=12)
     parser.add_argument("--pretrain-learning-rate", type=float, default=1e-3)
+    parser.add_argument("--pretrain-holdout-by-episode", action="store_true")
+    parser.add_argument("--demonstration-masks", default=None)
+    parser.add_argument("--save-pretrained", action="store_true")
     parser.add_argument("--expert-coefficient", type=float, default=0.0)
     parser.add_argument("--expert-batch-size", type=int, default=128)
     parser.add_argument("--expert-decay-timesteps", type=int, default=0)
@@ -407,6 +410,7 @@ def main() -> None:
         # optimizer, return scaler, interaction count and curriculum restart.
         from algo.canonical_policy import CanonicalActorCritic
 
+        initialization_rng = (torch.get_rng_state(), torch.cuda.get_rng_state_all() if trainer.device.type == "cuda" else None)
         source = CanonicalActorCritic.load(arguments.init_from, prefix="best")
         if source.config.shape.flat_size != policy_config.shape.flat_size:
             raise SystemExit(
@@ -414,12 +418,15 @@ def main() -> None:
             )
         trainer.policy.load_state_dict(source.state_dict())
         trainer.policy.to(trainer.device)
-        if arguments.reset_value_head:
-            for module in trainer.policy.value_head.modules():
-                if isinstance(module, torch.nn.Linear):
-                    module.reset_parameters()
-            print("reset value head for fresh-return optimization", flush=True)
+        torch.set_rng_state(initialization_rng[0])
+        if initialization_rng[1] is not None:
+            torch.cuda.set_rng_state_all(initialization_rng[1])
         print(f"initialised weights from {arguments.init_from}", flush=True)
+    if arguments.reset_value_head and not arguments.resume:
+        for module in trainer.policy.value_head.modules():
+            if isinstance(module, torch.nn.Linear):
+                module.reset_parameters()
+        print("reset value head for fresh-return optimization", flush=True)
 
     validation_env = factory()
     validation_seeds = split_seeds("validation", arguments.validation_scenarios)
@@ -506,12 +513,19 @@ def main() -> None:
                 flush=True,
             )
         if len(dataset) > 0:
+            if arguments.demonstration_masks:
+                masks = np.load(arguments.demonstration_masks)
+                targets = np.asarray(dataset.actions, dtype=int)
+                if masks.shape != (len(dataset), policy_config.max_actions) or masks.dtype != np.bool_ or not masks[np.arange(len(dataset)), targets].all():
+                    raise ValueError("demonstration mask override is incompatible or rejects an expert action")
+                dataset.masks = list(masks)
             pretrain_history = pretrain_policy(
                 trainer.policy,
                 dataset,
                 epochs=arguments.pretrain_epochs,
                 learning_rate=arguments.pretrain_learning_rate,
                 device=trainer.device,
+                validation_by_episode=arguments.pretrain_holdout_by_episode,
                 progress=lambda record: print(
                     f"  bc epoch {record['epoch']}: loss={record['train_loss']:.4f} "
                     f"holdout={record.get('holdout_loss', float('nan')):.4f} "
@@ -522,6 +536,8 @@ def main() -> None:
             (destination / "pretrain_history.json").write_text(
                 json.dumps(pretrain_history, indent=2, sort_keys=True)
             )
+            if arguments.save_pretrained:
+                trainer.save(destination, prefix="pretrained")
         else:
             print(
                 "  no successful demonstrations; skipping behaviour cloning", flush=True
@@ -623,6 +639,7 @@ def main() -> None:
             print(f"retaining {len(dataset)} expert transitions during PPO", flush=True)
         if pretrain_history:
             score_validation(0)
+            checkpoint()
         history = trainer.learn(progress)
         checkpoint()
         if not stop_requested:

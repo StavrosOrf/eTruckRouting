@@ -121,6 +121,28 @@ def prepare(destination: Path, arm_set="base"):
                 ("bc_progress", common),
                 ("bc_links_progress", [*common, "--action-entity-links"]),
             ]
+    if arm_set == "large_expert":
+        common = [
+            "--completion-shield", "--completion-capacity-lookahead",
+            "--completion-capacity-exact-lookahead", "--progress-action-features",
+            "--action-entity-links", "--nonlinear-edge-messages",
+            "--demonstrations", str(destination / "demonstrations/alns_planned.npz"),
+            "--demonstration-masks", str(destination / "demonstrations/exact_masks.npy"),
+            "--pretrain-epochs", "20", "--pretrain-learning-rate", "0.0003",
+            "--pretrain-holdout-by-episode", "--save-pretrained", "--reset-value-head",
+            "--learning-rate", "0.0001", "--entropy-coefficient", "0.005",
+            "--gamma", "1.0", "--time-multiplier", "40", "--success-bonus", "24000",
+            "--incompletion-penalty", "32000", "--stranding-penalty", "16000",
+        ]
+        parent = ROOT / "results/california_graphppo/intermediate_20261019_1020/checkpoints/bc_nonlinear_cost40_s0"
+        arms = [
+            ("large_fresh_cost40", common),
+            ("large_warm_cost40", [*common, "--init-from", str(parent)]),
+            (
+                "large_warm_mc_cost40",
+                [*common, "--init-from", str(parent), "--gae-lambda", "1.0", "--delivery-bonus", "0"],
+            ),
+        ]
     runs = [
         {"name": f"{name}_s{seed}", "seed": seed, "flags": flags}
         for seed in range(3)
@@ -214,7 +236,7 @@ def prepare(destination: Path, arm_set="base"):
             "total_customers": 30,
             "training": {
                 "schedule_timesteps": 12_000_000,
-                "imitation": arm_set in ("imitation", "capacity", "objective", "retention"),
+                "imitation": arm_set in ("imitation", "capacity", "objective", "retention", "large_expert"),
             },
         },
     )
@@ -353,7 +375,7 @@ def train_bundle(destination, bundle, budget, width):
         codes.append(child.wait())
         handle.close()
     write_json(
-        destination / "logs" / f"bundle_{bundle}_{budget}.json",
+        destination / "logs" / f"{manifest.get('bundle_record_prefix', 'bundle')}_{bundle}_{budget}.json",
         {
             "exit_codes": codes,
             "stop_signal": stop,
@@ -407,11 +429,16 @@ def submit(destination, bundles, budget):
     if matching:
         raise RuntimeError(f"campaign already has active training jobs: {matching}")
     wrapper = ROOT / "scripts/campaigns/california_graphppo.sbatch"
+    # Smaller stages fit shorter backfill windows. Current 10T30D runs sustain
+    # about 200--300 decisions/s including routine validation; retain margin
+    # for BC, checkpoint I/O, and slower instances. Signal exits still resume.
+    time_limit = "04:00:00" if budget <= 1_000_000 else "08:00:00" if budget <= 4_000_000 else "12:00:00"
     command = [
         "sbatch",
         "--parsable",
         "--job-name",
         name,
+        f"--time={time_limit}",
         f"--array=0-{bundles - 1}%{min(30, bundles)}",
         f"--output={destination}/logs/slurm-%A_%a.out",
         str(wrapper),
@@ -431,7 +458,7 @@ def submit(destination, bundles, budget):
     job = subprocess.check_output(command, text=True).strip()
     with (destination / "submissions.jsonl").open("a") as handle:
         handle.write(
-            json.dumps({"job": job, "budget": budget, "bundles": bundles, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
+            json.dumps({"job": job, "budget": budget, "bundles": bundles, "time_limit": time_limit, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
         )
     print(job, flush=True)
 
@@ -447,7 +474,7 @@ def main():
     parser.add_argument("--width", type=int, default=2)
     parser.add_argument(
         "--arm-set",
-        choices=("base", "progress", "imitation", "capacity", "objective", "retention", "cost_finetune"),
+        choices=("base", "progress", "imitation", "capacity", "objective", "retention", "cost_finetune", "large_expert"),
         default="base",
     )
     parser.add_argument("--budget", type=int, default=65536)

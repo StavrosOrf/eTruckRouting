@@ -1,77 +1,102 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-18 around 22:40 Amsterdam time. Earlier observations below are historical.
+Updated 2026-10-19T12:22:29.178304+02:00 (Amsterdam time). Earlier observations below are historical.
 
-The campaign is **running**. Its target is: at least 99% successful completion and at most 5% mean paired excess operating hours to independently built best-known feasible references, evaluated on 1,000 locked scenarios with five training seeds. The goal has not been achieved or verified yet.
+The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
 
-## Running experiments
+## Current training
 
-| Cohort | Training allocation | Runs / A100 jobs | Current target |
+| Cohort | Array | Running / queued allocations | Target decisions per run |
 | --- | --- | --- | --- |
-| Original finalists | 28265867 | 10 / 5 running | 12M decisions; five training seeds per recipe |
-| Progress-feature finalists | 28266976 | 10 / 5 running | 12M decisions; five training seeds per recipe |
-| Imitation-assisted finalists | 28267420 | 10 / 5 running | 12M decisions; five training seeds per recipe |
-| Capacity mask / nonlinear messages | 28267125 | 6 / 3 running | 4M decisions per run |
-| Undiscounted / cost-emphasis objectives | 28267175 | 6 / 3 running | 4M decisions per run |
-| Retained expert loss, with matched PPO control | 28267391 | 9 / 5 running | BC then 1M decisions; top two recipes eligible for promotion |
-| Cost-focused warm start, with matched control | 28267725 | 6 / 3 running | Additional 1M decisions from frozen trained parents; exploratory screening |
+| Capacity / graph messages | 28279539 | 5 / 0 | 12M; five seeds per recipe |
+| Imitation + progress | 28279541 | 5 / 0 | 12M; five seeds per recipe |
+| Undiscounted / cost emphasis | 28279544 | 5 / 0 | 12M; five seeds per recipe |
+| Progress features | 28279546 | 5 / 0 | 12M; five seeds per recipe |
+| Original finalists | 28279550 | 5 / 0 | 12M; five seeds per recipe |
+| Larger expert dataset | 28279916 + 28280299 | 5 / 0 | 1M initially; gated 4M / 12M |
 
-The goal tracker is active. There are 29 training allocations in this snapshot.
-Six cohorts with at most two five-seed finalists each require at most 30 packed
-training allocations. The retention cohort uses the same graph encoder,
-complete variable-action GCN, simulator, mask and train-only demonstration bank
-as the progress/imitation formulation. Its treatment is a separate expert
-cross-entropy term during PPO, with initial weight 0, 0.1 or 1 and linear decay
-to zero at 12M decisions. It is an ablation, not a demonstrated improvement.
+Observed training allocations: **30 total**, including **30 running** and **0 pending**. Six active cohorts need at most 30 allocations at their final stage. Each A100 allocation packs up to two runs; coordinators and CPU evaluation jobs are not training allocations.
 
-The three extra warm-start screening allocations overlap at most 26 legacy
-allocations. Capacity/objective promotions are gated behind this screen, keeping
-the current bound at 29; after it ends the six legacy cohorts again need at
-most 30. This screening stage has no automatic long-run promotion. It compares
-the current delivery reward / GAE settings against delivery bonus zero and GAE
-lambda one, with gamma one in both, and retains the same learned GraphPPO
-architecture. All six runtime configurations and initial updates were inspected;
-their independent quality results are pending.
+## Overnight checkpoint recovery
 
-The exact packing mask comparison completed: 98.44% completion (378/384 pairs)
-versus 97.92% without it, with no lost successes and unchanged costs on common
-successes. Mean paired excess remains 38.66%, and neither target is met. Its
-128 feasible witness routes were preserved. An additional work-escape reserve
-rule produced no further completion gains and remains experimental.
+Previous long-running arrays failed around 02:20 on October 19 while PyTorch wrote checkpoints. The specific filesystem cause was not established. Recovery audited 55 valid full training states and one missing state. Five cohorts resume model, optimizer, simulator and RNG state; the one run without a full checkpoint repeats its original BC initialization. One damaged selection-policy file was archived, and that run re-evaluates its restored policy before further optimization.
 
-## Current independent development-validation evidence
+Full states now use compressed, flushed atomic writes with explicit I/O errors and bounded retries; inference weights remain ordinary Torch files written atomically. A real checkpoint compression round trip preserved model, optimizer, simulator and RNG values while reducing 193 MiB to 107 MiB. Running recovery logs show restored interaction counts and further updates. The separate live checkpoint audit passed for all ten capacity policies after each advanced by at least 102,400 decisions; their compressed files passed archive CRC checks and full-state loading. Artifacts are under `recovery_20261019/`.
 
-CPU array **28267364** and report **28267365** completed successfully. Thirty
-frozen checkpoints (ten variants, three seeds each) were evaluated on the same
-128 scenarios at validation offset 2,000 and compared against six cached
-independent references. This bank is now reused development validation. The
-512-case final validation bank and locked 1,000-case test remain unopened.
+## Latest independent development comparison
 
-| Variant | Mean completion | Mean successful operating hours | Mean paired BKS excess |
+CPU jobs 28278836 and 28278837 completed a 42-policy comparison: 14 recipes, three training seeds each, 128 shared scenarios at validation offset 2,000, and six cached independent reference methods. The bank is reused development validation. Training budgets differ between recipes. Costs exclude failed episodes; completion statistics retain every failure.
+
+| Recipe | Mean completion | Mean successful operating hours | Mean paired BKS excess |
 | --- | --- | --- | --- |
-| Imitation + progress | 97.92% | 152.49 | 38.57% |
-| Imitation + progress + links | 95.83% | 160.87 | 45.16% |
-| Original shield | 97.40% | 157.54 | 45.60% |
-| Revised shield | 96.61% | 159.59 | 46.52% |
-| Nonlinear + gamma 1 + cost emphasis | 97.14% | 163.42 | 47.26% |
-| Capacity + nonlinear graph messages | 96.88% | 164.13 | 49.98% |
-| Progress + links + shield | 97.92% | 169.00 | 51.45% |
-| Capacity + links | 93.23% | 161.69 | 51.92% |
-| Nonlinear + gamma 1 | 96.35% | 164.67 | 52.40% |
-| Original links + shield | 97.14% | 170.21 | 53.61% |
+| bc_nonlinear_cost40 | 97.92% | 145.98 | 32.50% |
+| bc_progress | 98.44% | 149.94 | 35.78% |
+| warm_cost_mc | 97.66% | 150.98 | 36.55% |
+| bc_retain01 | 88.80% | 152.46 | 37.38% |
+| bc_links_progress | 97.40% | 152.40 | 37.65% |
+| v2_shield | 95.31% | 154.28 | 39.52% |
+| shield | 96.61% | 153.34 | 40.32% |
+| warm_control | 97.66% | 154.06 | 40.90% |
+| links_shield | 97.40% | 156.12 | 41.26% |
+| bc_nonlinear_gamma1 | 97.66% | 156.84 | 42.03% |
+| bc_capacity_nonlinear_links | 97.92% | 156.53 | 42.75% |
+| bc_capacity_links | 97.40% | 157.53 | 42.80% |
+| progress_links_shield | 97.66% | 161.43 | 45.42% |
+| bc_gamma1_control | 96.61% | 157.73 | 46.73% |
 
-All values average per-seed results; cost excludes failed episodes, which are
-retained in success statistics and failure reports. The leading recipe's
-hierarchical bootstrap interval for mean excess is [35.49%, 41.72%]. Its pooled
-successful cases use 6.77 trucks versus references' 4.26; travel contributes
-37.31 of 38.57 percentage points of cost excess. Neither target is met. The
-137-hour scores on the reused 64-case checkpoint-selection bank should not be
-interpreted as independent performance.
+No recipe satisfies both targets. Cost emphasis currently has the lowest cost among recipes completing over 95% of cases: 97.92% completion, 145.98 hours and 32.50% mean paired excess. Travel still accounts for about 31.25 percentage points of its pooled successful-pair excess. The stronger retained-expert-loss recipes lose reliability; the retention cohort was screened out during its interrupted 4M stage and is not resumed. This is an early stopping decision, not a convergence result.
 
-Artifacts: `results/california_graphppo/intermediate_20261018_2200/` contains
-frozen weights, input hashes, reference rows, episode results, independent
-paired report, training-seed intervals and cost-component breakdown. CPU job
-**28267429** replays selected failures with full action traces.
+Artifacts: `results/california_graphppo/intermediate_20261019_1020/` contains frozen policies, scenario results, provenance hashes, independent paired costs, training-seed uncertainty and cost components.
+
+## Larger train-only expert experiment
+
+New cohort `ca10t3d_large_expert_v14` compares fresh initialization, a fixed trained-policy warm start, and a matched warm-start treatment with GAE lambda one and delivery bonus zero. All three use 20 BC epochs followed by end-to-end PPO. The third treatment is motivated by the earlier matched cost-fine-tuning screen (36.55% versus 40.90% excess); it combines two changes and does not isolate their individual effects. It retains the heterogeneous graph encoder and complete variable-action GCN, nonlinear edge messages, action-to-entity links, gamma one and cost-emphasis rewards. The exact capacity restriction is used consistently in BC and PPO; additional work-escape restrictions remain disabled.
+
+The verified archive contains 183,697 decisions from 4,007 successful episodes among 4,096 training scenarios, with train seeds 600,000–604,095. Whole episodes are assigned to the BC holdout. BC normalization observes the training portion; warm starts also retain previously acquired training statistics. The archive is eight times the earlier teacher bank by episode count. Remasking pruned 3,363 candidate rows and zero expert labels. All 34 model/state/utils files match the anchored benchmark source; the YAML physics is unchanged.
+
+All warm-start seeds use the same frozen seed-zero parent. Their seed variability is conditional on that parent; the fresh-initialization arm varies all initial model weights. Every graph and action-network parameter remains trainable. No solver is invoked to select deployed neural-policy actions.
+
+Initial array **28279916** retains its original six run definitions in three allocations. Supplementary array **28280299** adds three disjoint runs in two allocations, giving nine runs and five allocations in this cohort. CPU job **28280300** waits for both arrays and compares BC-only, selection-best PPO and final PPO checkpoints on the opened 128-case development bank. Coordinator **28280303** waits for that report before the standard validation-gated 4M promotion, which retains at most two recipes. The original pending CPU jobs (28279949 / 28279953) were cancelled with zero runtime when this treatment was registered; no GPU training was restarted. A zero-runtime premature submission (28279715) was cancelled before input setup completed; it produced no training artifacts.
+
+## Larger-data startup and BC-only readout
+
+The following 64-case results are reused checkpoint-selection observations. They are not the independent 128-case development comparison. Operating hours include successful episodes only.
+
+| Run | BC epochs | PPO decisions logged | Initial completion | Initial operating hours |
+| --- | --- | --- | --- | --- |
+| large_fresh_cost40_s0 | 20/20 | 358,400 | 93.75% | 126.40 |
+| large_warm_cost40_s0 | 20/20 | 358,400 | 95.31% | 120.87 |
+| large_fresh_cost40_s1 | 20/20 | 358,400 | 93.75% | 124.66 |
+| large_warm_cost40_s1 | 20/20 | 368,640 | 96.88% | 122.19 |
+| large_fresh_cost40_s2 | 20/20 | 286,720 | 96.88% | 125.03 |
+| large_warm_cost40_s2 | 20/20 | 307,200 | 95.31% | 120.04 |
+| large_warm_mc_cost40_s0 | 20/20 | 348,160 | 96.88% | 121.66 |
+| large_warm_mc_cost40_s1 | 20/20 | 348,160 | 98.44% | 124.29 |
+| large_warm_mc_cost40_s2 | 20/20 | 563,200 | 96.88% | 124.13 |
+
+Early evaluation monitor: 28280824; state: `completed`. It uses one CPU while awaiting the nine immutable BC-only policies, then submits one packed CPU evaluation on 128 opened development cases. The 1M comparison reuses those results only after checking policy weights, configuration, source, masks and scenario coverage; otherwise it evaluates BC-only policies itself.
+
+Early BC-only scoring job: **28281262**.
+
+| BC-only recipe | Mean completion | Mean successful operating hours | Mean paired BKS excess |
+| --- | --- | --- | --- |
+| bc0_large_fresh_cost40 | 92.97% | 141.29 | 28.00% |
+| bc0_large_warm_cost40 | 90.62% | 136.21 | 25.56% |
+| bc0_large_warm_mc_cost40 | 91.67% | 139.41 | 27.29% |
+
+These are BC-only policies, before any PPO update. Warm starts share one pretrained parent; seed variability is conditional on that parent. Final validation and test remain unopened.
+
+## Completed reference-mask availability audit
+
+CPU audit **28280487** completed 256 new independent solver executions on the same opened 128 development scenarios. ALNS and CP-SAT each completed 126/128 cases, with successful operating-hour means of 111.99 and 118.68 respectively. Every initial physical descriptor matched the cached cases. None of the three queried masks (completion only, relaxed capacity, exact capacity) rejected any of the **11,920 actions in 252 successful reference routes**. The references executed their ordinary actions without mask repair.
+
+The combined new reference pool contains a mask-admissible successful route on all 128 cases. Selecting the cheapest successful reference separately for each case averages 0.35% excess over the cached six-reference BKS (paired bootstrap interval [-0.61%, 1.29%]). This is oracle reference-route selection and establishes observed route availability, not a deployed policy result or an optimality certificate. It supports concentrating the next experiments on learning those efficient choices. The original BKS pool was not revised. Artifacts are in `results/california_graphppo/reference_mask_audit_20261019/`.
+
+## Final evaluation protocol
+
+All seven registered cohorts share one final selection; retention is explicitly screened out, leaving six active cohorts and a maximum of 30 final-stage training allocations. The evaluator supports all trained mask flags and normalizes only four declared policy restrictions; physical/configuration and source hashes are checked. The disjoint 512-case final validation bank and locked 1,000-case test remain unopened. The test requires both target metrics and complete independent feasible-reference coverage on validation.
+
+Current machine-readable observations: `results/california_graphppo/status.json`.
 
 ## Earlier campaign observations
 

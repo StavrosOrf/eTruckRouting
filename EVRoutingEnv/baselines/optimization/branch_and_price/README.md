@@ -59,6 +59,35 @@ sbatch --array=0-19 scripts/slurm/bnp_array.sbatch 50 100 test results/branch_an
 python scripts/analysis/validate_branch_and_price.py --out results/branch_and_price/validation.json
 ```
 
+### Parallel subtrees (large instances)
+
+One process explores the tree serially, and at 50 x 100 a node takes a few
+minutes. A split search spreads the tree over Slurm tasks:
+
+```bash
+OUT=results/branch_and_price/ca_50x100_split
+# 1. root, then branching until 32 nodes are open; writes OUT/split_1.json
+sbatch scripts/slurm/bnp_array.sbatch 50 100 seeds=1 $OUT 84000 EVRoutingEnv/config_files/config_joint.yaml \
+    --alns-seconds 120 --split-nodes 32 --solver-arg lp_solver highs
+# 2. one task per open node; all tasks run at once
+sbatch --array=0-31 scripts/slurm/bnp_subtree.sbatch $OUT 1 82800 --lns_time 300
+# 3. combine, at any time; writes OUT/seed_1.json after the nominal replay
+python -m scripts.evaluation.combine_bnp_subtrees --out $OUT --seed 1 --trucks 50 --customers 100
+```
+
+Each subtree task takes its node's branching restrictions as its root, then
+generates its own cuts and searches its subtree. Runs publish every incumbent
+to `OUT/incumbents_<seed>/incumbent_<tag>.json`, and before each node they
+adopt any better incumbent another run published. To seed the search with an
+incumbent found elsewhere, copy that run's certificate into that directory
+under an `incumbent_` name.
+
+The subtrees cover exactly what the split run left open, so the combined
+lower bound is the least subtree bound. A subtree with no result yet counts
+at the bound it was split with. A subtree that finishes proves that it holds
+nothing better than its final incumbent. The combined status is `OPTIMAL`
+once every subtree has finished and the bounds meet.
+
 In campaigns, method `bnp` (`run_canonical_campaign.build_policy`) builds
 `policy.BranchAndPricePolicy`; set `certificate_dir` to reuse offline
 certificates. The policy plays the planned steps and falls back to the greedy

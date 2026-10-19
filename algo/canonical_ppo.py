@@ -1096,13 +1096,15 @@ class CanonicalPPO:
             ],
             "metadata": metadata or {},
         }
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        torch.save(state, temporary)
-        temporary.replace(path)
+        from algo.checkpoint_io import save_torch_atomic
+
+        save_torch_atomic(state, path, compress=True)
 
     def load_training(self, path: str | Path) -> dict:
         # These contain Python simulator objects: load only our trusted files.
-        state = torch.load(path, map_location="cpu", weights_only=False)
+        from algo.checkpoint_io import load_trusted_training
+
+        state = load_trusted_training(path, map_location="cpu")
         if state["policy_config"] != asdict(self.policy_config):
             raise ValueError("checkpoint policy configuration differs")
         for key in (

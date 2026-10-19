@@ -148,7 +148,9 @@ class CanonicalPolicyConfig:
         )
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(asdict(self), indent=2, sort_keys=True))
+        from algo.checkpoint_io import write_text_atomic
+
+        write_text_atomic(json.dumps(asdict(self), indent=2, sort_keys=True), path)
 
     @classmethod
     def load(cls, path: str | Path) -> CanonicalPolicyConfig:
@@ -343,7 +345,9 @@ class CanonicalActorCritic(nn.Module):
     def save(self, directory: str | Path, prefix: str = "policy") -> None:
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        torch.save(self.state_dict(), directory / f"{prefix}.pt")
+        from algo.checkpoint_io import save_torch_atomic
+
+        save_torch_atomic(self.state_dict(), directory / f"{prefix}.pt")
         self.config.save(directory / f"{prefix}_config.json")
 
     @classmethod

@@ -80,7 +80,7 @@ bound. Nothing the solver returned was ever below a proven optimum.
 | 96 small instances (default, time-window, tight-window, slow-charging; 2-3 trucks, 4-7 customers), `validate_routingblocks_alns.py` | 1 worker, 15 s | all 96 reach the brute-force optimum |
 | 10 x 30, seeds 0 and 3 | 1 worker, about 15 s | optimum on all 6 solver seeds each |
 | 128 campaign scenarios, 10 x 30 (119 proven optimal, 9 not) | 1 worker, 30 s | 110 of 119 equal the optimum, worst miss 1.8%; 5 of the 9 unproven branch-and-price incumbents beaten; all 128 replay |
-| the same 9 misses | 4 workers, 60 s | 4 now reach the optimum, the rest are within 0.4% |
+| the same 9 misses | 4 workers, 60 s | 4 now reach the optimum, the rest are within 0.5% |
 | 20 x 50 (seed 0), optimum 132.2842 h (500 s in branch-and-price) | 4 workers, 60 s | optimum on 3 of 3 solver seeds |
 | 50 x 100 (seed 1); bound about 350.9 h, best branch-and-price incumbent 354.2 h | 16 workers, 600 s | 354.89 h (1.1% above the bound) |
 | 128 x 200 (seed 1); bound about 839.3 h | 16 workers, 1200 s of search | 859.49 h (2.4% above the bound) |
@@ -105,6 +105,8 @@ with `scripts/evaluation/solve_routingblocks.py ... --bound-from <bnp dir>` and
   set-partitioning columns are capped (about 40,000, chosen per customer by
   cost per customer served). An uncapped pool of 370,000 columns stalled the
   master for minutes.
-* A few 10 x 30 instances stay about 0.3% above the optimum however the
-  parameters are set, because the optimum uses a different route count than the
-  search settles on; the pool and extra workers recover some of them.
+* A few 10 x 30 instances stay 0.3-0.4% above the optimum however the
+  parameters are set. In one case the optimum uses a different route count (5
+  routes, one with two customers) than the fully loaded 4-route solution the
+  search settles on; forcing extra routes did not help, so it is left as is.
+  Extra workers and the pool recover some of them.

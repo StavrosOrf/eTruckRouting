@@ -99,6 +99,39 @@ the result. Reproduce the campaign row with
 `scripts/evaluation/solve_routingblocks.py ... --bound-from <bnp dir>` and
 `scripts/analysis/compare_routingblocks_bnp.py`.
 
+### Closing the gap on 50 x 100 and 128 x 200: warm-starting branch-and-price
+
+This baseline cannot certify optimality by itself. The intended path (see
+`../branch_and_price/README.md`) is to hand branch-and-price the RB plan as a
+warm start: `--warm-from` turns the plan's routes into customer sequences,
+which B&P completes with its own optimal charging and uses as an incumbent.
+This was verified to work end-to-end (schema match confirmed, a short smoke
+run accepted the RB plan as its objective exactly) and launched for real with
+HiGHS (`--solver-arg lp_solver highs`, so it uses no Gurobi session and cannot
+disturb the account's own running Gurobi solves):
+
+```bash
+python -m scripts.evaluation.solve_branch_and_price --trucks 50 --customers 100 --seeds 1 \
+    --time-limit 1800 --threads 8 --out results/branch_and_price/ca_50x100_rbwarm \
+    --warm-from <rb certificate> --solver-arg lp_solver highs
+python -m scripts.evaluation.solve_branch_and_price --trucks 128 --customers 200 --seeds 1 \
+    --time-limit 2400 --threads 8 --out results/branch_and_price/ca_128x200_rbwarm \
+    --warm-from <rb certificate> --solver-arg lp_solver highs
+```
+
+Both were submitted to Slurm (`cbuild`, 8 threads) but sat queued behind the
+account's own large concurrent branch-and-price campaign (13+ jobs, one
+running 20+ hours, roughly 870 CPUs in flight) without a resource estimate; a
+20-second smoke run confirmed the pipeline (CLI, warm-start parsing, HiGHS)
+works and reproduces the RB objective exactly, but 20 s is far too short for a
+real root bound. Based on the main branch-and-price README's own logged
+history on these sizes (50 x 100 root bound still 0.07% from the incumbent
+after 100+ minutes; 128 x 200's first exact pricing round alone exceeding 20
+minutes), a bounded run in one session is unlikely to reach `OPTIMAL` on
+128 x 200 even with the warm start, though it should tighten the gap. Check
+`results/branch_and_price/ca_{50x100,128x200}_rbwarm/seed_1.json` for the
+outcome once the jobs run.
+
 ### Tuning notes
 
 * Local search is what matters. Running it on nearly every iteration

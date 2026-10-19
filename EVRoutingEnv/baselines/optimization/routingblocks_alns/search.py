@@ -58,8 +58,8 @@ class SearchParameters:
     penalty_period: int = 50
     initial_penalty: float = 100.0
     target_feasibility: float = 0.9
-    start_temperature: float = 0.01  # fraction of the incumbent cost
-    end_temperature: float = 0.0002
+    start_temperature: float = 0.5  # annealing temperature, in units of the incumbent's cost per customer
+    end_temperature: float = 0.02
     spare_routes: int = 2
     pool: bool = True
     pool_interval_seconds: float = 120.0
@@ -392,7 +392,7 @@ class Search:
                 self.progress = (progress_at_start or 0.0) + progress_span * (time.time() - started) / max(seconds, 1e-9)
             self.iterations += 1
             fraction = min(1.0, self.progress)
-            temperature = self.best_cost * (p.start_temperature * (1 - fraction) + p.end_temperature * fraction)
+            temperature = self.best_cost / self.n * (p.start_temperature * (1 - fraction) + p.end_temperature * fraction)
 
             spare = max(0, min(p.spare_routes, self.fleet - len(self.current_routes)))
             solution = self.to_rb(self.current_routes, spare)

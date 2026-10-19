@@ -8,6 +8,7 @@ reuses.  Only ``train`` seeds are ever rolled.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -46,6 +47,20 @@ def build_demonstrator(name: str):
         return RollingHorizonMPCPolicy(
             MPCParameters(
                 horizon=6, branching=2, energy_safety_factor=1.15, target_soc=0.8
+            )
+        )
+    if name == "alns_planned":
+        from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, ALNSPolicy
+
+        return ALNSPolicy(
+            ALNSParameters(
+                iterations=20000,
+                time_limit_seconds=10,
+                average_charging_power_kw=135,
+                energy_safety_factor=1.2,
+                objective="total_time",
+                replan_on_completion=False,
+                respect_planned_routes=True,
             )
         )
     if name == "ensemble":
@@ -103,7 +118,9 @@ def main() -> None:
         "--config", default="EVRoutingEnv/config_files/config_joint.yaml"
     )
     parser.add_argument(
-        "--demonstrator", default="mpc", choices=["mpc", "heuristic", "ensemble"]
+        "--demonstrator",
+        default="mpc",
+        choices=["mpc", "heuristic", "ensemble", "alns_planned"],
     )
     parser.add_argument("--scenarios", type=int, default=3000)
     parser.add_argument("--seed-offset", type=int, default=500_000)
@@ -161,6 +178,12 @@ def main() -> None:
         "config": arguments.config,
         "split": "train",
         "scenarios": len(seeds),
+        "seed_offset": arguments.seed_offset,
+        "scenario_seeds": seeds,
+        "config_sha256": hashlib.sha256(
+            Path(arguments.config).read_bytes()
+        ).hexdigest(),
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "episodes": episodes,
         "successful_episodes": successes,
         "transitions": int(actions.shape[0]),

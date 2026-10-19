@@ -52,6 +52,7 @@ class ExactPlannerParameters:
     average_charging_power_kw: float = 300.0
     energy_safety_factor: float = 1.15
     replan_on_completion: bool = True
+    respect_planned_routes: bool = False
     # ``makespan`` minimizes the longest single route; ``total_time`` minimizes
     # the sum over trucks. They are different plans: makespan balances the two
     # routes even when that costs fleet hours. Whichever the campaign reports as
@@ -82,6 +83,28 @@ class PlanSolution:
     @property
     def proven_optimal(self) -> bool:
         return self.status == "OPTIMAL"
+
+
+def planned_route_can_return(env, plan: PlanSolution, truck) -> bool:
+    """Finish an empty/exhausted route without taking another truck's work.
+
+    An incomplete plan or an unserviceable task still on this route retains
+    the existing recovery behavior. This is an execution option, not a bound.
+    """
+    if not plan.routes:
+        return False
+    covered = {node for route in plan.routes.values() for node in route}
+    own_route = set(plan.routes.get(truck.truck_id, ()))
+    for task in env.task_registry.tasks():
+        if task.is_served:
+            continue
+        if task.node_id not in covered:
+            return False
+        if task.node_id in own_route and (
+            task.claimed_by is None or task.claimed_by == truck.truck_id
+        ):
+            return False
+    return True
 
 
 def solve_nominal_plan(
@@ -335,6 +358,12 @@ class MathematicalProgrammingPolicy:
 
         self._decisions += 1
         goal = self._next_planned_stop(env, plan, truck)
+        if (
+            goal is None
+            and self.parameters.respect_planned_routes
+            and planned_route_can_return(env, plan, truck)
+        ):
+            goal = int(env.joint_instance.depot_node)
         if goal is None:
             # The plan has nothing left for this truck, so the execution layer
             # picks the stop instead. Counting this is what keeps "executed the

@@ -8,6 +8,7 @@ construction.  Only the policy architecture differs between runs.
 from __future__ import annotations
 
 import random
+import math
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -47,6 +48,10 @@ class PPOConfig:
     normalize_reward: bool = True
     seed: int = 0
     schedule_timesteps: int | None = None
+    expert_coefficient: float = 0.0
+    expert_batch_size: int = 128
+    expert_decay_timesteps: int = 0
+    expert_archive_sha256: str | None = None
 
     def __post_init__(self) -> None:
         positive = (
@@ -67,6 +72,16 @@ class PPOConfig:
             raise ValueError("gae_lambda must lie in [0, 1]")
         if self.clip_range <= 0.0:
             raise ValueError("clip_range must be positive")
+        if not math.isfinite(self.expert_coefficient) or self.expert_coefficient < 0:
+            raise ValueError("expert_coefficient must be finite and nonnegative")
+        if self.expert_batch_size < 1 or self.expert_decay_timesteps < 0:
+            raise ValueError("expert batch size must be positive and decay nonnegative")
+        if self.expert_coefficient > 0 and (
+            self.expert_archive_sha256 is None
+            or len(self.expert_archive_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.expert_archive_sha256)
+        ):
+            raise ValueError("expert guidance requires a pinned demonstration archive")
 
     @property
     def batch_size(self) -> int:
@@ -343,6 +358,9 @@ class SyncCanonicalVecEnv:
     def state_dict(self) -> dict:
         return {"envs": self.envs, "position": self._seed_position}
 
+    def current_masks(self) -> np.ndarray:
+        return np.stack([policy_action_mask(env) for env in self.envs])
+
     def load_state_dict(self, state: dict) -> None:
         if len(state["envs"]) != self.num_envs:
             raise ValueError("checkpoint environment count differs")
@@ -393,6 +411,9 @@ def _worker_loop(connection, env_factory, seeds, shaping) -> None:
                         "python_rng": random.getstate(),
                     }
                 )
+                continue
+            if command == "masks":
+                connection.send(np.stack([policy_action_mask(env) for env in envs]))
                 continue
             if command == "restore":
                 for env in envs:
@@ -548,6 +569,11 @@ class WorkerCanonicalVecEnv:
             connection.send(("state", None))
         return {"workers": [connection.recv() for connection in self._connections]}
 
+    def current_masks(self) -> np.ndarray:
+        for connection in self._connections:
+            connection.send(("masks", None))
+        return np.concatenate([connection.recv() for connection in self._connections])
+
     def load_state_dict(self, state: dict) -> None:
         if len(state["workers"]) != len(self._connections):
             raise ValueError("checkpoint rollout worker count differs")
@@ -628,6 +654,27 @@ class CanonicalPPO:
         self.completed_updates = 0
         self._current_observations = None
         self._current_masks = None
+        self._expert_tensors = None
+
+    def set_expert_demonstrations(self, dataset) -> None:
+        """Keep train-only expert states on CPU and stream sampled minibatches.
+
+        These states do not enter the PPO importance ratio or observation-stat
+        updates. Their supervised objective is an explicitly separate term.
+        """
+        observations, actions, masks = dataset.as_tensors("cpu")
+        count = len(dataset)
+        if count < 1 or observations.shape != (count, self.policy_config.shape.flat_size):
+            raise ValueError("expert observations do not match the policy")
+        if actions.shape != (count,) or masks.shape != (count, self.policy_config.max_actions):
+            raise ValueError("expert action/mask shapes do not match the policy")
+        if not bool(torch.isfinite(observations).all()):
+            raise ValueError("expert observations contain nonfinite values")
+        if bool(((actions < 0) | (actions >= masks.shape[1])).any()):
+            raise ValueError("expert action index is out of range")
+        if not bool(masks[torch.arange(count), actions].all()):
+            raise ValueError("expert archive contains forbidden teacher actions")
+        self._expert_tensors = observations, actions, masks
 
     def _build_vec_env(self, env_factory: Callable[[], object], base_seed: int):
         """Vector environment for one curriculum stage, sync or worker-backed."""
@@ -894,6 +941,12 @@ class CanonicalPPO:
         config = self.config
         indices = np.arange(config.batch_size)
         policy_losses, value_losses, entropies, kls = [], [], [], []
+        expert_losses = []
+        expert_weight = config.expert_coefficient
+        if config.expert_decay_timesteps:
+            expert_weight *= max(0.0, 1.0 - self.total_steps / config.expert_decay_timesteps)
+        if expert_weight > 0 and self._expert_tensors is None:
+            raise ValueError("expert guidance configured without loaded demonstrations")
         stop = False
 
         for _ in range(config.epochs):
@@ -948,6 +1001,18 @@ class CanonicalPPO:
                     + config.value_coefficient * value_loss
                     - config.entropy_coefficient * entropy_mean
                 )
+                if expert_weight > 0:
+                    expert_observations, expert_actions, expert_masks = self._expert_tensors
+                    expert_indices = torch.randint(len(expert_actions), (config.expert_batch_size,))
+                    expert_output = self.policy(
+                        expert_observations[expert_indices].to(self.device),
+                        expert_masks[expert_indices].to(self.device),
+                    )
+                    expert_loss = F.cross_entropy(
+                        expert_output.logits, expert_actions[expert_indices].to(self.device)
+                    )
+                    loss = loss + expert_weight * expert_loss
+                    expert_losses.append(float(expert_loss.detach().item()))
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.policy.parameters(), config.max_grad_norm)
@@ -971,6 +1036,8 @@ class CanonicalPPO:
             "value_loss": float(np.mean(value_losses)) if value_losses else 0.0,
             "entropy": float(np.mean(entropies)) if entropies else 0.0,
             "approx_kl": float(np.mean(kls)) if kls else 0.0,
+            "expert_loss": float(np.mean(expert_losses)) if expert_losses else 0.0,
+            "expert_coefficient": expert_weight,
         }
 
     def _record_episode(self, info: dict) -> None:
@@ -1044,8 +1111,13 @@ class CanonicalPPO:
             "gamma",
             "gae_lambda",
             "schedule_timesteps",
+            "expert_coefficient",
+            "expert_batch_size",
+            "expert_decay_timesteps",
+            "expert_archive_sha256",
         ):
-            if state["ppo_config"][key] != asdict(self.config)[key]:
+            defaults = asdict(PPOConfig())
+            if state["ppo_config"].get(key, defaults[key]) != asdict(self.config)[key]:
                 raise ValueError(f"checkpoint PPO configuration differs: {key}")
         self.policy.load_state_dict(state["policy"])
         self.optimizer.load_state_dict(state["optimizer"])
@@ -1064,6 +1136,10 @@ class CanonicalPPO:
             state["observations"],
             state["masks"],
         )
+        # Rebuild derived restrictions after restoring live simulator state.
+        # This also supports explicitly versioned policy-shield improvements.
+        if self._current_observations is not None:
+            self._current_masks = self.envs.current_masks()
         (
             self._episode_rewards,
             self._episode_successes,

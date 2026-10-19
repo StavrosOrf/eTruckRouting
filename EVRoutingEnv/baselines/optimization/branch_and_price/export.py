@@ -86,12 +86,14 @@ def _config_sha(config: dict) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def export_nominal_instance(env, *, objective: str = "travel", warm_start=None) -> dict:
+def export_nominal_instance(env, *, objective: str = "travel", warm_start=None, sequences=None) -> dict:
     """Build the solver input for the episode ``env`` was last reset to.
 
     ``objective`` is ``"travel"`` (fleet travel hours, the campaign metric) or
     ``"operating"`` (travel plus service and charging hours). ``warm_start``
-    optionally adds routes in witness format, e.g. from ALNS.
+    optionally adds routes in witness format; ``sequences`` adds customer-only
+    routes (environment node ids, e.g. an ALNS plan) that the solver completes
+    with its own optimal charging stops.
     """
     if objective not in ("travel", "operating"):
         raise ValueError(f"objective must be 'travel' or 'operating', got {objective!r}")
@@ -181,7 +183,11 @@ def export_nominal_instance(env, *, objective: str = "travel", warm_start=None) 
         "charge_levels": [float(v) for v in env.charge_action_values],
         "energy_kwh": matrix(E),
         "time_h": matrix(H),
-        "warm_start": {"witness": witness, "extra": list(warm_start or [])},
+        "warm_start": {
+            "witness": witness,
+            "extra": list(warm_start or []),
+            "sequences": [[int(node) for node in seq] for seq in (sequences or []) if seq],
+        },
     }
 
 

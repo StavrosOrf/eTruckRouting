@@ -16,6 +16,7 @@ using DataStructures
 using JSON3
 using JuMP
 using Gurobi
+using HiGHS
 using Printf
 
 include("nodeset.jl")
@@ -24,10 +25,11 @@ include("routes.jl")
 include("cuts.jl")
 include("pricing.jl")
 include("bidirectional.jl")
+include("backend.jl")
 include("master.jl")
 include("bnp.jl")
 include("output.jl")
 
-export read_instance, BPParameters, solve, write_result
+export read_instance, BPParameters, solve, write_result, Backend
 
 end

@@ -26,6 +26,7 @@ Base.@kwdef struct BPParameters
     time_limit::Float64 = 3600.0
     threads::Int = 1
     lp_method::Int = 1          # dual simplex: re-solves after branching and new columns warm-start
+    lp_solver::String = "gurobi" # or "highs" (no licence; slower master, same certificates)
     ng_size::Int = 8
     ng_adapt_rounds::Int = 50
     cut_rounds::Int = 50
@@ -33,9 +34,11 @@ Base.@kwdef struct BPParameters
     cut_violation::Float64 = 0.05
     cut_tailoff::Float64 = 1e-4
     subset_row_cuts::Int = 20      # per round, after capacity cuts are exhausted (0 = off)
+    subset_row_limit::Int = 128    # in total (at most MAX_SUBSET_ROW); each cut slows exact pricing
     bucket_cap::Int = 64
     max_columns::Int = 300
     heuristic_pricing::Bool = true
+    wide_bucket_cap::Int = 512   # second heuristic level: full graph, this many labels per node
     heuristic_neighbors::Int = 25
     relax_charging_time::Bool = true
     relax_horizon::Bool = true   # phase 1 without windows: drop the horizon too
@@ -50,10 +53,27 @@ Base.@kwdef struct BPParameters
     dive_time::Float64 = 300.0   # diving heuristic budget at the root (0 = off)
     dive_every::Int = 200        # repeat the dive every this many nodes (0 = root only)
     mip_time::Float64 = 60.0
+    arc_fixing::Bool = true          # reduced-cost arc fixing with the root duals
+    enum_gap::Float64 = 0.006        # try route enumeration at nodes within this relative gap (0 = off)
+    enum_route_cap::Int = 1_000_000  # give up enumerating beyond this many routes
+    enum_label_limit::Int = 30_000_000
+    enum_time::Float64 = 900.0       # seconds per enumeration attempt
+    enum_mip_time::Float64 = 900.0   # seconds for the MIP over the enumerated routes
+    lazy_certify::Bool = true        # certify tree nodes only when it can fathom them (see search!)
+    lazy_depth::Int = 3              # ...but always certify nodes this shallow, so the global bound moves
+    certify_cut_rounds::Bool = false # certify every root subset-row round (else only at the end)
+    lns_time::Float64 = 600.0        # route-subset re-optimisation budget after the root (0 = off)
+    primal_only::Bool = false        # heuristic root, then MIP + re-optimisation until the time limit; no bound
+    lns_routes::Int = 3              # incumbent routes re-optimised together
+    lns_sub_time::Float64 = 60.0     # time limit of each sub-problem solve
+    root_mip_time::Float64 = 300.0   # the root column pool is the richest; give its MIP longer
     max_nodes::Int = typemax(Int)
     label_limit::Int = typemax(Int)
     verbose::Bool = true
 end
+
+BPParameters(base::BPParameters; kwargs...) =
+    BPParameters(; (k => get(kwargs, k, getfield(base, k)) for k in fieldnames(BPParameters))...)
 
 struct BBNode
     id::Int
@@ -68,7 +88,7 @@ end
 mutable struct BPState{W}
     inst::Instance
     params::BPParameters
-    env::Gurobi.Env
+    env::Backend
     master::Master
     pricing::PricingWorkspace{W}
     backward::BackwardSpace{W}
@@ -84,6 +104,11 @@ mutable struct BPState{W}
     pricing_seconds::Float64
     master_seconds::Float64
     log::Vector{Dict{String,Any}}
+    # duals and value of the exactly converged root LP, for reduced-cost arc fixing
+    root_duals::Union{Nothing,Tuple{Vector{Float64},Float64,Vector{Float64},Vector{Float64}}}
+    root_z::Float64
+    fixed_at::Float64       # incumbent value at the last fixing pass
+    arcs_fixed::Int
 end
 
 elapsed(s::BPState) = time() - s.start
@@ -153,22 +178,106 @@ function integer_solution!(s::BPState, cols::Vector{Int}, source::String)
     improve!(s, repaired, source * " (re-timed)")
 end
 
+"""
+Cheapest feasible charging plan for a fixed customer order (e.g. an ALNS
+route), or `nothing`: time-free pricing restricted to exactly the sequence's
+successions, with a large dual on its customers so that only routes serving
+all of them are negative, then exact re-timing.
+"""
+function stitch_sequence(s::BPState{W}, seq::Vector{Int}) where {W}
+    inst = s.inst
+    (isempty(seq) || !allunique(seq)) && return nothing
+    chain = vcat(inst.depot, seq, inst.depot)
+    allowed = Set(zip(chain[1:end-1], chain[2:end]))
+    pairs = [(a, b) for a in 1:inst.n+1, b in 1:inst.n+1 if a != b && !((a, b) in allowed)]
+    restr = Restrictions{W}(inst, pairs)
+    π = zeros(inst.n)
+    π[seq] .= 1e3
+    res = price!(s.pricing, inst, π, 0.0, restr; exact = true, timefree = true, untimed = s.untimed,
+                 max_columns = 1, time_limit = 60.0)
+    isempty(res.routes) && return nothing
+    r = first(res.routes)
+    r.customers == seq || return nothing
+    schedule_route(inst, r)
+end
+
+"""
+Large-neighbourhood search with the solver itself: pick a few neighbouring
+incumbent routes, re-solve their customers as a sub-instance (other routes
+fixed), keep any improvement. Primal only; it certifies nothing.
+"""
+function lns!(s::BPState, budget::Float64)
+    inst, p, mp = s.inst, s.params, s.master
+    (isempty(s.incumbent) || budget <= 0) && return false
+    deadline = min(s.start + p.time_limit, time() + budget)
+    improved = false
+    tried = Set{Vector{Int}}()
+    sub_params = BPParameters(; time_limit = p.lns_sub_time, threads = p.threads, verbose = false,
+                              lns_time = 0.0, dive_time = min(p.dive_time, 30.0), root_mip_time = 20.0,
+                              mip_time = 10.0, ng_size = p.ng_size, subset_row_cuts = p.subset_row_cuts)
+    # route "distance": cheapest travel between any two of their customers
+    near(a, b) = minimum(inst.hours[i, j] + inst.hours[j, i] for i in a.customers, j in b.customers)
+    width = p.lns_routes
+    while time() < deadline
+        routes = s.incumbent
+        k = min(width, length(routes))
+        k < 2 && break
+        order = sortperm([r.travel for r in routes]; rev = true)
+        seed = nothing
+        for first in order
+            group = sort(sortperm([q == first ? -Inf : near(routes[first], routes[q]) for q in eachindex(routes)])[1:k])
+            group in tried && continue
+            seed = group
+            break
+        end
+        if seed === nothing
+            # every neighbourhood of this width failed: widen it, up to six routes
+            (width >= min(6, length(routes))) && break
+            width += 1
+            note!(s, "route re-optimisation: widening to $(width) routes")
+            continue
+        end
+        push!(tried, seed)
+        chosen = routes[seed]
+        customers = sort!(vcat([r.customers for r in chosen]...))
+        current = sum(r.travel for r in chosen)
+        idle = inst.fleet - length(routes)
+        sub, back = subinstance(inst, customers, k + min(idle, 1))
+        local_index = Dict(c => i for (i, c) in enumerate(customers))
+        append!(sub.initial_sequences, [[local_index[c] for c in r.customers] for r in chosen])
+        res = solve(sub; params = BPParameters(sub_params; time_limit = min(p.lns_sub_time, deadline - time())),
+                    env = s.env)
+        isfinite(res.upper) && res.upper < current - 1e-6 || continue
+        replacement = [Route(inst, back[r.nodes], r.levels) for r in res.routes]
+        all(r -> simulate(inst, r)[1], replacement) || continue
+        foreach(r -> add_column!(mp, inst, r), replacement)
+        others = routes[setdiff(eachindex(routes), seed)]
+        if improve!(s, vcat(others, replacement), "route re-optimisation")
+            improved = true
+            empty!(tried)
+        end
+    end
+    improved
+end
+
 """One pricing round in the mode of the current phase."""
 function price_round(s::BPState{W}, restr::Restrictions{W}, π, κ, σ, τ; exact::Bool, farkas::Bool,
-                     time_limit::Float64) where {W}
+                     time_limit::Float64, wide::Bool = false) where {W}
     p, mp = s.params, s.master
+    cap = wide ? p.wide_bucket_cap : p.bucket_cap
     if s.timefree && s.untimed && p.bidirectional
         price_bidirectional!(s.pricing, s.backward, s.inst, π, κ, restr; exact = exact,
                              max_columns = p.max_columns, rc_tol = p.rc_tol, time_limit = time_limit,
-                             label_limit = p.label_limit, bucket_cap = p.bucket_cap,
+                             label_limit = p.label_limit, bucket_cap = cap,
                              cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ,
-                             sr_cuts = mp.sr_cuts, τ = τ)
+                             sr_cuts = mp.sr_cuts, τ = τ, full_graph = wide)
     else
         price!(s.pricing, s.inst, π, κ, restr; exact = exact, timefree = s.timefree,
                untimed = s.timefree && s.untimed,
                max_columns = p.max_columns, rc_tol = p.rc_tol, time_limit = time_limit,
-               label_limit = p.label_limit, bucket_cap = p.bucket_cap,
-               cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ, sr_cuts = mp.sr_cuts, τ = τ)
+               label_limit = p.label_limit, bucket_cap = cap,
+               cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ, sr_cuts = mp.sr_cuts, τ = τ,
+               full_graph = wide)
     end
 end
 
@@ -206,8 +315,9 @@ function dive!(s::BPState{W}, node::BBNode, budget::Float64) where {W}
             solve_lp!(mp)
             artificial_mass(mp) > 1e-7 && (note!(s, "dive: infeasible after $(fixed) fixings"); return false)
             π, κ, σ, τ = master_duals(mp)
+            # the wide level: narrow pricing misses too much at 100+ customers
             res = price_round(s, restr, π, κ, σ, τ; exact = false, farkas = false,
-                              time_limit = deadline - time())
+                              time_limit = deadline - time(), wide = true)
             added = count(r -> add_column!(mp, inst, r), res.routes)
             added == 0 && break
             s.timefree || restrict!(mp, restr.forbidden, node.lo, node.hi, true)
@@ -252,7 +362,9 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
     node.lo > node.hi && return (:infeasible, bound, Float64[], NaN)
     restr = Restrictions{W}(inst, node.forbidden)
     restrict!(mp, restr.forbidden, node.lo, node.hi, !s.timefree)
-    heuristic = p.heuristic_pricing
+    # pricing level: 0 narrow heuristic, 1 wide heuristic, 2 exact
+    first_level = p.heuristic_pricing ? 0 : 2
+    level = first_level
     while true
         timed_out(s) && (set_phase_one!(mp, false, p.big_m); return (:timeout, bound, Float64[], NaN))
         t = time()
@@ -267,9 +379,9 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
         end
         farkas = mp.phase_one
         π, κ, σ, τ = master_duals(mp)
-        exact = !heuristic
+        exact = level == 2
         res = price_round(s, restr, π, κ, σ, τ; exact = exact, farkas = farkas,
-                          time_limit = p.time_limit - elapsed(s))
+                          time_limit = p.time_limit - elapsed(s), wide = level == 1)
         s.pricing_seconds += res.seconds
         s.rounds += 1
         if res.exact && !farkas
@@ -279,7 +391,7 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
         if p.verbose && (s.rounds % 10 == 0 || isempty(res.routes))
             note!(s, @sprintf("node %d round %d %s %.6f bound %.6f rc %.4g cols %d (+%d) labels %d %s %.2fs",
                 node.id, s.rounds, farkas ? "infeasibility" : "lp", lp, bound, res.min_rc, length(mp.z),
-                length(res.routes), res.labels, exact ? "exact" : "heur", res.seconds))
+                length(res.routes), res.labels, ("narrow", "wide", "exact")[level+1], res.seconds))
         end
         cutoff = prune_value(s)
         if !farkas && bound >= cutoff - tolerance(s, cutoff)
@@ -296,8 +408,8 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
             if !exact
                 # Uncertified solves (root strengthening) stop at heuristic
                 # convergence: good enough to separate cuts, not a bound.
-                !certify && !farkas && return (:solved, bound, column_values(mp), lp)
-                heuristic = false
+                !certify && !farkas && level == 1 && return (:solved, bound, column_values(mp), lp)
+                level += 1
                 continue
             end
             if !res.exact
@@ -311,7 +423,7 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
             bound = max(bound, lp)
             return (:solved, bound, column_values(mp), lp)
         end
-        heuristic = p.heuristic_pricing
+        level = first_level
     end
 end
 
@@ -321,6 +433,146 @@ function refresh_ng!(s::BPState)
     for k in eachindex(mp.routes)
         mp.ng_ok[k] = ng_feasible(s.pricing, s.inst, mp.routes[k])
     end
+end
+
+"""
+Reduced-cost arc fixing. With duals of an exactly converged root LP of value
+z (every column then has reduced cost >= 0), any integer solution x costs at
+least z + rc(p) for each route p in x. A route through arc (i, j) has reduced
+cost at least prefix(i) + rc(i, j) + completion(j) - kappa, from the q-route
+bounds (capacity split over every load at i; cut earnings at their maximum,
+subset-row penalties dropped). If that exceeds incumbent - z, no improving
+solution uses the arc, so it leaves the pricing graph and its columns leave
+the master. Returns the number of arcs removed.
+"""
+function fix_arcs!(s::BPState)
+    (s.params.arc_fixing && s.root_duals !== nothing) || return 0
+    upper = prune_value(s)
+    isfinite(upper) && upper < s.fixed_at - 1e-9 || return 0
+    s.fixed_at = upper
+    inst, ws, bs, mp = s.inst, s.pricing, s.backward, s.master
+    π, κ, σ, _ = s.root_duals
+    n, N, depot, R = inst.n, inst.N, inst.depot, ws.R
+    gap = upper - s.root_z + tolerance(s, upper)
+    earn = copy(π)
+    if any(>(1e-12), σ)
+        succession_duals!(ws.rho, mp.cuts, σ, n)
+        for w in 1:n
+            earn[w] = π[w] + maximum(view(ws.rho, :, w))
+        end
+    end
+    completion_bound!(ws, inst, earn, 1.0)
+    prefix_bound!(bs, ws, inst, earn, 1.0)
+    g, h, du = ws.bound, bs.prefix, ws.dunits
+    removed = Tuple{Int,Int}[]
+    @inbounds for i in 1:N, j in inst.out[i]
+        best = Inf
+        if j == depot
+            i == depot && continue
+            best = h[i, R+1] + inst.hours[i, j]
+        else
+            dj = j <= n ? du[j] : 0
+            arc = inst.hours[i, j] - (j <= n ? earn[j] : 0.0)
+            if i == depot
+                best = arc + g[j, R-dj+1]     # nothing served before leaving the depot
+            else
+                for a in 0:(R - dj)
+                    pre = h[i, a+1]
+                    pre < Inf || continue
+                    val = pre + arc + g[j, R-a-dj+1]
+                    val < best && (best = val)
+                end
+            end
+        end
+        best - κ > gap && push!(removed, (i, j))
+    end
+    isempty(removed) && return 0
+    for (i, j) in removed
+        inst.usable[i, j] = false
+    end
+    for i in 1:N
+        filter!(j -> inst.usable[i, j], inst.out[i])
+        filter!(j -> inst.usable[i, j], ws.near[i])
+    end
+    for k in eachindex(mp.routes)
+        nodes = mp.routes[k].nodes
+        mp.arc_ok[k] && any(!inst.usable[nodes[t], nodes[t+1]] for t in 1:length(nodes)-1) && (mp.arc_ok[k] = false)
+    end
+    s.arcs_fixed += length(removed)
+    note!(s, @sprintf("arc fixing at gap %.4f: removed %d arcs (%d total, %d left)", upper - s.root_z,
+        length(removed), s.arcs_fixed, sum(inst.usable)))
+    length(removed)
+end
+
+"""
+Close a node by route enumeration. With duals of the node's exactly converged
+LP (value `lp`), every solution in the node's subtree that beats the cutoff
+uses only routes of reduced cost below cutoff - lp. When that threshold is
+small, enumerate all such elementary routes (respecting the node's branching
+restrictions) and solve the set-partitioning MIP over them: its optimum, or
+its infeasibility, settles the whole subtree. Returns :closed, or :open when
+the gap is too wide or a cap or time limit stopped the attempt.
+"""
+function close_by_enumeration!(s::BPState{W}, node::BBNode, lp::Float64, duals) where {W}
+    p, inst, mp = s.params, s.inst, s.master
+    cutoff = prune_value(s)
+    p.enum_gap > 0 && isfinite(cutoff) || return :open
+    threshold = cutoff - lp
+    threshold <= p.enum_gap * max(1.0, abs(cutoff)) || return :open
+    π, κ, σ, τ = duals
+    restr = Restrictions{W}(inst, node.forbidden)
+    t = time()
+    res = enumerate_routes!(s.pricing, inst, π, κ, restr; threshold = threshold + tolerance(s, cutoff),
+                            timefree = s.timefree, untimed = s.timefree && s.untimed, cuts = mp.cuts, σ = σ,
+                            sr_cuts = mp.sr_cuts, τ = τ, time_limit = min(p.enum_time, p.time_limit - elapsed(s)),
+                            label_limit = p.enum_label_limit, route_cap = p.enum_route_cap)
+    if !res.exact
+        note!(s, @sprintf("enumeration at node %d (threshold %.4f) gave up after %.0fs, %d labels",
+            node.id, threshold, time() - t, res.labels))
+        return :open
+    end
+    routes = res.routes
+    # in phase 2 only truly feasible routes belong to the problem
+    if !s.timefree
+        routes = [r2 for r2 in (schedule_route(inst, r) for r in routes) if r2 !== nothing]
+    end
+    note!(s, @sprintf("enumeration at node %d: %d routes within %.4f h in %.0fs", node.id, length(routes),
+        threshold, time() - t))
+    isempty(routes) && return :closed
+    budget = min(p.enum_mip_time, p.time_limit - elapsed(s))
+    budget > 1.0 || return :open
+    model = new_model(s.env; threads = p.threads)
+    set_time_limit_sec(model, budget)
+    x = @variable(model, [1:length(routes)], Bin)
+    @objective(model, Min, sum(r.travel * x[k] for (k, r) in enumerate(routes)))
+    members = [Int[] for _ in 1:inst.n]
+    for (k, r) in enumerate(routes), c in r.customers
+        push!(members[c], k)
+    end
+    any(isempty, members) && return :closed      # some customer cannot be served below the cutoff
+    @constraint(model, [c in 1:inst.n], sum(x[k] for k in members[c]) == 1)
+    @constraint(model, node.lo <= sum(x) <= node.hi)
+    set_cutoff!(model, s.env, cutoff - tolerance(s, cutoff))
+    optimize!(model)
+    status = termination_status(model)
+    if has_values(model) && objective_value(model) < cutoff - tolerance(s, cutoff)
+        status in (MOI.OPTIMAL, MOI.OBJECTIVE_LIMIT) || return :open    # e.g. a time limit
+        chosen = [routes[k] for k in eachindex(routes) if value(x[k]) > 0.5]
+        foreach(r -> add_column!(mp, inst, r), chosen)
+        index = Dict(hash(mp.routes[q].nodes) => q for q in eachindex(mp.routes))
+        integer_solution!(s, [index[hash(r.nodes)] for r in chosen], "enumeration at node $(node.id)")
+        return :closed
+    end
+    # No solution below the cutoff: proven by optimality, infeasibility or the cutoff itself.
+    status in (MOI.OPTIMAL, MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.OBJECTIVE_LIMIT) ? :closed : :open
+end
+
+"""Whether the LP solution `z` would fathom its node (integral columns or successions)."""
+function fathomable(mp::Master, z::Vector{Float64})
+    all(v -> v < 1e-6 || v > 1 - 1e-6, z) && return true
+    routes = sum(z)
+    abs(routes - round(routes)) > 1e-6 && return false
+    all(v -> abs(v - round(v)) <= 1e-6, values(succession_flows(mp, z)))
 end
 
 function succession_flows(mp::Master, z::Vector{Float64})
@@ -347,16 +599,14 @@ function cheapest_per_sequence(mp::Master, z::Vector{Float64})
 end
 
 """Restricted-master MIP over the truly feasible elementary columns."""
-function mip_heuristic!(s::BPState)
+function mip_heuristic!(s::BPState; seconds::Float64 = s.params.mip_time)
     inst, mp = s.inst, s.master
     cols = [k for k in eachindex(mp.routes) if mp.feasible[k]]
     isempty(cols) && return false
-    budget = min(s.params.mip_time, s.params.time_limit - elapsed(s))
+    budget = min(seconds, s.params.time_limit - elapsed(s))
     budget > 1.0 || return false
-    model = direct_model(Gurobi.Optimizer(s.env))
-    set_silent(model)
-    set_attribute(model, "Threads", s.params.threads)
-    set_attribute(model, "TimeLimit", budget)
+    model = new_model(s.env; threads = s.params.threads)
+    set_time_limit_sec(model, budget)
     x = @variable(model, [1:length(cols)], Bin)
     @objective(model, Min, sum(mp.routes[k].travel * x[i] for (i, k) in enumerate(cols)))
     members = [Int[] for _ in 1:inst.n]
@@ -366,7 +616,7 @@ function mip_heuristic!(s::BPState)
     any(isempty, members) && return false
     @constraint(model, [c in 1:inst.n], sum(x[i] for i in members[c]) == 1)
     @constraint(model, sum(x) <= inst.fleet)
-    isfinite(s.upper) && set_attribute(model, "Cutoff", s.upper - 1e-7)
+    isfinite(s.upper) && set_cutoff!(model, s.env, s.upper - 1e-7)
     optimize!(model)
     has_values(model) || return false
     chosen = [mp.routes[cols[i]] for i in eachindex(cols) if value(x[i]) > 0.5]
@@ -423,59 +673,82 @@ function strengthen_root!(s::BPState, node::BBNode, result, nbound, z, lpvalue)
     inst, p, mp = s.inst, s.params, s.master
     resolve(certify) = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root"); certify = certify)
     adapted = 0
-    # :fast rounds use LPs converged under heuristic pricing and capacity cuts
-    # only; :exact rounds certify every LP and add subset-row cuts once no
-    # capacity cut is violated. Subset-row duals make heuristic pricing
-    # unreliable, so they are only ever separated from certified LPs.
-    phase = :fast
-    for round in 1:p.cut_rounds
+    # Stages: :fast rounds use LPs converged under heuristic pricing and add
+    # capacity cuts only; :capacity rounds certify every LP; :subset_row rounds
+    # add subset-row cuts as well (their duals make heuristic pricing
+    # unreliable, so they are only separated from certified LPs). A stage ends
+    # when it finds nothing or its last round barely moved the LP.
+    stage = :fast
+    sr_certified = p.certify_cut_rounds
+    last_certified = false
+    function advance!()
+        if stage == :fast
+            stage = :capacity
+            result, nbound, z, lpvalue = resolve(true)
+            last_certified = true
+            note!(s, @sprintf("root certified: lp %.6f, %d ng rounds", lpvalue, adapted))
+        elseif stage == :capacity && p.subset_row_cuts > 0
+            stage = :subset_row
+        else
+            stage = :done
+        end
+    end
+    round = 0
+    while round < p.cut_rounds
+        round += 1
         if result != :solved
             note!(s, "cut loop: node $(result) at round $(round)")
             return (result, nbound, z, lpvalue)
         end
-        certified = phase == :exact
+        if stage == :done
+            last_certified && break
+            # Subset-row rounds ran on heuristic LPs: certify, and if that
+            # moves the LP materially, repeat them on certified LPs.
+            before = lpvalue
+            result, nbound, z, lpvalue = resolve(true)
+            last_certified = true
+            note!(s, @sprintf("root certified: lp %.6f (heuristic %.6f)", lpvalue, before))
+            if result == :solved && !sr_certified && p.subset_row_cuts > 0 &&
+               before - lpvalue > 10 * p.cut_tailoff * max(1.0, abs(lpvalue))
+                sr_certified = true
+                stage = :subset_row
+                continue
+            end
+            break
+        end
+        certified = stage == :capacity || (stage == :subset_row && sr_certified)
         while adapted < p.ng_adapt_rounds && grow_neighbourhoods!(s.pricing, mp.routes, z)
             refresh_ng!(s)
             adapted += 1
             result, nbound, z, lpvalue = resolve(certified)
-            result == :solved || return (result, nbound, z, lpvalue)
+            last_certified = certified
+            result == :solved || break
         end
+        result == :solved || continue
         cuts = separate_capacity_cuts(inst, succession_flows(mp, z), mp.known_cuts;
                                       max_cuts = p.cuts_per_round, min_violation = p.cut_violation)
-        rows = SubsetRowCut[]
-        if isempty(cuts) && phase == :fast
-            phase = :exact
-            result, nbound, z, lpvalue = resolve(true)
-            note!(s, @sprintf("root certified: lp %.6f, %d ng rounds", lpvalue, adapted))
-            continue
-        end
-        if isempty(cuts) && p.subset_row_cuts > 0
-            rows = separate_subset_row_cuts(inst, mp.routes, z, mp.known_sr;
-                max_cuts = min(p.subset_row_cuts, MAX_SUBSET_ROW - length(mp.sr_cuts)),
-                min_violation = p.cut_violation)
-        end
+        rows = stage == :subset_row ?
+            separate_subset_row_cuts(inst, mp.routes, z, mp.known_sr;
+                max_cuts = min(p.subset_row_cuts, min(p.subset_row_limit, MAX_SUBSET_ROW) - length(mp.sr_cuts)),
+                min_violation = p.cut_violation) : SubsetRowCut[]
         if isempty(cuts) && isempty(rows)
-            note!(s, "cut loop: no violated cuts at round $(round)")
-            break
+            note!(s, "cut loop: nothing violated in stage $(stage) at round $(round)")
+            advance!()
+            continue
         end
         foreach(c -> add_cut!(mp, inst, c), cuts)
         foreach(c -> add_sr_cut!(mp, c), rows)
         before = lpvalue
         result, nbound, z, lpvalue = resolve(certified)
+        last_certified = certified
         note!(s, @sprintf("cut round %d (%s): +%d capacity / +%d subset-row cuts (%d / %d total), lp %.6f",
-            round, phase, length(cuts), length(rows), length(mp.cuts), length(mp.sr_cuts), lpvalue))
+            round, stage, length(cuts), length(rows), length(mp.cuts), length(mp.sr_cuts), lpvalue))
         if result == :solved && !(lpvalue - before > p.cut_tailoff * max(1.0, abs(before)))
-            if phase == :fast
-                phase = :exact
-                result, nbound, z, lpvalue = resolve(true)
-                note!(s, @sprintf("root certified: lp %.6f, %d ng rounds", lpvalue, adapted))
-            else
-                note!(s, @sprintf("cut loop: tail-off at round %d (%.3g)", round, lpvalue - before))
-                break
-            end
+            note!(s, @sprintf("cut loop: stage %s tailed off (%.3g)", stage, lpvalue - before))
+            advance!()
         end
     end
-    if result == :solved && phase == :fast
+    if result == :solved && !last_certified
         result, nbound, z, lpvalue = resolve(true)
     end
     (result, nbound, z, lpvalue)
@@ -507,20 +780,66 @@ function search!(s::BPState, floor_bound::Float64)
             break
         end
         explored += 1
-        result, nbound, z, lpvalue = solve_node!(s, node; certify = id != 1)
+        if p.primal_only
+            # Upper bounds only: a heuristically converged root feeds the
+            # restricted-master MIP and route re-optimisation for the whole
+            # budget. Bounds certified elsewhere stay valid against its result.
+            result, nbound, z, lpvalue = solve_node!(s, node; certify = false)
+            mip_heuristic!(s; seconds = p.root_mip_time)
+            lns!(s, p.time_limit - elapsed(s))
+            note!(s, @sprintf("primal-only search finished at %.6f", s.upper))
+            pending, closed = -Inf, false
+            break
+        end
+        # Lazy certification: a node converged under heuristic pricing may be
+        # branched on (its children keep the inherited, still valid bound);
+        # exact pricing runs only where a certified LP decides something,
+        # namely when it could prune the node or the LP is integral.
+        lazy = id != 1 && p.lazy_certify && node.depth > p.lazy_depth
+        result, nbound, z, lpvalue = solve_node!(s, node; certify = !lazy && id != 1)
+        certified = id != 1 && !lazy
+        if lazy && result == :solved
+            cutoff = prune_value(s)
+            near = p.enum_gap > 0 && cutoff - lpvalue <= p.enum_gap * max(1.0, abs(cutoff))
+            if lpvalue >= cutoff - tolerance(s, cutoff) || fathomable(mp, z) || near
+                result, nbound, z, lpvalue = solve_node!(s, node; certify = true)
+                certified = true
+            end
+        end
+        if certified && result == :solved
+            here0 = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label)
+            close_by_enumeration!(s, here0, lpvalue, master_duals(mp)) == :closed && continue
+        end
         if id == 1
             result, nbound, z, lpvalue = strengthen_root!(s, node, result, nbound, z, lpvalue)
             root_bound = nbound
+            if result == :solved
+                s.root_duals = master_duals(mp)
+                s.root_z = lpvalue
+            end
             if p.dive_time > 0 && result == :solved
                 cutoff = prune_value(s)
                 nbound < cutoff - tolerance(s, cutoff) && dive!(s, node, p.dive_time)
-                # the dive left the master restricted; re-solve the root as it was
-                result, nbound, z, lpvalue = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root"))
+                # The dive left the master restricted; re-solve the root as it was.
+                # Its bound is already certified and the dive only added
+                # columns, so heuristic convergence suffices to branch on.
+                result, nbound, z, lpvalue = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root");
+                                                         certify = false)
             end
             root_lp = lpvalue
             note!(s, @sprintf("%s root: lp %.6f bound %.6f, %d columns",
                 s.timefree ? "relaxed" : "exact", root_lp, root_bound, length(mp.z)))
-            mip_heuristic!(s)
+            mip_heuristic!(s; seconds = p.root_mip_time)
+            if p.lns_time > 0 && s.upper > nbound + tolerance(s, nbound)
+                before = s.upper
+                lns!(s, p.lns_time)
+                note!(s, @sprintf("route re-optimisation: %.6f -> %.6f", before, s.upper))
+            end
+            fix_arcs!(s)
+            if result == :solved && s.root_duals !== nothing &&
+               close_by_enumeration!(s, node, s.root_z, s.root_duals) == :closed
+                continue
+            end
         end
         if result == :timeout
             pending = min(pending, max(node.bound, nbound))
@@ -543,6 +862,7 @@ function search!(s::BPState, floor_bound::Float64)
             push!(open_nodes, (c.bound, -c.depth, c.id))
         end
         explored % p.mip_every == 0 && mip_heuristic!(s)
+        fix_arcs!(s)
         if p.dive_every > 0 && p.dive_time > 0 && explored % p.dive_every == 0
             dive!(s, here, p.dive_time / 2)
         end
@@ -577,12 +897,13 @@ struct BPResult
     log::Vector{Dict{String,Any}}
 end
 
-function solve(inst::Instance; params::BPParameters = BPParameters(), env::Gurobi.Env = Gurobi.Env())
+function solve(inst::Instance; params::BPParameters = BPParameters(),
+               env::Backend = Backend(Symbol(params.lp_solver)))
     W = words_for(inst.n + 1)
     _solve(Val(W), inst, params, env)
 end
 
-function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Gurobi.Env) where {W}
+function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Backend) where {W}
     start = time()
     mp = Master(inst, env; threads = params.threads, big_m = params.big_m, method = params.lp_method)
     ws = PricingWorkspace{W}(inst; ng_size = params.ng_size, unit = params.capacity_unit,
@@ -590,7 +911,7 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Gurobi.Env)
     windows = any(isfinite, inst.tw_close[1:inst.n]) || any(>(0), inst.tw_open[1:inst.n])
     s = BPState{W}(inst, params, env, mp, ws, BackwardSpace{W}(inst, ws.R), start, params.relax_charging_time,
                    params.relax_horizon && !windows, Route[], Inf, Inf,
-                   Route[], 0, 0, 0.0, 0.0, Dict{String,Any}[])
+                   Route[], 0, 0, 0.0, 0.0, Dict{String,Any}[], nothing, -Inf, Inf, 0)
 
     seeded = Route[]
     for steps in inst.initial_routes
@@ -605,6 +926,17 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Gurobi.Env)
         end
     end
     improve!(s, seeded, "warm-start witness")
+    if !isempty(inst.initial_sequences)
+        stitched = Route[]
+        for seq in inst.initial_sequences
+            r = stitch_sequence(s, seq)
+            r === nothing && continue
+            add_column!(mp, inst, r)
+            push!(stitched, r)
+        end
+        note!(s, "stitched $(length(stitched)) of $(length(inst.initial_sequences)) warm-start sequences")
+        improve!(s, stitched, "stitched warm-start sequences")
+    end
     singles = singleton_routes(inst)
     foreach(r -> add_column!(mp, inst, r), singles)
     note!(s, @sprintf("%d customers, %d chargers, %d trucks, %d seed columns",

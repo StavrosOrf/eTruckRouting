@@ -26,6 +26,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from EVRoutingEnv.baselines.heuristics.alns import ALNSParameters, solve_alns_plan
 from EVRoutingEnv.baselines.optimization.branch_and_price.export import write_instance
 from EVRoutingEnv.baselines.optimization.branch_and_price.julia_bridge import RUNNER, BPParameters
 from EVRoutingEnv.baselines.optimization.branch_and_price.validate import nominal_replay, port_conflicts
@@ -49,12 +50,20 @@ def main(argv=None) -> int:
     parser.add_argument("--trucks", type=int)
     parser.add_argument("--customers", type=int)
     parser.add_argument("--seeds", type=int, nargs="+", help="explicit scenario seeds")
-    parser.add_argument("--split", choices=("train", "val", "test"), help="seed namespace (with --count)")
+    parser.add_argument("--split", choices=("train", "validation", "test"), help="seed namespace (with --count)")
     parser.add_argument("--count", type=int, default=10)
+    parser.add_argument("--base-seed", type=int, default=0,
+                        help="offset inside the split namespace, as run_canonical_campaign's --base-seed")
     parser.add_argument("--index", type=int, help="solve only this position of the seed list (Slurm arrays)")
     parser.add_argument("--time-limit", type=float, default=3600.0)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--ng-size", type=int, default=8)
+    parser.add_argument("--warm-from", type=Path, action="append", default=[],
+                        help="certificate (evrp-bp-result/v1) whose routes seed the solver; repeatable")
+    parser.add_argument("--alns-seconds", type=float, default=0.0,
+                        help="run ALNS this long per scenario and hand its routes to the solver as a warm start")
+    parser.add_argument("--solver-arg", nargs=2, action="append", default=[], metavar=("KEY", "VALUE"),
+                        help="any other BPParameters field of the Julia solver, e.g. --solver-arg lns_time 1800")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
@@ -62,7 +71,7 @@ def main(argv=None) -> int:
     if args.seeds:
         seeds = list(args.seeds)
     elif args.split:
-        seeds = split_seeds(args.split, args.count)
+        seeds = split_seeds(args.split, args.count, args.base_seed)
     else:
         parser.error("give --seeds or --split")
     if args.index is not None:
@@ -79,7 +88,17 @@ def main(argv=None) -> int:
             print(f"seed {seed}: certificate exists, skipping", flush=True)
             continue
         env.reset(seed=seed)
-        write_instance(env, instances / f"seed_{seed}.json")
+        sequences = []
+        for path in args.warm_from:
+            certificate = json.loads(Path(path).read_text())
+            sequences += [[stop["node"] for stop in route["stops"] if stop["kind"] == "customer"]
+                          for route in certificate.get("routes", [])]
+        if args.alns_seconds > 0:
+            plan = solve_alns_plan(env, ALNSParameters(time_limit_seconds=args.alns_seconds,
+                                                       iterations=10**9, objective="total_time"))
+            sequences += [route for route in plan.routes.values() if route]
+            env.reset(seed=seed)
+        write_instance(env, instances / f"seed_{seed}.json", sequences=sequences)
         pending.append(seed)
     if not pending:
         return 0
@@ -88,7 +107,7 @@ def main(argv=None) -> int:
     batch.write_text("".join(f"{instances / f'seed_{s}.json'} {instances / f'seed_{s}.result.json'}\n"
                              for s in pending))
     params = BPParameters(time_limit_seconds=args.time_limit, threads=args.threads,
-                          ng_size=args.ng_size, verbose=True)
+                          ng_size=args.ng_size, verbose=True, extra=dict(args.solver_arg))
     log = instances / f"solver_{pending[0]}_{len(pending)}.log"
     started = time.perf_counter()
     with open(log, "w") as stream:

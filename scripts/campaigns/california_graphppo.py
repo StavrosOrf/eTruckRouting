@@ -12,6 +12,7 @@ import os
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import yaml
@@ -25,7 +26,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def prepare(destination: Path):
+def prepare(destination: Path, arm_set="base"):
     if (destination / "manifest.json").exists():
         raise FileExistsError(f"immutable campaign already exists: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
@@ -50,11 +51,96 @@ def prepare(destination: Path):
         ("links", ["--action-entity-links"]),
         ("links_shield", ["--action-entity-links", "--completion-shield"]),
     ]
+    if arm_set == "progress":
+        arms = [
+            ("v2_shield", ["--completion-shield"]),
+            ("progress_shield", ["--completion-shield", "--progress-action-features"]),
+            ("v2_links_shield", ["--completion-shield", "--action-entity-links"]),
+            (
+                "progress_links_shield",
+                [
+                    "--completion-shield",
+                    "--action-entity-links",
+                    "--progress-action-features",
+                ],
+            ),
+        ]
+    if arm_set in ("imitation", "capacity", "objective", "retention"):
+        common = [
+            "--completion-shield",
+            "--progress-action-features",
+            "--demonstrations",
+            str(destination / "demonstrations/alns_planned.npz"),
+            "--pretrain-epochs",
+            "20",
+            "--pretrain-learning-rate",
+            "0.0003",
+            "--learning-rate",
+            "0.0001",
+            "--entropy-coefficient",
+            "0.005",
+        ]
+        if arm_set == "retention":
+            common = [*common, "--gamma", "1.0", "--expert-decay-timesteps", "12000000"]
+            arms = [
+                ("bc_gamma1_control", common),
+                ("bc_retain01", [*common, "--expert-coefficient", "0.1"]),
+                ("bc_retain1", [*common, "--expert-coefficient", "1.0"]),
+            ]
+        elif arm_set in ("capacity", "objective"):
+            common = [
+                *common,
+                "--completion-capacity-lookahead",
+                "--action-entity-links",
+            ]
+            if arm_set == "objective":
+                common = [*common, "--nonlinear-edge-messages", "--gamma", "1.0"]
+                arms = [
+                    ("bc_nonlinear_gamma1", common),
+                    (
+                        "bc_nonlinear_cost40",
+                        [
+                            *common,
+                            "--time-multiplier", "40",
+                            "--success-bonus", "24000",
+                            "--incompletion-penalty", "32000",
+                            "--stranding-penalty", "16000",
+                        ],
+                    ),
+                ]
+            else:
+                arms = [
+                    ("bc_capacity_links", common),
+                    (
+                        "bc_capacity_nonlinear_links",
+                        [*common, "--nonlinear-edge-messages"],
+                    ),
+                ]
+        else:
+            arms = [
+                ("bc_progress", common),
+                ("bc_links_progress", [*common, "--action-entity-links"]),
+            ]
     runs = [
         {"name": f"{name}_s{seed}", "seed": seed, "flags": flags}
         for seed in range(3)
         for name, flags in arms
     ]
+    if arm_set == "cost_finetune":
+        runs = []
+        parents = ROOT / "results/california_graphppo/intermediate_20261018_2200/checkpoints"
+        for seed in range(3):
+            common = [
+                "--completion-shield", "--progress-action-features",
+                "--learning-rate", "0.0001", "--entropy-coefficient", "0.005",
+                "--gamma", "1.0", "--reset-value-head",
+                "--init-from", str(parents / f"bc_progress_s{seed}"),
+            ]
+            for name, flags in (
+                ("warm_control", [*common, "--delivery-bonus", "500", "--gae-lambda", "0.95"]),
+                ("warm_cost_mc", [*common, "--delivery-bonus", "0", "--gae-lambda", "1.0"]),
+            ):
+                runs.append({"name": f"{name}_s{seed}", "seed": seed, "flags": flags})
     baselines = {
         "heuristic": {"parameters": {"energy_safety_factor": 1.2, "target_soc": 0.9}},
         "mpc": {
@@ -115,6 +201,7 @@ def prepare(destination: Path):
         destination / "manifest.json",
         {
             "version": 1,
+            "arm_set": arm_set,
             "commit": commit,
             "runs": runs,
             "config": str(config_path),
@@ -125,7 +212,10 @@ def prepare(destination: Path):
             "problem": "joint_fleet",
             "trucks": 10,
             "total_customers": 30,
-            "training": {"schedule_timesteps": 12_000_000, "imitation": False},
+            "training": {
+                "schedule_timesteps": 12_000_000,
+                "imitation": arm_set in ("imitation", "capacity", "objective", "retention"),
+            },
         },
     )
     print(destination, flush=True)
@@ -139,6 +229,10 @@ def train_bundle(destination, bundle, budget, width):
     cpus = sorted(os.sched_getaffinity(0))
     children = []
     stop = False
+    # The pinned trainer floors total_timesteps / rollout_batch. Round its
+    # limit up so the final 12M milestone can actually be reached on resume.
+    rollout_batch = 16 * 128
+    training_limit = ((12_000_000 + rollout_batch - 1) // rollout_batch) * rollout_batch
 
     def terminate(signum, frame):
         nonlocal stop
@@ -150,13 +244,17 @@ def train_bundle(destination, bundle, budget, width):
     signal.signal(signal.SIGUSR1, terminate)
     signal.signal(signal.SIGTERM, terminate)
     for slot, run in enumerate(runs):
-        assigned = cpus[
-            slot * len(cpus) // len(runs) : (slot + 1) * len(cpus) // len(runs)
-        ]
+        # Keep worker counts unchanged when the final bundle has one run;
+        # complete checkpoints include the original worker/seed partition.
+        assigned = cpus[slot * len(cpus) // width : (slot + 1) * len(cpus) // width]
         if len(assigned) < 2:
             raise ValueError("at least two allocated CPUs required per training run")
         output = destination / "training" / run["name"]
         resume = output / "training.pt"
+        flags = list(run["flags"])
+        if resume.exists() and "--init-from" in flags:
+            index = flags.index("--init-from")
+            del flags[index : index + 2]
         command = [
             "taskset",
             "-c",
@@ -196,7 +294,7 @@ def train_bundle(destination, bundle, budget, width):
             "--stranding-penalty",
             "4000",
             "--total-timesteps",
-            "12000000",
+            str(training_limit),
             "--schedule-timesteps",
             "12000000",
             "--stop-after-timesteps",
@@ -221,7 +319,7 @@ def train_bundle(destination, bundle, budget, width):
             str(destination / "training"),
             "--run-name",
             run["name"],
-            *run["flags"],
+            *flags,
         ]
         if resume.exists():
             command.extend(["--resume", str(resume)])
@@ -266,16 +364,42 @@ def train_bundle(destination, bundle, budget, width):
         raise SystemExit(1)
 
 
+def unresolved_training_dependencies(dependencies):
+    """Keep live dependencies; confirm terminal jobs before omitting old IDs."""
+    terminal = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL", "DEADLINE", "PREEMPTED", "REVOKED"}
+    pending = []
+    for job in dependencies:
+        established = False
+        for attempt in range(3):
+            queue = subprocess.run(["squeue", "-h", "-j", job, "-o", "%i|%T"], capture_output=True, text=True)
+            if queue.returncode == 0 and queue.stdout.strip():
+                pending.append(job)
+                established = True
+                break
+            if queue.returncode == 0 or "Invalid job id" in queue.stderr:
+                accounting = subprocess.run(["sacct", "-n", "-X", "-j", job, "--format=State%30", "-P"], capture_output=True, text=True)
+                states = [line.strip().split()[0].rstrip("+") for line in accounting.stdout.splitlines() if line.strip()]
+                if accounting.returncode == 0 and states and all(state in terminal for state in states):
+                    established = True
+                    break
+            if attempt < 2:
+                time.sleep(attempt + 1)
+        if not established:
+            raise RuntimeError(f"cannot establish whether training dependency {job} is terminal")
+    return pending
+
+
 def submit(destination, bundles, budget):
-    # One named campaign wave at a time enforces a global ceiling and avoids
-    # simultaneous writers to a run. Arrays are not independently set to %30.
+    # One wave per family avoids simultaneous writers. Declared dependencies
+    # additionally bound overlap between cohorts with different stage sizes.
     name = destination.name
     manifest = json.loads((destination / "manifest.json").read_text())
     if not 1 <= bundles <= (len(manifest["runs"]) + 1) // 2:
         raise ValueError("bundle count exceeds available experiments")
     if budget < 1:
         raise ValueError("transition budget must be positive")
-    family = (destination / "training").resolve().parent.name
+    campaign_root = (destination / "training").resolve().parent
+    family = campaign_root.name
     active = subprocess.check_output(
         ["squeue", "-h", "-u", os.environ["USER"], "-o", "%j|%i"], text=True
     ).splitlines()
@@ -294,10 +418,20 @@ def submit(destination, bundles, budget):
         str(destination),
         str(budget),
     ]
+    dependency_file = campaign_root / "training_dependencies.json"
+    dependencies = []
+    declared_dependencies = []
+    if dependency_file.exists():
+        declared_dependencies = json.loads(dependency_file.read_text()).get("afterany", [])
+        if any(not isinstance(job, str) or not job.isdigit() for job in declared_dependencies):
+            raise ValueError("training dependencies must be SLURM array/job IDs")
+        dependencies = unresolved_training_dependencies(declared_dependencies)
+        if dependencies:
+            command[2:2] = ["--dependency=afterany:" + ":".join(dependencies), "--kill-on-invalid-dep=yes"]
     job = subprocess.check_output(command, text=True).strip()
     with (destination / "submissions.jsonl").open("a") as handle:
         handle.write(
-            json.dumps({"job": job, "budget": budget, "bundles": bundles}) + "\n"
+            json.dumps({"job": job, "budget": budget, "bundles": bundles, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
         )
     print(job, flush=True)
 
@@ -311,11 +445,16 @@ def main():
     parser.add_argument("--bundle", type=int, default=0)
     parser.add_argument("--bundles", type=int, default=2)
     parser.add_argument("--width", type=int, default=2)
+    parser.add_argument(
+        "--arm-set",
+        choices=("base", "progress", "imitation", "capacity", "objective", "retention", "cost_finetune"),
+        default="base",
+    )
     parser.add_argument("--budget", type=int, default=65536)
     args = parser.parse_args()
     directory = args.directory.resolve()
     if args.action == "prepare":
-        prepare(directory)
+        prepare(directory, args.arm_set)
     elif args.action == "submit":
         submit(directory, args.bundles, args.budget)
     elif args.action == "train":

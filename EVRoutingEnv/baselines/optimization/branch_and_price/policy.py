@@ -3,11 +3,15 @@
 The plan is solved once per scenario on the nominal problem, or loaded from a
 certificate written offline by ``scripts/evaluation/solve_branch_and_price.py``.
 Each decision takes the truck's next planned step when the hard mask allows
-it. Under stochastic legs a planned step can become infeasible (less energy
-left than planned, a window lost to delay); the truck then advances toward
-its next planned customer through the same energy-safe navigation the greedy
-heuristic and the CP-SAT baseline use, and the policy counts the fallback so
-that "executed the optimal plan" stays an auditable claim.
+it and the step is safe under worst-case energy: after the leg, at the
+largest realized energy the simulator can draw, the truck must still be able
+to leave for some charger or the depot. The optimal nominal plan uses exactly
+the mask's per-leg margin, so without this check a run of high energy draws
+can strand a truck at a customer. Otherwise (unsafe or masked step, a window
+lost to delay) the truck advances toward its next planned customer through the
+same energy-safe navigation the greedy heuristic and the CP-SAT baseline use.
+The policy counts every such fallback, so that "executed the optimal plan"
+stays an auditable claim.
 """
 
 from __future__ import annotations
@@ -44,7 +48,8 @@ class BranchAndPricePolicy:
         self.parameters = parameters or BPParameters()
         self.certificate_dir = None if certificate_dir is None else Path(certificate_dir)
         self.navigator = GreedyHeuristicPolicy(
-            heuristic_parameters or HeuristicParameters(target_soc=1.0, demand_weight=2.0)
+            heuristic_parameters
+            or HeuristicParameters(energy_safety_factor=1.15, target_soc=1.0, demand_weight=2.0)
         )
         self.last_plan: BPSolution | None = None
         self._key: object = None
@@ -108,6 +113,30 @@ class BranchAndPricePolicy:
             return list(env.charging_nodes).index(node)
         return env.num_charging_nodes + env.task_registry.task_for_node(node).task_id
 
+    @staticmethod
+    def _worst_energy_multiplier(env) -> float:
+        """Largest realized/nominal energy ratio the simulator can produce."""
+        traffic = env.traffic_config
+        if not (traffic["enable_traffic"] and traffic["enable_energy_uncertainty"]):
+            return 1.0
+        if float(traffic["std_dev_factor"]) == 0.0 and float(traffic["energy_uncertainty_factor"]) == 0.0:
+            return 1.0  # no noise at all: every leg draws exactly its nominal energy
+        return max(1.0, float(traffic["max_energy_multiplier"]))
+
+    def _leg_is_safe(self, env, truck, node: int) -> bool:
+        """After the leg at worst-case energy, a charger or the depot must stay reachable."""
+        depot = int(env.joint_instance.depot_node)
+        if node == depot or node in env.charging_nodes:
+            return True  # the route ends there, or the truck can recharge
+        graph = env.transport_graph
+        worst = self._worst_energy_multiplier(env)
+        left = float(truck.current_battery) - worst * float(graph.get_path_energy(int(truck.current_node), node))
+        return any(
+            worst * float(graph.get_path_energy(node, int(exit_node))) <= left + 1e-9
+            for exit_node in [*env.charging_nodes, depot]
+            if int(exit_node) != node
+        )
+
     def _next_customer(self, env, tid: int) -> int | None:
         for node, _, charging in self._routes.get(tid, [])[self._position[tid]:]:
             if charging or node in env.charging_nodes or node == env.joint_instance.depot_node:
@@ -145,7 +174,7 @@ class BranchAndPricePolicy:
                 self._position[tid] += 1  # already at or above the planned level
                 continue
             action = self._action_for(env, step)
-            if action in feasible:
+            if action in feasible and (charging or self._leg_is_safe(env, truck, int(node))):
                 self._position[tid] += 1
                 return action
             break

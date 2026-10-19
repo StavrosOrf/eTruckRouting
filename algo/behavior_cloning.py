@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from algo.canonical_policy import CanonicalActorCritic
+from EVRoutingEnv.state.action_mask import policy_action_mask
 
 
 # Chunk size for streaming the archive across the CPU/accelerator boundary.
@@ -71,10 +72,15 @@ def _roll_episode(env, demonstrator, seed: int, max_steps: int) -> dict:
     if callable(reset):
         reset()
     while not (terminated or truncated) and steps < max_steps:
-        mask = env.mask_fn()
+        mask = policy_action_mask(env)
         try:
             action = demonstrator(env, observation, info)
         except (RuntimeError, ValueError):
+            break
+        if not 0 <= int(action) < len(mask) or not mask[int(action)]:
+            # A demonstration must obey the same policy restriction as PPO.
+            # Discard this unfinished episode instead of cloning a forbidden
+            # action or silently repairing the teacher with future information.
             break
         observations.append(np.asarray(observation, dtype=np.float32))
         actions.append(int(action))

@@ -1,0 +1,169 @@
+{
+ "name": "china_jinghu",
+ "title": "China: Beijing-Shanghai (Jinghu corridor), 10,000 delivery nodes",
+ "generated_utc": "2026-10-18T18:15:33Z",
+ "preset": {
+  "name": "china_jinghu",
+  "title": "China: Beijing-Shanghai (Jinghu corridor), 10,000 delivery nodes",
+  "geofabrik": [
+   "asia/china/shanghai",
+   "asia/china/jiangsu",
+   "asia/china/shandong",
+   "asia/china/hebei",
+   "asia/china/tianjin",
+   "asia/china/beijing"
+  ],
+  "delivery_source": "places",
+  "bbox": [
+   30.3,
+   114.3,
+   40.5,
+   122.0
+  ],
+  "n_customers": 10000,
+  "n_depots": 0,
+  "min_population": 500,
+  "assume_population": true,
+  "min_place_spacing_m": 3500,
+  "chargers_source": "osm_services",
+  "min_charger_kw": 50,
+  "service_area_ports": 6,
+  "service_area_dedup_m": 300,
+  "max_chargers": 0,
+  "charger_merge_m": 15000,
+  "charger_merge_linkage": "complete",
+  "max_snap_m": 5000,
+  "max_road_class": "unclassified",
+  "terrain_zoom": 11,
+  "terrain_source": "AWS Terrain Tiles (Terrarium; SRTM composite over China)",
+  "smooth_length_m": 150,
+  "vis_max_class": "secondary",
+  "vehicle_profile": "heavy_truck",
+  "output_format": "npy",
+  "contract_chains": true,
+  "seed": 0,
+  "workers": 32
+ },
+ "units": {
+  "energy": "kWh (battery)",
+  "time": "hours",
+  "distance": "km"
+ },
+ "scale_km": 1132.0,
+ "counts": {
+  "nodes": 10469,
+  "chargers": 469,
+  "depots": 0,
+  "customers": 10000,
+  "delivery_nodes_with_assumed_population": 9644,
+  "dcfast_ports_in_nodes": 7187,
+  "dcfast_sites_available": 469,
+  "dcfast_stations_raw": 1197,
+  "dcfast_stations_modelled": 1195
+ },
+ "study_bbox_min_lat_lon_max_lat_lon": [
+  30.3,
+  114.3,
+  40.5,
+  122.0
+ ],
+ "road_network": {
+  "nodes": 6503275,
+  "directed_edges": 11478578,
+  "plotted_segments": 2769121,
+  "excluded": "service roads, private/no-motor-vehicle ways, road classes below unclassified",
+  "terrain_zoom": 11,
+  "dem_rms_change_m": 1.9687711637805083,
+  "n_span_nodes_interpolated": 210028,
+  "elevation_range_m": [
+   -12.63609754018755,
+   2160.471442589498
+  ],
+  "dem_nodes_reset_to_sea_level": 362
+ },
+ "vehicle_profile": "heavy_truck",
+ "vehicle_model": {
+  "air_density": 1.2,
+  "signal_delay_s": 20.0,
+  "signal_stop_prob": 0.5,
+  "stop_delay_s": 8.0,
+  "stop_stop_prob": 1.0,
+  "mass_kg": 36000.0,
+  "crr": 0.007,
+  "cda_m2": 6.5,
+  "eta_drive": 0.9,
+  "eta_regen": 0.65,
+  "aux_kw": 6.0
+ },
+ "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
+ "leg_energy_floor_kwh": 0.02,
+ "legs_floored": 3101,
+ "od_stats": {
+  "road_nodes_before_contraction": 6503275,
+  "road_edges_before_contraction": 11478578,
+  "junction_nodes": 1045384,
+  "junction_edges": 2553385,
+  "reduced_cost_min": 0.000354177267984564,
+  "n_negative_reduced": 0,
+  "max_energy_consistency_error_kwh": 2.954999217763543e-06,
+  "unreachable_pairs": 0
+ },
+ "ranges": {
+  "energy_kwh_p5_p50_p95_max": [
+   114.24,
+   506.44,
+   1208.22,
+   1916.9
+  ],
+  "time_h_p5_p50_p95_max": [
+   2.711,
+   11.662,
+   26.951,
+   39.88
+  ],
+  "dist_km_p5_p50_p95_max": [
+   103.4,
+   452.6,
+   1084.1,
+   1581.8
+  ],
+  "kwh_per_km_median": 1.105,
+  "sampled_pairs": 3999604
+ },
+ "asymmetry": {
+  "energy": {
+   "pairs_sampled": 3999337,
+   "median_rel_diff": 0.0204,
+   "p90_rel_diff": 0.1658,
+   "frac_over_5pct": 0.2973,
+   "frac_over_20pct": 0.0769
+  },
+  "time": {
+   "pairs_sampled": 3999601,
+   "median_rel_diff": 0.0121,
+   "p90_rel_diff": 0.056,
+   "frac_over_5pct": 0.1224,
+   "frac_over_20pct": 0.0043
+  }
+ },
+ "charger_clusters": {
+  "max_diameter_m": 14978.9,
+  "merged_nodes_with_multiple_stations": 387,
+  "modelled_sites": 468
+ },
+ "sources": {
+  "delivery_and_depot_locations": "OpenStreetMap place nodes (city/town/village), 9644 of 10000 with no population tag (population assumed by place kind: see road_graph.PLACE_KIND_POPULATION_FALLBACK), ODbL",
+  "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
+  "terrain": "AWS Terrain Tiles (Terrarium; SRTM composite over China)",
+  "chargers": "OpenStreetMap amenity=charging_station (real stations, >= 50 kW) plus every mapped expressway service area (highway=services/rest_area) not already carrying one, assumed to host 6 DC-fast ports each (modelled, not measured: see 'charger_clusters.modelled_sites' below), ODbL"
+ },
+ "format": "npy",
+ "files": {
+  "energy": "od_energy_kwh.npy",
+  "time": "od_time_h.npy",
+  "node_ids": "od_node_ids.npy",
+  "layout": "float32 (nodes x nodes); row/column i is OSM node od_node_ids[i] (ascending); diagonal 0; entry [i, j] is the minimum-energy route i -> j"
+ },
+ "battery_kwh": 400.0,
+ "config_file": "EVRoutingEnv/config_files/config_joint_china_jinghu.yaml"
+}

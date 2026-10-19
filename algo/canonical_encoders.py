@@ -339,16 +339,21 @@ class DeepSetsStateEncoder(_BaseStateEncoder):
 class _TypedMessagePassingLayer(nn.Module):
     """One round of dense typed message passing over all nine relations.
 
-    The per-edge message is affine in the source embedding and the edge
-    features, and aggregation is a masked sum, so the sum is folded *through*
+    By default messages are affine in the source embedding and edge
+    features, and aggregation is a masked sum, so the sum is folded through
     the linear map instead of materializing a ``[batch, sources, targets,
     hidden]`` tensor.  The result is algebraically identical to scoring every
     edge and summing, but costs ``O(sources * targets)`` instead of
     ``O(sources * targets * hidden)``.
+
+    The optional nonlinear variant applies ReLU to each source/edge pair
+    before pooling. This preserves associations between a source's dynamic
+    features and its transport costs to a particular target.
     """
 
-    def __init__(self, hidden_dim: int):
+    def __init__(self, hidden_dim: int, *, nonlinear_edge_messages: bool = False):
         super().__init__()
+        self.nonlinear_edge_messages = nonlinear_edge_messages
         self.messages = nn.ModuleDict(
             {
                 _relation_key(relation): nn.Linear(
@@ -398,16 +403,27 @@ class _TypedMessagePassingLayer(nn.Module):
             edge_weight = weight[:, source_embed.shape[-1] :]
 
             counted = mask.sum(dim=1).unsqueeze(-1).to(source_embed.dtype)
-            # sum_i mask_ij * h_i  and  sum_i mask_ij * e_ij, then map once.
-            pooled_source = torch.einsum(
-                "bij,bih->bjh", mask.to(source_embed.dtype), source_embed
-            )
-            pooled_edge = (pairwise[relation] * mask.unsqueeze(-1)).sum(dim=1)
-            summed = (
-                pooled_source @ source_weight.t()
-                + pooled_edge @ edge_weight.t()
-                + linear.bias * counted
-            )
+            if self.nonlinear_edge_messages:
+                # Couple each source's state with its particular transport
+                # edge before summing. Affine pooling loses this association
+                # on dense relations: only source sums and edge sums survive.
+                projected_source = F.linear(source_embed, source_weight)
+                projected_edge = F.linear(
+                    pairwise[relation], edge_weight, linear.bias
+                )
+                messages = F.relu(projected_source.unsqueeze(2) + projected_edge)
+                summed = (messages * mask.unsqueeze(-1)).sum(dim=1)
+            else:
+                # Sum source and edge features separately, then map once.
+                pooled_source = torch.einsum(
+                    "bij,bih->bjh", mask.to(source_embed.dtype), source_embed
+                )
+                pooled_edge = (pairwise[relation] * mask.unsqueeze(-1)).sum(dim=1)
+                summed = (
+                    pooled_source @ source_weight.t()
+                    + pooled_edge @ edge_weight.t()
+                    + linear.bias * counted
+                )
             aggregated[target] = aggregated[target] + summed
             counts[target] = counts[target] + counted
 
@@ -435,6 +451,7 @@ class HeteroGraphStateEncoder(_BaseStateEncoder):
         output_dim: int,
         *,
         num_layers: int = 2,
+        nonlinear_edge_messages: bool = False,
     ):
         super().__init__(shape, hidden_dim, output_dim)
         if (
@@ -450,7 +467,10 @@ class HeteroGraphStateEncoder(_BaseStateEncoder):
             }
         )
         self.layers = nn.ModuleList(
-            _TypedMessagePassingLayer(hidden_dim) for _ in range(num_layers)
+            _TypedMessagePassingLayer(
+                hidden_dim, nonlinear_edge_messages=nonlinear_edge_messages
+            )
+            for _ in range(num_layers)
         )
         self.global_encoder = _mlp(GLOBAL_FEATURE_DIM, hidden_dim, hidden_dim)
         summary_dim = 2 * hidden_dim * len(NODE_TYPES) + hidden_dim
@@ -677,6 +697,7 @@ def build_state_encoder(
     output_dim: int,
     *,
     num_layers: int = 2,
+    nonlinear_edge_messages: bool = False,
 ) -> _BaseStateEncoder:
     """Construct one of the three canonical state encoders."""
     if not isinstance(encoder_type, str):
@@ -693,4 +714,11 @@ def build_state_encoder(
             f"unknown state encoder {encoder_type!r}; expected one of "
             f"{STATE_ENCODER_TYPES}"
         )
-    return builders[normalized](shape, hidden_dim, output_dim, num_layers=num_layers)
+    options = {"num_layers": num_layers}
+    if normalized == "hetero_graph":
+        options["nonlinear_edge_messages"] = nonlinear_edge_messages
+    elif nonlinear_edge_messages:
+        raise ValueError(
+            "nonlinear edge messages require the heterogeneous graph encoder"
+        )
+    return builders[normalized](shape, hidden_dim, output_dim, **options)

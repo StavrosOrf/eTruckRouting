@@ -79,6 +79,9 @@ def build_policy(name: str, settings: dict):
             prefix=settings.get("prefix", "best"),
             deterministic=bool(settings.get("deterministic", True)),
         )
+    # Named variants share an implementation while preserving distinct frozen
+    # settings, manifests, and episode rows in the same paired comparison.
+    name = settings.get("baseline", name)
     if name == "random":
         return RandomFeasiblePolicy(seed=int(settings.get("seed", 0)))
     if name == "heuristic":

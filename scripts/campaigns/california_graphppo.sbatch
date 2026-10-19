@@ -11,12 +11,11 @@
 set -euo pipefail
 campaign_dir="$1"
 transition_budget="$2"
-export PYTHONPATH="$campaign_dir/source"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 # The supervisor preserves SLURM GPU visibility and forwards signals to every
 # trainer. Each trainer writes a complete checkpoint at its next update.
 /gpfs/home2/sorfanoudakis/EVRP/.venv/bin/python \
-  "$campaign_dir/source/scripts/campaigns/california_graphppo.py" train \
+  /gpfs/home2/sorfanoudakis/EVRP/scripts/campaigns/california_graphppo.py train \
   --directory "$campaign_dir" --bundle "$SLURM_ARRAY_TASK_ID" \
   --budget "$transition_budget" &
 supervisor_pid=$!

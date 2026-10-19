@@ -13,7 +13,7 @@ function parse_parameters(args)
         key = Symbol(replace(lstrip(args[k], '-'), '-' => '_'))
         haskey(types, key) || error("unknown parameter $(args[k])")
         T = types[key]
-        kwargs[key] = T === Bool ? parse(Bool, args[k+1]) : parse(T, args[k+1])
+        kwargs[key] = T === String ? String(args[k+1]) : T === Bool ? parse(Bool, args[k+1]) : parse(T, args[k+1])
         k += 2
     end
     BPParameters(; kwargs...)

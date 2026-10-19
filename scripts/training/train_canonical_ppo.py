@@ -12,6 +12,7 @@ here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import signal
 import time
@@ -70,7 +71,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument("--action-entity-links", action="store_true")
+    parser.add_argument("--nonlinear-edge-messages", action="store_true")
+    parser.add_argument("--progress-action-features", action="store_true")
     parser.add_argument("--completion-shield", action="store_true")
+    parser.add_argument("--completion-capacity-lookahead", action="store_true")
+    parser.add_argument("--completion-capacity-exact-lookahead", action="store_true")
+    parser.add_argument("--completion-work-escape-lookahead", action="store_true")
     parser.add_argument(
         "--resume", default=None, help="Trusted complete training checkpoint."
     )
@@ -112,6 +118,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         choices=["travel_time", "makespan", "operating_time", "distance"],
         help="Metric that breaks ties between equally feasible checkpoints.",
     )
+    parser.add_argument("--delivery-bonus", type=float, default=None)
     parser.add_argument("--disable-reward-shaping", action="store_true")
     parser.add_argument(
         "--policy-action-mask",
@@ -197,6 +204,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory of a trained policy to initialise from (weights only).",
     )
+    parser.add_argument("--reset-value-head", action="store_true")
     parser.add_argument(
         "--curriculum",
         default=None,
@@ -215,6 +223,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--pretrain-epochs", type=int, default=12)
     parser.add_argument("--pretrain-learning-rate", type=float, default=1e-3)
+    parser.add_argument("--expert-coefficient", type=float, default=0.0)
+    parser.add_argument("--expert-batch-size", type=int, default=128)
+    parser.add_argument("--expert-decay-timesteps", type=int, default=0)
     parser.add_argument(
         "--demonstrator",
         default="mpc",
@@ -258,6 +269,16 @@ def main() -> None:
         raise ValueError("choose resume or initialization, not both")
     if arguments.completion_shield:
         config["environment"]["completion_shield"] = True
+    if arguments.completion_capacity_lookahead:
+        config["environment"]["completion_shield"] = True
+        config["environment"]["completion_capacity_lookahead"] = True
+    if arguments.completion_capacity_exact_lookahead:
+        config["environment"]["completion_shield"] = True
+        config["environment"]["completion_capacity_lookahead"] = True
+        config["environment"]["completion_capacity_exact_lookahead"] = True
+    if arguments.completion_work_escape_lookahead:
+        config["environment"]["completion_shield"] = True
+        config["environment"]["completion_work_escape_lookahead"] = True
     if arguments.disable_routing_action_features:
         config["environment"]["routing_action_features"] = False
         print("routing action features zeroed (ablation arm)", flush=True)
@@ -289,6 +310,9 @@ def main() -> None:
             f"dense operating-time penalty: {arguments.time_multiplier} per truck-hour",
             flush=True,
         )
+    if arguments.delivery_bonus is not None:
+        config["rewards"]["delivery_bonus"] = float(arguments.delivery_bonus)
+        print(f"delivery bonus: {arguments.delivery_bonus}", flush=True)
 
     def factory():
         return EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
@@ -308,6 +332,8 @@ def main() -> None:
         ablate_state_pooling=arguments.ablate_state_pooling,
         normalize_action_features=arguments.normalize_action_features,
         action_entity_links=arguments.action_entity_links,
+        nonlinear_edge_messages=arguments.nonlinear_edge_messages,
+        progress_action_features=arguments.progress_action_features,
     )
     probe.close()
 
@@ -323,6 +349,13 @@ def main() -> None:
         gae_lambda=arguments.gae_lambda,
         schedule_timesteps=arguments.schedule_timesteps,
         seed=arguments.seed,
+        expert_coefficient=arguments.expert_coefficient,
+        expert_batch_size=arguments.expert_batch_size,
+        expert_decay_timesteps=arguments.expert_decay_timesteps,
+        expert_archive_sha256=(
+            hashlib.file_digest(Path(arguments.demonstrations).open("rb"), "sha256").hexdigest()
+            if arguments.expert_coefficient > 0 and arguments.demonstrations else None
+        ),
     )
     shaping = RewardShaping(
         enabled=not arguments.disable_reward_shaping,
@@ -370,9 +403,8 @@ def main() -> None:
         rollout_workers=arguments.rollout_workers,
     )
     if arguments.init_from:
-        # Weights only: the optimizer, curriculum position, and normalizer
-        # statistics all restart, so this is a fresh PPO run that happens to
-        # begin from a learned policy rather than a random one.
+        # Policy weights include the observation-normalizer buffers. The
+        # optimizer, return scaler, interaction count and curriculum restart.
         from algo.canonical_policy import CanonicalActorCritic
 
         source = CanonicalActorCritic.load(arguments.init_from, prefix="best")
@@ -382,6 +414,11 @@ def main() -> None:
             )
         trainer.policy.load_state_dict(source.state_dict())
         trainer.policy.to(trainer.device)
+        if arguments.reset_value_head:
+            for module in trainer.policy.value_head.modules():
+                if isinstance(module, torch.nn.Linear):
+                    module.reset_parameters()
+            print("reset value head for fresh-return optimization", flush=True)
         print(f"initialised weights from {arguments.init_from}", flush=True)
 
     validation_env = factory()
@@ -397,6 +434,7 @@ def main() -> None:
         print(f"resumed {trainer.total_steps} transitions", flush=True)
     started = time.perf_counter()
     pretrain_history: list[dict] = []
+    dataset = None
     stop_requested = False
 
     def request_stop(signum, frame):
@@ -422,7 +460,9 @@ def main() -> None:
         )
     )
 
-    if arguments.demonstrations or arguments.pretrain_demonstrations > 0:
+    if not arguments.resume and (
+        arguments.demonstrations or arguments.pretrain_demonstrations > 0
+    ):
         from algo.behavior_cloning import (
             DemonstrationSet,
             collect_demonstrations,
@@ -553,6 +593,8 @@ def main() -> None:
                 f"travel={record['mean_travel_time']:6.1f} "
                 f"entropy={record['entropy']:.3f} kl={record['approx_kl']:.4f} "
                 f"stage={record.get('curriculum_stage', 'none')} "
+                f"expert_loss={record.get('expert_loss', 0):.4f} "
+                f"expert_weight={record.get('expert_coefficient', 0):.4f} "
                 f"{record['elapsed_seconds']:.0f}s",
                 flush=True,
             )
@@ -567,6 +609,18 @@ def main() -> None:
         return stopping
 
     try:
+        if arguments.expert_coefficient > 0:
+            if dataset is None:
+                from algo.behavior_cloning import DemonstrationSet
+
+                with np.load(arguments.demonstrations) as archive:
+                    dataset = DemonstrationSet(
+                        observations=list(archive["observations"]),
+                        actions=[int(value) for value in archive["actions"]],
+                        masks=list(archive["masks"]),
+                    )
+            trainer.set_expert_demonstrations(dataset)
+            print(f"retaining {len(dataset)} expert transitions during PPO", flush=True)
         if pretrain_history:
             score_validation(0)
         history = trainer.learn(progress)

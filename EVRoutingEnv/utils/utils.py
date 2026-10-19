@@ -181,6 +181,11 @@ def get_graph(config: Optional[Dict[str, Any]] = None) -> nx.DiGraph:
     energy_file = network_config["shortest_path_energy_file"]
     time_file = network_config["shortest_path_time_file"]
     station_file = network_config["station_info_file"]
+    if str(energy_file).endswith(".npy"):
+        raise ValueError(
+            f"{energy_file} is an all-pairs matrix case study (10^4 nodes): a NetworkX graph of its edges would not "
+            "fit in memory. Load it with MatrixTransportationGraph.from_config instead."
+        )
 
     data_dir = resolve_network_data_dir(network_config)
 

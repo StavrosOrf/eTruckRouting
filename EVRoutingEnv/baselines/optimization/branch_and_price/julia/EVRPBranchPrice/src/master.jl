@@ -23,6 +23,7 @@ mutable struct Master
     elementary::BitVector # visits every customer at most once
     feasible::BitVector   # elementary and feasible with exact charging times
     ng_ok::BitVector      # false: not an ng-route under the grown neighbourhoods
+    arc_ok::BitVector     # false: uses an arc removed by reduced-cost fixing
     phase_one::Bool
     blocked::BitVector
     known::Set{UInt64}
@@ -35,11 +36,8 @@ mutable struct Master
     big_m::Float64
 end
 
-function Master(inst::Instance, env::Gurobi.Env; threads::Int, big_m::Float64, method::Int)
-    model = direct_model(Gurobi.Optimizer(env))
-    set_silent(model)
-    set_attribute(model, "Threads", threads)
-    set_attribute(model, "Method", method)
+function Master(inst::Instance, backend::Backend; threads::Int, big_m::Float64, method::Int)
+    model = new_model(backend; threads = threads, method = method)
     n = inst.n
     art = @variable(model, [1:n+2], lower_bound = 0.0)
     @objective(model, Min, big_m * sum(art))
@@ -47,7 +45,7 @@ function Master(inst::Instance, env::Gurobi.Env; threads::Int, big_m::Float64, m
     fleet_max = @constraint(model, -art[n+1] <= inst.fleet)
     fleet_min = @constraint(model, art[n+2] >= 0.0)
     Master(model, cover, fleet_max, fleet_min, art, VariableRef[], Route[],
-           Vector{Tuple{Int,Int}}[], falses(0), falses(0), falses(0), false, falses(0), Set{UInt64}(),
+           Vector{Tuple{Int,Int}}[], falses(0), falses(0), falses(0), falses(0), false, falses(0), Set{UInt64}(),
            CapacityCut[], ConstraintRef[], Set{BitVector}(),
            SubsetRowCut[], ConstraintRef[], Set{NTuple{3,Int}}(), big_m)
 end
@@ -90,6 +88,7 @@ function add_column!(mp::Master, inst::Instance, r::Route)
     push!(mp.elementary, allunique(r.customers))
     push!(mp.feasible, feasible)
     push!(mp.ng_ok, true)
+    push!(mp.arc_ok, all(inst.usable[r.nodes[t], r.nodes[t+1]] for t in 1:length(r.nodes)-1))
     push!(mp.blocked, false)
     true
 end
@@ -103,7 +102,7 @@ route-count range.
 """
 function restrict!(mp::Master, forbidden::BitMatrix, lo::Int, hi::Int, exact_time::Bool)
     for p in eachindex(mp.z)
-        bad = !mp.ng_ok[p] || (exact_time && mp.elementary[p] && !mp.feasible[p]) ||
+        bad = !mp.ng_ok[p] || !mp.arc_ok[p] || (exact_time && mp.elementary[p] && !mp.feasible[p]) ||
               any(forbidden[a, b] for (a, b) in mp.succ[p])
         if bad != mp.blocked[p]
             bad ? set_upper_bound(mp.z[p], 0.0) : delete_upper_bound(mp.z[p])

@@ -9,6 +9,7 @@ architecture rather than information.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -23,6 +24,11 @@ from algo.canonical_state import (
     CanonicalTensors,
     scatter_logits,
     unpack_flat_observation,
+)
+from algo.progress_features import (
+    PROGRESS_FEATURE_DIM,
+    ProgressActionFeatures,
+    station_progress_config,
 )
 from EVRoutingEnv.state.features import (
     ACTION_FEATURES,
@@ -61,9 +67,44 @@ class CanonicalPolicyConfig:
     ablate_state_pooling: bool = False
     normalize_action_features: bool = False
     action_entity_links: bool = False
+    nonlinear_edge_messages: bool = False
+    progress_action_features: bool = False
+    progress_station_ids: tuple[int, ...] = ()
+    progress_station_hops: tuple[tuple[float, ...], ...] = ()
+    progress_energy_multiplier: float = 1.0
     feature_schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "progress_station_ids", tuple(self.progress_station_ids)
+        )
+        object.__setattr__(
+            self,
+            "progress_station_hops",
+            tuple(tuple(row) for row in self.progress_station_hops),
+        )
+        if self.progress_action_features and (
+            len(self.progress_station_ids) != self.max_chargers
+            or self.max_chargers == 0
+            or len(self.progress_station_hops) != self.max_chargers
+            or any(len(row) != self.max_chargers for row in self.progress_station_hops)
+        ):
+            raise ValueError(
+                "progress features require the fixed station map and hop matrix"
+            )
+        if self.progress_action_features and (
+            not math.isfinite(self.progress_energy_multiplier)
+            or self.progress_energy_multiplier < 1
+            or len(set(self.progress_station_ids)) != self.max_chargers
+            or any(
+                not math.isfinite(value) or value < 0
+                for row in self.progress_station_hops
+                for value in row
+            )
+        ):
+            raise ValueError(
+                "progress feature map costs and energy factor must be valid"
+            )
         if self.action_entity_links and self.state_encoder != "hetero_graph":
             raise ValueError(
                 "action entity links require the heterogeneous graph encoder"
@@ -96,6 +137,8 @@ class CanonicalPolicyConfig:
     @classmethod
     def from_env(cls, env, **overrides) -> CanonicalPolicyConfig:
         shape = env.canonical_shape
+        if overrides.get("progress_action_features"):
+            overrides.update(station_progress_config(env))
         return cls(
             max_trucks=shape.max_trucks,
             max_customers=shape.max_customers,
@@ -138,16 +181,27 @@ class CanonicalActorCritic(nn.Module):
             config.hidden_dim,
             config.encoder_output_dim,
             num_layers=config.encoder_layers,
+            nonlinear_edge_messages=config.nonlinear_edge_messages,
         )
         self.action_head = build_action_head(
             config.action_head,
             config.encoder_output_dim,
             config.hidden_dim,
             ACTION_FEATURE_DIM
+            + (PROGRESS_FEATURE_DIM if config.progress_action_features else 0)
             + (2 * config.hidden_dim if config.action_entity_links else 0),
             num_layers=config.action_head_layers,
             attention_heads=config.action_attention_heads,
             dropout=config.action_head_dropout,
+        )
+        self.progress_features = (
+            ProgressActionFeatures(
+                config.progress_station_ids,
+                config.progress_station_hops,
+                config.progress_energy_multiplier,
+            )
+            if config.progress_action_features
+            else None
         )
         self.value_head = nn.Sequential(
             nn.Linear(config.encoder_output_dim, config.hidden_dim),
@@ -190,6 +244,10 @@ class CanonicalActorCritic(nn.Module):
             action_rows = self.encoder.normalizer._standardize(
                 "action", tensors.action
             )[feasible]
+        if self.progress_features is not None:
+            action_rows = torch.cat(
+                (action_rows, self.progress_features(tensors)[feasible]), dim=-1
+            )
         if self.config.action_entity_links:
             embedding, nodes = self.encoder(tensors, return_nodes=True)
             active = tensors.nodes["truck"][..., TRUCK_FEATURES.index("is_active")]

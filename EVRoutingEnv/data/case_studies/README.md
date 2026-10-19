@@ -10,7 +10,6 @@ baselines and plotting work on any of them by pointing `network.data_path` at th
 | Case | Config | Extent | Nodes: chargers / depots / delivery | DC-fast ports | Median leg | Max leg | Terrain |
 |---|---|---|---|---|---|---|---|
 | **Texas** | `config_joint_texas.yaml` | 1260 km | 666: 432 / 4 / 230 | 5665 | 466 kWh | 1863 kWh | flat to hilly, 0-2040 m |
-| **Germany + Netherlands + Belgium** | `config_joint_de_nl_be.yaml` | 882 km | 1661: 1427 / 4 / 230 | 22824 | 525 kWh | 1475 kWh | mostly flat, Eifel to Alpine foothills, -15 to 1540 m (the 90 km/h truck limit applies) |
 | **Pacific Northwest** (WA + OR) | `config_joint_pacific_northwest.yaml` | 790 km | 557: 323 / 4 / 230 | 3772 | 486 kWh | 1729 kWh | Cascades and Coast Range, 0-2950 m |
 | Puget Sound (Seattle) | `config_joint_seattle.yaml` | 118 km | 283: 50 / 3 / 230 | 952 | 58 kWh | 201 kWh | hilly, 0-590 m |
 | Chicagoland | `config_joint_chicago.yaml` | 107 km | 340: 106 / 4 / 230 | 1644 | 52 kWh | 168 kWh | flat, 165-306 m |
@@ -31,10 +30,12 @@ the system temp folder afterwards; set `TMPDIR` to keep it).
 |---|---|---|
 | Delivery nodes, metros | Amazon Last Mile Routing Research Challenge 2021 (real driver routes, CC BY-NC 4.0) | 230 random real stops per metro, plus the real depot ("station") locations |
 | Delivery nodes, states | OpenStreetMap `place` nodes (city, town, village with a population tag), like California's city-to-city lanes | 230 places drawn with probability proportional to sqrt(population), at least 5 km apart; the 4 largest become the depot nodes (Houston, Dallas, San Antonio, Fort Worth in Texas) |
+| Delivery nodes, China (`china_jinghu`) | OpenStreetMap `place` nodes (ODbL); a population tag exists on well under 1 % of them (792 of 93,430 named city/town/village nodes in the corridor bbox), so `assume_population: true` estimates it from the place kind instead (**modelled**, not measured: `road_graph.PLACE_KIND_POPULATION_FALLBACK`; flagged per node, `population_is_assumed` in `vis_data/nodes.json`) | 10,000 places drawn by the same sqrt-population weighting, at least 3.5 km apart; no depots |
 | Road network | OpenStreetMap via Geofabrik (ODbL). One-ways and speed limits respected; service roads excluded; state cases keep motorway to `unclassified` classes only | directed graph, largest strongly connected component (3.5M nodes for each state case) |
-| Slope | AWS terrain tiles (USGS 3DEP/NED over the US; SRTM, EU-DEM and national DEMs over Europe): about 13 m per pixel for metros, 52 m for the Pacific Northwest, 100 m for Texas, 48 m for Germany + Netherlands + Belgium | node elevation, smoothed along the road graph (60-300 m scale); bridge and tunnel nodes interpolated between their land ends; offshore bathymetry values reset to sea level |
+| Slope | AWS terrain tiles (USGS 3DEP/NED over the US; SRTM, EU-DEM and national DEMs over Europe and China): about 13 m per pixel for metros, 52 m for the Pacific Northwest, 100 m for Texas, 48 m for Germany + Netherlands + Belgium, 48 m for China | node elevation, smoothed along the road graph (60-300 m scale); bridge and tunnel nodes interpolated between their land ends; offshore bathymetry values reset to sea level |
 | Chargers, US | NREL/NLR Alternative Fuels Data Center, public open DC-fast stations only (no Level 1 or Level 2) | **every** DC-fast station in the area, merged within 5 km (complete linkage) into one node, `total_capacity` = DC-fast ports of the node |
-| Chargers, Europe | OpenStreetMap `amenity=charging_station` (ODbL): CCS, CHAdeMO and NACS sockets with a tagged output of at least 50 kW (untagged outputs are kept) | Germany + Netherlands + Belgium: 6854 DC stations are read and merged within **10 km** (complete linkage) into 1429 sites, 1427 of which are on a road node (see "Charger nodes") |
+| Chargers, Europe | OpenStreetMap `amenity=charging_station` (ODbL): CCS, CHAdeMO and NACS sockets with a tagged output of at least 50 kW (untagged outputs are kept) | Germany + Netherlands + Belgium: all DC sites are read and merged within 5 km (complete linkage), like the US cases (see "Charger nodes"); europe_10k merges within 20 km, also complete linkage |
+| Chargers, China (`china_jinghu`) | OpenStreetMap `amenity=charging_station` tagging is real but sparse (2 of 1197 raw sites); `chargers_source: osm_services` adds every mapped expressway service area (`highway=services`/`rest_area`, ODbL), assumed to host 6 DC-fast ports where it carries no real charger tag (**modelled**, not measured: flagged per site, `modelled` in `vis_data/stations.json` and `vis_data/all_dcfast_sites.json`, counted in `metadata.json` `counts.dcfast_stations_modelled` / `charger_clusters.modelled_sites`) | 469 nodes (7,187 ports) merged within 15 km, complete linkage; 468 of 469 are fully modelled |
 | Energy and time | modelled (below) | all-pairs minimum-energy routes between the nodes |
 
 Delivery demand, service times and time windows are **not** taken from the data sources; they come from
@@ -76,7 +77,7 @@ pair inside a node is within the radius). Nodes before snapping to the road netw
 
 ![sweep](charger_merge_sweep.png)
 
-- Going from 1 km to 10 km removes 55-75 % of the nodes with complete linkage, and up to 99 % with single linkage. **The US case studies use 5 km, complete linkage; the Germany + Netherlands + Belgium case uses 10 km** (below).
+- Going from 1 km to 10 km removes 55-75 % of the nodes with complete linkage, and up to 99 % with single linkage. **The case studies use 5 km, complete linkage.**
 - **Single linkage stops being usable above 2 km**: it chains neighbouring towns into one node (Chicago 31 nodes at 5 km
   and 2 at 10 km, chains 63-124 km long, 360-1216 ports in one node), which is why the case studies use complete linkage.
 - Complete linkage keeps nodes compact (largest centre displacement 3-5 km at 5 km, 7-9 km at 10 km, ports per node
@@ -87,21 +88,6 @@ pair inside a node is within the radius). Nodes before snapping to the road netw
   regenerates the table, `charger_merge_sweep.json` and the figure; the full numbers (ports, diameters,
   displacement) are in the JSON.
 
-**Germany + Netherlands + Belgium** has 6854 OSM DC stations (22828 ports) and is four times the size of the US metros, so
-it merges within 10 km (the same sweep on its stations):
-
-| radius | complete linkage: nodes / largest centre displacement / median ports | single linkage: nodes / longest chain |
-|---|---|---|
-| 1 km | 4347 / 0.9 km / 3 | 4068 / 4.6 km |
-| 5 km | 2275 / 4.7 km / 6 | 1474 / 69 km |
-| **10 km (used)** | **1429 / 8.8 km / 10** | 542 / 265 km |
-| 15 km | 1015 / 12.8 km / 14 | 196 / 777 km |
-
-At 5 km the case has 2273 charger nodes (2507 terminals), which makes the all-pairs matrices 2.3 times larger and
-the route certificate slower; 10 km gives 1427 charger nodes with all 22824 ports kept. Single linkage chains
-chargers along the motorway network across hundreds of kilometres, so only complete linkage is used.
-The depots are the four largest drawn places: Hamburg, Munich, Amsterdam and Leipzig.
-
 ### Energy and time model
 Per directed road segment, from the slope of the smoothed elevation profile:
 
@@ -109,11 +95,11 @@ Per directed road segment, from the slope of the smoothed elevation profile:
 - battery energy = traction (gravity + rolling + drag) divided by the drivetrain efficiency, or
   multiplied by the regeneration efficiency on net-downhill segments, + auxiliary load x time +
   kinetic losses at signals and stop signs;
-- vehicle profile `heavy_truck` (default): 36 t class-8 battery-electric truck (the Germany + Netherlands + Belgium preset adds `vehicle: {max_speed_kph: 90}`, the EU speed limiter of heavy trucks: posted limits above 90 km/h are capped before the class speed factor), Crr 0.007, CdA 6.5 m2,
+- vehicle profile `heavy_truck` (default): 36 t class-8 battery-electric truck, Crr 0.007, CdA 6.5 m2,
   drivetrain 0.90, regeneration 0.65, 6 kW auxiliary. These were **calibrated to the California data**
   (median 1.57 kWh/km, 10th-90th percentile 1.13-1.97, from its lane table) rather than read from a
   publication: median over routes is 1.47 (Seattle), 1.25 (Chicago), 1.33 (Pacific Northwest) and
-  1.18 (Texas) and 1.27 (Germany + Netherlands + Belgium) kWh/km. A `van` profile (4.2 t, about 0.3 kWh/km) is also provided. Parameters are
+  1.18 (Texas) kWh/km. A `van` profile (4.2 t, about 0.3 kWh/km) is also provided. Parameters are
   recorded in `metadata.json` and overridable in the preset (`vehicle_profile:`, `vehicle:`).
 
 Uphill and downhill, and one-way versus two-way streets, make both costs depend on direction. Routes
@@ -134,7 +120,6 @@ floored to 0.02 kWh (219 of 80k legs in Seattle, 31 of 310k in the Pacific North
 | Pacific Northwest | 7.8 % | 63 % | 15 % | 24 % |
 | Seattle | 13.5 % | 79 % | 35 % | 52 % |
 | Chicago | 10.1 % | 77 % | 11 % | 20 % |
-| Germany + Netherlands + Belgium | 6.7 % | 61 % | 5 % | 19 % |
 
 Seattle's energy asymmetry follows net climb between the two ends (`figures/asymmetry.png`), and its time
 asymmetry is high because a 36 t truck's minimum-energy route differs by direction; a lighter vehicle gives
@@ -161,6 +146,85 @@ default configs) load it from there. Nothing California-related remains outside 
   median of 1.57 kWh/km, which the heavy-truck profile of the other cases is calibrated to); there are no depots (the
   environment draws one at random).
 
+## Western Europe, 10,000 delivery nodes (`europe_10k`)
+
+Germany, Netherlands, Belgium, France, Switzerland and Denmark on one road network (about 1850 km across; the UK and
+Scandinavia are left out: the UK is only reachable by ferry or by the Channel Tunnel, which OpenStreetMap maps as rail).
+
+| | |
+|---|---|
+| Delivery nodes | 10,000 OpenStreetMap places with a population tag (cities, towns, villages), drawn by sqrt-population weight, at least 4 km apart |
+| Depots | none: any delivery node can be a depot, as in California |
+| Charger nodes | 1,561: 12,118 OSM DC-fast stations (44,236 ports) merged within 20 km (complete linkage: every pair of stations inside a node within 20 km, largest node 20.0 km across; nodes end up 17 km apart at the median, single linkage would chain the motorways into one 1,450 km node), ports summed (44,130 ports in nodes) |
+| Road network | OSM motorway .. unclassified: 47.8M nodes, 89.8M directed edges, one strongly connected component |
+| Energy / time | same heavy-truck model as the other cases (90 km/h limiter, 400 kWh battery); median route 666 km, 842 kWh, 16.5 h; 1.25 kWh/km |
+| Asymmetry | 44 % of sampled pairs differ by more than 5 % in energy between the two directions, 12 % in time |
+
+Format: the 10^8 ordered pairs do not fit a JSON dictionary or a NetworkX graph, so this case stores float32 matrices
+(`od_energy_kwh.npy`, `od_time_h.npy`, entry `[i, j]` = minimum-energy route i -> j, row i = OSM node `od_node_ids[i]`,
+ascending ids like the JSON loader's numbering). `EventDrivenTruckEnv` loads them memory-mapped through
+`MatrixTransportationGraph` (a route is the direct leg; no search runs); `get_graph` refuses such a config.
+The two matrices are 600 MB each and are git-ignored: rebuild them with the staged Slurm pipeline (about an hour in total,
+of which the one-off OSM extraction is 10 minutes per country and the all-pairs routing 10 minutes on 24 array tasks):
+
+```bash
+for r in germany france netherlands belgium switzerland denmark; do      # road network and chargers/places per country
+  sbatch --cpus-per-task=24 scripts/casestudies/slurm_extract.sh scripts/casestudies/presets/europe_10k.yaml europe/$r
+  sbatch --export=ALL,MODE=scan scripts/casestudies/slurm_extract.sh scripts/casestudies/presets/europe_10k.yaml europe/$r
+done
+bash scripts/casestudies/submit_npy_build.sh scripts/casestudies/presets/europe_10k.yaml 24   # prepare -> od array -> assemble
+```
+
+The routing runs on the junction graph: the 80 % of road nodes that only continue a road (one way in, one out) are folded
+into their edges (`contract.py`), which leaves every terminal-to-terminal time, energy and length exactly unchanged (checked
+against the full graph) and shrinks the search graph from 47.8M to 2.6M nodes. Scenario check: 10 of 10 episodes succeed
+(10 distinct depots in France, Germany, Switzerland and Belgium, same-seed replay identical, about 4 s to draw a scenario).
+
+Caveats: OpenStreetMap lists far fewer French chargers (3,810 DC stations) than exist, so French charger nodes are sparser than
+the German ones; 20 km merging hides most of it, but charger coverage is not uniform across countries. Learning code that builds
+dense N x N features (`dense_transport_matrix`: 11,561^2 x 3 float32 = 1.6 GB) needs the whole matrix in memory.
+
+## China: Beijing <-> Shanghai, 10,000 delivery nodes (`china_jinghu`)
+
+Six Geofabrik province extracts (Shanghai, Jiangsu, Shandong, Hebei, Tianjin, Beijing) clipped to a bbox along
+the G2 Jinghu Expressway corridor, about 1130 km end to end, on the same staged `.npy` pipeline as `europe_10k`.
+
+| | |
+|---|---|
+| Delivery nodes | 10,000 OpenStreetMap places (cities, towns, villages), drawn by sqrt-population weight (real where tagged, modelled by place kind otherwise -- see above), at least 3.5 km apart |
+| Depots | none: any delivery node can be a depot, as in California and europe_10k |
+| Charger nodes | 469: 1,197 raw sites (2 real OSM `amenity=charging_station` stations + 1,195 modelled expressway service areas, see above) merged within 15 km (complete linkage), 7,187 ports; 468 of 469 nodes are fully modelled |
+| Road network | OSM motorway .. unclassified: 6.50M nodes, 11.48M directed edges, one strongly connected component |
+| Energy / time | same heavy-truck model as the US cases (no speed governor; 400 kWh battery); median route 453 km, 506 kWh, 11.7 h; p95 1084 km, 1208 kWh; max 1582 km, 1917 kWh; 1.11 kWh/km median |
+| Asymmetry | 30 % of sampled pairs differ by more than 5 % in energy between the two directions, 12 % in time |
+
+Format: `.npy` matrices, same layout as `europe_10k` (`od_energy_kwh.npy`, `od_time_h.npy`, `od_node_ids.npy`; 400 MB
+each, git-ignored). Build it (province extracts are small enough that `prepare` extracts and scans them itself; no
+separate per-region extract jobs are needed, unlike europe_10k) -- about 15 minutes end to end on `cbuild`, almost
+all of it fetching 3,266 terrain tiles on first run:
+
+```bash
+RAW_DIR=/path/to/.casestudy_raw PYTHON=/path/to/python \
+  bash scripts/casestudies/submit_npy_build.sh scripts/casestudies/presets/china_jinghu.yaml 32   # prepare -> od array -> assemble
+```
+
+The routing graph contracts from 6.50M to 1.05M junction nodes (2.55M edges), 10,469 terminals. Scenario check:
+20 of 20 episodes build and certify, 0 failures, same-seed replay identical, 20 distinct depots, 7.5 s median to
+play a scenario; the heuristic succeeds in 18 of 20 (90 %, the other 2 `no_feasible_action`) -- every one needs
+charging (median 1671 km driven, 6 charging sessions), as expected with a 400 kWh battery on a corridor whose
+median leg alone is 506 kWh.
+
+Caveats, beyond the chargers and population already flagged as modelled above:
+- Real OSM DC-fast tagging is close to absent along this corridor (2 of 1197 raw sites); the 6-ports-per-service-area
+  assumption (`service_area_ports` in the preset) is a deliberate model input, not a reverse-engineered real count,
+  and every modelled site is flagged so a different assumption (or dropping modelled sites entirely) is a preset change away.
+- Unlike `europe_10k` and `de_nl_be`, no speed governor is applied (China's expressway truck limits are closer to the
+  US/Texas pattern than the EU's 90 km/h limiter), which is also why the energy asymmetry (30 %) reads lower than
+  Europe's (44 %): a governed network makes the directional cost gap from one-way streets and signals relatively larger.
+- Hebei's Geofabrik extract already contains Beijing and Tianjin, so scanning all six as separate regions
+  double-counts anything in the overlap; `chargers.dedupe_sites` (by near-duplicate OSM object, not just
+  proximity) removes it (1,370 raw service areas -> 1,195 after this dedup) before the service-area assumption is applied.
+
 ## Scenario check
 
 `scripts/casestudies/check_scenarios.py` resets the environment on 20 seeds per case. Each reset draws a
@@ -173,7 +237,6 @@ plays the episode. Results are in `<case>/scenario_check.json` and `<case>/figur
 | California (default) | 20 / 0 | yes | 20 / 139 | 45 % | 20 of 20 | 7038 km | 14, 149 | 0.1 |
 | Texas | 20 / 0 | yes | 19 / 142 | 80 % | 20 of 20 | 4167 km | 19, 31 | 4.0 |
 | Pacific Northwest | 20 / 0 | yes | 19 / 139 | 85 % | 20 of 20 | 3293 km | 18, 29 | 2.2 |
-| Germany + Netherlands + Belgium | 20 / 0 | yes | 20 / 135 | 90 % | 20 of 20 | 1505 km | 5, 12 | 0.3 |
 | Seattle | 20 / 0 | yes | 19 / 143 | 100 % | 0 of 20 | 462 km | 0, 0 | < 0.1 |
 | Chicago | 20 / 0 | yes | 19 / 139 | 100 % | 0 of 20 | 470 km | 0, 0 | < 0.1 |
 
@@ -261,7 +324,11 @@ AFDC downloads are "latest" snapshots (these case studies: October 2026), so a f
 - The DEM is bare earth at 13-100 m; steep short ramps and overpasses without a `bridge` tag can be
   mis-graded, and smoothing flattens grades shorter than the smoothing scale (60 m metros, 150-300 m states).
 - The vehicle model is calibrated to the California data's consumption, not taken from a source paper.
-- Merged chargers: node positions and port totals are regional (up to 5 km), so queueing at a node represents the
-  whole cluster's ports.
+- Merged chargers: node positions and port totals are regional (up to 5-20 km depending on the case), so queueing at
+  a node represents the whole cluster's ports.
+- `china_jinghu`: almost all delivery-node populations (9,644 of 10,000) and almost all charger port counts (468 of
+  469 nodes) are modelled by place kind / a fixed ports-per-service-area assumption, not measured, because OSM tags
+  real population and real chargers far more sparsely in China than in Europe or the US (both are flagged per node/site
+  and counted in `metadata.json`; see "What is real and what is modelled" and the `china_jinghu` section above).
 - The Amazon data is CC BY-NC 4.0, so these derived folders are for non-commercial research;
   OSM data requires attribution (ODbL).

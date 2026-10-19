@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # this checkout, not an installed copy
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 import numpy as np  # noqa: E402

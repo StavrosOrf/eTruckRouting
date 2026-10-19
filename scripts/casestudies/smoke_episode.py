@@ -8,7 +8,11 @@ queues) under EVRoutingEnv/results/<run_id>/, drawn on the case study's own road
 """
 import argparse
 import os
+import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # this checkout, not an installed copy
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 

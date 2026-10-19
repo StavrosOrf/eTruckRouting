@@ -3,6 +3,10 @@
     python scripts/casestudies/visualize_case_study.py EVRoutingEnv/data/case_studies/seattle
 
 Writes <case>/figures/{overview,terrain,asymmetry}.png using only files inside the folder.
+
+Matrix case studies (europe_10k, od_energy_kwh.npy) have 10^8 node pairs: the asymmetry figure then uses a random
+sample of `--sample-nodes` nodes (default 2500) and, when given `--dist-km <od_dist_km.npy>` (written next to the OD
+shards in the raw cache), their true route lengths instead of straight-line distances.
 """
 from __future__ import annotations
 
@@ -25,7 +29,18 @@ ROLE_STYLE = {
 }
 
 
-def load_case(case: Path):
+def sample_matrix_od(case: Path, meta: dict, n_sample: int, dist_km: Path | None, seed: int = 0) -> dict:
+    """energy/time (and route length) between a random subset of nodes of a matrix case study."""
+    ids = np.load(case / "od_node_ids.npy")
+    rng = np.random.default_rng(seed)
+    pick = np.sort(rng.choice(len(ids), min(n_sample, len(ids)), replace=False))
+    sub = lambda f: np.asarray(np.load(f, mmap_mode="r")[pick][:, pick], dtype=np.float32)
+    E, T = sub(case / meta["files"]["energy"]), sub(case / meta["files"]["time"])
+    K = sub(dist_km) if dist_km is not None and Path(dist_km).exists() else np.full(E.shape, np.nan, np.float32)
+    return {"node_ids": ids[pick], "energy_net_kwh": E, "time_h": T, "dist_km": K}
+
+
+def load_case(case: Path, n_sample: int = 2500, dist_km: Path | None = None):
     d = {"meta": json.load(open(case / "metadata.json")),
          "nodes": json.load(open(case / "vis_data" / "nodes.json")),
          "stations": json.load(open(case / "vis_data" / "stations.json")),
@@ -34,8 +49,11 @@ def load_case(case: Path):
     d["roads"] = {k: r[k] for k in r.files}
     t = np.load(case / "vis_data" / "terrain.npz")
     d["terrain"] = {k: t[k] for k in t.files}
-    o = np.load(case / "vis_data" / "od_matrices.npz")
-    d["od"] = {k: o[k] for k in o.files}
+    if d["meta"].get("format") == "npy":
+        d["od"] = sample_matrix_od(case, d["meta"], n_sample, dist_km)
+    else:
+        o = np.load(case / "vis_data" / "od_matrices.npz")
+        d["od"] = {k: o[k] for k in o.files}
     return d
 
 
@@ -87,10 +105,11 @@ def fig_overview(case: Path, d: dict):
         ax.scatter([s["lon"] for s in other], [s["lat"] for s in other], s=10, marker="^", c="none",
                    edgecolors="#c28e8e", lw=0.5, zorder=3)
     big = meta.get("scale_km", 100) > 300          # state-scale maps need smaller markers
-    k = 0.35 if big else 1.0
+    dense = len(nodes) > 3000                      # continent-scale cases: thousands of nodes per map
+    k = 0.12 if dense else 0.35 if big else 1.0
     for role in ("customer", "depot"):
         pts = [n for n in nodes if n["role"] == role]
-        style = dict(ROLE_STYLE[role]); style["s"] = style["s"] * (2.2 if big and role == "customer" else 0.8 if big else 1)
+        style = dict(ROLE_STYLE[role]); style["s"] = style["s"] * (0.45 if dense and role == "customer" else 2.2 if big and role == "customer" else 0.8 if big else 1)
         ax.scatter([p["lon"] for p in pts], [p["lat"] for p in pts], **style)
     ports = np.array([s["ports"] for s in st], float)
     kinds = np.array([s.get("station_type", "DCFast") for s in st])
@@ -100,7 +119,7 @@ def fig_overview(case: Path, d: dict):
         if m.any():
             sc = ax.scatter(np.array([s["lon"] for s in st])[m], np.array([s["lat"] for s in st])[m],
                             s=(30 + 7 * np.minimum(ports[m], 40)) * k, c=ports[m], cmap="YlOrRd", vmin=0,
-                            vmax=max(ports.max(), 1), marker=marker, edgecolors="black", lw=0.5 if big else 0.8, zorder=6)
+                            vmax=max(ports.max(), 1), marker=marker, edgecolors="black", lw=0.2 if dense else 0.5 if big else 0.8, zorder=6)
     cb = fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.015)
     cb.set_label("ports at charger node" if (kinds != "DCFast").any() else "DC-fast ports at charger node")
     c = meta["counts"]
@@ -199,14 +218,17 @@ def fig_asymmetry(case: Path, d: dict):
     ax.set_title("Energy asymmetry follows net climb")
     ax = axs[1, 1]
     ok = (K > 1) & (E > 0)
-    ax.hexbin(K[ok], (E / np.maximum(K, 0.1))[ok] * 1000, gridsize=60, bins="log", cmap="plasma", mincnt=1, extent=(0, np.percentile(K[ok], 99.5), 0, 900))
+    whkm = (E / np.maximum(K, 0.1))[ok] * 1000
+    ax.hexbin(K[ok], whkm, gridsize=60, bins="log", cmap="plasma", mincnt=1,
+              extent=(0, np.percentile(K[ok], 99.5), 0, max(900.0, 1.15 * np.percentile(whkm, 99.5))))
     ax.set_xlabel(dist_label); ax.set_ylabel("Wh per km"); ax.set_title("Consumption per directed pair")
     ax = axs[1, 2]
     ax.hist(E[~np.eye(n, dtype=bool)], bins=60, color="#7570b3")
     ax.set_xlabel("directed leg energy (kWh)"); ax.set_ylabel("directed pairs")
     r = meta["ranges"]["energy_kwh_p5_p50_p95_max"]
-    ax.set_title(f"Leg energy: p5 {r[0]}, median {r[1]}, p95 {r[2]} kWh")
-    fig.suptitle(f"{meta['title']}: direction-dependent energy and time between all {n} nodes", fontsize=12)
+    ax.set_title(f"Leg energy: p5 {r[0]:.0f}, median {r[1]:.0f}, p95 {r[2]:.0f} kWh", fontsize=11)
+    scope = f"a random sample of {n} of the {meta['counts']['nodes']}" if n < meta["counts"]["nodes"] else f"all {n}"
+    fig.suptitle(f"{meta['title']}: direction-dependent energy and time between {scope} nodes", fontsize=12)
     fig.tight_layout(); fig.savefig(case / "figures" / "asymmetry.png", dpi=140); plt.close(fig)
 
 
@@ -261,9 +283,9 @@ def fig_scenarios(case: Path, d: dict):
     fig.savefig(case / "figures" / "scenarios.png", dpi=140); plt.close(fig)
 
 
-def main(case: Path):
+def main(case: Path, n_sample: int = 2500, dist_km: Path | None = None):
     (case / "figures").mkdir(exist_ok=True)
-    d = load_case(case)
+    d = load_case(case, n_sample, dist_km)
     fig_overview(case, d); fig_terrain(case, d); fig_asymmetry(case, d)
     if (case / "scenario_check.json").exists():
         fig_scenarios(case, d)
@@ -271,4 +293,11 @@ def main(case: Path):
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("case", type=Path)
+    ap.add_argument("--sample-nodes", type=int, default=2500, help="matrix case studies: nodes sampled for the asymmetry figure")
+    ap.add_argument("--dist-km", type=Path, help="matrix case studies: od_dist_km.npy of the build (route lengths)")
+    a = ap.parse_args()
+    main(a.case, a.sample_nodes, a.dist_km)

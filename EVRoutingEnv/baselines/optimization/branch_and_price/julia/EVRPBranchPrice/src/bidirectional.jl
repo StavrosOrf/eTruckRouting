@@ -32,20 +32,21 @@ mutable struct BLabel{W}
     need::Float64
     ng::NodeSet{W}
     first::Int
-    sr::UInt128
+    sr::SRBits
     alive::Bool
 end
 
 mutable struct BackwardSpace{W}
     pool::Vector{BLabel{W}}
     buckets::Vector{Vector{Int}}
+    bcost::Vector{Vector{Float64}}
     heap::BinaryMinHeap{Tuple{Float64,Int}}
     prefix::Matrix{Float64}   # least prefix cost depot -> v within r capacity units
     slack::Matrix{Float64}    # dominance correction between first customers
 end
 
 BackwardSpace{W}(inst::Instance, R::Int) where {W} = BackwardSpace{W}(
-    BLabel{W}[], [Int[] for _ in 1:inst.N], BinaryMinHeap{Tuple{Float64,Int}}(),
+    BLabel{W}[], [Int[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N], BinaryMinHeap{Tuple{Float64,Int}}(),
     zeros(inst.N, R + 1), zeros(inst.n + 1, inst.n + 1),
 )
 
@@ -101,29 +102,9 @@ end
 
 function insert_backward!(bs::BackwardSpace{W}, inst::Instance, restr::Restrictions{W}, ws::PricingWorkspace{W},
                           lab::BLabel{W}, cap::Int) where {W}
-    bucket = bs.buckets[lab.node]
-    if length(bucket) >= cap
-        worst = argmax(k -> bs.pool[bucket[k]].cost, eachindex(bucket))
-        lab.cost < bs.pool[bucket[worst]].cost || return false
-        bs.pool[bucket[worst]].alive = false
-        bucket[worst] = bucket[end]
-        pop!(bucket)
-    end
-    i = 1
-    @inbounds while i <= length(bucket)
-        old = bs.pool[bucket[i]]
-        backward_dominates(inst, restr, bs, ws, old, lab) && return false
-        if backward_dominates(inst, restr, bs, ws, lab, old)
-            old.alive = false
-            bucket[i] = bucket[end]
-            pop!(bucket)
-            continue
-        end
-        i += 1
-    end
-    push!(bs.pool, lab)
-    idx = length(bs.pool)
-    push!(bucket, idx)
+    dom(a, b) = backward_dominates(inst, restr, bs, ws, a, b)
+    idx = sorted_insert!(dom, bs.pool, bs.buckets[lab.node], bs.bcost[lab.node], lab, cap)
+    idx == 0 && return false
     push!(bs.heap, (lab.load, idx))
     true
 end
@@ -140,8 +121,9 @@ function forward_pass!(ws::PricingWorkspace{W}, inst::Instance, restr::Restricti
     min_rc = Inf
     empty!(ws.pool)
     foreach(empty!, ws.buckets)
+    foreach(empty!, ws.bcost)
     ws.heap = BinaryMinHeap{Tuple{Float64,Int}}()
-    push!(ws.pool, Label{W}(depot, 0, 0.0, 0.0, 0.0, inst.start_battery, 0.0, NodeSet{W}(), depot, zero(UInt128), true))
+    push!(ws.pool, Label{W}(depot, 0, 0.0, 0.0, 0.0, inst.start_battery, 0.0, NodeSet{W}(), depot, zero(SRBits), true))
     push!(ws.heap, (0.0, 1))
     popped = 0
     while !isempty(ws.heap)
@@ -179,6 +161,7 @@ function forward_pass!(ws::PricingWorkspace{W}, inst::Instance, restr::Restricti
             sr = l.sr
             if customer && ws.has_sr
                 m = ws.sr_mask[w]
+                sr &= ws.sr_keep[w]          # forget cuts whose memory w is outside
                 cost += srpen(ws.sr_pen, sr & m)
                 sr = sr ⊻ m
             end
@@ -200,8 +183,9 @@ function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Ins
     n, N, depot = inst.n, inst.N, inst.depot
     empty!(bs.pool)
     foreach(empty!, bs.buckets)
+    foreach(empty!, bs.bcost)
     bs.heap = BinaryMinHeap{Tuple{Float64,Int}}()
-    push!(bs.pool, BLabel{W}(depot, 0, 0.0, 0.0, 0.0, NodeSet{W}(), depot, zero(UInt128), true))
+    push!(bs.pool, BLabel{W}(depot, 0, 0.0, 0.0, 0.0, NodeSet{W}(), depot, zero(SRBits), true))
     push!(bs.heap, (0.0, 1))
     popped = 0
     while !isempty(bs.heap)
@@ -235,6 +219,7 @@ function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Ins
             sr = u_lab.sr
             if customer && ws.has_sr
                 m = ws.sr_mask[v]
+                sr &= ws.sr_keep[v]
                 cost += srpen(ws.sr_pen, sr & m)
                 sr = sr ⊻ m
             end
@@ -257,7 +242,7 @@ function price_bidirectional!(
     ws::PricingWorkspace{W}, bs::BackwardSpace{W}, inst::Instance, π::Vector{Float64}, κ::Float64,
     restr::Restrictions{W}; exact::Bool, max_columns::Int, rc_tol::Float64, time_limit::Float64,
     label_limit::Int, bucket_cap::Int, cost_scale::Float64, cuts::Vector{CapacityCut}, σ::Vector{Float64},
-    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[],
+    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
 ) where {W}
     t0 = time()
     n, N, depot = inst.n, inst.N, inst.depot
@@ -294,7 +279,7 @@ function price_bidirectional!(
     prefix_bound!(bs, ws, inst, ws.earn, cost_scale)
     set_subset_rows!(ws, sr_cuts, τ, n)
     cap = exact ? typemax(Int) : bucket_cap
-    nbrs = exact ? inst.out : ws.near
+    nbrs = (exact || full_graph) ? inst.out : ws.near
     deadline = t0 + time_limit
     # The two halves share only read-only pricing data, so with more than one
     # Julia thread the backward pass runs alongside the forward one.
@@ -314,7 +299,7 @@ function price_bidirectional!(
             bwd = sort!([k for k in bs.buckets[u] if bs.pool[k].alive]; by = k -> bs.pool[k].cost)
             isempty(bwd) && continue
             self = nodeset(Val(W), (u,))
-            mu = ws.has_sr ? ws.sr_mask[u] : zero(UInt128)
+            mu = ws.has_sr ? ws.sr_mask[u] : zero(SRBits)
             # u was counted on both sides: a triple holding u was charged once
             # too often when both sides are even; one not holding u is owed a
             # penalty when both are odd. The refund is at most `credit`.

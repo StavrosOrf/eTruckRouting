@@ -17,6 +17,17 @@ def local_xy(lat, lon, lat0):
     return np.c_[np.radians(lon) * 6371008.8 * np.cos(np.radians(lat0)), np.radians(lat) * 6371008.8]
 
 
+def sphere_xyz(lat, lon):
+    """Points on the Earth sphere in metres (chord distance = great-circle distance to <1e-6 relative at 20 km).
+
+    ``local_xy`` is one equirectangular map around a single latitude: east-west distances are off by 15 % at the
+    edges of a 17-degree-tall region, which matters when merging stations within a fixed radius at that scale.
+    """
+    la = np.radians(np.asarray(lat, float)); lo = np.radians(np.asarray(lon, float))
+    r = 6371008.8
+    return np.c_[r * np.cos(la) * np.cos(lo), r * np.cos(la) * np.sin(lo), r * np.sin(la)]
+
+
 def load_dcfast(afdc_json: Path, bbox, exclude_tesla_only: bool = False) -> list[dict]:
     """Open, public stations with at least one DC-fast port inside bbox=(min_lat,min_lon,max_lat,max_lon)."""
     mnla, mnlo, mxla, mxlo = bbox
@@ -91,50 +102,97 @@ def osm_dcfast_ports(tags, min_kw: float = 50.0):
     return ports, sorted(conns)
 
 
-def load_dcfast_osm(pbfs, bbox, min_kw: float = 50.0, exclude_tesla_only: bool = False, dedup_m: float = 15.0) -> list[dict]:
-    """Public DC-fast sites from OpenStreetMap ``amenity=charging_station`` nodes and ways.
+def scan_osm_chargers(pbf, bbox, min_kw: float = 50.0, exclude_tesla_only: bool = False) -> list[dict]:
+    """DC-fast ``amenity=charging_station`` nodes and ways of one extract, before de-duplication."""
+    import osmium
 
-    Same record format as ``load_dcfast`` (the id list is called ``afdc_id`` for compatibility; here it is
-    ``node/<id>`` or ``way/<id>``). Stations tagged private/no access or not for cars are skipped. Two
-    entries within ``dedup_m`` with the same operator and port count are one station mapped twice
-    (a node inside a mapped area), so only the first is kept.
+    mnla, mnlo, mxla, mxlo = bbox
+    out = []
+    fp = osmium.FileProcessor(str(pbf)).with_locations().with_filter(osmium.filter.KeyFilter("amenity"))
+    for o in fp:
+        if o.is_relation() or o.tags.get("amenity") != "charging_station":
+            continue
+        t = o.tags
+        if t.get("access") in ("private", "no", "permit") or t.get("motorcar") == "no":
+            continue
+        if o.is_node():
+            lat, lon, kind = o.location.lat, o.location.lon, "node"
+        else:
+            try:
+                pts = [(n.lat, n.lon) for n in o.nodes]
+            except osmium.InvalidLocationError:
+                continue
+            if not pts:
+                continue
+            lat, lon = float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))
+            kind = "way"
+        if not (mnla <= lat <= mxla and mnlo <= lon <= mxlo):
+            continue
+        ports, conns = osm_dcfast_ports(t, min_kw)
+        if ports <= 0 or (exclude_tesla_only and set(conns) == {"TESLA"}):
+            continue
+        out.append({"afdc_id": f"{kind}/{o.id}", "name": t.get("name") or t.get("brand"), "lat": float(lat),
+                    "lon": float(lon), "ports": int(ports), "network": t.get("operator") or t.get("network"),
+                    "connectors": conns, "city": t.get("addr:city")})
+    return out
+
+
+def scan_osm_service_areas(pbf, bbox, assume_ports: int = 4) -> list[dict]:
+    """Expressway service areas (``highway=services``/``rest_area``) as modelled DC-fast charger sites.
+
+    Used where explicit ``amenity=charging_station`` tagging badly under-counts real chargers (e.g. China):
+    OSM's mapping of the service areas themselves is far more complete than its mapping of the charging bays
+    inside them, and the great majority of Chinese expressway service areas (服务区) now host a DC-fast bank
+    (Ministry of Transport rollout along the national expressway network). Each service area found this way
+    is given ``assume_ports`` DC-fast ports; this is a modelling assumption, not a measurement, flagged
+    ``modelled: True`` per site and surfaced in the case's metadata.json so it stays distinguishable from
+    real AFDC/OSM station data. Call ``drop_near`` against the real stations first so a service area that
+    already carries its own ``amenity=charging_station`` tag is not double-counted.
     """
     import osmium
 
     mnla, mnlo, mxla, mxlo = bbox
     out = []
-    for pbf in pbfs:
-        fp = osmium.FileProcessor(str(pbf)).with_locations().with_filter(osmium.filter.KeyFilter("amenity"))
-        for o in fp:
-            if o.is_relation() or o.tags.get("amenity") != "charging_station":
+    fp = osmium.FileProcessor(str(pbf)).with_locations().with_filter(osmium.filter.KeyFilter("highway"))
+    for o in fp:
+        if o.is_relation() or o.tags.get("highway") not in ("services", "rest_area"):
+            continue
+        t = o.tags
+        if o.is_node():
+            lat, lon, kind = o.location.lat, o.location.lon, "node"
+        else:
+            try:
+                pts = [(n.lat, n.lon) for n in o.nodes]
+            except osmium.InvalidLocationError:
                 continue
-            t = o.tags
-            if t.get("access") in ("private", "no", "permit") or t.get("motorcar") == "no":
+            if not pts:
                 continue
-            if o.is_node():
-                lat, lon, kind = o.location.lat, o.location.lon, "node"
-            else:
-                try:
-                    pts = [(n.lat, n.lon) for n in o.nodes]
-                except osmium.InvalidLocationError:
-                    continue
-                if not pts:
-                    continue
-                lat, lon = float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))
-                kind = "way"
-            if not (mnla <= lat <= mxla and mnlo <= lon <= mxlo):
-                continue
-            ports, conns = osm_dcfast_ports(t, min_kw)
-            if ports <= 0 or (exclude_tesla_only and set(conns) == {"TESLA"}):
-                continue
-            out.append({"afdc_id": f"{kind}/{o.id}", "name": t.get("name") or t.get("brand"), "lat": float(lat),
-                        "lon": float(lon), "ports": int(ports), "network": t.get("operator") or t.get("network"),
-                        "connectors": conns, "city": t.get("addr:city")})
+            lat, lon = float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))
+            kind = "way"
+        if not (mnla <= lat <= mxla and mnlo <= lon <= mxlo):
+            continue
+        out.append({"afdc_id": f"service/{kind}/{o.id}", "name": t.get("name"), "lat": float(lat),
+                    "lon": float(lon), "ports": int(assume_ports), "network": t.get("operator") or "expressway service area",
+                    "connectors": ["CCS"], "city": None, "modelled": True})
+    return out
+
+
+def drop_near(points: list[dict], others: list[dict], radius_m: float = 300.0) -> list[dict]:
+    """Drop entries of ``points`` within ``radius_m`` of any entry of ``others`` (e.g. a service area that
+    already carries its own real ``amenity=charging_station`` tag, so it is not double-counted)."""
+    if not points or not others:
+        return points
+    tree = cKDTree(sphere_xyz([o["lat"] for o in others], [o["lon"] for o in others]))
+    xyz = sphere_xyz([p["lat"] for p in points], [p["lon"] for p in points])
+    near = tree.query_ball_point(xyz, r=radius_m)
+    return [p for p, hits in zip(points, near) if len(hits) == 0]
+
+
+def dedupe_sites(out: list[dict], dedup_m: float = 15.0) -> list[dict]:
+    """Drop the same station mapped as a node and as an area, or listed in two overlapping extracts."""
     if not out or dedup_m <= 0:
         return out
-    # the same station mapped as a node and as an area, or listed in two overlapping extracts
-    xy = local_xy([s["lat"] for s in out], [s["lon"] for s in out], float(np.mean([s["lat"] for s in out])))
-    tree = cKDTree(xy)
+    tree = cKDTree(sphere_xyz([s["lat"] for s in out], [s["lon"] for s in out]))
     drop = set()
     for i, j in sorted(tree.query_pairs(dedup_m)):
         if i in drop or j in drop:
@@ -144,11 +202,44 @@ def load_dcfast_osm(pbfs, bbox, min_kw: float = 50.0, exclude_tesla_only: bool =
     return [s for k, s in enumerate(out) if k not in drop]
 
 
+def load_dcfast_osm(pbfs, bbox, min_kw: float = 50.0, exclude_tesla_only: bool = False, dedup_m: float = 15.0) -> list[dict]:
+    """Public DC-fast sites from OpenStreetMap ``amenity=charging_station`` nodes and ways.
+
+    Same record format as ``load_dcfast`` (the id list is called ``afdc_id`` for compatibility; here it is
+    ``node/<id>`` or ``way/<id>``). Stations tagged private/no access or not for cars are skipped. Two
+    entries within ``dedup_m`` with the same operator and port count are one station mapped twice
+    (a node inside a mapped area), so only the first is kept.
+    """
+    out = []
+    for pbf in pbfs:
+        out += scan_osm_chargers(pbf, bbox, min_kw, exclude_tesla_only)
+    return dedupe_sites(out, dedup_m)
+
+
+def _leader_labels(xyz: np.ndarray, ports: np.ndarray, merge_m: float) -> np.ndarray:
+    """Greedy leader clustering: largest unassigned site first, absorbing every unassigned site within merge_m/2.
+
+    Any two members are then within merge_m of each other (triangle inequality), the same guarantee as complete
+    linkage, but it needs a KD-tree instead of the O(n^2) distance matrix, so it scales to 10^5 stations.
+    """
+    tree = cKDTree(xyz)
+    lab = -np.ones(len(xyz), np.int64)
+    for i in np.lexsort((xyz[:, 2], xyz[:, 1], xyz[:, 0], -ports)):
+        if lab[i] >= 0:
+            continue
+        near = np.asarray(tree.query_ball_point(xyz[i], r=merge_m / 2.0), np.int64)
+        lab[near[lab[near] < 0]] = i
+    return lab
+
+
 def merge_sites(sites: list[dict], merge_m: float, linkage_method: str = "single") -> list[dict]:
     """Merge stations closer than merge_m (single linkage by default); ports are summed.
 
     ``linkage_method="complete"`` instead guarantees every pair inside a node is within merge_m,
-    which keeps large radii from chaining neighbouring towns into one node.
+    which keeps large radii from chaining neighbouring towns into one node. ``"leader"`` gives the same
+    guarantee with a greedy radius-merge_m/2 clustering that needs no distance matrix (for 10^5 stations), but
+    it leaves clearly more nodes: 2405 against 1584 for the 12k stations of europe_10k at 20 km. Regions
+    taller than 5 degrees of latitude are measured on the sphere rather than on a single-latitude map.
 
     The merged location is the port-weighted centroid. ``diameter_m`` records the largest
     distance between member stations so chained merges are visible in the metadata.
@@ -156,11 +247,19 @@ def merge_sites(sites: list[dict], merge_m: float, linkage_method: str = "single
     if not sites:
         return []
     lat0 = float(np.mean([s["lat"] for s in sites]))
-    xy = local_xy([s["lat"] for s in sites], [s["lon"] for s in sites], lat0)
-    lab = fcluster(linkage(xy, linkage_method), t=merge_m, criterion="distance") if len(sites) > 1 else np.array([1])
+    lat_span = max(s["lat"] for s in sites) - min(s["lat"] for s in sites)
+    # a single-latitude map is good to <0.1 % over 100 km but 15 % off at the edges of a 17-degree region
+    xy = (sphere_xyz if lat_span > 5.0 else lambda la, lo: local_xy(la, lo, lat0))(
+        [s["lat"] for s in sites], [s["lon"] for s in sites])
+    if linkage_method == "leader":
+        lab = _leader_labels(xy, np.array([s["ports"] for s in sites], float), merge_m)
+    else:
+        lab = fcluster(linkage(xy, linkage_method), t=merge_m, criterion="distance") if len(sites) > 1 else np.array([1])
+    order = np.argsort(lab, kind="stable")
+    cuts = np.r_[0, np.nonzero(np.diff(lab[order]))[0] + 1, len(lab)]
     clusters = []
-    for c in np.unique(lab):
-        idx = np.nonzero(lab == c)[0]
+    for a, b in zip(cuts[:-1], cuts[1:]):
+        idx = order[a:b]
         mem = [sites[i] for i in idx]
         w = np.array([m["ports"] for m in mem], float)
         diam = float(pdist(xy[idx]).max()) if len(idx) > 1 else 0.0
@@ -175,6 +274,7 @@ def merge_sites(sites: list[dict], merge_m: float, linkage_method: str = "single
             "networks": sorted({m["network"] for m in mem if m["network"]}),
             "connectors": sorted({c for m in mem for c in m["connectors"]}),
             "afdc_ids": [m["afdc_id"] for m in mem],
+            "modelled": all(m.get("modelled", False) for m in mem),
         })
     return sorted(clusters, key=lambda c: (-c["ports"], c["lat"], c["lon"]))
 
@@ -209,4 +309,5 @@ def combine(group: list[dict]) -> dict:
         "networks": sorted({n for g in group for n in g["networks"]}),
         "connectors": sorted({n for g in group for n in g["connectors"]}),
         "afdc_ids": [i for g in group for i in g["afdc_ids"]],
+        "modelled": all(g.get("modelled", False) for g in group),
     }

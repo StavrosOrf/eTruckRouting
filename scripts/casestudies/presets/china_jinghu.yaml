@@ -1,0 +1,47 @@
+# China: Beijing <-> Shanghai (the G2 Jinghu Expressway corridor), 10,000 delivery nodes. Six Geofabrik
+# province extracts (Shanghai, Jiangsu, Shandong, Hebei, Tianjin, Beijing) clipped to the corridor bbox,
+# about 1250 km end to end on the state-scale/europe_10k pattern (Texas, Pacific Northwest, europe_10k).
+# There are no depot nodes: every delivery node can be a depot, like California and europe_10k.
+#
+# Delivery nodes: China's OSM `place` nodes are richly mapped by name and location (about 84,600 named
+# city/town/village nodes in this bbox alone, measured directly from the extracts) but a `population` tag
+# is on well under 1% of them (792/84,616) -- the opposite problem from Europe/the US, where load_places
+# requires one. `assume_population: true` keeps a place without a population tag anyway, estimating it from
+# its `place` kind (city > town > village) via road_graph.PLACE_KIND_POPULATION_FALLBACK, a modelling input
+# recorded per node (`population_is_assumed`) and in metadata.json (`counts.delivery_nodes_with_assumed_population`).
+#
+# Chargers (Option B): OSM's amenity=charging_station tagging of individual chargers is sparse in China
+# relative to how fast the real network has grown, but OSM's mapping of the expressway service areas
+# themselves (highway=services / rest_area, the 服务区 every ~50 km) is solid. chargers_source: osm_services
+# therefore takes every real tagged charging station, PLUS every mapped service area that is not already
+# carrying one, assumed to host `service_area_ports` DC-fast ports. That assumption is a model input, not
+# a measurement: it is recorded per site (vis_data/stations.json `modelled`) and in metadata.json
+# (`counts.dcfast_stations_modelled`, `charger_clusters.modelled_sites`), so it stays distinguishable from
+# the real tagged stations if you want to re-run with a different assumption or drop the modelled sites.
+name: china_jinghu
+title: "China: Beijing-Shanghai (Jinghu corridor), 10,000 delivery nodes"
+geofabrik: [asia/china/shanghai, asia/china/jiangsu, asia/china/shandong, asia/china/hebei, asia/china/tianjin, asia/china/beijing]
+delivery_source: places                # real towns, townships and cities (OpenStreetMap place nodes with population)
+bbox: [30.3, 114.3, 40.5, 122.0]        # min_lat, min_lon, max_lat, max_lon: Shanghai to Beijing with margin
+n_customers: 10000                      # up to 10,000 potential delivery nodes
+n_depots: 0                             # no dedicated depots: any delivery node can start a route
+min_population: 500
+assume_population: true                 # see above: ~99% of named places here carry no population tag at all
+min_place_spacing_m: 3500              # villages are extremely dense in the North China Plain; 4000 m capped out at 9425/10000
+chargers_source: osm_services           # real OSM DC-fast stations + modelled expressway service-area chargers (see above)
+min_charger_kw: 50
+service_area_ports: 6                   # assumed DC-fast ports per service area not already tagged with a real charger
+service_area_dedup_m: 300               # a service area within this of a real tagged station uses the real station, not the assumption
+max_chargers: 0                         # keep every merged DC site (the 15 km merge radius keeps the node count manageable)
+charger_merge_m: 15000                  # DC sites within 15 km become one node (ports add up)
+charger_merge_linkage: complete         # every pair of stations inside a node is within 15 km
+max_snap_m: 5000
+max_road_class: unclassified            # motorway .. unclassified; residential streets are left out
+terrain_zoom: 11                        # about 48 m per pixel at this latitude
+terrain_source: "AWS Terrain Tiles (Terrarium; SRTM composite over China)"
+smooth_length_m: 150
+vis_max_class: secondary
+vehicle_profile: heavy_truck
+output_format: npy                      # 10^4 nodes: float32 matrices instead of the 10^8-entry JSON dictionaries
+contract_chains: true                   # exact routing on the junction graph (degree-2 road nodes folded into their edges)
+seed: 0

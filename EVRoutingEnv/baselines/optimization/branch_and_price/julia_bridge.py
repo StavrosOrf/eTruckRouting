@@ -33,6 +33,9 @@ class BPParameters:
             "verbose": bool(self.verbose),
             **self.extra,
         }
+        # EVRP_BP_LP_SOLVER=highs runs the master without a Gurobi licence session.
+        if "lp_solver" not in values and os.environ.get("EVRP_BP_LP_SOLVER"):
+            values["lp_solver"] = os.environ["EVRP_BP_LP_SOLVER"]
         args = []
         for key, value in values.items():
             args += [f"--{key}", str(value).lower() if isinstance(value, bool) else str(value)]

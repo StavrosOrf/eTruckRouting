@@ -177,20 +177,44 @@ def merge_networks(nets: list[RoadNetwork]) -> RoadNetwork:
                        L[first], kph[first], cls[first].astype(np.int8), span[first])
 
 
-def load_places(pbf: Path, kinds=("city", "town", "village"), min_pop: int = 500) -> list[dict]:
-    """Named populated places with a population tag, from the OSM `place` nodes of one extract."""
+# Population estimate by `place` kind, used only when a node has no numeric `population` tag and
+# ``assume_population=True``. This is a modelling input, not a measurement: it matters where OSM names and
+# geolocates places far more completely than it records their size, e.g. China has about 80,000 named
+# `place=village` nodes in the Beijing-Shanghai corridor alone but a population tag on well under 1% of
+# them. Ratios follow the kind hierarchy (city > town > suburb/quarter > village > hamlet); only their
+# relative size for the sqrt-population sampling weight matters, not the absolute figure.
+PLACE_KIND_POPULATION_FALLBACK = {
+    "city": 200000, "town": 20000, "borough": 15000, "suburb": 8000, "quarter": 5000,
+    "neighbourhood": 4000, "village": 1500, "hamlet": 300, "isolated_dwelling": 50, "locality": 100,
+}
+
+
+def load_places(pbf: Path, kinds=("city", "town", "village"), min_pop: int = 500,
+                assume_population: bool = False) -> list[dict]:
+    """Named places from the OSM `place` nodes of one extract.
+
+    By default a place is kept only when it carries a numeric `population` tag (as in Europe and the US).
+    With ``assume_population=True``, a place without one is kept anyway with its population estimated from
+    ``PLACE_KIND_POPULATION_FALLBACK[kind]`` (flagged ``population_is_assumed: True``) instead of being
+    dropped; use this where population tagging on place nodes is sparse (see above).
+    """
     out = []
     fp = osmium.FileProcessor(str(pbf)).with_filter(osmium.filter.KeyFilter("place"))
     for o in fp:
-        if not o.is_node() or o.tags["place"] not in kinds:
+        kind = o.tags.get("place")
+        if not o.is_node() or kind not in kinds:
             continue
+        assumed = False
         try:
             pop = int(str(o.tags.get("population", "")).replace(",", "").split()[0])
         except (ValueError, IndexError):
-            continue
+            if not assume_population:
+                continue
+            pop = PLACE_KIND_POPULATION_FALLBACK.get(kind, 100)
+            assumed = True
         if pop >= min_pop and o.tags.get("name"):
             out.append({"name": o.tags["name"], "lat": o.location.lat, "lon": o.location.lon,
-                        "population": pop, "place": o.tags["place"]})
+                        "population": pop, "place": kind, "population_is_assumed": assumed})
     return out
 
 

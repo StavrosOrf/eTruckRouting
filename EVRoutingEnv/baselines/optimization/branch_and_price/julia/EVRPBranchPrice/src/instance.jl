@@ -41,6 +41,7 @@ struct Instance
     step_budget::Int
     objective::Symbol
     initial_routes::Vector{Vector{Tuple{Int,Float64,Bool}}}
+    initial_sequences::Vector{Vector{Int}}   # customer-only routes (internal indices), e.g. from ALNS
     meta::Dict{String,Any}
 end
 
@@ -128,6 +129,13 @@ function read_instance(path::AbstractString)
         push!(initial_routes, [(Int(s[1]), Float64(s[2]), Bool(s[3])) for s in route])
     end
 
+    customer_index = Dict(env_id[i] => i for i in 1:n)
+    initial_sequences = Vector{Int}[]
+    for seq in get(raw.warm_start, :sequences, [])
+        ids = [Int(x) for x in seq]
+        all(in(keys(customer_index)), ids) && push!(initial_sequences, [customer_index[x] for x in ids])
+    end
+
     meta = Dict{String,Any}(String(k) => v for (k, v) in pairs(raw.meta))
     inst = Instance(
         n, m, N, depot, env_id, task_id, demand, service, tw_open, tw_close,
@@ -136,7 +144,7 @@ function read_instance(path::AbstractString)
         sort(Float64.(raw.charge_levels)), curve, curves,
         Float64(raw.charge_curves.soc_step), ports, out,
         zeros(N), zeros(N), Int(raw.step_budget), Symbol(raw.objective),
-        initial_routes, meta,
+        initial_routes, initial_sequences, meta,
     )
     inst.objective == :travel || error("only objective = travel is implemented")
     _fill_bounds!(inst)
@@ -192,4 +200,28 @@ function ng_neighbourhoods(inst::Instance, ::Val{W}, size::Int) where {W}
         others = sort([j for j in 1:n if j != i]; by = j -> inst.hours[i, j] + inst.hours[j, i])
         nodeset(Val(W), vcat(i, others[1:min(size - 1, length(others))]))
     end
+end
+
+"""
+Sub-instance on a customer subset (all chargers and the depot kept) with a
+given fleet, for large-neighbourhood re-optimisation. Returns the instance
+and `back`, mapping its internal nodes to `inst`'s.
+"""
+function subinstance(inst::Instance, customers::Vector{Int}, fleet::Int)
+    m = length(customers)
+    back = vcat(customers, inst.depot, collect(inst.depot+1:inst.N))
+    N = length(back)
+    pick(v) = v[back]
+    usable = inst.usable[back, back]
+    sub = Instance(
+        m, inst.m, N, m + 1, inst.env_id[back], inst.task_id[customers],
+        pick(inst.demand), pick(inst.service), pick(inst.tw_open), pick(inst.tw_close),
+        inst.energy[back, back], inst.hours[back, back], usable,
+        inst.battery, inst.payload, inst.margin, inst.horizon, fleet, inst.start_battery,
+        inst.levels, pick(inst.curve), inst.curves, inst.soc_step, pick(inst.ports),
+        [Int[j for j in 1:N if usable[i, j]] for i in 1:N], zeros(N), zeros(N),
+        inst.step_budget, inst.objective, Vector{Tuple{Int,Float64,Bool}}[], Vector{Int}[], inst.meta,
+    )
+    _fill_bounds!(sub)
+    sub, back
 end

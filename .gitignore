@@ -230,3 +230,7 @@ latex/*.blg
 
 # Raw downloads for case-study generation (reproducible via scripts/casestudies/fetch_data.py)
 .casestudy_raw/
+# All-pairs matrices of the 10^4-node case study (600 MB each): rebuild with scripts/casestudies/submit_npy_build.sh
+/EVRoutingEnv/data/case_studies/*/od_*.npy
+# Slurm job logs from the case-study build scripts (slurm_extract.sh, slurm_stage.sh)
+/slurm-*.out

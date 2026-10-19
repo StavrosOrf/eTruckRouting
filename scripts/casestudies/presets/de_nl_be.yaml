@@ -7,13 +7,13 @@ geofabrik: [europe/germany, europe/netherlands, europe/belgium]
 delivery_source: places                # real towns and cities (OpenStreetMap place nodes with population)
 bbox: [47.2, 2.5, 55.15, 15.1]         # min_lat, min_lon, max_lat, max_lon
 n_customers: 230
-n_depots: 4                            # the four largest drawn places (Hamburg, Munich, Amsterdam, Leipzig)
+n_depots: 4                            # the four largest selected places (Berlin, Hamburg, Munich, Cologne)
 min_population: 1000
 min_place_spacing_m: 5000
 chargers_source: osm                   # no AFDC outside the US: DC sockets of amenity=charging_station
 min_charger_kw: 50
-max_chargers: 0                        # keep every merged DC site (the merge radius below keeps the node count manageable)
-charger_merge_m: 10000                 # DC sites within 10 km become one node (ports add up); 1429 nodes (5 km: 2275, 15 km: 1015)
+max_chargers: 0                        # keep every merged DC site (5 km merge keeps the node count manageable)
+charger_merge_m: 5000                  # DC sites within 5 km become one node (ports add up)
 charger_merge_linkage: complete        # every pair inside a node is within the radius
 max_snap_m: 5000
 max_road_class: unclassified           # motorway .. unclassified; residential streets are left out

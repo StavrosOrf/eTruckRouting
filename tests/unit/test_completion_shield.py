@@ -69,3 +69,38 @@ def test_shield_fallback_preserves_execution_legality(monkeypatch):
     result = action_mask.completion_action_mask(environment(), legal)
     np.testing.assert_array_equal(result, legal)
     assert not result[2], "fallback must never expose an execution-illegal action"
+
+
+def test_retirement_reserves_committed_demand_and_excludes_returning_trucks(
+    monkeypatch,
+):
+    decisions = [
+        FeasibilityResult.allow(ActionKind.DEPOT, target_node=0, required_energy=1),
+        FeasibilityResult.allow(ActionKind.CHARGER, target_node=2, required_energy=2),
+    ]
+    monkeypatch.setattr(action_mask, "joint_action_feasibility", lambda env: decisions)
+    env = environment(other_capacity=8)
+    available = next(iter(env.task_registry.tasks()))
+    committed = SimpleNamespace(
+        is_available=False, is_served=False, claimed_by=1, demand=4
+    )
+    env.task_registry.tasks = lambda: [available, committed]
+    assert not action_mask.completion_action_mask(env, np.ones(2, dtype=bool))[0]
+    env = environment(other_capacity=10)
+    env.trucks[1].return_to_depot_pending = True
+    assert not action_mask.completion_action_mask(env, np.ones(2, dtype=bool))[0]
+
+
+def test_retirement_requires_a_truck_that_can_fit_each_remaining_task(monkeypatch):
+    decisions = [
+        FeasibilityResult.allow(ActionKind.DEPOT, target_node=0, required_energy=1),
+        FeasibilityResult.allow(ActionKind.CHARGER, target_node=2, required_energy=2),
+    ]
+    monkeypatch.setattr(action_mask, "joint_action_feasibility", lambda env: decisions)
+    env = environment(other_capacity=3)
+    env.trucks.append(
+        SimpleNamespace(
+            truck_id=2, remaining_payload=3, failed=False, is_complete=False
+        )
+    )
+    assert not action_mask.completion_action_mask(env, np.ones(2, dtype=bool))[0]

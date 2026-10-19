@@ -39,7 +39,7 @@ mutable struct Label{W}
     load::Float64
     ng::NodeSet{W}
     last::Int            # last customer served, depot index before the first
-    sr::UInt128          # parity of visits to each subset-row triple
+    sr::SRBits           # parity of visits to each subset-row triple
     alive::Bool
 end
 
@@ -64,6 +64,7 @@ end
 mutable struct PricingWorkspace{W}
     pool::Vector{Label{W}}
     buckets::Vector{Vector{Int}}
+    bcost::Vector{Vector{Float64}}
     heap::BinaryMinHeap{Tuple{Float64,Int}}
     options::Vector{NTuple{3,Float64}}
     cmod::Matrix{Float64}
@@ -80,9 +81,11 @@ mutable struct PricingWorkspace{W}
     slack::Matrix{Float64}    # dominance correction between last customers
     earn::Vector{Float64}     # pi_w + max_l rho[l, w], for the completion bound
     has_cuts::Bool
-    sr_mask::Vector{UInt128}  # subset-row triples containing each customer
+    sr_mask::Vector{SRBits}   # subset-row triples containing each customer
+    sr_keep::Vector{SRBits}   # subset-row cuts whose memory holds each customer
     sr_pen::Vector{Float64}   # |tau| per subset-row cut
     has_sr::Bool
+    enumerating::Bool         # route enumeration: dominance only between equal visited sets
 end
 
 function PricingWorkspace{W}(inst::Instance; ng_size::Int, unit::Float64, near::Int) where {W}
@@ -103,12 +106,12 @@ function PricingWorkspace{W}(inst::Instance; ng_size::Int, unit::Float64, near::
         vcat(customers[1:min(near, length(customers))], others)
     end
     PricingWorkspace{W}(
-        Label{W}[], [Int[] for _ in 1:N], BinaryMinHeap{Tuple{Float64,Int}}(),
+        Label{W}[], [Int[] for _ in 1:N], [Float64[] for _ in 1:N], BinaryMinHeap{Tuple{Float64,Int}}(),
         NTuple{3,Float64}[], zeros(N, N), zeros(N, R + 1), zeros(N, R + 1), zeros(Int, N, R + 1),
         cpath, dunits, unit, R,
         ng_neighbourhoods(inst, Val(W), ng_size), lists,
         zeros(n + 1, n), zeros(n + 1, n + 1), zeros(n), false,
-        zeros(UInt128, n), zeros(MAX_SUBSET_ROW), false,
+        zeros(SRBits, n), zeros(SRBits, n), zeros(MAX_SUBSET_ROW), false, false,
     )
 end
 
@@ -125,26 +128,33 @@ end
     clamp(floor(Int, (inst.payload - load) / ws.unit + 1e-6), 0, ws.R)
 
 """Sum of subset-row penalties over the cuts in `bits`."""
-@inline function srpen(pen::Vector{Float64}, bits::UInt128)
+@inline function srpen_word(pen::Vector{Float64}, bits::UInt128, offset::Int)
     total = 0.0
     while bits != zero(UInt128)
-        total += @inbounds pen[trailing_zeros(bits)+1]
+        total += @inbounds pen[offset+trailing_zeros(bits)+1]
         bits &= bits - one(UInt128)
     end
     total
 end
 
+@inline srpen(pen::Vector{Float64}, bits::SRBits) = srpen_word(pen, bits.lo, 0) + srpen_word(pen, bits.hi, 128)
+
 """Install subset-row duals: a label pays |tau| whenever its parity bit for a cut flips back to even."""
 function set_subset_rows!(ws::PricingWorkspace, sr_cuts::Vector{SubsetRowCut}, τ::Vector{Float64}, n::Int)
-    fill!(ws.sr_mask, zero(UInt128))
+    fill!(ws.sr_mask, zero(SRBits))
+    fill!(ws.sr_keep, zero(SRBits))
     fill!(ws.sr_pen, 0.0)
     ws.has_sr = false
     for (c, (cut, t)) in enumerate(zip(sr_cuts, τ))
         t < -1e-12 || continue
         ws.has_sr = true
         ws.sr_pen[c] = -t
+        bit = sr_bit(c)
         for w in cut.members
-            ws.sr_mask[w] |= one(UInt128) << (c - 1)
+            ws.sr_mask[w] |= bit
+        end
+        for w in 1:n
+            cut.memory[w] && (ws.sr_keep[w] |= bit)
         end
     end
 end
@@ -235,6 +245,9 @@ end
 
 @inline function dominates(ws::PricingWorkspace, inst::Instance, restr::Restrictions, a::Label, b::Label, levels,
                            timefree::Bool, untimed::Bool)
+    # Enumeration needs every route below the threshold, not just the cheapest,
+    # so only labels over the same customers may dominate each other.
+    ws.enumerating && a.ng != b.ng && return false
     a.load <= b.load + 1e-12 || return false
     # a may still pay a subset-row penalty b would not: on the cuts where only a is odd
     acost = ws.has_sr ? a.cost + srpen(ws.sr_pen, a.sr & ~b.sr) : a.cost
@@ -257,32 +270,54 @@ end
     (untimed || a.time <= b.time + 1e-12) && a.battery >= b.battery - 1e-12
 end
 
+"""
+Insert `lab` into a bucket kept sorted by cost (with its costs mirrored in
+`costs`), applying dominance in both directions. Every dominance rule here
+needs the dominating label to be no costlier, so only cheaper labels are
+tried as dominators of `lab`, and only costlier ones as its victims. With a
+finite `cap` (heuristic rounds) only the `cap` cheapest labels are kept.
+Returns the new pool index, or 0 when `lab` is discarded.
+"""
+function sorted_insert!(dom::F, pool::Vector{L}, bucket::Vector{Int}, costs::Vector{Float64}, lab::L,
+                        cap::Int) where {F,L}
+    c = lab.cost
+    hi = searchsortedlast(costs, c + 1e-12)
+    @inbounds for k in 1:hi
+        dom(pool[bucket[k]], lab) && return 0
+    end
+    lo = searchsortedfirst(costs, c - 1e-12)
+    w = lo
+    @inbounds for k in lo:length(bucket)
+        old = pool[bucket[k]]
+        if dom(lab, old)
+            old.alive = false
+        else
+            bucket[w] = bucket[k]
+            costs[w] = costs[k]
+            w += 1
+        end
+    end
+    resize!(bucket, w - 1)
+    resize!(costs, w - 1)
+    if length(bucket) >= cap
+        c < costs[end] || return 0
+        pool[bucket[end]].alive = false
+        pop!(bucket)
+        pop!(costs)
+    end
+    push!(pool, lab)
+    idx = length(pool)
+    pos = searchsortedfirst(costs, c)
+    insert!(bucket, pos, idx)
+    insert!(costs, pos, c)
+    idx
+end
+
 function insert_label!(ws::PricingWorkspace{W}, inst::Instance, restr::Restrictions{W}, lab::Label{W}, levels,
                        timefree::Bool, untimed::Bool, cap::Int) where {W}
-    bucket = ws.buckets[lab.node]
-    if length(bucket) >= cap
-        # Heuristic rounds only: keep the `cap` cheapest labels per node.
-        worst = argmax(k -> ws.pool[bucket[k]].cost, eachindex(bucket))
-        lab.cost < ws.pool[bucket[worst]].cost || return false
-        ws.pool[bucket[worst]].alive = false
-        bucket[worst] = bucket[end]
-        pop!(bucket)
-    end
-    i = 1
-    @inbounds while i <= length(bucket)
-        old = ws.pool[bucket[i]]
-        dominates(ws, inst, restr, old, lab, levels, timefree, untimed) && return false
-        if dominates(ws, inst, restr, lab, old, levels, timefree, untimed)
-            old.alive = false
-            bucket[i] = bucket[end]
-            pop!(bucket)
-            continue
-        end
-        i += 1
-    end
-    push!(ws.pool, lab)
-    idx = length(ws.pool)
-    push!(bucket, idx)
+    dom(a, b) = dominates(ws, inst, restr, a, b, levels, timefree, untimed)
+    idx = sorted_insert!(dom, ws.pool, ws.buckets[lab.node], ws.bcost[lab.node], lab, cap)
+    idx == 0 && return false
     push!(ws.heap, (lab.time, idx))
     true
 end
@@ -320,12 +355,16 @@ function price!(
     exact::Bool = true, timefree::Bool = false, untimed::Bool = false, max_columns::Int = 200, rc_tol::Float64 = 1e-6,
     time_limit::Float64 = Inf, label_limit::Int = typemax(Int), bucket_cap::Int = 64,
     cost_scale::Float64 = 1.0, cuts::Vector{CapacityCut} = CapacityCut[], σ::Vector{Float64} = Float64[],
-    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[],
+    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
+    threshold::Float64 = -Inf, route_cap::Int = typemax(Int),
 ) where {W}
+    # threshold > -Inf: enumeration mode, collect every route with reduced cost <= threshold
+    listing = threshold > -Inf
     t0 = time()
     n, N, depot = inst.n, inst.N, inst.depot
     empty!(ws.pool)
     foreach(empty!, ws.buckets)
+    foreach(empty!, ws.bcost)
     ws.heap = BinaryMinHeap{Tuple{Float64,Int}}()
     @inbounds for i in 1:N, j in 1:N
         ws.cmod[i, j] = cost_scale * inst.hours[i, j] - (j <= n ? π[j] : 0.0)
@@ -346,9 +385,9 @@ function price!(
     untimed && (timefree || error("untimed pricing requires the time-free relaxation"))
     horizon = untimed ? Inf : inst.horizon
     levels = (exact && !timefree) ? inst.levels : [maximum(inst.levels)]
-    nbrs = exact ? inst.out : ws.near
+    nbrs = (exact || full_graph) ? inst.out : ws.near
 
-    root = Label{W}(depot, 0, 0.0, 0.0, 0.0, inst.start_battery, 0.0, NodeSet{W}(), depot, zero(UInt128), true)
+    root = Label{W}(depot, 0, 0.0, 0.0, 0.0, inst.start_battery, 0.0, NodeSet{W}(), depot, zero(SRBits), true)
     push!(ws.pool, root)
     push!(ws.heap, (0.0, 1))
 
@@ -358,7 +397,8 @@ function price!(
     popped = 0
     while !isempty(ws.heap)
         popped += 1
-        if popped % 64 == 0 && (time() - t0 > time_limit || length(ws.pool) > label_limit)
+        if popped % 64 == 0 && (time() - t0 > time_limit || length(ws.pool) > label_limit ||
+                                length(found) > route_cap)
             complete = false
             break
         end
@@ -378,7 +418,11 @@ function price!(
                     t + inst.hours[v, w] <= horizon + EPS || break
                     rc = l.cost + ws.cmod[v, w] - κ
                     rc < min_rc && (min_rc = rc)
-                    rc < -rc_tol && push!(found, (rc, li, lev))
+                    if listing
+                        rc <= threshold && push!(found, (rc, li, lev))
+                    else
+                        rc < -rc_tol && push!(found, (rc, li, lev))
+                    end
                     break
                 end
                 continue
@@ -395,10 +439,12 @@ function price!(
             sr = l.sr
             if customer && ws.has_sr
                 m = ws.sr_mask[w]
+                sr &= ws.sr_keep[w]          # forget cuts whose memory w is outside
                 cost += srpen(ws.sr_pen, sr & m)
                 sr = sr ⊻ m
             end
-            cost + ws.bound[w, capacity_units(ws, inst, load)+1] - κ >= 0.0 && continue
+            completion = cost + ws.bound[w, capacity_units(ws, inst, load)+1] - κ
+            (listing ? completion > threshold : completion >= 0.0) && continue
             ng = customer ? with(l.ng & ws.ng[w], w) : l.ng
             last = customer ? w : l.last
             for (b, t, lev) in opts
@@ -420,7 +466,7 @@ function price!(
     routes = Route[]
     rcs = Float64[]
     for (rc, li, lev) in found
-        length(routes) >= max_columns && break
+        !listing && length(routes) >= max_columns && break
         push!(routes, rebuild_route(ws, inst, li, lev))
         push!(rcs, rc)
     end
@@ -460,4 +506,28 @@ function grow_neighbourhoods!(ws::PricingWorkspace{W}, routes, z::Vector{Float64
         end
     end
     grew
+end
+
+"""
+Every elementary route with reduced cost at most `threshold` under the given
+duals and restrictions (`exact` in the result: the enumeration completed
+within the caps). Full customer memory makes routes elementary; dominance is
+limited to labels over the same customers, and pruning uses the completion
+bound against the threshold.
+"""
+function enumerate_routes!(ws::PricingWorkspace{W}, inst::Instance, π, κ, restr::Restrictions{W};
+                           threshold::Float64, timefree::Bool, untimed::Bool, cuts, σ, sr_cuts, τ,
+                           time_limit::Float64, label_limit::Int, route_cap::Int) where {W}
+    saved = ws.ng
+    everyone = nodeset(Val(W), 1:inst.n)
+    ws.ng = fill(everyone, inst.n)
+    ws.enumerating = true
+    try
+        price!(ws, inst, π, κ, restr; exact = true, timefree = timefree, untimed = untimed,
+               cuts = cuts, σ = σ, sr_cuts = sr_cuts, τ = τ, threshold = threshold,
+               route_cap = route_cap, time_limit = time_limit, label_limit = label_limit)
+    finally
+        ws.ng = saved
+        ws.enumerating = false
+    end
 end

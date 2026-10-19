@@ -13,6 +13,15 @@ Output: EVRoutingEnv/data/case_studies/<name>/
     waiting_time_lookup.json         charger queue model (copied from the California data)
     vis_data/                        nodes, stations, roads, terrain and OD matrices for plotting
     metadata.json                    provenance, model assumptions, measured statistics
+
+Presets with ``output_format: npy`` (europe_10k, 10^4 nodes) store the same route costs as float32 matrices
+instead, because their 10^8 ordered pairs do not fit a JSON dictionary or a NetworkX graph:
+    od_energy_kwh.npy, od_time_h.npy   (N, N) matrices, entry [i, j] = route i -> j; row i is OSM node od_node_ids[i]
+    od_node_ids.npy                    node ids in ascending order (the JSON loader numbers nodes the same way)
+and run in stages so the routing can be spread over Slurm array tasks (see scripts/casestudies/submit_npy_build.sh):
+    --stage prepare   road network, terminals, routing graph (degree-2 road nodes folded away, exact)
+    --stage od        one shard of the all-pairs routing:   --shard i --n-shards K
+    --stage assemble  matrices, visualisation data, metadata
 """
 from __future__ import annotations
 
@@ -33,6 +42,7 @@ from scipy.spatial import cKDTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import chargers as chg  # noqa: E402
+import contract as ctr  # noqa: E402
 import fetch_data  # noqa: E402
 import road_graph as rg  # noqa: E402
 
@@ -76,6 +86,21 @@ def _as_list(x):
     return list(x) if isinstance(x, (list, tuple)) else [x]
 
 
+def extract_region(raw: Path, pbf: Path, bbox, max_class: int) -> rg.RoadNetwork:
+    """Road network of one Geofabrik extract, cached per extract so large multi-country cases can extract
+    their regions as separate parallel jobs (``--extract-only``) and reuse them across presets."""
+    key = f"{pbf.name}{pbf.stat().st_size}{bbox}{rg.CLASSES}{max_class}v1"
+    cache = raw / "cache" / f"extract_{pbf.name.split('-latest')[0]}_{hashlib.sha1(key.encode()).hexdigest()[:10]}.pkl"
+    if cache.exists():
+        log("using cached extraction", cache.name)
+        return pickle.load(open(cache, "rb"))
+    log("extracting road network from", pbf.name)
+    net = rg.extract(pbf, bbox, max_class)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    pickle.dump(net, open(cache, "wb"), protocol=4)
+    return net
+
+
 def load_network(raw: Path, preset: dict, bbox):
     """Extract + merge regions + SCC + elevation, cached because it takes minutes to hours."""
     pbfs = [fetch_data.ensure_osm(raw, r) for r in _as_list(preset["geofabrik"])]
@@ -94,9 +119,8 @@ def load_network(raw: Path, preset: dict, bbox):
         return _finish_network(net, raw, smooth, zoom, cache)
     nets = []
     for pbf in pbfs:
-        log("extracting road network from", pbf.name)
-        nets.append(rg.extract(pbf, bbox, max_class))
-        log(f"  {nets[-1].n} nodes, {len(nets[-1].eu)} edges")
+        nets.append(extract_region(raw, pbf, bbox, max_class))
+        log(f"  {pbf.name}: {nets[-1].n} nodes, {len(nets[-1].eu)} edges")
     net = rg.merge_networks(nets)
     del nets
     log(f"  merged: {net.n} nodes, {len(net.eu)} edges")
@@ -117,10 +141,42 @@ def _finish_network(net, raw, smooth, zoom, cache):
     return out
 
 
-def load_place_candidates(raw: Path, preset: dict):
+def scan_region(raw: Path, pbf: Path, preset: dict, bbox) -> dict:
+    """Charging stations and populated places of one extract, cached per extract (``--scan-only``).
+
+    Reading a 5 GB extract for its amenity and place nodes takes minutes, so large multi-country cases scan
+    their regions as parallel jobs and every later build reuses the result.
+    """
+    min_kw, tesla = float(preset.get("min_charger_kw", 50.0)), bool(preset.get("exclude_tesla_only", False))
+    min_pop = preset.get("min_population", 500)
+    assume_pop = bool(preset.get("assume_population", False))
+    charger_source = preset.get("chargers_source", "afdc")
+    want_ch = charger_source in ("osm", "osm_services")
+    want_svc = charger_source == "osm_services"
+    svc_ports = int(preset.get("service_area_ports", 4))
+    want_pl = preset.get("delivery_source", "amazon") == "places"
+    key = f"{pbf.name}{pbf.stat().st_size}{bbox}{min_kw}{tesla}{min_pop}{assume_pop}{want_ch}{want_pl}{want_svc}{svc_ports}v3"
+    cache = raw / "cache" / f"scan_{pbf.name.split('-latest')[0]}_{hashlib.sha1(key.encode()).hexdigest()[:10]}.pkl"
+    if cache.exists():
+        return pickle.load(open(cache, "rb"))
+    log("scanning", pbf.name, "for", "chargers" if want_ch else "", "service areas" if want_svc else "",
+        "places" if want_pl else "")
+    out = {"chargers": chg.scan_osm_chargers(pbf, bbox, min_kw, tesla) if want_ch else [],
+           "service_areas": chg.scan_osm_service_areas(pbf, bbox, svc_ports) if want_svc else [],
+           "places": rg.load_places(pbf, min_pop=min_pop, assume_population=assume_pop) if want_pl else []}
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    pickle.dump(out, open(cache, "wb"), protocol=4)
+    log(f"  {pbf.name}: {len(out['chargers'])} charging stations, {len(out['service_areas'])} service areas, "
+        f"{len(out['places'])} places")
+    return out
+
+
+def load_place_candidates(raw: Path, preset: dict, bbox=None):
     places = []
     for r in _as_list(preset["geofabrik"]):
-        places += rg.load_places(fetch_data.ensure_osm(raw, r), min_pop=preset.get("min_population", 500))
+        pbf = fetch_data.ensure_osm(raw, r)
+        places += scan_region(raw, pbf, preset, bbox)["places"] if bbox is not None else rg.load_places(
+            pbf, min_pop=preset.get("min_population", 500), assume_population=bool(preset.get("assume_population", False)))
     return places
 
 
@@ -131,21 +187,60 @@ def sample_places(places: list[dict], n: int, rng) -> list[dict]:
     return [places[i] for i in idx]  # over-draw: some will drop on snapping/dedup
 
 
+def pick_places(places: list[dict], n: int, rng, snap, used: dict, max_snap: float, min_spacing_m: float) -> list[dict]:
+    """Up to n places, drawn by sqrt-population weight without replacement (big cities first, villages fill the gaps).
+
+    A place is kept when it snaps to an unused road node within max_snap and lies at least min_spacing_m from
+    every kept place; the spacing test hashes the kept places into a 3-D grid, so it is linear in the number of
+    candidates (the pairwise check of ``sample_places`` is quadratic and too slow for 10^4 places).
+    """
+    w = np.sqrt(np.array([p["population"] for p in places], float))
+    order = np.argsort(-(rng.random(len(places)) ** (1.0 / w)))   # Efraimidis-Spirakis weighted order
+    cand = [places[i] for i in order]
+    lat = np.array([p["lat"] for p in cand]); lon = np.array([p["lon"] for p in cand])
+    nodes_i, dist = snap(lat, lon)
+    xyz = chg.sphere_xyz(lat, lon)
+    cell, r2 = {}, min_spacing_m ** 2
+    picked = []
+    for k, pl in enumerate(cand):
+        i = int(nodes_i[k])
+        if dist[k] > max_snap or i in used:
+            continue
+        c = tuple((xyz[k] // min_spacing_m).astype(np.int64))
+        if any(((xyz[k] - q) ** 2).sum() < r2
+               for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+               for q in cell.get((c[0] + dx, c[1] + dy, c[2] + dz), ())):
+            continue
+        cell.setdefault(c, []).append(xyz[k])
+        used[i] = "customer"
+        picked.append({"node_idx": i, "lat": pl["lat"], "lon": pl["lon"], "zone_id": pl["name"],
+                       "population": pl["population"], "place": pl["place"], "snap_m": round(float(dist[k]), 1),
+                       "population_is_assumed": pl.get("population_is_assumed", False)})
+        if len(picked) >= n:
+            break
+    return picked
+
+
 # ------------------------------------------------------------------ snapping
 class Snapper:
-    """Nearest drivable node, excluding freeway-class nodes (stops are never on a freeway)."""
+    """Nearest drivable node, excluding freeway-class nodes by default (stops are never on a freeway).
 
-    def __init__(self, net: rg.RoadNetwork):
+    An expressway service area is the one terminal type that really does sit beside the motorway/trunk
+    mainline (reached by a short ramp that is usually not even in the graph, since ``service`` roads are
+    excluded): pass ``min_class="motorway"`` to let it snap to the mainline itself instead of being pushed
+    to the nearest ordinary road, which can be many km away on a rural expressway.
+    """
+
+    def __init__(self, net: rg.RoadNetwork, min_class: str = "primary"):
         ok = np.zeros(net.n, bool)
-        low = net.hwclass >= rg.CLASS_ID["primary"]
+        low = net.hwclass >= rg.CLASS_ID[min_class]
         ok[net.eu[low]] = True
         ok[net.ev[low]] = True
         self.idx = np.nonzero(ok)[0]
-        self.lat0 = float(net.lat.mean())
-        self.tree = cKDTree(chg.local_xy(net.lat[self.idx], net.lon[self.idx], self.lat0))
+        self.tree = cKDTree(chg.sphere_xyz(net.lat[self.idx], net.lon[self.idx]))
 
     def __call__(self, lat, lon):
-        d, i = self.tree.query(chg.local_xy(lat, lon, self.lat0))
+        d, i = self.tree.query(chg.sphere_xyz(lat, lon))
         if np.ndim(lat) == 0:
             return int(self.idx[i[0]]), float(d[0])
         return self.idx[i], d
@@ -216,32 +311,51 @@ def _od_rows(args):
     return c0, rows
 
 
-def od_matrices(net: rg.RoadNetwork, terminals: np.ndarray, t_h, e_kwh, vehicle, chunk=4, workers=None):
-    """Minimum-energy routes between terminals, with time/length summed on the same route.
+def od_graph(net: rg.RoadNetwork, terminals: np.ndarray, t_h, e_kwh, vehicle, contract: bool = False, seed: int = 0) -> dict:
+    """Search graph for the all-pairs routing: reduced (non-negative) edge costs, optionally on the junction graph.
 
     Edge energies can be negative (regeneration). Reweighting by the elevation potential
     c' = c - kappa*(h_v - h_u) >= 0 makes Dijkstra exact; the true net energy of a route is
-    D' + kappa*(h_t - h_s). Energy is also re-accumulated along each route as a check.
+    D' + kappa*(h_t - h_s). With ``contract`` the degree-2 road nodes are first folded into their edges
+    (see contract.py), which leaves every terminal-to-terminal route cost exactly unchanged.
     """
-    import multiprocessing as mp
-
-    n = net.n
     kappa = rg.potential_slope(vehicle)
-    dh = net.elev[net.ev] - net.elev[net.eu]
-    red = e_kwh - kappa * dh
-    stats = {"reduced_cost_min": float(red.min()), "n_negative_reduced": int((red < -1e-9).sum())}
+    eu, ev, costs = net.eu, net.ev, [t_h, e_kwh, net.length]
+    elev, term, stats = net.elev, np.asarray(terminals, np.int64), {}
+    if contract:
+        protect = np.zeros(net.n, bool)
+        protect[terminals] = True
+        alive, eu, ev, costs = ctr.contract_chains(net.n, eu, ev, protect, costs, seed=seed, log=log)
+        remap = -np.ones(net.n, np.int64)
+        remap[alive] = np.arange(int(alive.sum()))
+        eu, ev, elev, term = remap[eu], remap[ev], net.elev[alive], remap[term]
+        stats.update(road_nodes_before_contraction=int(net.n), road_edges_before_contraction=int(len(net.eu)),
+                     junction_nodes=int(alive.sum()), junction_edges=int(len(eu)))
+    t_u, e_u, l_u = costs
+    n = len(elev)
+    red = e_u - kappa * (elev[ev] - elev[eu])
+    stats.update(reduced_cost_min=float(red.min()), n_negative_reduced=int((red < -1e-9).sum()))
     red = np.maximum(red, 0.0) + 1e-9
     # parallel edges: keep the cheapest
-    order = np.lexsort((red, net.ev, net.eu))
-    eu, ev = net.eu[order], net.ev[order]
+    order = np.lexsort((red, ev, eu))
+    eu, ev = eu[order], ev[order]
     first = np.r_[True, (eu[1:] != eu[:-1]) | (ev[1:] != ev[:-1])]
     sel = order[first]
-    eu, ev = net.eu[sel].astype(np.int64), net.ev[sel].astype(np.int64)
-    _OD.update(csr=csr_matrix((red[sel], (eu, ev)), shape=(n, n)), keys=eu * n + ev, e=e_kwh[sel], t=t_h[sel],
-               l=net.length[sel], terminals=terminals, kappa=kappa, elev=net.elev, n=n)
-    T = len(terminals)
-    E = np.zeros((T, T)); TT = np.zeros((T, T)); LL = np.zeros((T, T)); AE = np.zeros((T, T))
-    jobs = [(c0, terminals[c0:c0 + chunk]) for c0 in range(0, T, chunk)]
+    eu, ev = eu[first].astype(np.int64), ev[first].astype(np.int64)
+    return dict(csr=csr_matrix((red[sel], (eu, ev)), shape=(n, n)), keys=eu * n + ev, e=e_u[sel], t=t_u[sel],
+                l=l_u[sel], terminals=term, kappa=kappa, elev=elev, n=n, stats=stats)
+
+
+def od_block(g: dict, r0: int, r1: int, chunk: int = 4, workers=None, label: str = ""):
+    """Rows r0..r1 of the terminal-to-terminal matrices: (E_net, time, km, accumulated-energy check, stats)."""
+    import multiprocessing as mp
+
+    _OD.update(csr=g["csr"], keys=g["keys"], e=g["e"], t=g["t"], l=g["l"], terminals=g["terminals"],
+               kappa=g["kappa"], elev=g["elev"], n=g["n"])
+    terminals = g["terminals"]
+    R, T = r1 - r0, len(terminals)
+    E = np.zeros((R, T)); TT = np.zeros((R, T)); LL = np.zeros((R, T)); AE = np.zeros((R, T))
+    jobs = [(c0, terminals[r0 + c0:r0 + min(c0 + chunk, R)]) for c0 in range(0, R, chunk)]
     workers = workers or min(16, max(1, (mp.cpu_count() or 2) // 4))
     done = 0
     with mp.get_context("fork").Pool(workers) as pool:
@@ -249,12 +363,22 @@ def od_matrices(net: rg.RoadNetwork, terminals: np.ndarray, t_h, e_kwh, vehicle,
             for k, (e_red, at, ae, al) in enumerate(rows):
                 E[c0 + k], TT[c0 + k], LL[c0 + k], AE[c0 + k] = e_red, at, al, ae
             done += len(rows)
-            if (done // chunk) % 10 == 0 or done == T:
-                log(f"  OD rows {done}/{T}")
-    stats["max_energy_consistency_error_kwh"] = float(np.nanmax(np.abs(np.where(np.isfinite(E), E - AE, 0))))
-    stats["unreachable_pairs"] = int((~np.isfinite(E)).sum())
+            if (done // chunk) % 10 == 0 or done == R:
+                log(f"  OD rows {label}{done}/{R}")
+    stats = {"max_energy_consistency_error_kwh": float(np.nanmax(np.abs(np.where(np.isfinite(E), E - AE, 0)))),
+             "unreachable_pairs": int((~np.isfinite(E)).sum())}
     _OD.clear()
     return E, TT, LL / 1000.0, stats
+
+
+def od_matrices(net: rg.RoadNetwork, terminals: np.ndarray, t_h, e_kwh, vehicle, chunk=4, workers=None):
+    """Minimum-energy routes between terminals, with time/length summed on the same route.
+
+    Energy is also re-accumulated along each route as a check.
+    """
+    g = od_graph(net, terminals, t_h, e_kwh, vehicle)
+    E, TT, KM, stats = od_block(g, 0, len(terminals), chunk, workers)
+    return E, TT, KM, {**g["stats"], **stats}
 
 
 def asymmetry_stats(E, TT, min_e=1.0):
@@ -324,6 +448,9 @@ def make_config(name: str, title: str, overrides: dict) -> Path:
 
     src = (REPO / "EVRoutingEnv" / "config_files" / "config_joint.yaml").read_text()
     sub = [(r"(?m)^(  data_path:).*$", rf"\1 EVRoutingEnv/data/case_studies/{name}/")]
+    if overrides.get("output_format") == "npy":  # the environment loads matrices when the file name ends in .npy
+        sub.append((r"(?m)^(  shortest_path_energy_file:).*$", r"\1 od_energy_kwh.npy"))
+        sub.append((r"(?m)^(  shortest_path_time_file:).*$", r"\1 od_time_h.npy"))
     if overrides.get("battery_kwh"):
         sub.append((r"(?m)^(  battery_capacity:).*$", rf"\1 {float(overrides['battery_kwh']):.1f}"))
     if overrides.get("station_power_classes_kw"):
@@ -340,9 +467,101 @@ def make_config(name: str, title: str, overrides: dict) -> Path:
     return out
 
 
-def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
+def od_cache_dir(raw: Path, name: str) -> Path:
+    return raw / "cache" / f"{name}_od"
+
+
+def run_od_shard(preset: dict, raw: Path, shard: int, n_shards: int) -> Path:
+    """Rows of one shard of the all-pairs routing (a Slurm array task), from the graph saved by ``--stage prepare``."""
+    cdir = od_cache_dir(raw, preset["name"])
+    g = pickle.load(open(cdir / "graph.pkl", "rb"))
+    bounds = np.linspace(0, len(g["terminals"]), n_shards + 1).astype(int)
+    r0, r1 = int(bounds[shard]), int(bounds[shard + 1])
+    log(f"  shard {shard}/{n_shards}: rows {r0}..{r1} of {len(g['terminals'])} on {g['n']} search nodes")
+    E, TT, KM, st = od_block(g, r0, r1, workers=preset.get("workers"), label=f"[shard {shard}] ")
+    f = cdir / f"shard_{shard:04d}_of_{n_shards:04d}.npz"
+    tmp = cdir / f"tmp_{f.name}"
+    np.savez(tmp, ids=g["ids"], r0=r0, r1=r1, E=E.astype(np.float32), T=TT.astype(np.float32),
+             KM=KM.astype(np.float32), **st)
+    tmp.replace(f)
+    log("  wrote", f)
+    return f
+
+
+def write_npy_matrices(out: Path, cdir: Path, ids: list[int], sample: int = 4_000_000, seed: int = 0):
+    """Assemble the shards into ``od_energy_kwh.npy`` / ``od_time_h.npy`` (float32, row i = node ids[i]).
+
+    Writes row by row into memory-mapped files, so the 10^4 x 10^4 matrices never sit in memory twice. Summary
+    statistics (percentiles, asymmetry) are taken on a random sample of pairs.
+    """
+    from numpy.lib.format import open_memmap
+
+    T = len(ids)
+    files = sorted(cdir.glob("shard_*_of_*.npz"))
+    if not files:
+        raise SystemExit(f"no OD shards in {cdir}")
+    nsh = {int(f.stem.split("_of_")[1]) for f in files}
+    if len(nsh) != 1 or len(files) != nsh.pop():
+        raise SystemExit(f"incomplete shard set in {cdir}: {[f.name for f in files]}")
+    Em = open_memmap(out / "od_energy_kwh.npy", mode="w+", dtype=np.float32, shape=(T, T))
+    Tm = open_memmap(out / "od_time_h.npy", mode="w+", dtype=np.float32, shape=(T, T))
+    Km = open_memmap(cdir / "od_dist_km.npy", mode="w+", dtype=np.float32, shape=(T, T))
+    stats = {"max_energy_consistency_error_kwh": 0.0, "unreachable_pairs": 0}
+    neg, covered = 0, 0
+    for f in files:
+        z = np.load(f)
+        if not np.array_equal(z["ids"], np.array(ids, np.int64)):
+            raise SystemExit(f"{f.name} was computed for a different terminal set; rerun --stage prepare and od")
+        r0, r1 = int(z["r0"]), int(z["r1"])
+        if r0 != covered:
+            raise SystemExit(f"shards do not tile the rows: gap before {f.name}")
+        covered = r1
+        diag = (np.arange(r1 - r0), np.arange(r0, r1))
+        E_net, tt, km = z["E"].astype(np.float64), z["T"].copy(), z["KM"].copy()
+        E_net[diag] = 0.0; tt[diag] = 0.0; km[diag] = 0.0
+        neg += int((E_net < MIN_LEG_KWH).sum()) - (r1 - r0)
+        E = np.maximum(E_net, MIN_LEG_KWH); E[diag] = 0.0
+        Em[r0:r1], Tm[r0:r1], Km[r0:r1] = E, tt, km
+        stats["max_energy_consistency_error_kwh"] = max(stats["max_energy_consistency_error_kwh"],
+                                                        float(z["max_energy_consistency_error_kwh"]))
+        stats["unreachable_pairs"] += int(z["unreachable_pairs"])
+    if covered != T:
+        raise SystemExit(f"shards cover {covered} of {T} rows")
+    for m in (Em, Tm, Km):
+        m.flush()
+    rng = np.random.default_rng(seed)
+    i = rng.integers(0, T, sample); j = rng.integers(0, T, sample)
+    off = i != j
+    i, j = i[off], j[off]
+    e_f, e_r = Em[i, j].astype(float), Em[j, i].astype(float)
+    t_f, t_r, k_f = Tm[i, j].astype(float), Tm[j, i].astype(float), Km[i, j].astype(float)
+    asym = {}
+    for key, f_, r_, floor in (("energy", e_f, e_r, 1.0), ("time", t_f, t_r, 0.05)):
+        ok = (f_ > floor) & (r_ > floor)
+        rel = np.abs(f_[ok] - r_[ok]) / np.maximum(f_[ok], r_[ok])
+        asym[key] = {"pairs_sampled": int(ok.sum()), "median_rel_diff": round(float(np.median(rel)), 4),
+                     "p90_rel_diff": round(float(np.percentile(rel, 90)), 4),
+                     "frac_over_5pct": round(float((rel > 0.05).mean()), 4),
+                     "frac_over_20pct": round(float((rel > 0.20).mean()), 4)}
+    ranges = {
+        "energy_kwh_p5_p50_p95_max": [round(float(x), 2) for x in np.percentile(e_f, [5, 50, 95, 100])],
+        "time_h_p5_p50_p95_max": [round(float(x), 3) for x in np.percentile(t_f, [5, 50, 95, 100])],
+        "dist_km_p5_p50_p95_max": [round(float(x), 1) for x in np.percentile(k_f, [5, 50, 95, 100])],
+        "kwh_per_km_median": round(float(np.median(e_f / np.maximum(k_f, 0.1))), 3),
+        "sampled_pairs": int(len(e_f)),
+    }
+    np.save(out / "od_node_ids.npy", np.array(ids, np.int64))
+    return stats, neg, asym, ranges
+
+
+def build(preset: dict, raw: Path, out_root: Path, overrides: dict, stage: str = "all", shard: int = 0, n_shards: int = 1):
     preset = {**preset, **{k: v for k, v in overrides.items() if v is not None}}
     name = preset["name"]
+    npy = preset.get("output_format", "json") == "npy"
+    if stage == "od":
+        return run_od_shard(preset, raw, shard, n_shards), None
+    if stage != "all" and not npy:
+        raise SystemExit("--stage needs output_format: npy in the preset")
     out = out_root / name
     (out / "vis_data").mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(preset.get("seed", 0))
@@ -373,17 +592,39 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         charger_src = "NREL/NLR Alternative Fuels Data Center station locator, public DC-fast only"
     elif charger_source == "osm":
         # outside the US there is no AFDC: DC sockets of amenity=charging_station in the same Geofabrik extracts
-        sites = chg.load_dcfast_osm([fetch_data.ensure_osm(raw, r) for r in _as_list(preset["geofabrik"])], bbox,
-                                    float(preset.get("min_charger_kw", 50.0)), preset.get("exclude_tesla_only", False))
+        sites = chg.dedupe_sites([c for r in _as_list(preset["geofabrik"])
+                                  for c in scan_region(raw, fetch_data.ensure_osm(raw, r), preset, bbox)["chargers"]])
         charger_src = (f"OpenStreetMap amenity=charging_station (CCS/CHAdeMO/NACS sockets, tagged output >= "
                        f"{float(preset.get('min_charger_kw', 50.0)):g} kW), ODbL")
+    elif charger_source == "osm_services":
+        # real amenity=charging_station tagging plus every mapped expressway service area (highway=services/
+        # rest_area), assumed to host a DC-fast bank where it is not itself tagged with a real charger: OSM's
+        # mapping of service areas is far more complete than its mapping of the chargers inside them in regions
+        # like China, where the expressway service-area EV rollout outpaces OSM tagging of individual stations.
+        scans = [scan_region(raw, fetch_data.ensure_osm(raw, r), preset, bbox) for r in _as_list(preset["geofabrik"])]
+        real = chg.dedupe_sites([c for s in scans for c in s["chargers"]])
+        # dedupe_sites also catches the same OSM way re-extracted from two overlapping region files (e.g.
+        # Hebei's Geofabrik extract already contains Beijing and Tianjin), which would otherwise double its
+        # assumed ports when it is merged below
+        svc = chg.dedupe_sites([c for s in scans for c in s["service_areas"]])
+        svc = chg.drop_near(svc, real, float(preset.get("service_area_dedup_m", 300.0)))
+        sites = real + svc
+        svc_ports = int(preset.get("service_area_ports", 4))
+        charger_src = (f"OpenStreetMap amenity=charging_station (real stations, >= "
+                       f"{float(preset.get('min_charger_kw', 50.0)):g} kW) plus every mapped expressway service "
+                       f"area (highway=services/rest_area) not already carrying one, assumed to host {svc_ports} "
+                       f"DC-fast ports each (modelled, not measured: see 'charger_clusters.modelled_sites' below), ODbL")
     else:
-        raise SystemExit(f"unknown chargers_source {charger_source!r} (afdc or osm)")
+        raise SystemExit(f"unknown chargers_source {charger_source!r} (afdc, osm or osm_services)")
     merged = chg.merge_sites(sites, preset["charger_merge_m"], preset.get("charger_merge_linkage", "complete"))
-    # sites that snap to the same road node are one charger node; sites far from any road are dropped
+    # sites that snap to the same road node are one charger node; sites far from any road are dropped.
+    # osm_services sites genuinely sit beside the motorway/trunk mainline (reached by a ramp that is usually
+    # not in the graph at all, since `service` roads are excluded), so let them snap to it directly instead
+    # of being pushed out to the nearest ordinary road, which can be many km away on a rural expressway.
+    snap_charger = Snapper(net, "motorway") if charger_source == "osm_services" else snap
     by_node: dict[int, list[dict]] = {}
     for c in merged:
-        i, d = snap(c["lat"], c["lon"])
+        i, d = snap_charger(c["lat"], c["lon"])
         if d <= max_snap:
             c["node_idx"], c["snap_m"] = i, round(d, 1)
             by_node.setdefault(i, []).append(c)
@@ -399,7 +640,7 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         used[c["node_idx"]] = "charger"
         charger_nodes.append(c)
 
-    depot_nodes, cust_nodes = [], []
+    depot_nodes, cust_nodes, n_assumed_pop = [], [], 0
     if source == "amazon":
         # depots: the real Amazon stations; customers: random real stops, one per road node
         for code, (la, lo) in depots.items():
@@ -423,55 +664,105 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         delivery_src = "Amazon Last Mile Routing Research Challenge 2021 (training routes), CC BY-NC 4.0"
     else:
         # towns and cities with a population tag in OpenStreetMap (like California's city-to-city lanes)
-        cand = sample_places(load_place_candidates(raw, preset), int(preset["n_customers"]), rng)
-        lat = np.array([p["lat"] for p in cand]); lon = np.array([p["lon"] for p in cand])
-        nodes_i, dist = snap(lat, lon)
-        picked = []
-        for k, pl in enumerate(cand):
-            i = int(nodes_i[k])
-            if dist[k] > max_snap or i in used:
-                continue
-            xy = chg.local_xy([pl["lat"]], [pl["lon"]], float(lat.mean()))[0]
-            if any(np.hypot(*(xy - q)) < preset.get("min_place_spacing_m", 4000.0) for q in (pp["xy"] for pp in picked)):
-                continue
-            used[i] = "customer"
-            picked.append({"node_idx": i, "lat": pl["lat"], "lon": pl["lon"], "zone_id": pl["name"],
-                           "population": pl["population"], "place": pl["place"], "snap_m": round(float(dist[k]), 1), "xy": xy})
-            if len(picked) >= preset["n_customers"] + int(preset.get("n_depots", 4)):
-                break
-        for pp in picked:
-            pp.pop("xy")
-        cust_nodes = picked
+        if npy:
+            places = load_place_candidates(raw, preset, bbox)
+            log(f"  {len(places)} populated places with a population tag")
+            cust_nodes = pick_places(places, int(preset["n_customers"]) + int(preset.get("n_depots", 4)), rng, snap,
+                                     used, max_snap, float(preset.get("min_place_spacing_m", 4000.0)))
+        else:
+            cand = sample_places(load_place_candidates(raw, preset), int(preset["n_customers"]), rng)
+            lat = np.array([p["lat"] for p in cand]); lon = np.array([p["lon"] for p in cand])
+            nodes_i, dist = snap(lat, lon)
+            picked = []
+            for k, pl in enumerate(cand):
+                i = int(nodes_i[k])
+                if dist[k] > max_snap or i in used:
+                    continue
+                xy = chg.local_xy([pl["lat"]], [pl["lon"]], float(lat.mean()))[0]
+                if any(np.hypot(*(xy - q)) < preset.get("min_place_spacing_m", 4000.0) for q in (pp["xy"] for pp in picked)):
+                    continue
+                used[i] = "customer"
+                picked.append({"node_idx": i, "lat": pl["lat"], "lon": pl["lon"], "zone_id": pl["name"],
+                               "population": pl["population"], "place": pl["place"], "snap_m": round(float(dist[k]), 1), "xy": xy})
+                if len(picked) >= preset["n_customers"] + int(preset.get("n_depots", 4)):
+                    break
+            for pp in picked:
+                pp.pop("xy")
+            cust_nodes = picked
         # depots: the largest places become regional hubs (plain nodes in the environment)
         big = sorted(range(len(cust_nodes)), key=lambda j: -cust_nodes[j]["population"])[: int(preset.get("n_depots", 4))]
         for j in sorted(big, reverse=True):
             c = cust_nodes.pop(j)
             depot_nodes.append({"code": c["zone_id"], "node_idx": c["node_idx"], "lat": c["lat"], "lon": c["lon"],
-                                "snap_m": c["snap_m"], "population": c["population"]})
+                                "snap_m": c["snap_m"], "population": c["population"],
+                                "population_is_assumed": c.get("population_is_assumed", False)})
         depot_nodes.reverse()
-        delivery_src = "OpenStreetMap place nodes (city/town/village with population tag), ODbL"
+        n_assumed_pop = sum(1 for lst in (depot_nodes, cust_nodes) for m in lst if m.get("population_is_assumed"))
+        delivery_src = "OpenStreetMap place nodes (city/town/village)" + (
+            f", {n_assumed_pop} of {len(depot_nodes) + len(cust_nodes)} with no population tag "
+            f"(population assumed by place kind: see road_graph.PLACE_KIND_POPULATION_FALLBACK)"
+            if preset.get("assume_population") else " with population tag") + ", ODbL"
     if len(cust_nodes) + len(depot_nodes) < preset["n_customers"]:
         log(f"  WARNING only {len(cust_nodes) + len(depot_nodes)} delivery nodes placed")
 
     terminals_meta = ([("charger", c) for c in charger_nodes] + [("depot", d) for d in depot_nodes]
                       + [("customer", c) for c in cust_nodes])
+    if npy:  # matrix row i is the i-th smallest OSM node id, the same node numbering the JSON loader derives
+        terminals_meta.sort(key=lambda rm: int(net.osm_id[rm[1]["node_idx"]]))
     term_idx = np.array([m["node_idx"] for _, m in terminals_meta])
     ids = [int(net.osm_id[i]) for i in term_idx]
     log(f"  terminals: {len(charger_nodes)} chargers, {len(depot_nodes)} depots, {len(cust_nodes)} customers")
 
-    t_h, e_kwh, _ = rg.edge_costs(net, vehicle)
-    log("  computing all-pairs minimum-energy routes between terminals")
-    E_net, TT, KM, od_stats = od_matrices(net, term_idx, t_h, e_kwh, vehicle, workers=preset.get("workers"))
-    if od_stats["unreachable_pairs"] - len(ids) > 0:
-        raise SystemExit("unreachable terminal pairs in a strongly connected graph: " + str(od_stats))
-    np.fill_diagonal(E_net, 0); np.fill_diagonal(TT, 0); np.fill_diagonal(KM, 0)
-    neg = int((E_net[~np.eye(len(ids), dtype=bool)] < MIN_LEG_KWH).sum())
-    E = np.maximum(E_net, MIN_LEG_KWH); np.fill_diagonal(E, 0)
-    asym = asymmetry_stats(E_net, TT)
+    if npy:
+        cdir = od_cache_dir(raw, name)
+        if stage in ("all", "prepare"):
+            cdir.mkdir(parents=True, exist_ok=True)
+            for stale in cdir.glob("shard_*"):
+                stale.unlink()
+            t_h, e_kwh, _ = rg.edge_costs(net, vehicle)
+            g = od_graph(net, term_idx, t_h, e_kwh, vehicle, contract=bool(preset.get("contract_chains", False)))
+            g["ids"] = np.array(ids, np.int64)
+            del t_h, e_kwh
+            pickle.dump(g, open(cdir / "graph.pkl", "wb"), protocol=4)
+            log(f"  routing graph saved ({g['n']} search nodes, {len(g['e'])} edges, {len(ids)} terminals) -> {cdir}")
+            if stage == "prepare":
+                return cdir, None
+            od_stats = dict(g["stats"])
+            del g
+            for sh in range(n_shards):
+                run_od_shard(preset, raw, sh, n_shards)
+        else:
+            saved = pickle.load(open(cdir / "graph.pkl", "rb"))
+            od_stats = dict(saved["stats"])
+            if not np.array_equal(saved["ids"], np.array(ids, np.int64)):
+                raise SystemExit("terminal set differs from the one the OD shards were computed for; rerun --stage prepare")
+            del saved
+        log("  assembling OD matrices")
+        shard_stats, neg, asym, ranges = write_npy_matrices(out, cdir, ids)
+        od_stats.update(shard_stats)
+        if od_stats["unreachable_pairs"] > 0:
+            raise SystemExit("unreachable terminal pairs in a strongly connected graph: " + str(od_stats))
+    else:
+        t_h, e_kwh, _ = rg.edge_costs(net, vehicle)
+        log("  computing all-pairs minimum-energy routes between terminals")
+        E_net, TT, KM, od_stats = od_matrices(net, term_idx, t_h, e_kwh, vehicle, workers=preset.get("workers"))
+        if od_stats["unreachable_pairs"] - len(ids) > 0:
+            raise SystemExit("unreachable terminal pairs in a strongly connected graph: " + str(od_stats))
+        np.fill_diagonal(E_net, 0); np.fill_diagonal(TT, 0); np.fill_diagonal(KM, 0)
+        neg = int((E_net[~np.eye(len(ids), dtype=bool)] < MIN_LEG_KWH).sum())
+        E = np.maximum(E_net, MIN_LEG_KWH); np.fill_diagonal(E, 0)
+        asym = asymmetry_stats(E_net, TT)
+        off_diag = ~np.eye(len(ids), dtype=bool)
+        ranges = {
+            "energy_kwh_p5_p50_p95_max": [round(float(x), 2) for x in np.percentile(E[off_diag], [5, 50, 95, 100])],
+            "time_h_p5_p50_p95_max": [round(float(x), 3) for x in np.percentile(TT[off_diag], [5, 50, 95, 100])],
+            "dist_km_p5_p50_p95_max": [round(float(x), 1) for x in np.percentile(KM[off_diag], [5, 50, 95, 100])],
+            "kwh_per_km_median": round(float(np.median(E[off_diag] / np.maximum(KM[off_diag], 0.1))), 3),
+        }
 
-    # --- write the California-format files
-    write_dict(out / "shortest_path_energy_dict.json", ids, E, 4)
-    write_dict(out / "shortest_path_time_dict.json", ids, TT, 5)
+        # --- write the California-format files
+        write_dict(out / "shortest_path_energy_dict.json", ids, E, 4)
+        write_dict(out / "shortest_path_time_dict.json", ids, TT, 5)
     station_info = {str(int(net.osm_id[c["node_idx"]])): {"station_type": "DCFast", "total_capacity": float(c["ports"])}
                     for c in charger_nodes}
     json.dump(station_info, open(out / "station_info_dict.json", "w"), indent=1)
@@ -489,6 +780,7 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
             **({"zone_id": m["zone_id"]} if role == "customer" else {}),
             **({"amazon_station": m["amazon_station"]} if role == "customer" and "amazon_station" in m else {}),
             **({"population": m["population"]} if "population" in m else {}),
+            **({"population_is_assumed": True} if m.get("population_is_assumed") else {}),
         })
     json.dump(node_rows, open(vis / "nodes.json", "w"))
     json.dump([{
@@ -497,25 +789,29 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         "site_lat": round(c["lat"], 6), "site_lon": round(c["lon"], 6), "ports": c["ports"],
         "n_stations": c["n_stations"], "diameter_m": c["diameter_m"], "snap_m": c["snap_m"],
         "names": c["names"], "networks": c["networks"], "connectors": c["connectors"], "afdc_ids": c["afdc_ids"],
+        "modelled": c.get("modelled", False),
     } for c in charger_nodes], open(vis / "stations.json", "w"), indent=1)
     chosen_ids = {i for x in chosen for i in x["afdc_ids"]}
     json.dump([{"cluster_rank": i, "lat": round(c["lat"], 6), "lon": round(c["lon"], 6), "ports": c["ports"],
-                "n_stations": c["n_stations"], "networks": c["networks"], "selected": c["afdc_ids"][0] in chosen_ids}
+                "n_stations": c["n_stations"], "networks": c["networks"], "selected": c["afdc_ids"][0] in chosen_ids,
+                "modelled": c.get("modelled", False)}
                for i, c in enumerate(merged)], open(vis / "all_dcfast_sites.json", "w"))
     n_road = write_roads(vis / "roads.npz", net, rg.CLASS_ID[preset.get("vis_max_class", "tertiary_link")])
     ext_km = max((bbox[2] - bbox[0]) * 111.0, (bbox[3] - bbox[1]) * 111.0 * np.cos(np.radians(0.5 * (bbox[0] + bbox[2]))))
     write_terrain_grid(vis / "terrain.npz", raw, bbox, zoom, step_m=max(250.0, ext_km * 1000.0 / 700.0))
-    np.savez_compressed(vis / "od_matrices.npz", node_ids=np.array(ids, np.int64), energy_net_kwh=E_net.astype(np.float32),
-                        energy_kwh=E.astype(np.float32), time_h=TT.astype(np.float32), dist_km=KM.astype(np.float32))
+    if not npy:
+        np.savez_compressed(vis / "od_matrices.npz", node_ids=np.array(ids, np.int64), energy_net_kwh=E_net.astype(np.float32),
+                            energy_kwh=E.astype(np.float32), time_h=TT.astype(np.float32), dist_km=KM.astype(np.float32))
 
-    off_diag = ~np.eye(len(ids), dtype=bool)
     meta = {
         "name": name, "title": preset["title"], "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "preset": preset, "units": {"energy": "kWh (battery)", "time": "hours", "distance": "km"},
         "scale_km": round(float(ext_km), 0),
         "counts": {"nodes": len(ids), "chargers": len(charger_nodes), "depots": len(depot_nodes), "customers": len(cust_nodes),
+                   "delivery_nodes_with_assumed_population": n_assumed_pop,
                    "dcfast_ports_in_nodes": int(sum(c["ports"] for c in charger_nodes)),
-                   "dcfast_sites_available": len(merged), "dcfast_stations_raw": len(sites)},
+                   "dcfast_sites_available": len(merged), "dcfast_stations_raw": len(sites),
+                   "dcfast_stations_modelled": sum(1 for s in sites if s.get("modelled", False))},
         "study_bbox_min_lat_lon_max_lat_lon": [round(x, 5) for x in bbox],
         "road_network": {"nodes": int(net.n), "directed_edges": int(len(net.eu)), "plotted_segments": n_road,
                          "excluded": "service roads, private/no-motor-vehicle ways"
@@ -525,15 +821,11 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
         "route_policy": "minimum battery energy (regeneration allowed on the road graph); time summed on the same route",
         "leg_energy_floor_kwh": MIN_LEG_KWH, "legs_floored": neg,
         "od_stats": od_stats,
-        "ranges": {
-            "energy_kwh_p5_p50_p95_max": [round(float(x), 2) for x in np.percentile(E[off_diag], [5, 50, 95, 100])],
-            "time_h_p5_p50_p95_max": [round(float(x), 3) for x in np.percentile(TT[off_diag], [5, 50, 95, 100])],
-            "dist_km_p5_p50_p95_max": [round(float(x), 1) for x in np.percentile(KM[off_diag], [5, 50, 95, 100])],
-            "kwh_per_km_median": round(float(np.median(E[off_diag] / np.maximum(KM[off_diag], 0.1))), 3),
-        },
+        "ranges": ranges,
         "asymmetry": asym,
         "charger_clusters": {"max_diameter_m": max(c["diameter_m"] for c in charger_nodes),
-                             "merged_nodes_with_multiple_stations": sum(c["n_stations"] > 1 for c in charger_nodes)},
+                             "merged_nodes_with_multiple_stations": sum(c["n_stations"] > 1 for c in charger_nodes),
+                             "modelled_sites": sum(1 for c in charger_nodes if c.get("modelled", False))},
         "sources": {
             "delivery_and_depot_locations": delivery_src,
             "road_network": "OpenStreetMap contributors via Geofabrik, ODbL",
@@ -541,6 +833,11 @@ def build(preset: dict, raw: Path, out_root: Path, overrides: dict):
             "chargers": charger_src,
         },
     }
+    if npy:
+        meta["format"] = "npy"
+        meta["files"] = {"energy": "od_energy_kwh.npy", "time": "od_time_h.npy", "node_ids": "od_node_ids.npy",
+                         "layout": "float32 (nodes x nodes); row/column i is OSM node od_node_ids[i] (ascending); "
+                                   "diagonal 0; entry [i, j] is the minimum-energy route i -> j"}
     cfg = make_config(name, preset["title"], preset)
     meta["battery_kwh"] = float(yaml.safe_load(cfg.read_text())["truck"]["battery_capacity"])
     meta["config_file"] = str(cfg.relative_to(REPO))
@@ -559,6 +856,24 @@ if __name__ == "__main__":
     ap.add_argument("--max-chargers", type=int)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--workers", type=int, help="processes for the all-pairs route computation")
+    ap.add_argument("--extract-only", metavar="REGION", help="only extract and cache the road network of one Geofabrik "
+                    "region of the preset (e.g. europe/france); run one job per region, then build normally")
+    ap.add_argument("--scan-only", metavar="REGION", help="only scan one region's charging stations and places into the cache")
+    ap.add_argument("--stage", choices=["all", "prepare", "od", "assemble"], default="all",
+                    help="npy presets only. prepare: network, terminals and routing graph; od: one shard of the routing "
+                         "(--shard/--n-shards, one Slurm array task each); assemble: matrices, visualisation data, metadata")
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--n-shards", type=int, default=1)
     a = ap.parse_args()
+    if a.scan_only:
+        pre = yaml.safe_load(open(a.preset))
+        scan_region(a.raw_dir, fetch_data.ensure_osm(a.raw_dir, a.scan_only), pre, tuple(pre["bbox"]))
+        raise SystemExit(0)
+    if a.extract_only:
+        pre = yaml.safe_load(open(a.preset))
+        extract_region(a.raw_dir, fetch_data.ensure_osm(a.raw_dir, a.extract_only), tuple(pre["bbox"]),
+                       rg.CLASS_ID[pre.get("max_road_class", "living_street")])
+        raise SystemExit(0)
     build(yaml.safe_load(open(a.preset)), a.raw_dir, a.out_root,
-          {"n_customers": a.n_customers, "max_chargers": a.max_chargers, "seed": a.seed, "workers": a.workers})
+          {"n_customers": a.n_customers, "max_chargers": a.max_chargers, "seed": a.seed, "workers": a.workers},
+          stage=a.stage, shard=a.shard, n_shards=a.n_shards)

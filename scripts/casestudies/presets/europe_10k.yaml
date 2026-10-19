@@ -1,0 +1,31 @@
+# Western continental Europe (Germany, Netherlands, Belgium, France, Switzerland, Denmark): a 10,000-node delivery
+# case on the full road network up to `unclassified`. The UK and Scandinavia (Norway, Sweden) are left out: the UK is
+# only reachable by ferry or the Channel Tunnel (rail in OSM), and the Nordic countries add 1000+ km of sparse network.
+# There are no depot nodes: every delivery node can be a depot, as in the California case. Chargers are merged within
+# 20 km so that charging nodes stay a few thousand. Heavy trucks are speed-limited to 90 km/h (EU limiter).
+name: europe_10k
+title: "Western Europe (DE, NL, BE, FR, CH, DK), 10,000 delivery nodes"
+geofabrik: [europe/germany, europe/netherlands, europe/belgium, europe/france, europe/switzerland, europe/denmark]
+delivery_source: places                # real towns, villages and cities (OpenStreetMap place nodes with population)
+bbox: [41.2, -5.4, 57.9, 15.3]         # min_lat, min_lon, max_lat, max_lon (includes Corsica, dropped as a separate road component)
+n_customers: 10000                     # up to 10,000 potential delivery nodes
+n_depots: 0                            # no dedicated depots: any delivery node can start a route
+min_population: 200
+min_place_spacing_m: 4000
+chargers_source: osm                   # no AFDC outside the US: DC sockets of amenity=charging_station
+min_charger_kw: 50
+max_chargers: 0                        # keep every merged DC site
+charger_merge_m: 20000                 # DC sites within 20 km become one node (ports add up)
+charger_merge_linkage: complete        # every pair of stations inside a node is within 20 km (single linkage chains the motorways into one 1450 km node)
+max_snap_m: 5000
+max_road_class: unclassified           # motorway .. unclassified; residential streets are left out
+terrain_zoom: 10                       # about 100 m per pixel at 47 N; smoothing is on a 150 m scale anyway
+terrain_source: "AWS Terrain Tiles (Terrarium; composite of SRTM, EU-DEM and national DEMs over Europe)"
+smooth_length_m: 150
+vis_max_class: trunk_link              # plotted roads: motorways and trunks (the full network has ~10^8 segments)
+vehicle_profile: heavy_truck
+vehicle:
+  max_speed_kph: 90                    # speed limiter of N3 trucks; posted limits above this are capped
+output_format: npy                     # 10^4 nodes: float32 matrices instead of the 10^8-entry JSON dictionaries
+contract_chains: true                  # exact routing on the junction graph (degree-2 road nodes folded into their edges)
+seed: 0

@@ -32,7 +32,10 @@ from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     _travel_hours,
     decode_feasible_actions,
 )
-from EVRoutingEnv.baselines.optimization.exact_optimization import PlanSolution
+from EVRoutingEnv.baselines.optimization.exact_optimization import (
+    PlanSolution,
+    planned_route_can_return,
+)
 from EVRoutingEnv.models.core.customer import TaskStatus
 
 
@@ -56,6 +59,7 @@ class ALNSParameters:
     objective: str = "total_time"
     seed: int = 0
     replan_on_completion: bool = True
+    respect_planned_routes: bool = False
 
     def __post_init__(self) -> None:
         if self.objective not in ("makespan", "total_time"):
@@ -563,6 +567,12 @@ class ALNSPolicy:
 
         self._decisions += 1
         goal = self._next_planned_stop(env, plan, truck)
+        if (
+            goal is None
+            and self.parameters.respect_planned_routes
+            and planned_route_can_return(env, plan, truck)
+        ):
+            goal = int(env.joint_instance.depot_node)
         if goal is None:
             self._fallbacks += 1
             goal = self.navigator._select_goal(

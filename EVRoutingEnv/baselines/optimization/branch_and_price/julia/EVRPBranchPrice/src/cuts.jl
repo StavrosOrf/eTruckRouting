@@ -129,20 +129,75 @@ function separate_capacity_cuts(inst::Instance, y::Dict{Tuple{Int,Int},Float64},
      for (_, S) in found[1:min(max_cuts, length(found))]]
 end
 
-# Subset-row cuts on customer triples (rank-1, multipliers 1/2):
-#   sum_p floor(|p cap T| / 2) z_p <= 1,
-# valid because an integer solution visits each customer once. The dual
-# tau_T <= 0 is a penalty |tau_T| paid at every second visit to T, which
-# labels track with one parity bit per cut (see pricing.jl).
+# Limited-memory subset-row cuts on customer triples (rank-1, multipliers
+# 1/2; upstream's lm-SR3, after Pecin et al. 2017). Scanning a route, the
+# parity for triple T toggles at each visit to T and is forgotten at any
+# customer outside the cut's memory M (T is inside M); a penalty is earned at
+# every return to odd -> even. The coefficient is therefore the sum over
+# memory segments of floor(visits to T / 2), never more than floor(|p cap T|/2),
+# so
+#   sum_p alpha_p z_p <= 1
+# stays valid. The count splits only at forgetting customers, so it is the
+# same read forwards or backwards. The dual tau_T <= 0 is a penalty |tau_T|
+# per earned unit, tracked by one parity bit per cut (see pricing.jl).
 
-const MAX_SUBSET_ROW = 128
+const MAX_SUBSET_ROW = 256
+
+"""Parity bits of up to 256 subset-row cuts (cut c is bit c-1 of lo, then hi)."""
+struct SRBits
+    lo::UInt128
+    hi::UInt128
+end
+
+Base.zero(::Type{SRBits}) = SRBits(zero(UInt128), zero(UInt128))
+@inline Base.:&(a::SRBits, b::SRBits) = SRBits(a.lo & b.lo, a.hi & b.hi)
+@inline Base.:|(a::SRBits, b::SRBits) = SRBits(a.lo | b.lo, a.hi | b.hi)
+@inline Base.xor(a::SRBits, b::SRBits) = SRBits(a.lo ⊻ b.lo, a.hi ⊻ b.hi)
+@inline Base.:~(a::SRBits) = SRBits(~a.lo, ~a.hi)
+@inline sr_bit(c::Int) = c <= 128 ? SRBits(one(UInt128) << (c - 1), zero(UInt128)) :
+                                    SRBits(zero(UInt128), one(UInt128) << (c - 129))
 
 struct SubsetRowCut
     members::NTuple{3,Int}
+    memory::BitVector       # customers that keep the parity (members included)
 end
 
-sr_coefficient(cut::SubsetRowCut, customers::Vector{Int}) =
-    count(in(cut.members), customers) ÷ 2
+function sr_coefficient(cut::SubsetRowCut, customers::Vector{Int})
+    odd, total = false, 0
+    for c in customers
+        if c in cut.members
+            odd && (total += 1)
+            odd = !odd
+        elseif !cut.memory[c]
+            odd = false
+        end
+    end
+    total
+end
+
+"""
+Smallest memory keeping the cut's full coefficient on the given support
+routes: every customer between two consecutive visits to the triple.
+"""
+function cut_memory(T::NTuple{3,Int}, routes, n::Int)
+    memory = falses(n)
+    for t in T
+        memory[t] = true
+    end
+    for r in routes
+        last = 0
+        for (k, c) in enumerate(r.customers)
+            c in T || continue
+            if last > 0
+                for m in last+1:k-1
+                    memory[r.customers[m]] = true
+                end
+            end
+            last = k
+        end
+    end
+    memory
+end
 
 """Most violated subset-row triples among customers sharing LP support columns."""
 function separate_subset_row_cuts(inst::Instance, routes::Vector{Route}, z::Vector{Float64},
@@ -181,5 +236,8 @@ function separate_subset_row_cuts(inst::Instance, routes::Vector{Route}, z::Vect
         end
     end
     sort!(found; by = f -> -f[1])
-    [SubsetRowCut(T) for (_, T) in found[1:min(max_cuts, length(found))]]
+    map(found[1:min(max_cuts, length(found))]) do (_, T)
+        hits = [routes[q] for q in support if count(in(T), routes[q].customers) >= 2]
+        SubsetRowCut(T, cut_memory(T, hits, n))
+    end
 end

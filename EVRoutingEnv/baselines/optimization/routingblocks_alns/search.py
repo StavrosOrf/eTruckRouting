@@ -63,6 +63,7 @@ class SearchParameters:
     spare_routes: int = 2
     pool: bool = True
     pool_interval_seconds: float = 120.0
+    restart_after: int = 0  # iterations without a new best before restarting from a fresh construction (0: never)
     diversify: bool = True  # parallel: odd workers use larger destroys and a hotter start
     adopt_fraction: float = 0.5  # parallel: share of workers that restart from the shared best each round
     pool_elite_tolerance: float = 0.03  # routes of candidates within this of the best join the pool
@@ -372,6 +373,7 @@ class Search:
         self.history = [(self.elapsed, self.best_cost)]
         self.window: list[tuple] = []
         self.progress = 0.0  # fraction of the whole budget used; drives the temperature
+        self.last_best_iteration = self.iterations
         self._note(f"start exact cost {self.best_cost:.4f} with {len(self.best_routes)} routes")
 
     def set_current(self, routes) -> None:
@@ -436,6 +438,7 @@ class Search:
             score = 0.0
             if cand_cost < self.best_cost - 1e-9:
                 self.best_routes, self.best_cost = cand_routes, cand_cost
+                self.last_best_iteration = self.iterations
                 score = p.score_new_best
                 self.history.append((self.elapsed, self.best_cost))
                 self._note(f"it {self.iterations} new best {self.best_cost:.4f} routes {len(self.best_routes)}")
@@ -454,7 +457,14 @@ class Search:
             if self.iterations % p.penalty_period == 0 and self.window:
                 self._adapt_penalties(self.window)
                 self.window = []
-            if self.iterations % 500 == 0 and self.current_cost > self.best_cost * 1.02:
+            if p.restart_after and self.iterations - self.last_best_iteration >= p.restart_after:
+                fresh = self.greedy_routes()
+                if fresh is not None:
+                    self.current_routes, self.current_cost = fresh, self.exact_cost(fresh)
+                    self._elite_add(fresh)
+                    self._note(f"it {self.iterations} stalled: restart from a fresh construction ({self.current_cost:.4f})")
+                self.last_best_iteration = self.iterations
+            elif not p.restart_after and self.iterations % 500 == 0 and self.current_cost > self.best_cost * 1.02:
                 self.current_routes, self.current_cost = list(self.best_routes), self.best_cost
 
     def _elite_add(self, routes) -> None:

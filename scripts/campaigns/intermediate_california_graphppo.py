@@ -176,8 +176,9 @@ def submit(root):
         raise FileExistsError("evaluation already submitted; inspect recorded jobs")
     base = read(root / "manifest.json")
     command = [base["python"], str(root / "intermediate.py")]
-    common = ["sbatch", "--parsable", "--account=tdsei17344", "--partition=cbuild", "--nodes=1", "--ntasks=1"]
-    job = subprocess.check_output(common + ["--cpus-per-task=12", "--mem=64G", "--time=02:00:00", "--job-name=ca10t3d_intermediate", f"--array=0-{SHARDS - 1}%{SHARDS}", f"--output={root}/score-%A_%a.out", "--wrap", shlex.join(command + ["score", "--directory", str(root)])], text=True).strip()
+    common = ["sbatch", "--parsable", "--account=tdsei17344", "--partition=gpu_mig",
+            "--gpus=1", "--nodes=1", "--ntasks=1"]
+    job = subprocess.check_output(common + ["--cpus-per-task=9", "--mem=60G", "--time=02:00:00", "--job-name=ca10t3d_intermediate", f"--array=0-{SHARDS - 1}%{SHARDS}", f"--output={root}/score-%A_%a.out", "--wrap", shlex.join(command + ["score", "--directory", str(root)])], text=True).strip()
     write(root / "jobs.json", {"scoring_job": job, "status": "scoring_submitted"})
     merge = subprocess.check_output(common + ["--cpus-per-task=2", "--mem=8G", "--time=00:20:00", "--job-name=ca10t3d_intermediate_report", f"--dependency=afterok:{job}", "--kill-on-invalid-dep=yes", f"--output={root}/merge-%j.out", "--wrap", shlex.join(command + ["merge", "--directory", str(root)])], text=True).strip()
     write(root / "jobs.json", {"scoring_job": job, "merge_job": merge, "status": "submitted"})

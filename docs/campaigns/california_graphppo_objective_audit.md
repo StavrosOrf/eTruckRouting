@@ -746,3 +746,133 @@ no GPU allocation, and cannot open final validation or test. Its 626 immutable
 inputs were checked after submission. Artifacts:
 `results/california_graphppo/policy_temperature_20261019/`.
 Implementation: `scripts/campaigns/evaluate_california_policy_temperature.py`.
+
+## Scheduling policy changed to GPU partitions (October 19, 21:55 CEST)
+
+At the user's instruction, all eight pending campaign coordination/evaluation
+jobs on `cbuild` were cancelled at zero runtime and resubmitted on `gpu_mig`.
+Their unresolved dependencies and original batch commands were preserved.
+Full training remains on `gpu_a100`; recovery array **28319946** has nine runs
+in five allocations and coordinator **28320169**. The larger-data coordinator
+is **28320170**, and the progress/objective/capacity coordinators are
+**28320171 / 28320172 / 28320173**. Action-edge bootstrap is **28320174**;
+objective and capacity maturity screens are **28320175 / 28320176**.
+
+Future active submission paths now request MIG slices for auxiliary work, with
+up to nine CPUs and 60 GiB per allocation. Development scoring limits the two
+concurrent method pools to four workers each, while full training retains its
+existing worker/seed partitions. Historical completed evaluation scripts and
+pinned neural/simulator source snapshots were preserved. Completed development
+and decoding-study input locks, plus both continuation/bootstrap and queued
+screen locks, still verify. No active campaign job remains on `cbuild`.
+
+The metadata-only original completion and audited recovery bootstrap were
+executed inline after their unused pending jobs were cancelled at zero runtime.
+All original ten runs have completed 12M; recovery now waits only in the GPU
+training queue. The target metrics remain unmet and final validation/test remain
+unopened. The persistent scheduling preference is recorded in
+`results/california_graphppo/slurm_policy.json`; migration commands, accounting
+and ID mappings are in `scheduler_gpu_migration_20261019/`.
+
+## Unstarted training stages moved to single-model MIG allocations (October 19, 22:05 CEST)
+
+The warm 4M continuation and recovery 1M stage remained entirely pending on full
+A100 allocations while MIG slices were available. These zero-runtime arrays and
+their pending coordinators were cancelled and resubmitted with one model per MIG
+slice. The operational layout gives each model the same **nine CPUs, seven
+rollout workers and sixteen environments** as half of an original two-model
+A100 allocation. Full optimizer/simulator/RNG checkpoints resume; a new launcher
+guard rejects any saved worker/seed partition mismatch. Network weights,
+configuration, data, masks, rewards and run definitions are unchanged.
+
+The action-edge stage now uses the same single-model MIG layout. Its full-A100
+packing profiles **28305475 / 28305476** were cancelled at zero runtime and never
+executed; their two-versus-three comparison is not reported as a result. The
+bootstrap explicitly checks that cancellation, the unchanged source/parent/data
+hashes, released imitation slots, and the allocation bound. The projected
+single-model BC host use is 31.64 GiB against a 60-GiB allocation; this remains
+a projection from completed accounting, not a measured new-model peak.
+
+New arrays and coordinators:
+
+| Stage | Training array | Coordinator | Array tasks | Maximum simultaneous allocations |
+| --- | --- | --- | --- | --- |
+| Warm continuation to 4M | 28320619 | 28320621 | 6 | 5 |
+| Recovery-data ablation to 1M | 28320624 | 28320625 | 9 | 5 |
+| Action-edge ablation to 1M | 28320681 | 28320683 | 9 | 5 |
+
+All three arrays have started on `gpu_mig`. Warm logs show restoration from
+1,001,472 decisions and further PPO updates with seven rollout workers. New
+recovery/action-edge logs confirm loading the fixed parent and the intended
+flags. Legacy running training remains on full A100s. No active campaign job
+uses `cbuild`.
+
+The launcher supports explicit one-, two- and three-model layouts; legacy
+manifests retain their prior defaults. MIG arrays use a `%5` throttle. Thus
+queued task count is distinct from simultaneous allocation count: the observed
+30 queue entries currently reserve at most 21 simultaneous training allocations.
+The six-family future reservation envelope remains at most 30. Current neural
+performance evidence is unchanged, and final validation/test remain unopened.
+
+Operational evidence, cancelled-job accounting, preserved run definitions and
+job mappings: `results/california_graphppo/training_mig_migration_20261019/`.
+
+## Objective maturity screen completed (October 19, 22:11 CEST)
+
+MIG job **28320175** completed in 8:57. On the same opened 128 development cases,
+three selected actors from completed 12M cost-emphasis runs averaged **96.88%
+completion, 138.77 successful operating hours and 26.39% paired BKS excess**.
+The gamma-one recipe averaged **98.96%, 146.55 hours and 32.76% excess**.
+The comparison retained every failure and used the existing six independent
+reference methods; inherited warm-anchor training histories differ explicitly.
+
+The prespecified cohort stopping condition was **not met**. The cost recipe's
+excess is only 8.26 percentage points above the warm anchor, below the ten-point
+screening threshold. Gamma-one has higher mean completion than that anchor.
+The remaining seeds continue; this avoids claiming dominance from cost alone.
+The new results are included in the performance-comparison JSON/CSV and live
+status report. Neither recipe satisfies both goal metrics. The capacity screen
+still waits for its third required completed allocation, and final validation
+and locked test remain unopened.
+
+## Live MIG PPO updates and completed capacity screen
+
+Updated 2026-10-19T22:46:52.105503+02:00.
+
+The actual full-campaign PPO checkpoints passed the finite-parameter/update audit after BC: the control had 153,600 PPO decisions, both routing variants 102,400. The graph encoder, action network and value network changed; gated variants also updated their routing gates. The critic-detached actor encoder continued to receive PPO updates. This is direct evidence of end-to-end optimization, not improved held-out performance. Artifact: `training_mig_migration_20261019/full_PPO_audit.json`.
+
+A reward source inspection resolved the apparent missing success bonus: `mean_episode_reward` logs the simulator episode reward; the vector worker separately adds terminal shaping to the PPO reward vector. The configured 24,000 success bonus is present in training. Pinned source files were preserved. Artifact: `training_mig_migration_20261019/reward_logging_audit.json`.
+
+All ten progress runs finished 12M decisions and completion metadata was recorded inline after cancelling its zero-runtime pending coordinator 28320171. The ready capacity evaluation likewise replaced pending job 28320176 with a two-CPU, zero-GPU overlapping step 28320619_0.0 inside owned warm-training MIG allocation 28320671. The exact preregistered source, actors, masks, scenarios and reference pool were preserved. No extra GPU allocation was needed.
+
+The completed three-seed, 128-case capacity readout is: `bc_capacity_links` 98.1771% completion, 151.8801 successful operating hours, 36.8986% paired excess; `bc_capacity_nonlinear_links` 97.9167%, 142.0873 hours, 28.9716% excess. Neither exceeds warm-cost completion, and both have at least ten percentage points greater excess than its 18.1363%. The predeclared dominated-cohort rule therefore requested graceful stops of remaining capacity allocations 28279539_3 and _4, with partial full states retained. Terminal accounting and full-state loading must be verified separately before claiming resource release. The five-seed convergence requirement has not been satisfied for this stopped cohort.
+
+Future launcher continuations now omit bundles whose requested milestone and all published training/selection/final artifacts are complete. Original bundle indices, CPU/worker assignments and the full seed manifest are preserved. Read-only planning finds legacy objective and capacity continuation indices [3, 4], avoiding resubmission of finished indices [0, 1, 2]. Prior launcher and prepared bootstrap hash locks were backed up before refreshing the declared orchestration hashes. Existing scientific sources and completed result locks were not changed. Artifact: `incomplete_bundle_optimization_20261019/`.
+
+The best completed GraphPPO result remains 98.4375% completion / 131.1190 successful hours / 18.1363% paired BKS excess. All 29 completed comparison rows are in `performance_comparison_20261019.json` and CSV. Final 512-case validation and locked 1,000-case test remain unopened; the goal is active and unmet.
+
+Capacity terminal verification completed at 2026-10-19T20:48:08.568896+00:00: allocations 28279539_3 and _4 both exited COMPLETED 0:0. The four retained full checkpoints loaded and matched saved counters: 9,857,024; 9,957,376; 9,668,608; 9,934,848 decisions. The pinned settle operation completed as a one-CPU, zero-GPU overlapping step within the existing MIG allocation; pending settle GPU job 28342006 was cancelled at zero runtime. Two A100 training allocations are released. Shared joint-selection readiness was rechecked, with final validation and test still unopened.
+
+## Release idle campaign reservations and use H100 capacity
+
+Updated 2026-10-19T22:56:12.825870+02:00.
+
+The previous goal turn made scientific/resource progress: a completed three-seed capacity comparison justified stopping its remaining work, and retained full states and terminal accounting were verified. This turn observed all 17 remaining training allocations live. Nine additional tasks were pending solely because of the initial five-allocation family throttles. The original and progress cohorts are complete; capacity, imitation and retention are screened out. Allowing six warm, nine recovery and nine action-edge allocations plus the two remaining objective allocations bounds current concurrency at 26, below the user limit of 30. Even reserving all five objective slots yields 29. Future stages retain the five-allocation family default.
+
+SLURM rejected live `ArrayTaskThrottle` updates with an access/permission error. Only the nine never-started tasks and their pending coordinators were cancelled; supplemental arrays preserved the same bundle indices, model directories, physics, data, seeds, CPU allocations and seven-worker layouts. MIG resource queueing persisted while H100 nodes had capacity. The site also rejects mixed-partition shared jobs, so those unstarted supplemental arrays were replaced with single-partition H100 arrays. Every replaced task/coordinator in both steps has zero-runtime cancellation accounting (24 entries); running models were preserved. Scientific manifest hashes are unchanged.
+
+Final mappings: warm arrays 28320619 + 28344289, coordinator 28344290; recovery 28320624 + 28344292, coordinator 28344294; action-edge 28320681 + 28344295, coordinator 28344296. Each replacement coordinator has verified afterany dependencies on both its original MIG and supplemental H100 array. It verifies all requested decision budgets before promotion. The three H100 arrays were submitted and observed pending on scheduler priority at the latest check; submission is not proof of startup or a measured speed improvement. Hardware assignment must accompany later per-seed results.
+
+Artifacts: `array_throttle_release_20261019/plan.json`, `gpu_partition_fallback.json`, and `verification.json`. The 512-case final-validation bank and locked 1,000-case test remain unopened. No new performance result or goal completion is claimed.
+
+## Objective MIG continuation, teacher drift and packing pilot
+
+Updated 2026-10-19T23:29:28.243485+02:00.
+
+The prior objective A100 allocations completed cleanly at their checkpoint boundaries. Four full optimizer/simulator/RNG states loaded and matched final histories: cost s3 8,419,328; gamma-one s3 8,417,280; cost s4 8,032,256; gamma-one s4 7,989,248 decisions. The old root controller still hardcoded two models per bundle. Its first width-one continuation attempt submitted no jobs because it requested only five already-completed bundles. The packing calculation was corrected to use the manifest, and the prepared wave was reused. MIG array 28348611 submits only indices [6,7,8,9], with coordinator 28348614. Each model retains 16 environments and seven workers. Six completed 12M models are skipped. Scientific source, rewards, data and actor flags are unchanged. Root objective manifest/controller are absent from completed input locks; prior versions are retained.
+
+The train-only teacher-retention diagnostic compared BC and stable current PPO weights on the pre-existing 128 pilot states (119 cases), not a held-out route evaluation. Control at 563,200 decisions: teacher NLL 1.496→7.236, BC-to-PPO KL 5.012. Routing gates at 460,800: 1.411→5.607, KL 3.306. Gates plus critic detachment at 460,800: 1.453→20.558, KL 17.528. Exact teacher match fell in all three. This flags policy drift, particularly with detachment in one matched seed, and does not prove route-cost degradation or causality. No optimizer updates or training restarts were performed by the diagnostic. Frozen actors and provenance are under `teacher_retention_diagnostic_20261019/`. Full three-seed 1M comparisons remain the promotion gate.
+
+A live owned-allocation inspection found about 4.58 GiB aggregate proportional host memory and 2,176 MiB GPU residency for warm PPO. Recovery packing pilot 28348662 replaces pending H100 elements 5 and 8 with one MIG allocation (9 CPUs, 60 GiB, shared GPU), retaining each registered model’s seven-worker partition. BC is staggered until the first model has entered PPO and its process-tree RSS is below 12 GiB. The nominal BC host-memory projection is 31.64 GiB; recovery teacher-50 has about 5% more decisions, still within the declared host reserve. Replacement coordinator 28348663 depends on original MIG array 28320624, remaining H100 array 28344292 and packed job 28348662. The removed unmaterialized pending task handles are absent; this site does not expose their individual sacct rows, so zero-runtime accounting is claimed only for the cancelled coordinator. The pre-cancellation state was checked pending at zero elapsed. No runtime packing improvement is claimed while the pilot is queued. Current maximum simultaneous allocations is 27, including four objective continuations.
+
+An exploratory seed-zero 1M preview is registered on the same opened 128 cases, with the unchanged six independent references and cached warm seed-zero anchor. It requires all six seed-zero training tasks to finish successfully before freezing selected actors. A two-CPU/zero-GPU overlap watcher runs within existing warm allocation 28320671 (unified session 73272). It does not promote recipes, estimate between-seed uncertainty, open final validation/test, or replace the complete three-/five-seed protocol. Artifacts are under `seed0_1m_preview_20261019/`.

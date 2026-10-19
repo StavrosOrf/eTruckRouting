@@ -57,11 +57,19 @@ def _write(path: Path, data: dict) -> None:
 
 
 def _dirs(farm: Path) -> dict[str, Path]:
-    return {name: farm / name for name in ("queue", "running", "done", "work", "incumbents")}
+    return {name: farm / name for name in ("queue", "running", "done", "work", "incumbents", "cancelled")}
+
+
+def _cancelled(farm: Path, item_id: str) -> bool:
+    """Whether a split node at or above this item was closed elsewhere (see `prune`)."""
+    root = item_id.split(".")[0]
+    return (farm / "cancelled" / root).exists()
 
 
 def _enqueue(farm: Path, split: Path, prefix: str, skip: set[int] = frozenset()) -> int:
     nodes = _read(split)["nodes"]
+    if _cancelled(farm, prefix.rstrip(".") or "-"):
+        return 0
     count = 0
     for index, node in enumerate(nodes):
         if index in skip:
@@ -121,7 +129,8 @@ def summary(farm: Path) -> dict:
     done = [_read(p) for p in d["done"].glob("*.json")]
     bounds = [i["bound"] for i in queued] + [live_bound(i, d["work"] / i["id"] / "log") for i in running]
     lower = min(bounds, default=float("inf"))
-    optimal = not queued and not running and done and all(i["outcome"] == "closed" for i in done)
+    # split items are covered by their children, retried ones went back to the queue
+    optimal = not queued and not running and bool(done)
     if optimal or lower >= upper - GAP_TOL * max(1.0, abs(upper)):
         lower = min(lower, upper)
     return {"upper": upper, "upper_source": where, "lower": lower,
@@ -129,6 +138,30 @@ def summary(farm: Path) -> dict:
             "queued": len(queued), "running": len(running), "done": len(done),
             "closed": sum(i["outcome"] == "closed" for i in done), "split": sum(i["outcome"] == "split" for i in done),
             "optimal": bool(optimal)}
+
+
+def cmd_prune(args) -> int:
+    """Close the items under split nodes whose subtree another run (OUT/subtrees_<seed>) closed."""
+    farm, d = args.farm, _dirs(args.farm)
+    d["cancelled"].mkdir(exist_ok=True)
+    closed = 0
+    for result in Path(args.closed_dir).glob("sub_*.result.json"):
+        if _read(result)["status"] not in ("OPTIMAL", "INFEASIBLE"):
+            continue
+        root = f"s{int(result.name.split('_')[1].split('.')[0])}"
+        marker = d["cancelled"] / root
+        if marker.exists():
+            continue
+        marker.write_text(str(result.resolve()))
+        closed += 1
+        for path in d["queue"].glob("*.json"):
+            if path.stem == root or path.stem.startswith(root + "."):
+                item = _read(path)
+                item.update(outcome="closed", closed_by=str(result.resolve()), finished=time.time())
+                _write(d["done"] / path.name, item)
+                path.unlink(missing_ok=True)
+    print(f"{closed} more split nodes closed elsewhere; running items under them stop at the next poll")
+    return 0
 
 
 def cmd_status(args) -> int:
@@ -166,7 +199,10 @@ def _finish(farm: Path, item: dict, returncode: int) -> str:
     work = d["work"] / item["id"]
     result, split = work / "result.json", work / "split.json"
     outcome, detail = "retry", {}
-    if result.exists():
+    if _cancelled(farm, item["id"]):
+        outcome = "closed"
+        detail = {"closed_by": (farm / "cancelled" / item["id"].split(".")[0]).read_text()}
+    elif result.exists():
         certificate = _read(result)
         detail = {key: certificate.get(key) for key in ("status", "objective_hours", "best_bound_hours",
                                                         "nodes_explored", "nodes_open", "wall_seconds")}
@@ -215,7 +251,28 @@ def cmd_work(args) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     extra = [a for a in args.solver_args if a != "--"]
+    primal: dict[int, subprocess.Popen] = {}
+    host = socket.gethostname().split(".")[0]
+
+    def launch_primal(k: int, budget: float) -> None:
+        # route re-optimisation from the best shared incumbent, publishing improvements
+        work = farm / "work" / f"primal_{host}_{os.getpid()}_{k}"
+        work.mkdir(parents=True, exist_ok=True)
+        command = [str(args.runner), meta["instance"], str(work / "result.json"), "--lp_solver", "highs",
+                   "--threads", "1", "--verbose", "true", "--primal_only", "true", "--time_limit", str(int(budget)),
+                   "--incumbent_dir", str(farm / "incumbents"), "--incumbent_tag", work.name]
+        with open(work / "log", "a") as log:
+            primal[k] = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                         env={**os.environ, "EVRP_BP_THREADS": "1"})
+
     while not stopping:
+        for key, (proc, item) in workers.items():
+            if proc.poll() is None and _cancelled(farm, key):
+                proc.terminate()
+        left = end - time.time() - args.margin
+        for k in range(args.primal_workers):
+            if (k not in primal or primal[k].poll() is not None) and left > args.min_worker_time:
+                launch_primal(k, min(args.worker_time, left))
         for key, (proc, item) in list(workers.items()):
             if proc.poll() is not None:
                 outcome = _finish(farm, item, proc.returncode)
@@ -252,6 +309,8 @@ def cmd_work(args) -> int:
                 break
         time.sleep(args.poll)
     # allocation ending or stopped: hand unfinished items back
+    for proc in primal.values():
+        proc.poll() is None and proc.terminate()
     for key, (proc, item) in workers.items():
         if proc.poll() is None:
             proc.terminate()
@@ -315,8 +374,13 @@ def main(argv=None) -> int:
     p.add_argument("--margin", type=float, default=300.0, help="seconds kept free before the allocation ends")
     p.add_argument("--max-seconds", type=float, default=float("inf"))
     p.add_argument("--poll", type=float, default=15.0)
+    p.add_argument("--primal-workers", type=int, default=0,
+                   help="extra primal-only processes improving the shared incumbent (not counted in --workers)")
     p.add_argument("--runner", type=Path, default=Path(os.environ.get("EVRP_BP_RUNNER", RUNNER)))
     p.add_argument("solver_args", nargs=argparse.REMAINDER, help="after --: extra solver arguments")
+    p = sub.add_parser("prune")
+    p.add_argument("--farm", type=Path, required=True)
+    p.add_argument("--closed-dir", required=True, help="subtrees_<seed> directory of the split's own subtree runs")
     p = sub.add_parser("status")
     p.add_argument("--farm", type=Path, required=True)
     p = sub.add_parser("finalize")
@@ -329,7 +393,8 @@ def main(argv=None) -> int:
     p.add_argument("--extra-results", help="directory of earlier subtree results (e.g. OUT/subtrees_<seed>)")
     p.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
-    return {"init": cmd_init, "work": cmd_work, "status": cmd_status, "finalize": cmd_finalize}[args.command](args)
+    return {"init": cmd_init, "work": cmd_work, "prune": cmd_prune, "status": cmd_status,
+            "finalize": cmd_finalize}[args.command](args)
 
 
 if __name__ == "__main__":

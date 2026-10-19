@@ -243,16 +243,41 @@ def prepare(destination: Path, arm_set="base"):
     print(destination, flush=True)
 
 
+def completed_training_run(destination, run, budget):
+    """Require completed counters and published artifacts before skipping work."""
+    folder = destination / "training" / run["name"]
+    required = ("training.pt", "training_history.json", "validation_history.json",
+                "best.pt", "best_config.json", "final.pt", "final_config.json", "run_config.json")
+    if any(not (folder / filename).is_file() or (folder / filename).stat().st_size == 0 for filename in required):
+        return False
+    try:
+        steps = json.loads((folder / "training_history.json").read_text()).get("timesteps", [])
+        validation = json.loads((folder / "validation_history.json").read_text())
+        arguments = json.loads((folder / "run_config.json").read_text())["arguments"]
+        return bool(steps and steps[-1] >= budget and validation and arguments["seed"] == run["seed"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def incomplete_training_bundles(destination, runs, width, bundles, budget):
+    """Keep original bundle indices so CPU/worker assignments do not change."""
+    return [index for index in range(bundles)
+            if any(not completed_training_run(destination, run, budget)
+                   for run in runs[index * width:(index + 1) * width])]
+
+
 def train_bundle(destination, bundle, budget, width):
     manifest = json.loads((destination / "manifest.json").read_text())
     width = int(manifest.get("runs_per_allocation", 2)) if width is None else width
-    if width not in (2, 3):
-        raise ValueError("supported packing widths are two or three runs")
+    if width not in (1, 2, 3):
+        raise ValueError("supported packing widths are one, two or three runs")
     runs = manifest["runs"][bundle * width : (bundle + 1) * width]
     if not runs:
         raise ValueError("empty bundle")
     cpus = sorted(os.sched_getaffinity(0))
     children = []
+    launched_runs = []
+    skipped_completed_runs = []
     stop = False
     # The pinned trainer floors total_timesteps / rollout_batch. Round its
     # limit up so the final 12M milestone can actually be reached on resume.
@@ -269,11 +294,19 @@ def train_bundle(destination, bundle, budget, width):
     signal.signal(signal.SIGUSR1, terminate)
     signal.signal(signal.SIGTERM, terminate)
     for slot, run in enumerate(runs):
+        if completed_training_run(destination, run, budget):
+            skipped_completed_runs.append(run["name"])
+            continue
         # Keep worker counts unchanged when the final bundle has one run;
         # complete checkpoints include the original worker/seed partition.
         assigned = cpus[slot * len(cpus) // width : (slot + 1) * len(cpus) // width]
         if len(assigned) < 2:
             raise ValueError("at least two allocated CPUs required per training run")
+        previous_config = destination / "training" / run["name"] / "run_config.json"
+        if (destination / "training" / run["name"] / "training.pt").exists() and previous_config.exists():
+            previous_arguments = json.loads(previous_config.read_text())["arguments"]
+            if previous_arguments["num_envs"] != 16 or previous_arguments["rollout_workers"] != max(1, len(assigned) - 2):
+                raise ValueError("resume would alter the saved rollout worker/seed partition")
         output = destination / "training" / run["name"]
         resume = output / "training.pt"
         flags = list(run["flags"])
@@ -373,6 +406,7 @@ def train_bundle(destination, bundle, budget, width):
             stderr=subprocess.STDOUT,
         )
         children.append((child, handle))
+        launched_runs.append(run["name"])
     codes = []
     for child, handle in children:
         codes.append(child.wait())
@@ -383,6 +417,8 @@ def train_bundle(destination, bundle, budget, width):
             "exit_codes": codes,
             "stop_signal": stop,
             "runs": [run["name"] for run in runs],
+            "launched_runs": launched_runs,
+            "skipped_completed_runs": skipped_completed_runs,
         },
     )
     if any(codes):
@@ -420,7 +456,7 @@ def submit(destination, bundles, budget):
     name = destination.name
     manifest = json.loads((destination / "manifest.json").read_text())
     width = int(manifest.get("runs_per_allocation", 2))
-    if width not in (2, 3):
+    if width not in (1, 2, 3):
         raise ValueError("unsupported training packing width")
     if not 1 <= bundles <= (len(manifest["runs"]) + width - 1) // width:
         raise ValueError("bundle count exceeds available experiments")
@@ -434,18 +470,38 @@ def submit(destination, bundles, budget):
     matching = [row for row in active if row.split("|", 1)[0].startswith(family)]
     if matching:
         raise RuntimeError(f"campaign already has active training jobs: {matching}")
+    bundle_indices = incomplete_training_bundles(destination, manifest["runs"], width, bundles, budget)
+    if not bundle_indices:
+        raise RuntimeError("all requested bundles already completed this budget; advance the coordinator instead")
     wrapper = ROOT / "scripts/campaigns/california_graphppo.sbatch"
     # Smaller stages fit shorter backfill windows. Current 10T30D runs sustain
     # about 200--300 decisions/s including routine validation; retain margin
     # for BC, checkpoint I/O, and slower instances. Signal exits still resume.
     time_limit = "04:00:00" if budget <= 1_000_000 else "08:00:00" if budget <= 4_000_000 else "12:00:00"
+    resources = manifest.get("slurm_resources", {})
+    partition = resources.get("partition", "gpu_a100")
+    if partition not in ("gpu_a100", "gpu_mig", "gpu_h100"):
+        raise ValueError("training must use a GPU partition")
+    cpus_per_task = int(resources.get("cpus_per_task", 18))
+    memory = resources.get("memory", "120G")
+    if cpus_per_task < 2 * width:
+        raise ValueError("insufficient CPUs for the selected packing width")
+    if partition == "gpu_mig" and (width != 1 or cpus_per_task != 9):
+        raise ValueError("MIG training requires one model with nine CPUs and seven rollout workers")
+    concurrency = min(len(bundle_indices), int(manifest.get("max_concurrent_allocations", min(30, bundles))))
+    if not 1 <= concurrency <= 30:
+        raise ValueError("invalid training allocation concurrency")
     command = [
         "sbatch",
         "--parsable",
         "--job-name",
         name,
         f"--time={time_limit}",
-        f"--array=0-{bundles - 1}%{min(30, bundles)}",
+        f"--partition={partition}",
+        f"--cpus-per-task={cpus_per_task}",
+        f"--mem={memory}",
+        "--gpus=1",
+        "--array=" + ",".join(map(str, bundle_indices)) + f"%{concurrency}",
         f"--output={destination}/logs/slurm-%A_%a.out",
         str(wrapper),
         str(destination),
@@ -464,7 +520,7 @@ def submit(destination, bundles, budget):
     job = subprocess.check_output(command, text=True).strip()
     with (destination / "submissions.jsonl").open("a") as handle:
         handle.write(
-            json.dumps({"job": job, "budget": budget, "bundles": bundles, "runs_per_allocation": width, "time_limit": time_limit, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
+            json.dumps({"job": job, "budget": budget, "bundles": len(bundle_indices), "declared_bundles": bundles, "submitted_bundle_indices": bundle_indices, "skipped_completed_bundles": [index for index in range(bundles) if index not in bundle_indices], "runs_per_allocation": width, "max_concurrent_allocations": concurrency, "partition": partition, "cpus_per_task": cpus_per_task, "memory": memory, "time_limit": time_limit, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
         )
     print(job, flush=True)
 

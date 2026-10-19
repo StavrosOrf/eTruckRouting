@@ -1,6 +1,6 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-19T21:25:38.227006+02:00 (Amsterdam time). Earlier observations below are historical.
+Updated 2026-10-19T23:31:11.752163+02:00 (Europe/Berlin). Earlier observations below are historical.
 
 The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
 
@@ -8,17 +8,19 @@ The goal remains **active and unmet**: at least 99% successful depot-return comp
 
 | Cohort | Array | Running / queued allocations | Target decisions per run |
 | --- | --- | --- | --- |
-| Capacity / graph messages | 28279539 | 3 / 0 | 12M; five seeds per recipe |
+| Capacity / graph messages | 28279539 | 0 / 0 | screened out; partial checkpoints retained |
 | Imitation + progress | 28279541 | 0 / 0 | screened out; partial checkpoints retained |
-| Undiscounted / cost emphasis | 28279544 | 5 / 0 | 12M; five seeds per recipe |
-| Progress features | 28279546 | 1 / 0 | 12M; five seeds per recipe |
-| Original finalists | 28279550 | 0 / 0 | 12M; five seeds per recipe |
-| Larger expert dataset | 28285204 | 0 / 3 | 4M; gated 12M |
-| Matched recovery data (gated) | not submitted | 0 / 0 | 1M; gated 12M |
-| Routing action edges / critic gradients (gated) | not submitted | 0 / 0 | 1M; gated 12M |
-| Packing profiles (two / three runs per A100) | 28305475 / 28305476 | 0 / 2 | 16,384; throughput measurement |
+| Undiscounted / cost emphasis | 28348611 | 0 / 4 | 12M; five seeds per recipe |
+| Progress features | 28279546 | 0 / 0 | completed 12M; five seeds per recipe |
+| Original finalists | 28279550 | 0 / 0 | completed 12M; five seeds per recipe |
+| Larger expert dataset | 28320619 + 28344289 | 5 / 1 | 4M; gated 12M |
+| Matched recovery data (gated) | 28320624 + 28344292 + 28348662 | 5 / 3 | 1M; gated 12M |
+| Routing action edges / critic gradients (gated) | 28320681 + 28344295 | 5 / 4 | 1M; gated 12M |
+| Packing profiles (two / three runs per A100) | 28305475 / 28305476 | 0 / 0 | cancelled at zero runtime; no measurement |
 
-Observed training allocations: **14 total**, including **9 running** and **5 pending**. The recovery cohort may start only after the original cohort finishes all five seeds and releases its slots. This keeps the maximum at 30 even when the other families reach their final stages. Existing full cohorts pack two runs per A100. The new action-edge cohort will use two or three according to the queued profiles. Action-edge v16 replaces screened-out imitation slots after both profiles terminate. Coordinators and CPU evaluation jobs are excluded from training counts.
+Training queue entries: **27**, including **15 running** and **12 pending tasks**. Array throttles currently bound simultaneous training allocations to **27**, within the global limit of 30. The original and progress cohorts have completed all five seeds. New warm, recovery and action-edge arrays run one model per GPU allocation, with nine CPUs and seven rollout workers per model; current warm/recovery/action-edge stages may use six/eight/nine allocations after unused reservations were released; future stages retain the five-allocation default. Four objective models continue on single-model MIG allocations. A queued recovery pilot packs two registered models per MIG with staggered BC; runtime efficiency remains unmeasured. The unexecuted A100 packing profiles were cancelled at zero runtime. The current-stage bound is 27 allocations, and future stage defaults preserve the global cap of 30. Coordinators and CPU evaluation jobs are excluded from training counts.
+
+Campaign coordination and evaluation use **gpu_mig** or **gpu_h100** (one GPU, up to nine CPUs and 60 GiB). Existing new-family arrays use **gpu_mig**; supplemental arrays for nine previously unstarted tasks use **gpu_h100**, and unfinished objective models continue on **gpu_mig** after clean A100 checkpoint exits. No active campaign job uses cbuild. Eight zero-runtime auxiliary jobs were migrated with dependencies preserved; scientific source and completed evaluation inputs are intact.
 
 ## Overnight checkpoint recovery
 
@@ -36,7 +38,7 @@ The comparison after 1M additional PPO steps completed on the same opened 128 de
 | large_warm_cost40 | 98.44% | 131.12 | 18.14% |
 | large_warm_mc_cost40 | 97.92% | 134.60 | 20.28% |
 
-The warm cost recipe improves the earlier leading 32.50% excess to 18.14%, with completion rising from 97.92% to 98.44%. It still misses both targets. The warm cost and warm MC recipes advanced to 4M decisions in array 28285204, coordinator 28285206. The MC treatment combines removal of the delivery bonus with GAE one; this screen does not isolate their effects.
+The warm cost recipe improves the earlier leading 32.50% excess to 18.14%, with completion rising from 97.92% to 98.44%. It still misses both targets. The warm cost and warm MC recipes advanced to 4M and now resume on MIG array 28320619, coordinator 28320621, with the same seven-worker saved rollout layout. The MC treatment combines removal of the delivery bonus with GAE one; this screen does not isolate their effects.
 
 ## Completed matured-control development comparison
 
@@ -46,8 +48,12 @@ Three training seeds, the same 128 opened development cases and six independent 
 | --- | --- | --- | --- |
 | large_warm_cost40 | 98.44% | 131.12 | 18.14% |
 | large_warm_mc_cost40 | 97.92% | 134.60 | 20.28% |
+| bc_nonlinear_cost40 | 96.88% | 138.77 | 26.39% |
+| bc_capacity_nonlinear_links | 97.92% | 142.09 | 28.97% |
+| bc_nonlinear_gamma1 | 98.96% | 146.55 | 32.76% |
 | bc_progress | 97.66% | 145.94 | 33.91% |
 | v2_shield | 95.05% | 147.99 | 34.86% |
+| bc_capacity_links | 98.18% | 151.88 | 36.90% |
 | bc_links_progress | 97.92% | 151.23 | 37.06% |
 | links_shield | 96.61% | 155.16 | 39.30% |
 | shield | 97.66% | 152.66 | 40.18% |
@@ -96,7 +102,7 @@ On 128 train-only cases, the original-plan teacher retained 68 cases at 80% teac
 
 Pilot data audits passed in an existing campaign allocation and standalone CPU job 28296798. Full collection 28297279 completed in 1:03:01 on 4,096 fresh training cases (700128–704223), with one shared initial ALNS plan per case and teacher probabilities 100%, 80% and 50%. The full archive integrity audit passed. It retained 4,008 nominal-teacher episodes, 3,965 at 80% teacher control and 3,886 at 50%, with zero final rejected labels. Archives are in campaign-owned scratch storage. These collection outcomes are not deployed neural-policy performance.
 
-Recovery bootstrap 28318317 waits for lightweight original-cohort completion coordinator 28318314; all ten original runs and data collection have finished. The former pending metadata jobs were cancelled at zero runtime and replaced with one-CPU jobs. It verifies full data hashes, unchanged physical configuration and parent weights, all original five-seed 12M completion records, absence of original training jobs, and the 30-allocation limit. Only then may it launch nine BC+PPO runs packed into five allocations. It compares nominal, 80% and 50% data from the same cases; all start from the fixed seed-zero 1M warm-cost actor. It selects at most two recipes for 4M, then expands to five seeds for 12M. No solver chooses actions at neural-policy deployment.
+Recovery array 28320624 has been submitted after recording all ten completed original runs and verifying all data/source/parent/resource gates. Coordinator 28320625 runs on gpu_mig. The recovery array uses one model per MIG slice and at most five simultaneous allocations. The metadata handoff was executed inline after cancelling its unused pending jobs at zero runtime. It verifies full data hashes, unchanged physical configuration and parent weights, all original five-seed 12M completion records, absence of original training jobs, and the 30-allocation limit. The audited nine BC+PPO runs are now submitted as nine single-model MIG tasks, at most five simultaneously. It compares nominal, 80% and 50% data from the same cases; all start from the fixed seed-zero 1M warm-cost actor. It selects at most two recipes for 4M, then expands to five seeds for 12M. No solver chooses actions at neural-policy deployment.
 
 Both the larger-data and recovery cohorts freeze and score best/final actors at 4M before further training can overwrite them. All readouts use the opened 128-case development bank; the shared final validation and locked test remain protected.
 
@@ -114,6 +120,37 @@ The 1M counts in the larger-data warm recipes are additional PPO interaction bud
 
 The completed matured-control comparison scored 18 selected original, progress and imitation actors after their three-seed 12M run budgets, alongside six cached larger-data warm actors. The inherited training budgets differ. Both imitation recipes met the prespecified dominated-cohort screen; their paired excess was 37.06% and 33.91%, versus 18.14% for warm cost, with lower completion. Their pending coordinator was cancelled and the last four runs stopped gracefully with checkpoints retained. The progress cohort remains active because one recipe achieved 98.70% completion, so it did not meet the screening rule. This is compute screening on opened development cases; final validation and test remain unopened.
 
+## New MIG training progress
+
+New stages use one model per MIG slice, nine CPUs and seven rollout workers. The six-run warm stage resumes its prior 1M state; its logged counters include that prior stage. Recovery and action-edge models first perform 20 BC epochs. BC losses and rollout completion are training diagnostics, not held-out benchmark performance.
+
+| Run | Phase | BC epochs completed | PPO decisions logged |
+| --- | --- | --- | --- |
+| large_warm_cost40_s0 | PPO | 0 | 2,140,160 |
+| large_warm_mc_cost40_s0 | PPO | 0 | 2,170,880 |
+| large_warm_cost40_s1 | PPO | 0 | 2,140,160 |
+| large_warm_mc_cost40_s1 | PPO | 0 | 2,150,400 |
+| large_warm_cost40_s2 | PPO | 0 | 2,140,160 |
+| large_warm_mc_cost40_s2 | not started | 0 | 0 |
+| recovery_nominal_s0 | PPO | 20 | 921,600 |
+| recovery_teacher80_s0 | PPO | 20 | 890,880 |
+| recovery_teacher50_s0 | PPO | 20 | 829,440 |
+| recovery_nominal_s1 | PPO | 20 | 942,080 |
+| recovery_teacher80_s1 | PPO | 20 | 921,600 |
+| recovery_teacher50_s1 | not started | 0 | 0 |
+| recovery_nominal_s2 | not started | 0 | 0 |
+| recovery_teacher80_s2 | not started | 0 | 0 |
+| recovery_teacher50_s2 | not started | 0 | 0 |
+| edge_control_cost40_s0 | PPO | 20 | 921,600 |
+| edge_route_cost40_s0 | PPO | 20 | 757,760 |
+| edge_route_criticstop_s0 | PPO | 20 | 788,480 |
+| edge_control_cost40_s1 | PPO | 20 | 829,440 |
+| edge_route_cost40_s1 | PPO | 20 | 716,800 |
+| edge_route_criticstop_s1 | not started | 0 | 0 |
+| edge_control_cost40_s2 | not started | 0 | 0 |
+| edge_route_cost40_s2 | not started | 0 | 0 |
+| edge_route_criticstop_s2 | not started | 0 | 0 |
+
 ## Frozen-policy decoding study
 
 CPU job 28309962 compares the three selected warm-cost actors under greedy decoding and sampling temperatures 0.25, 0.5 and 1.0. Each positive temperature has three predefined policy RNG repetitions per actor, independently seeded from the simulator. Every executed trajectory and failure is retained; there is no best-over-rollouts selection. Repetitions are not treated as independent trained policies.
@@ -129,9 +166,9 @@ All three zero-temperature replays must exactly match the cached greedy outcomes
 
 Job 28309962 completed in 30:16. All 384 greedy replay controls exactly matched cached costs and outcomes. Positive temperatures modestly changed reliability but all worsened BKS excess; none meets both targets, so sampling is not promoted as a solution.
 
-## Queued mature-cohort compute screens
+## Mature-cohort compute screens
 
-CPU jobs 28309429 (capacity) and 28309430 (objective) each wait for their first three training allocations to finish. They require both recipes to have completed 12M decisions in seeds 0, 1 and 2, freeze the selected actors, and evaluate the same 128 opened development cases against the unchanged six-method reference pool. The anchor is the cached three-seed larger-data warm-cost result; inherited training histories differ.
+Objective MIG job 28320175 completed. The ready capacity screen now executes in owned warm-training step 28320619_0.0 with two CPUs and no GPU access, after its unused pending MIG job was cancelled at zero runtime. Both first verify that both recipes completed 12M decisions in seeds 0, 1 and 2, freeze the selected actors, and evaluate the same 128 opened development cases against the unchanged six-method reference pool. The anchor is the cached three-seed larger-data warm-cost result; inherited training histories differ.
 
 The prespecified rule stops remaining training only when neither recipe improves mean completion over the anchor and both have at least ten percentage points more paired BKS excess. A graceful stop retains partial checkpoints; a dependent CPU job verifies terminal accounting and full-state loading, then rechecks shared evaluation readiness. Already completed five-seed cohorts and active coordinators are preserved. These screens add no GPU allocations and do not open final validation or test.
 
@@ -139,7 +176,9 @@ The prespecified rule stops remaining training only when neither recipe improves
 
 A new optional action-GCN residual learns routing relationships between feasible candidate actions from observed graph travel and energy features. The physical action set, hard masks and simulator are unchanged. An additional treatment blocks only critic-loss gradients into the shared encoder; actor gradients still train the complete encoder and action network. Zero-output gates preserved parent logits and values exactly on 128 training states. The actual 4,096-step GPU PPO pilot completed, changed encoder and gate parameters, and produced loadable policy and full training checkpoints. These are implementation and training-path results, not evidence of improved held-out performance.
 
-Registered cohort `ca10t3d_action_edges_v16` has nine matched runs: three seeds each for the standard GCN, routing-edge gates, and gates with critic-gradient isolation. All use the same 4,008 nominal-teacher episodes, fixed parent and 20 BC epochs. Queued bootstrap 28307255 waits for packing profiles 28305475 and 28305476, then checks data/source/parent hashes, completed imitation screening and the global allocation limit. The predeclared profile rule selects two or three runs per A100 before initial submission. It evaluates BC0, selected PPO and final PPO at 1M, promotes at most two recipes to 4M, then expands to five seeds at 12M.
+Registered cohort `ca10t3d_action_edges_v16` has nine matched runs: three seeds each for the standard GCN, routing-edge gates, and gates with critic-gradient isolation. All use the same 4,008 nominal-teacher episodes, fixed parent and 20 BC epochs. The audited bootstrap completed inline and submitted action-edge MIG array 28320681, coordinator 28320683. It verified source/parent/data hashes, released imitation slots, the five-allocation family throttle, and explicit zero-runtime cancellation of the unexecuted A100 packing profiles. The operational GPU layout keeps one model and seven rollout workers per allocation; no profile-based performance claim is made. It evaluates BC0, selected PPO and final PPO at 1M, promotes at most two recipes to 4M, then expands to five seeds at 12M.
+
+A live full-campaign audit loaded the actual post-BC PPO states: 153,600 decisions for the control and 102,400 for both routing-gate variants. Encoder, action-network and value-network parameters changed after BC; both gated models also changed routing-gate parameters. All checked neural parameters were finite. The critic-isolation actor encoder still updates through PPO. This establishes actual end-to-end optimization, not improved held-out performance.
 
 The new cohort replaces imitation training slots; recovery v15 separately replaces original-cohort slots after all five original seeds complete. Both remain in the shared nine-cohort final-evaluation hold. The common evaluator now uses the audited source that reads both legacy and edge-gated model configurations.
 

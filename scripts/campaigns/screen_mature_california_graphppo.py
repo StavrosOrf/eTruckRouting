@@ -144,7 +144,7 @@ def screening_decision(protocol,path):
         decision['action']='screened out; graceful stops requested; verify terminal states before slot reuse'
         dump(family/'screening_execution.json',{'requested':record,'stage':decision['action']})
         command='cd '+shlex.quote(protocol['source'])+'\nexport PYTHONPATH='+shlex.quote(protocol['source'])+'\nexport OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1\n'+shlex.join([protocol['python'],str(Path(__file__).resolve()),'--mode','settle','--protocol',protocol['protocol_path']])
-        job=subprocess.check_output(['sbatch','--parsable','--account=tdsei17344','--partition=cbuild',
+        job=subprocess.check_output(['sbatch','--parsable','--account=tdsei17344','--partition=gpu_mig','--gpus=1',
               '--cpus-per-task=1','--mem=16G','--time=00:15:00',
               '--dependency=afterany:'+promotion['training_job'],'--kill-on-invalid-dep=yes',
               '--job-name=ca10t3d_screen_settle','--output='+str(path/'settle-%j.out'),'--wrap',command],text=True).strip()

@@ -129,6 +129,7 @@ def solve(instance: dict, parameters: SearchParameters, workers: int = 1,
             "pricer_hits": result["pricer_hits"],
             "pool_columns": result["pool_columns"],
             "history": result["history"][-100:],
+            "partition_timings": result.get("partition_timings", []),
         },
         "assumptions": {
             "nominal": "mean leg times/energies, base service times, deterministic charging curve",

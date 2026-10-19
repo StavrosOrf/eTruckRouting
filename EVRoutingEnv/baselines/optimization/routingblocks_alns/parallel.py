@@ -131,7 +131,11 @@ def solve_parallel(instance: dict, parameters: SearchParameters, workers: int, o
         "pool_columns": len(pool),
         "log": summaries[0][1],
         "per_worker_iterations": [s[3] for s in summaries],
+        "partition_timings": [{k: v for k, v in t.items() if k != "at"} for t in TIMINGS],
     }
+
+
+TIMINGS: list[dict] = []
 
 
 def _partition(problem: Problem, pool, best_routes, best_cost, p: SearchParameters, workers: int):
@@ -141,6 +145,7 @@ def _partition(problem: Problem, pool, best_routes, best_cost, p: SearchParamete
             pool[key] = (problem.price(route), tuple(route))
     limit = max(1.0, min(p.pool_seconds, 0.15 * p.time_limit_seconds))
     found = solve_partition(pool, problem.customers, problem.trucks, best_routes, limit, threads=workers)
+    TIMINGS.append({"at": time.time(), **getattr(solve_partition, "last_timing", {})})
     if found is None:
         return None
     routes, _ = found

@@ -512,6 +512,7 @@ class Search:
         if found is None:
             return None
         routes, cost = found
+        self._note(f"partition timing {solve_partition.last_timing}")
         exact = self.exact_cost(routes)  # re-price: the cache is authoritative
         if exact < best_cost - 1e-9:
             self._note(f"set partitioning {best_cost:.4f} -> {exact:.4f} ({len(self.elite)} pool columns)")

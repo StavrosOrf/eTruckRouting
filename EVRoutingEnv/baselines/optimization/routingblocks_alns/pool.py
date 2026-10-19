@@ -10,6 +10,7 @@ warm-started with the incumbent, under a time limit.
 from __future__ import annotations
 
 import math
+import time
 
 import highspy
 import numpy as np
@@ -27,24 +28,44 @@ def best_per_set(cache: dict[tuple, float]) -> dict[frozenset, tuple[float, tupl
     return best
 
 
+def select_columns(pool: dict[frozenset, tuple[float, tuple]], keep: list[frozenset],
+                   max_columns: int) -> list[tuple[float, tuple]]:
+    """At most ~``max_columns`` columns: per customer, the routes with the lowest cost per customer.
+
+    HiGHS does not honour its time limit inside presolve and the root LP, so a
+    pool of hundreds of thousands of columns can stall the master for minutes.
+    Every customer keeps its best-value routes, so the restricted problem still
+    covers all of them with diverse alternatives. The incumbent's routes always stay.
+    """
+    if len(pool) <= max_columns:
+        return sorted(pool.values(), key=lambda e: e[0])
+    per_customer: dict[int, list[tuple[float, frozenset]]] = {}
+    for key, (cost, route) in pool.items():
+        value = cost / len(route)
+        for c in route:
+            per_customer.setdefault(c, []).append((value, key))
+    quota = max(20, max_columns // max(len(per_customer), 1))
+    chosen = set(keep)
+    for rows in per_customer.values():
+        rows.sort(key=lambda r: r[0])
+        chosen.update(key for _, key in rows[:quota])
+    return sorted((pool[key] for key in chosen), key=lambda e: e[0])
+
+
 def solve_partition(pool: dict[frozenset, tuple[float, tuple]], customers: range, fleet: int,
-                    incumbent: list[tuple], time_limit: float, max_columns: int = 400_000, threads: int = 1):
+                    incumbent: list[tuple], time_limit: float, max_columns: int = 40_000, threads: int = 1):
     """Return (routes, cost) of the best partition of ``pool`` found, or None.
 
     ``pool`` maps a customer set to (cost, cheapest known ordering).
     """
+    t_start = time.time()
     pool = dict(pool)
     for route in incumbent:  # the incumbent is always a column, so the start is feasible
         key = frozenset(route)
         if key not in pool:
             return None
     incumbent_sets = [frozenset(r) for r in incumbent]
-    entries = sorted(pool.values(), key=lambda e: e[0])
-    if len(entries) > max_columns:
-        keep = {s for s in incumbent_sets}
-        head = entries[:max_columns]
-        have = {frozenset(r) for _, r in head}
-        entries = head + [pool[s] for s in keep if s not in have]
+    entries = select_columns(pool, incumbent_sets, max_columns)
     index = {c: k for k, c in enumerate(customers)}
     n_rows = len(index)
     n_cols = len(entries)
@@ -85,9 +106,13 @@ def solve_partition(pool: dict[frozenset, tuple[float, tuple]], customers: range
     warm = highspy.HighsSolution()
     warm.col_value = list(start_value)
     model.setSolution(warm)
+    t_built = time.time()
     model.run()
+    t_solved = time.time()
 
     info = model.getInfo()
+    solve_partition.last_timing = {'columns': n_cols, 'build_s': t_built - t_start, 'solve_s': t_solved - t_built,
+                                   'status': str(model.getModelStatus())}
     if info.primal_solution_status != highspy.SolutionStatus.kSolutionStatusFeasible:
         return None
     values = np.array(model.getSolution().col_value)

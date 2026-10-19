@@ -31,13 +31,13 @@ breaks a window or the horizon, in which case the replay fails.
 | Master | Set partitioning (`== 1` per customer; the tables break the triangle inequality and the env refuses second visits), route-count rows, one column per node sequence |
 | Pricing | Label setting with ng-route memory, discrete charging at chargers, per-leg margin, payload, windows and horizon, plus a q-route completion bound with 2-cycle elimination. This is upstream's "benchmark" (Desaulniers et al. 2016) pricing; upstream's subpath stitching was dropped because clustered California customers give over a million three-customer subpaths per charger at 200 customers |
 | Relaxation phases | Phase 1 prices with charging time ignored (and, without windows, the horizon dropped too). That is a valid relaxation, so its optimum is a lower bound; every priced route is re-timed exactly (`schedule_route`), and a relaxed optimum that is truly feasible is optimal. Otherwise phase 2 repeats the search with full time-aware pricing over truly feasible columns, starting from that bound |
-| Pricing speed | Without time windows, phase 1 prices bidirectionally (forward and backward labels meet past half the payload; both halves run on separate threads when Julia has more than one). Heuristic rounds (nearest customers, capped buckets) run before every exact round |
+| Pricing speed | Without time windows, phase 1 prices bidirectionally (forward and backward labels meet past half the payload; both halves run on separate threads when Julia has more than one). Heuristic rounds (nearest customers, capped buckets) run before every exact round. Each node's label bucket keeps the loads and ng memories of its labels in contiguous arrays beside their costs, so dominance scans skip most pairs without touching a label (6.6x faster exact rounds at 50 x 100) |
 | Tightening | Root fleet bound ceil(sum d / payload); adaptive ng-routes (as upstream); rounded capacity cuts on customer successions, with exact dominance correction for the last-customer-dependent cut duals; limited-memory subset-row cuts on customer triples (upstream's lm-SR3, up to 256 cuts), tracked by one parity bit per cut. Capacity-cut rounds run on heuristically converged LPs; subset-row rounds run on certified ones |
 | Bounds | Lagrangian bound `LP + hi * min(0, min rc)` after every exact pricing round; Farkas (phase-one) pricing proves infeasible nodes; reduced-cost arc fixing with the certified root duals (an arc whose cheapest route, by q-route bounds, has reduced cost above incumbent minus root bound leaves the graph), repeated whenever the incumbent improves |
 | Tree | Best-bound search; nodes at depth <= `lazy_depth` (3) are always certified so the global bound moves; deeper, lazy certification: a node converged under heuristic pricing is branched on with its inherited (valid) bound, and exact pricing runs only where a certified LP decides something, that is, where it can prune the node or the LP is integral |
 | Branching | Route count, then the most fractional customer succession `y_ij`; complete, because integral successions fix the customer sequences and the cheapest column per sequence is then integral |
 | Primal | Warm-start witness, single-customer seed routes, optional ALNS routes (`--alns-seconds`; the solver adds their optimal charging stops), restricted-master MIP, diving (fixing the largest fractional column), route re-optimisation (a few neighbouring incumbent routes re-solved exactly as a sub-instance by this same solver), integral nodes |
-| Closing by enumeration | At certified nodes within `enum_gap` (relative) of the cutoff, enumerate every elementary route with reduced cost below cutoff minus node LP (after Baldacci, Christofides & Mingozzi), and solve the set-partitioning MIP over them. Its optimum, or its infeasibility, settles the whole subtree. Gives up at `enum_route_cap` routes or `enum_time` seconds |
+| Closing by enumeration | At certified nodes within `enum_gap` (relative) of the cutoff, enumerate every elementary route with reduced cost below cutoff minus node LP (after Baldacci, Christofides & Mingozzi), and solve the set-partitioning MIP over them. Its optimum, or its infeasibility, settles the whole subtree. Gives up at `enum_route_cap` routes or `enum_time` seconds, and is not retried at thresholds above half of one that failed. With q-route completion bounds it rarely finishes beyond about 30 customers; pass `--enum_gap 0` there |
 | Branching choice | Strong branching on the most fractional successions, ranked by child LPs over the current columns |
 
 Status `OPTIMAL` means the incumbent's travel equals the certified lower bound
@@ -61,26 +61,48 @@ python scripts/analysis/validate_branch_and_price.py --out results/branch_and_pr
 
 ### Parallel subtrees (large instances)
 
-One process explores the tree serially, and at 50 x 100 a node takes a few
-minutes. A split search spreads the tree over Slurm tasks:
+One process explores the tree serially, and at 50 x 100 a node takes about
+a minute. A split search spreads the tree over many processes. Within one
+allocation, `bnp_parallel.sbatch` runs the whole pipeline: the split run, then
+all subtrees side by side, then the combined certificate.
+
+```bash
+sbatch --array=0-7 scripts/slurm/bnp_parallel.sbatch 50 100 test results/branch_and_price/ca_50x100_par \
+    84000 16 EVRoutingEnv/config_files/config_joint.yaml --alns-seconds 120
+```
+
+A solver process keeps about one core busy, so an allocation that is already
+running a solve can host the pipeline as an extra step:
+`srun --jobid=<job> --overlap -n1 -c16 bash scripts/slurm/bnp_parallel.sbatch ...`.
+Give it a time limit that ends before that job's own script does.
+
+To spread the subtrees over several allocations instead:
 
 ```bash
 OUT=results/branch_and_price/ca_50x100_split
 # 1. root, then branching until 32 nodes are open; writes OUT/split_1.json
 sbatch scripts/slurm/bnp_array.sbatch 50 100 seeds=1 $OUT 84000 EVRoutingEnv/config_files/config_joint.yaml \
     --alns-seconds 120 --split-nodes 32 --solver-arg lp_solver highs
-# 2. one task per open node; all tasks run at once
-sbatch --array=0-31 scripts/slurm/bnp_subtree.sbatch $OUT 1 82800 --lns_time 300
+# 2. all 32 subtrees at once: 4 tasks x 8 solver processes
+sbatch --array=0-3 scripts/slurm/bnp_subtree.sbatch $OUT 1 82800 8 --lns_time 300
 # 3. combine, at any time; writes OUT/seed_1.json after the nominal replay
 python -m scripts.evaluation.combine_bnp_subtrees --out $OUT --seed 1 --trucks 50 --customers 100
 ```
 
-Each subtree task takes its node's branching restrictions as its root, then
-generates its own cuts and searches its subtree. Runs publish every incumbent
-to `OUT/incumbents_<seed>/incumbent_<tag>.json`, and before each node they
-adopt any better incumbent another run published. To seed the search with an
-incumbent found elsewhere, copy that run's certificate into that directory
-under an `incumbent_` name.
+A solver process keeps only one or two cores busy and needs 2-4 GB at
+50 x 100, so each task runs several subtrees side by side. Each subtree run
+takes its node's branching restrictions as its root. The split file also
+carries the split run's master: its columns, capacity and subset-row cuts and
+adapted ng neighbourhoods. A subtree run therefore starts from that LP, adds
+cuts of its own and searches its subtree.
+
+Runs publish every incumbent to `OUT/incumbents_<seed>/incumbent_<tag>.json`.
+Before each node, and between route re-optimisation steps, they adopt any
+better incumbent another run has published. To seed the search with an
+incumbent found elsewhere, copy that run's certificate into the directory
+under an `incumbent_` name. Spare cores can feed it with primal-only runs:
+`run_bp.sh OUT/instances/seed_<seed>.json OUT/primal.json --primal_only true
+--incumbent_dir OUT/incumbents_<seed> --incumbent_tag primal --lp_solver highs`.
 
 The subtrees cover exactly what the split run left open, so the combined
 lower bound is the least subtree bound. A subtree with no result yet counts

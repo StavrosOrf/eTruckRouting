@@ -115,9 +115,30 @@ end
 
 function solve_lp!(mp::Master)
     optimize!(mp.model)
+    # Numerical trouble (HiGHS reports OTHER_ERROR now and then): solve once
+    # more from scratch, then with the other algorithm.
+    for attempt in 1:2
+        termination_status(mp.model) == MOI.OPTIMAL && break
+        retry_lp!(mp.model, attempt)
+    end
     status = termination_status(mp.model)
     status == MOI.OPTIMAL || error("restricted master LP ended with status $(status)")
     objective_value(mp.model)
+end
+
+function retry_lp!(model::Model, attempt::Int)
+    inner = backend(model)
+    if inner isa HiGHS.Optimizer
+        HiGHS.Highs_clearSolver(inner.inner)
+        attempt == 2 && set_attribute(model, "solver", "ipm")
+        optimize!(model)
+        attempt == 2 && set_attribute(model, "solver", "choose")
+    else
+        method = get_attribute(model, "Method")
+        set_attribute(model, "Method", attempt == 1 ? 0 : 2)    # primal simplex, then barrier
+        optimize!(model)
+        set_attribute(model, "Method", method)
+    end
 end
 
 """Cover duals, the combined route-count dual, capacity-cut and subset-row duals."""
@@ -133,11 +154,9 @@ end
 function add_sr_cut!(mp::Master, cut::SubsetRowCut)
     (cut.members in mp.known_sr || length(mp.sr_cuts) >= MAX_SUBSET_ROW) && return false
     push!(mp.known_sr, cut.members)
-    row = @constraint(mp.model, 0.0 * mp.artificial[1] <= 1.0)
-    for k in eachindex(mp.z)
-        e = sr_coefficient(cut, mp.routes[k].customers)
-        e > 0 && set_normalized_coefficient(row, mp.z[k], Float64(e))
-    end
+    # the whole row at once: coefficient by coefficient is slow in HiGHS
+    terms = [(k, e) for (k, e) in ((k, sr_coefficient(cut, mp.routes[k].customers)) for k in eachindex(mp.z)) if e > 0]
+    row = @constraint(mp.model, 0.0 * mp.artificial[1] + sum(Float64(e) * mp.z[k] for (k, e) in terms; init = 0.0) <= 1.0)
     push!(mp.sr_cuts, cut)
     push!(mp.sr_rows, row)
     true
@@ -150,11 +169,8 @@ function add_cut!(mp::Master, inst::Instance, cut::CapacityCut)
     art = @variable(mp.model, lower_bound = 0.0)
     set_objective_coefficient(mp.model, art, mp.phase_one ? 1.0 : mp.big_m)
     push!(mp.artificial, art)
-    row = @constraint(mp.model, art >= cut.rhs)
-    for k in eachindex(mp.z)
-        e = entries(cut, mp.succ[k], inst.n)
-        e > 0 && set_normalized_coefficient(row, mp.z[k], Float64(e))
-    end
+    terms = [(k, e) for (k, e) in ((k, entries(cut, mp.succ[k], inst.n)) for k in eachindex(mp.z)) if e > 0]
+    row = @constraint(mp.model, art + sum(Float64(e) * mp.z[k] for (k, e) in terms; init = 0.0) >= cut.rhs)
     push!(mp.cuts, cut)
     push!(mp.cut_rows, row)
     true

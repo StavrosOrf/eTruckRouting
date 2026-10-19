@@ -140,11 +140,19 @@ class IndependentActionHead(_BaseActionHead):
 class _CompleteGraphConvolution(nn.Module):
     """One directed complete-graph message-passing layer without self edges."""
 
-    def __init__(self, hidden_dim: int):
+    def __init__(self, hidden_dim: int, edge_feature_dim: int = 0):
         super().__init__()
         self.self_linear = nn.Linear(hidden_dim, hidden_dim)
         self.neighbor_linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.norm = nn.LayerNorm(hidden_dim)
+        self.edge_gate = None
+        if edge_feature_dim:
+            # Preserve the base-network initialization RNG, including the
+            # critic, when this optional residual module is constructed.
+            with torch.random.fork_rng(devices=[]):
+                self.edge_gate = nn.Sequential(nn.Linear(edge_feature_dim, 32), nn.ReLU(), nn.Linear(32, 1))
+            nn.init.zeros_(self.edge_gate[-1].weight)
+            nn.init.zeros_(self.edge_gate[-1].bias)
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         neighbor_sum = torch.zeros_like(x)
@@ -157,7 +165,7 @@ class _CompleteGraphConvolution(nn.Module):
         update = self.self_linear(x) + self.neighbor_linear(neighbor_mean)
         return self.norm(x + F.relu(update))
 
-    def forward_segments(self, x: torch.Tensor, ptr: torch.Tensor) -> torch.Tensor:
+    def forward_segments(self, x: torch.Tensor, ptr: torch.Tensor, edge_features=None) -> torch.Tensor:
         """Exact complete-graph means without constructing quadratic edges."""
         counts = ptr[1:] - ptr[:-1]
         segment = torch.repeat_interleave(
@@ -168,6 +176,22 @@ class _CompleteGraphConvolution(nn.Module):
         neighbors = (sums[segment] - x) / (counts[segment] - 1).clamp_min(1).unsqueeze(
             -1
         )
+        if self.edge_gate is not None:
+            if edge_features is None:
+                raise ValueError("edge-gated action GCN requires routing edge features")
+            features, known = edge_features
+            width = features.shape[1]
+            if features.shape[:3] != (counts.numel(), width, width):
+                raise ValueError("action routing edges do not match ragged graphs")
+            local = torch.arange(x.shape[0], device=x.device) - ptr[segment]
+            padded = x.new_zeros((counts.numel(), width, x.shape[-1]))
+            padded[segment, local] = x
+            valid = torch.arange(width, device=x.device).unsqueeze(0) < counts.unsqueeze(1)
+            pairs = valid.unsqueeze(2) & valid.unsqueeze(1) & known
+            pairs &= ~torch.eye(width, dtype=torch.bool, device=x.device).unsqueeze(0)
+            gates = torch.tanh(self.edge_gate(features).squeeze(-1)).masked_fill(~pairs, 0)
+            residual = torch.bmm(gates, padded) / (counts - 1).clamp_min(1).view(-1, 1, 1)
+            neighbors = neighbors + residual[segment, local]
         update = self.self_linear(x) + self.neighbor_linear(neighbors)
         return self.norm(x + F.relu(update))
 
@@ -184,6 +208,7 @@ class CompleteGraphGCNActionHead(_BaseActionHead):
         action_feature_dim: int,
         *,
         num_layers: int = 2,
+        edge_feature_dim: int = 0,
     ):
         super().__init__(encoder_dim, hidden_dim, action_feature_dim)
         if (
@@ -194,7 +219,7 @@ class CompleteGraphGCNActionHead(_BaseActionHead):
             raise ValueError("num_layers must be a positive integer")
         self.action_proj = nn.Linear(action_feature_dim, hidden_dim)
         self.layers = nn.ModuleList(
-            _CompleteGraphConvolution(hidden_dim) for _ in range(num_layers)
+            _CompleteGraphConvolution(hidden_dim, edge_feature_dim) for _ in range(num_layers)
         )
 
     def forward(
@@ -202,11 +227,12 @@ class CompleteGraphGCNActionHead(_BaseActionHead):
         embedding: torch.Tensor,
         action_features: torch.Tensor,
         ptr: torch.Tensor,
+        edge_features=None,
     ) -> ActionHeadOutput:
         embedding = self._validate_inputs(embedding, action_features, ptr)
         actions = F.relu(self.action_proj(action_features))
         for layer in self.layers:
-            actions = layer.forward_segments(actions, ptr)
+            actions = layer.forward_segments(actions, ptr, edge_features)
         return self._score_actions(embedding, actions, ptr)
 
     @staticmethod
@@ -354,11 +380,14 @@ def build_action_head(
     num_layers: int = 2,
     attention_heads: int = 4,
     dropout: float = 0.0,
+    edge_feature_dim: int = 0,
 ) -> _BaseActionHead:
     """Construct one of the three approved action-head ablations."""
     if not isinstance(head_type, str):
         raise TypeError("head_type must be a string")
     normalized = head_type.strip().lower().replace("-", "_")
+    if edge_feature_dim and normalized != "complete_gcn":
+        raise ValueError("routing edge gates require the complete action GCN")
     if normalized == "independent":
         return IndependentActionHead(encoder_dim, hidden_dim, action_feature_dim)
     if normalized == "complete_gcn":
@@ -367,6 +396,7 @@ def build_action_head(
             hidden_dim,
             action_feature_dim,
             num_layers=num_layers,
+            edge_feature_dim=edge_feature_dim,
         )
     if normalized == "self_attention":
         return SelfAttentionActionHead(

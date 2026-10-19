@@ -232,14 +232,15 @@ def main():
             "archive_sha256": digest,
         }
         summaries[name] = summary
-        metadata = {**summary, **values, "split": "train", "scenario_seeds": seeds,
+        metadata = {**summary, "episode_records": values["episodes"], "split": "train", "scenario_seeds": seeds,
+                    "operating_hours_role": "mixed collection behavior, not a deployed student-policy result",
                     "label_source": "nominal expert queried on mixed-behavior states",
                     "behavior_actions_recorded_separately": True,
                     "teacher_definition": "initial ALNS plan plus mask-restricted energy-safe recovery" if args.recover_rejected_labels else "initial ALNS plan",
                     "student_checkpoint": args.student_checkpoint, "student_prefix": args.student_prefix}
         (folder / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (root / "summary.json").write_text(json.dumps({"status": "completed", "optimizer_updates": 0,
-        "role": "train-only recovery-data pilot; mixed behavior is not a deployed policy",
+        "role": "train-only recovery demonstrations; mixed behavior is not a deployed policy",
         "scenarios": len(seeds), "summaries": summaries}, indent=2) + "\n")
     print(json.dumps(summaries, indent=2), flush=True)
 

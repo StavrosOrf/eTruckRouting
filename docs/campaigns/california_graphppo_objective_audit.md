@@ -450,3 +450,299 @@ treatment resolves delivery bonus zero and GAE lambda one; its control resolves
 `ca10t3d_large_expert_v14/effective_settings_audit.json` records the actual
 settings. Thirty training allocations are now running, including all five
 allocations for the expanded-data study. This establishes startup, not quality.
+
+## Larger-data 1M results and recovery continuation (2026-10-19 afternoon)
+
+The completed comparison evaluated 27 frozen actors on the already opened
+128-case development bank: BC-only, selection-best PPO, and final PPO for three
+recipes and three training seeds. It reused the six independent reference
+methods and did not add neural policies to the reference pool.
+
+| Selection-best recipe | Completion | Successful operating hours | Mean paired BKS excess |
+| --- | --- | --- | --- |
+| Fresh cost emphasis | 98.44% | 139.62 | 25.52% |
+| Warm cost emphasis | 98.44% | 131.12 | 18.14% |
+| Warm MC cost emphasis | 97.92% | 134.60 | 20.28% |
+
+The leading recipe improves the earlier leading 32.50% excess and 97.92%
+completion, but still misses the 99% / 5% goal. Its hierarchical development
+intervals are [15.69%, 20.45%] for excess and [96.61%, 100%] for completion.
+These intervals resample the shared cases and three training seeds; warm seeds
+share a fixed pretrained parent. Final warm-cost actors achieved 98.70%
+completion, 132.18 hours and 19.65% excess. Costs remain conditional on success;
+failed episodes remain in completion denominators. The bank is reused for
+development, so these are not final held-out claims or optimality certificates.
+
+The warm-cost successful pairs use 5.65 trucks versus 4.26 for their paired
+references. Travel contributes 17.37 percentage points of its 18.14% excess;
+charging contributes 0.75. BC-only actors had used about four trucks, so PPO's
+reliability gain accompanies a change in fleet consolidation. The warm and warm
+MC recipes advanced to a 4M wave (array 28285204), initially queued. Both best
+and final actors will be frozen before the following wave changes their files,
+then scored on the opened bank by an additional CPU job.
+
+The nine initial 1M runs completed in five allocations: packed pairs took about
+1h46–2h00 including BC; the singleton took 1h23. The 27-actor development job
+took 4m48, partly reusing the verified BC-only scores. Queue time is additional.
+
+### Evidence for recovery-state demonstrations
+
+Nine frozen BC-only failure replays reproduced their original development
+outcomes. They repeatedly charged at full battery and moved between chargers
+with customers still unserved; the selected failures reached the time limit.
+A separate controlled, train-only gradient audit measured median weighted
+critic-to-policy encoder gradient norm ratio 2.05 and mean cosine about -0.006.
+This does not establish critic interference as the cause of the remaining gap.
+
+On 128 fresh train-only cases, an initial-plan teacher could not reliably label
+states after student deviations: 80% teacher behavior retained only 68 episodes,
+and 50% retained 18. An explicit recovery expert queries the existing energy-safe
+navigator restricted to the policy's allowed candidates when the original label
+is masked. It records nominal labels, recovered labels, student proposals and
+executed behavior separately. With the same cases, initial plans, frozen student
+and mixture random draws, it retained 126 episodes at 80% teacher behavior and
+119 at 50%; the pure-teacher control retained 127.
+
+The actual archive audit passed on one CPU in an existing campaign allocation,
+without optimizer updates or another GPU allocation. It checked all label and
+behavior masks, numeric finiteness and shapes, contiguous per-case step counts,
+training-only scenario provenance, recorded recovery use and archive hashes.
+The pure-teacher control exactly matched the previous pilot's physical episode
+outcomes and its observations, expert actions, masks, behavior actions and seeds.
+A queued standalone audit repeats this gate before full collection.
+
+These completion figures describe mixed data-collection behaviors, not deployed
+neural policies. Only successful complete episodes are retained, which conditions
+the training data on collection success. Lower collection cost is not a policy
+performance claim.
+
+### Matched recovery campaign and compute gate
+
+Collection 28297279 uses 4,096 new train-only seeds, 700128–704223. All three
+arms (100%, 80%, 50% teacher control) share the same initial ALNS plan per case.
+The nominal arm supplies a matched control, avoiding a comparison that changes
+both recovery exposure and the underlying scenario bank. The fixed student used
+for collection is fresh BC-only seed zero; it was not selected by its development
+score. Outputs are stored in campaign-owned scratch space and audited again.
+Pending zero-runtime collection 28296931 was replaced to add this nominal control.
+
+Cohort `ca10t3d_recovery_v15` has nine prepared runs: three data recipes by three
+PPO seeds, packed into five allocations. All begin from the frozen seed-zero
+warm-cost 1M actor, repeat 20 BC epochs with a whole-episode holdout, reset the
+value head, and use identical cost-emphasis PPO settings. The graph encoder,
+variable-action GCN and critic remain trainable. Mixture archives have different
+retained episode sets and decision counts; those counts must be reported rather
+than claiming exactly matched gradient-update budgets. A fresh 1M PPO counter is
+additional fine-tuning, not the total training inherited by the starting actor.
+No expert selects deployed neural-policy actions.
+
+Bootstrap 28297466 depends on full collection and original-cohort coordinator
+28279551. Before submitting GPU work it requires: passed archive audits and
+hashes; unchanged physical configuration and parent weights; all original
+five-seed 12M completion records; no original training allocation still present;
+and space for five allocations within the 30-job limit. A clean early-exit
+resume of the original cohort defers the bootstrap to its successor coordinator.
+Thus recovery replaces the original family's five slots, leaving a maximum of
+25 allocations in the five other live families plus five recovery allocations.
+
+The initial 1M comparison reports BC-only, best PPO and final PPO on the opened
+128-case bank before promotion. At most two recipes continue to 4M and then five
+seeds at 12M. The shared final-selection barrier now registers eight cohorts,
+including the screened-out retention cohort and the completed original family.
+Completed original policies remain candidates. The 512-case final validation
+and locked 1,000-case test remain unopened.
+
+Artifacts: `ca10t3d_large_expert_v14/development_1m/`,
+`recovery_data_pilot_v2_20261019/integrity_audit.json`,
+`recovery_data_4096_v15/`, and `ca10t3d_recovery_v15/`, all under
+`results/california_graphppo/`.
+
+### Trained-policy failure and mask audit
+
+Six first-failure replays (one per seed for each warm recipe) reproduced their
+original 1M development outcomes. All three warm-cost failures timed out, with
+34–60 charge actions and 46–78 charger movements in the selected trajectories.
+The selected MC failures included two exhausted feasible-action sets and one
+fleet retirement with a customer left unserved.
+
+A second audit replayed the recorded actions and queried the completion mask
+before its legal-action fallback. The two MC stranding cases encountered one
+and two fallback steps, and the MC fleet-retirement case encountered one. One
+warm-cost looping case also encountered a fallback. Thus execution legality and
+payload packing do not guarantee an energy-feasible continuation. These are
+specific failed development trajectories, not estimates of fallback prevalence.
+
+Enabling the existing work-escape predicate only for counterfactual mask queries
+rejected no additional recorded choices in these six cases. No counterfactual
+policy was executed, and no claim is made that this option fixes these failures.
+The evidence supports examining energy reachability in future retirement checks,
+including in-flight trucks, while the matched recovery-data experiment addresses
+poor choices on recoverable states. Current training masks and all benchmark
+physics remain unchanged. Artifacts: `trained_1m_mask_diagnostic_20261019/` and
+`ca10t3d_large_expert_v14/development_1m/failure_traces/`.
+
+## Energy-completion experiments and inherited training budget
+
+The optimistic energy/payload candidate check uses only observed truck state,
+public nominal path energies, the minimum energy multiplier, and a charging
+connectivity relaxation. It accounts for announced in-flight destinations and
+reserves claimed payload. It does not read sampled future event discharges or
+solver plans. Passing its conditions is not a route-feasibility certificate.
+It preserves all 11,920 recorded actions from 252 successful independent routes.
+
+An inference-only ablation reran the six frozen 1M warm actors on the opened
+128-case bank. Warm-cost performance was exactly unchanged: 98.44% completion,
+131.12 successful hours and 18.14% mean paired BKS excess. Warm MC completion
+increased from 97.92% to 98.18%; excess changed from 20.28% to 20.29%. These
+results do not establish a substantial improvement. No weights or training
+masks changed. Artifacts: `energy_completion_audit_20261019/policy_summary.json`.
+
+A separate restriction used energy factor 1.2 instead of the optimistic lower
+factor. It is an experimental risk restriction and can remove physically
+feasible continuations under favorable disturbances. The strict predicate
+rejected 44 steps on one successful reference route. With the actual trained-mask
+fallback included, it still rejects two of that route's decisions. This leaves
+one of 128 opened cases without an observed admissible successful route in the
+two-reference audit pool, so it fails the predeclared coverage gate and is not
+promoted. None of these routes were added to or removed from the six-method BKS
+pool. Artifacts: `energy_completion_risk12_audit_20261019/references_effective/`.
+
+A batched candidate calculation matched its scalar version on 9,035 legal
+candidates across all 542 decisions in the six recorded learned-failure episodes.
+It keeps both the action set and the predicate semantics of that implementation;
+this finite audit is not a proof for every possible state.
+
+The larger-data warm parent, `bc_nonlinear_cost40_s0`, was selected after
+**3,174,400 PPO steps**, rather than starting from scratch. The larger-data
+1M stage is additional PPO experience following 20 more BC epochs on 4,007
+successful teacher episodes. Its selected warm seed-zero actor was chosen after
+921,600 additional steps, so recovery v15 inherits **4,096,000 selected-chain PPO
+steps**, plus the preceding BC stages, before its own BC and PPO work begins.
+Fresh and warm actors therefore have matched new interaction budgets, not
+matched total training histories. Seed uncertainty remains conditional on the
+fixed inherited parent. Provenance: `initialization_lineage_20261019.json`.
+
+First three seeds of both recipes in each of the original, progress and imitation
+cohorts have now completed their 12M training-run budgets. Their 18 selected actors
+are frozen for another opened-development comparison, alongside the six cached
+larger-data warm actors. It reports unequal training histories explicitly and
+can inform screening of older cohorts. It does not change the protected final
+validation/test protocol. Artifacts: `matured_controls_20261019_1735/`.
+
+The recovery collection's existing CPU job started at 17:24 CEST. The proposed
+move to distributed spare CPUs was not carried out: a fresh scheduler/accounting
+check showed the job already running before any cancellation or change occurred.
+The original dependency chain remains intact.
+
+## Completed data collection and action-edge campaign registration (October 19, evening)
+
+Collection **28297279** completed in 1:03:01. The full integrity audit passed:
+4,008 nominal-teacher episodes, 3,965 episodes at 80% teacher control and 3,886
+at 50%, from the same 4,096 fresh training cases. Retained labels and behavior
+obey recorded masks, with contiguous episode steps and verified archive hashes.
+These are collection outcomes, not deployed neural-policy results.
+
+The completed matured-control comparison met its prespecified screening rule for
+both imitation recipes: 37.06% and 33.91% paired BKS excess, with completion
+below the warm-cost anchor's 98.44%. Three seeds of each had finished their 12M
+run budgets. Coordinator 28279542 was cancelled; the last two allocations
+28279541_3/4 saved checkpoints and completed gracefully. Their four partial runs
+stopped at 9,218,048, 8,519,680, 9,422,848 and 8,501,248 decisions. These partial
+runs are retained, without a five-seed convergence claim. Progress remains active:
+one recipe has 98.70% completion and does not meet that screening rule.
+
+The next controlled neural ablation keeps the heterogeneous encoder and complete
+variable-action GCN. Optional zero-output residual gates learn routing relations
+between candidate destinations from observable energy, travel, reachability and
+action features. No additional action or physical mask restriction is introduced.
+A second treatment stops only the value-loss gradient at the encoder; policy
+gradients still train all encoder parameters and the action network.
+
+The audited source is `source_action_edges_v16`. Seventy physical Python/JSON/YAML
+files match the prior anchored source byte for byte. On 128 training states,
+legacy-default and zero-gate models exactly reproduce parent logits and values.
+Actor gradients reach the encoder, critic detachment works, and gate gradients
+reach both gate layers after an update. The real GPU CLI pilot then completed
+4,096 PPO decisions with minibatches of 256, changed encoder parameters
+(L2 0.3705), existing action-head parameters (0.3075), and gate outputs (0.00714).
+All trained parameters were finite, and inference weights and compressed full
+training states loaded. It used an existing campaign allocation. These audits
+establish a working training path; they do not show improved generalization.
+
+Registered ninth cohort **`ca10t3d_action_edges_v16`** compares three recipes,
+three seeds each: standard complete action GCN, routing-edge gates, and gates
+with critic-gradient isolation. All use the same audited 4,008 nominal-teacher
+episodes, 20 BC epochs, fixed selected-chain 4.096M PPO parent, rewards and masks.
+The initial budget is 1M additional decisions per run, with a 27-actor BC0 / best /
+final development readout. At most two recipes advance to 4M, followed by five
+seeds at 12M. Warm-seed uncertainty remains conditional on the common parent.
+
+Packing jobs **28305475 / 28305476** compare two and three parallel runs using
+identical one-A100, 18-CPU footprints and 16,384 PPO decisions per run. The frozen
+rule selects three only if aggregate throughput improves by at least 20% over
+twice the two-packed gated-run rate, median per-run rate retains at least 80%,
+and summed peak CUDA reservation is at most 16 GiB. Otherwise it uses two.
+The measured interval excludes BC and startup, so later throughput may differ.
+
+Queued bootstrap **28307255** depends on both profiles and checks their actual
+terminal accounting states, all dataset hashes, source and parent hashes,
+finished imitation screening, and the global allocation limit before submitting
+full GPU training. It replaces imitation's allocation budget. Recovery v15
+separately waits for all five original seeds to finish before reusing original
+slots. Both bootstrap input locks were rechecked without mismatches.
+
+All nine cohort holds agree. The common final evaluator now uses the audited,
+backward-compatible source that can read the optional neural fields. The
+512-case final validation and 1,000-case locked test remain unopened. The best
+completed development recipe remains **98.44%, 131.12 successful operating hours,
+18.14% paired BKS excess**. The goal remains active and unmet.
+
+## Capacity and objective maturity screens queued (October 19, 19:23 CEST)
+
+Original array task **28279550_4** completed cleanly at its rounded 12M budget;
+task 3 remains live. The pending recovery bootstrap still waits for all five
+original seeds and the original coordinator, so its resource gate is intact.
+
+CPU screens **28309429** (capacity) and **28309430** (objective) now depend on
+their respective array tasks 0, 1 and 2. They verify that all six corresponding
+runs reached 12M decisions, freeze their selected actors, then score the opened
+128-case development bank against the unchanged six-method BKS pool. Cached
+warm-cost anchor actors have different inherited training histories, reported
+explicitly. Their source, preparation code, baseline inputs and protocols are
+pinned; existing development and queued-protocol input locks were audited.
+
+The preregistered stopping condition is the same conservative rule used for
+imitation: neither recipe improves completion over the warm-cost anchor, and
+both have at least ten percentage points more paired BKS excess. A qualifying
+cohort's pending coordinator is cancelled and remaining runs receive the graceful
+checkpoint signal. A dependent CPU job verifies terminal SLURM accounting and
+retained partial full states, then rechecks the shared final-evaluation barrier.
+An already completed five-seed cohort or active coordinator is preserved. No
+extra GPU allocation was submitted, and final validation/test remain unopened.
+
+Implementation: `scripts/campaigns/screen_mature_california_graphppo.py`.
+Protocols and eventual results: `results/california_graphppo/maturity_screens_20261019/`.
+
+## Frozen-policy decoding comparison queued (October 19, 19:29 CEST)
+
+A live original-cohort run reported approximately 98–99% sampled training
+completion while one greedy validation checkpoint achieved 71.9%. These use
+different scenario banks and rollout samples; this is not evidence that decoding
+alone explains the discrepancy. It motivates a controlled comparison on the
+same frozen actors and cases.
+
+CPU job **28309962** evaluates the three selected warm-cost actors at sampling
+temperatures 0.25, 0.5 and 1.0, with three predefined policy RNG repetitions per
+actor. Policy sampling uses a separate, explicitly seeded Torch generator for
+each physical case, without reading future simulator disturbances. Every executed
+trajectory and failure counts. No per-case best-rollout selection is allowed,
+and nine sampled executions are not reported as nine independent trained actors.
+The zero-temperature controls must exactly reproduce all cached greedy outcomes,
+cost components and policy-call counts on 384 actor/case pairs.
+
+The job uses the already opened 128-case development bank and unchanged six-method
+BKS pool. It changes no weights, training masks or physical configuration, adds
+no GPU allocation, and cannot open final validation or test. Its 626 immutable
+inputs were checked after submission. Artifacts:
+`results/california_graphppo/policy_temperature_20261019/`.
+Implementation: `scripts/campaigns/evaluate_california_policy_temperature.py`.

@@ -65,6 +65,8 @@ mutable struct PricingWorkspace{W}
     pool::Vector{Label{W}}
     buckets::Vector{Vector{Int}}
     bcost::Vector{Vector{Float64}}
+    bload::Vector{Vector{Float64}}    # bucket loads and memories, beside the costs: the
+    bng::Vector{Vector{NodeSet{W}}}   # dominance scans filter on them without touching labels
     heap::BinaryMinHeap{Tuple{Float64,Int}}
     options::Vector{NTuple{3,Float64}}
     cmod::Matrix{Float64}
@@ -106,7 +108,8 @@ function PricingWorkspace{W}(inst::Instance; ng_size::Int, unit::Float64, near::
         vcat(customers[1:min(near, length(customers))], others)
     end
     PricingWorkspace{W}(
-        Label{W}[], [Int[] for _ in 1:N], [Float64[] for _ in 1:N], BinaryMinHeap{Tuple{Float64,Int}}(),
+        Label{W}[], [Int[] for _ in 1:N], [Float64[] for _ in 1:N], [Float64[] for _ in 1:N],
+        [NodeSet{W}[] for _ in 1:N], BinaryMinHeap{Tuple{Float64,Int}}(),
         NTuple{3,Float64}[], zeros(N, N), zeros(N, R + 1), zeros(N, R + 1), zeros(Int, N, R + 1),
         cpath, dunits, unit, R,
         ng_neighbourhoods(inst, Val(W), ng_size), lists,
@@ -271,52 +274,64 @@ end
 end
 
 """
-Insert `lab` into a bucket kept sorted by cost (with its costs mirrored in
-`costs`), applying dominance in both directions. Every dominance rule here
-needs the dominating label to be no costlier, so only cheaper labels are
-tried as dominators of `lab`, and only costlier ones as its victims. With a
-finite `cap` (heuristic rounds) only the `cap` cheapest labels are kept.
-Returns the new pool index, or 0 when `lab` is discarded.
+Insert `lab` into a bucket kept sorted by cost (with its costs, loads and
+memories mirrored in `costs`, `loads` and `ngs`), applying dominance in both
+directions. Every dominance rule here needs the dominating label to be no
+costlier, no more loaded and to remember a subset of the other's customers,
+so only cheaper labels are tried as dominators of `lab` and only costlier
+ones as its victims, and the mirrored loads and memories rule out most pairs
+before `dom` reads a label. With a finite `cap` (heuristic rounds) only the
+`cap` cheapest labels are kept. Returns the new pool index, or 0 when `lab`
+is discarded.
 """
-function sorted_insert!(dom::F, pool::Vector{L}, bucket::Vector{Int}, costs::Vector{Float64}, lab::L,
-                        cap::Int) where {F,L}
-    c = lab.cost
+function sorted_insert!(dom::F, pool::Vector{L}, bucket::Vector{Int}, costs::Vector{Float64},
+                        loads::Vector{Float64}, ngs::Vector{S}, lab::L, cap::Int) where {F,L,S}
+    c, q, g = lab.cost, lab.load, lab.ng
     hi = searchsortedlast(costs, c + 1e-12)
     @inbounds for k in 1:hi
+        (loads[k] <= q + 1e-12 && issubset(ngs[k], g)) || continue
         dom(pool[bucket[k]], lab) && return 0
     end
     lo = searchsortedfirst(costs, c - 1e-12)
     w = lo
     @inbounds for k in lo:length(bucket)
-        old = pool[bucket[k]]
-        if dom(lab, old)
-            old.alive = false
+        if q <= loads[k] + 1e-12 && issubset(g, ngs[k]) && dom(lab, pool[bucket[k]])
+            pool[bucket[k]].alive = false
         else
             bucket[w] = bucket[k]
             costs[w] = costs[k]
+            loads[w] = loads[k]
+            ngs[w] = ngs[k]
             w += 1
         end
     end
     resize!(bucket, w - 1)
     resize!(costs, w - 1)
+    resize!(loads, w - 1)
+    resize!(ngs, w - 1)
     if length(bucket) >= cap
         c < costs[end] || return 0
         pool[bucket[end]].alive = false
         pop!(bucket)
         pop!(costs)
+        pop!(loads)
+        pop!(ngs)
     end
     push!(pool, lab)
     idx = length(pool)
     pos = searchsortedfirst(costs, c)
     insert!(bucket, pos, idx)
     insert!(costs, pos, c)
+    insert!(loads, pos, q)
+    insert!(ngs, pos, g)
     idx
 end
 
 function insert_label!(ws::PricingWorkspace{W}, inst::Instance, restr::Restrictions{W}, lab::Label{W}, levels,
                        timefree::Bool, untimed::Bool, cap::Int) where {W}
     dom(a, b) = dominates(ws, inst, restr, a, b, levels, timefree, untimed)
-    idx = sorted_insert!(dom, ws.pool, ws.buckets[lab.node], ws.bcost[lab.node], lab, cap)
+    v = lab.node
+    idx = sorted_insert!(dom, ws.pool, ws.buckets[v], ws.bcost[v], ws.bload[v], ws.bng[v], lab, cap)
     idx == 0 && return false
     push!(ws.heap, (lab.time, idx))
     true
@@ -365,6 +380,8 @@ function price!(
     empty!(ws.pool)
     foreach(empty!, ws.buckets)
     foreach(empty!, ws.bcost)
+    foreach(empty!, ws.bload)
+    foreach(empty!, ws.bng)
     ws.heap = BinaryMinHeap{Tuple{Float64,Int}}()
     @inbounds for i in 1:N, j in 1:N
         ws.cmod[i, j] = cost_scale * inst.hours[i, j] - (j <= n ? π[j] : 0.0)

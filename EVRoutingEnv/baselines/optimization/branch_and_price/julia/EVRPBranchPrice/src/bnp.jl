@@ -43,6 +43,7 @@ Base.@kwdef struct BPParameters
     relax_charging_time::Bool = true
     relax_horizon::Bool = true   # phase 1 without windows: drop the horizon too
     bidirectional::Bool = true   # bidirectional pricing in that (untimed) mode
+    forward_share::Float64 = 0.5 # payload share grown forward (the rest backward); exact for any value
     exact_fallback::Bool = true
     rc_tol::Float64 = 1e-6
     gap_tol::Float64 = 1e-6
@@ -57,7 +58,7 @@ Base.@kwdef struct BPParameters
     enum_gap::Float64 = 0.006        # try route enumeration at nodes within this relative gap (0 = off)
     enum_route_cap::Int = 1_000_000  # give up enumerating beyond this many routes
     enum_label_limit::Int = 30_000_000
-    enum_time::Float64 = 900.0       # seconds per enumeration attempt
+    enum_time::Float64 = 120.0       # seconds per enumeration attempt
     enum_mip_time::Float64 = 900.0   # seconds for the MIP over the enumerated routes
     lazy_certify::Bool = true        # certify tree nodes only when it can fathom them (see search!)
     lazy_depth::Int = 3              # ...but always certify nodes this shallow, so the global bound moves
@@ -69,6 +70,17 @@ Base.@kwdef struct BPParameters
     root_mip_time::Float64 = 300.0   # the root column pool is the richest; give its MIP longer
     max_nodes::Int = typemax(Int)
     label_limit::Int = typemax(Int)
+    farkas_time::Float64 = 300.0       # limit of one exact Farkas round (zero-cost pricing can explode)
+    exact_round_time::Float64 = 3600.0 # limit of one exact round otherwise; past either, the node is branched undecided
+    # Parallel subtrees (see search!): a split run stops once this many nodes
+    # are open and writes them to `split_file`; a subtree run searches node
+    # `subtree_index` (0-based) of a `subtree_file` as its root.
+    split_nodes::Int = 0
+    split_file::String = ""
+    subtree_file::String = ""
+    subtree_index::Int = 0
+    incumbent_dir::String = ""       # runs sharing it publish and adopt each other's incumbents
+    incumbent_tag::String = "main"   # this run's file there: incumbent_<tag>.json
     verbose::Bool = true
 end
 
@@ -109,6 +121,9 @@ mutable struct BPState{W}
     root_z::Float64
     fixed_at::Float64       # incumbent value at the last fixing pass
     arcs_fixed::Int
+    base_usable::BitMatrix  # arcs before fixing: routes found elsewhere may use fixed ones
+    enum_failed::Float64    # least threshold at which an enumeration attempt gave up
+    shared_seen::Dict{String,Float64}  # shared incumbent file -> modification time last read
 end
 
 elapsed(s::BPState) = time() - s.start
@@ -129,19 +144,84 @@ function covers_exactly(inst::Instance, routes::Vector{Route})
     all(==(1), count) && length(routes) <= inst.fleet
 end
 
+"""`simulate` on the arcs as read, before reduced-cost fixing removed any."""
+function base_simulate(s::BPState, r::Route)
+    inst = s.inst
+    current = copy(inst.usable)
+    inst.usable .= s.base_usable
+    try
+        simulate(inst, r)
+    finally
+        inst.usable .= current
+    end
+end
+
 function improve!(s::BPState, routes::Vector{Route}, source::String)
     covers_exactly(s.inst, routes) || return false
     cost = sum(r.travel for r in routes; init = 0.0)
     cost < s.upper - 1e-9 || return false
     for r in routes
-        ok, why, _ = simulate(s.inst, r)
+        ok, why, _ = base_simulate(s, r)
         ok || error("internal: $(source) produced an infeasible route ($(why))")
     end
     s.upper = cost
     s.incumbent = routes
     note!(s, @sprintf("incumbent %.6f h from %s (%d routes)", cost, source, length(routes)))
     push!(s.log, Dict("t" => elapsed(s), "event" => "incumbent", "value" => cost, "source" => source))
+    publish_incumbent!(s)
     true
+end
+
+"""Write the incumbent to `incumbent_dir` for the other runs (atomic rename)."""
+function publish_incumbent!(s::BPState)
+    dir = s.params.incumbent_dir
+    isempty(dir) && return
+    mkpath(dir)
+    path = joinpath(dir, "incumbent_$(s.params.incumbent_tag).json")
+    tmp = path * ".tmp"
+    open(tmp, "w") do io
+        JSON3.write(io, Dict("objective_hours" => s.upper, "tag" => s.params.incumbent_tag,
+            "routes" => [Dict("witness" => [[id, v, c] for (id, v, c) in witness_steps(s.inst, r)])
+                         for r in s.incumbent]))
+    end
+    mv(tmp, path; force = true)
+    s.shared_seen[path] = mtime(path)
+end
+
+"""
+Adopt the best incumbent other runs on the same instance published in
+`incumbent_dir` (any `incumbent_*.json`; an evrp-bp-result certificate works
+too). Returns whether the incumbent improved.
+"""
+function adopt_incumbents!(s::BPState)
+    dir = s.params.incumbent_dir
+    (isempty(dir) || !isdir(dir)) && return false
+    adopted = false
+    for name in readdir(dir)
+        (startswith(name, "incumbent_") && endswith(name, ".json")) || continue
+        path = joinpath(dir, name)
+        stamp = try mtime(path) catch; continue end
+        get(s.shared_seen, path, NaN) == stamp && continue
+        s.shared_seen[path] = stamp
+        data = try JSON3.read(read(path, String)) catch; continue end
+        value = get(data, :objective_hours, nothing)
+        (value isa Real && value < s.upper - 1e-9) || continue
+        routes = Route[]
+        for rec in get(data, :routes, [])
+            r = route_from_witness(s.inst, [(Int(x[1]), Float64(x[2]), Bool(x[3])) for x in rec[:witness]])
+            r === nothing && (empty!(routes); break)
+            push!(routes, r)
+        end
+        cost = sum(r.travel for r in routes; init = 0.0)
+        covers_exactly(s.inst, routes) && cost < s.upper - 1e-9 || continue
+        all(r -> base_simulate(s, r)[1], routes) || continue
+        s.upper = cost
+        s.incumbent = routes
+        note!(s, @sprintf("incumbent %.6f h shared in %s (%d routes)", cost, name, length(routes)))
+        push!(s.log, Dict("t" => elapsed(s), "event" => "incumbent", "value" => cost, "source" => "shared $(name)"))
+        adopted = true
+    end
+    adopted
 end
 
 function improve_relaxed!(s::BPState, routes::Vector{Route}, source::String)
@@ -215,15 +295,27 @@ function lns!(s::BPState, budget::Float64)
     sub_params = BPParameters(; time_limit = p.lns_sub_time, threads = p.threads, verbose = false,
                               lns_time = 0.0, dive_time = min(p.dive_time, 30.0), root_mip_time = 20.0,
                               mip_time = 10.0, ng_size = p.ng_size, subset_row_cuts = p.subset_row_cuts)
-    # route "distance": cheapest travel between any two of their customers
-    near(a, b) = minimum(inst.hours[i, j] + inst.hours[j, i] for i in a.customers, j in b.customers)
+    # route "distance": cheapest travel between any two of their customers;
+    # after the first pass, distances get random noise so new groups come up
+    pass = 0
+    sub_time = p.lns_sub_time
+    near(a, b) = minimum(inst.hours[i, j] + inst.hours[j, i] for i in a.customers, j in b.customers) *
+                 (pass == 0 ? 1.0 : 1.0 + rand())
     width = p.lns_routes
     while time() < deadline
+        # work on the best solution any run sharing incumbent_dir has found
+        adopt_incumbents!(s) && empty!(tried)
         routes = s.incumbent
         k = min(width, length(routes))
         k < 2 && break
         order = sortperm([r.travel for r in routes]; rev = true)
         seed = nothing
+        if pass > 0                                  # random seed routes (Fisher-Yates)
+            for i in length(order):-1:2
+                j = rand(1:i)
+                order[i], order[j] = order[j], order[i]
+            end
+        end
         for first in order
             group = sort(sortperm([q == first ? -Inf : near(routes[first], routes[q]) for q in eachindex(routes)])[1:k])
             group in tried && continue
@@ -231,10 +323,20 @@ function lns!(s::BPState, budget::Float64)
             break
         end
         if seed === nothing
-            # every neighbourhood of this width failed: widen it, up to six routes
-            (width >= min(6, length(routes))) && break
-            width += 1
-            note!(s, "route re-optimisation: widening to $(width) routes")
+            # every neighbourhood of this width failed: widen it, up to six
+            # routes; then start over with randomised groups and sub-solves
+            # twice as long (up to 8x)
+            if width < min(6, length(routes))
+                width += 1
+                note!(s, "route re-optimisation: widening to $(width) routes")
+            else
+                pass += 1
+                sub_time = min(8 * p.lns_sub_time, 2 * sub_time)
+                width = p.lns_routes
+                empty!(tried)
+                note!(s, @sprintf("route re-optimisation: pass %d, randomised groups, %.0f s sub-solves", pass + 1,
+                    sub_time))
+            end
             continue
         end
         push!(tried, seed)
@@ -245,8 +347,14 @@ function lns!(s::BPState, budget::Float64)
         sub, back = subinstance(inst, customers, k + min(idle, 1))
         local_index = Dict(c => i for (i, c) in enumerate(customers))
         append!(sub.initial_sequences, [[local_index[c] for c in r.customers] for r in chosen])
-        res = solve(sub; params = BPParameters(sub_params; time_limit = min(p.lns_sub_time, deadline - time())),
-                    env = s.env)
+        res = try
+            solve(sub; params = BPParameters(sub_params; time_limit = min(sub_time, deadline - time())),
+                  env = s.env)
+        catch err
+            # a failed sub-solve (e.g. LP numerics) only costs this neighbourhood
+            note!(s, "route re-optimisation: sub-solve failed ($(sprint(showerror, err)))")
+            continue
+        end
         isfinite(res.upper) && res.upper < current - 1e-6 || continue
         replacement = [Route(inst, back[r.nodes], r.levels) for r in res.routes]
         all(r -> simulate(inst, r)[1], replacement) || continue
@@ -270,7 +378,7 @@ function price_round(s::BPState{W}, restr::Restrictions{W}, π, κ, σ, τ; exac
                              max_columns = p.max_columns, rc_tol = p.rc_tol, time_limit = time_limit,
                              label_limit = p.label_limit, bucket_cap = cap,
                              cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ,
-                             sr_cuts = mp.sr_cuts, τ = τ, full_graph = wide)
+                             sr_cuts = mp.sr_cuts, τ = τ, full_graph = wide, forward_share = p.forward_share)
     else
         price!(s.pricing, s.inst, π, κ, restr; exact = exact, timefree = s.timefree,
                untimed = s.timefree && s.untimed,
@@ -380,8 +488,10 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
         farkas = mp.phase_one
         π, κ, σ, τ = master_duals(mp)
         exact = level == 2
-        res = price_round(s, restr, π, κ, σ, τ; exact = exact, farkas = farkas,
-                          time_limit = p.time_limit - elapsed(s), wide = level == 1)
+        limit = p.time_limit - elapsed(s)
+        exact && (limit = min(limit, farkas ? p.farkas_time : p.exact_round_time))
+        res = price_round(s, restr, π, κ, σ, τ; exact = exact, farkas = farkas, time_limit = limit,
+                          wide = level == 1)
         s.pricing_seconds += res.seconds
         s.rounds += 1
         if res.exact && !farkas
@@ -413,8 +523,13 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
                 continue
             end
             if !res.exact
+                z = column_values(mp)
                 set_phase_one!(mp, false, p.big_m)
-                return (:timeout, bound, Float64[], NaN)
+                timed_out(s) && return (:timeout, bound, Float64[], NaN)
+                # only this round's limit: the node stays undecided (see search!)
+                note!(s, @sprintf("node %d: exact %spricing hit its %.0f s limit", node.id,
+                    farkas ? "Farkas " : "", limit))
+                return (:undecided, bound, z, NaN)
             end
             if farkas
                 set_phase_one!(mp, false, p.big_m)
@@ -519,6 +634,8 @@ function close_by_enumeration!(s::BPState{W}, node::BBNode, lp::Float64, duals) 
     p.enum_gap > 0 && isfinite(cutoff) || return :open
     threshold = cutoff - lp
     threshold <= p.enum_gap * max(1.0, abs(cutoff)) || return :open
+    # an attempt at a similar threshold already ran out of time or routes
+    threshold < 0.5 * s.enum_failed || return :open
     π, κ, σ, τ = duals
     restr = Restrictions{W}(inst, node.forbidden)
     t = time()
@@ -527,6 +644,7 @@ function close_by_enumeration!(s::BPState{W}, node::BBNode, lp::Float64, duals) 
                             sr_cuts = mp.sr_cuts, τ = τ, time_limit = min(p.enum_time, p.time_limit - elapsed(s)),
                             label_limit = p.enum_label_limit, route_cap = p.enum_route_cap)
     if !res.exact
+        s.enum_failed = min(s.enum_failed, threshold)
         note!(s, @sprintf("enumeration at node %d (threshold %.4f) gave up after %.0fs, %d labels",
             node.id, threshold, time() - t, res.labels))
         return :open
@@ -754,29 +872,115 @@ function strengthen_root!(s::BPState, node::BBNode, result, nbound, z, lpvalue)
     (result, nbound, z, lpvalue)
 end
 
-"""Best-bound tree search. Returns (closed, lower bound over unexplored nodes, explored, open)."""
-function search!(s::BPState, floor_bound::Float64)
+"""
+Open nodes of a split run, for one subtree run each. The tree they cover is
+exactly what the split run left unexplored, so the least bound the subtree
+runs certify (each against its own incumbent) is a bound of the problem.
+"""
+function write_split(s::BPState, nodes::Vector{BBNode})
+    path = s.params.split_file
+    isempty(path) && error("split_nodes needs a split_file")
+    sort!(nodes; by = n -> n.bound)
+    mp, inst = s.master, s.inst
+    # The master as the split run left it, so that subtree runs start from its
+    # LP: columns, cuts and the adapted ng neighbourhoods (all globally valid).
+    pool = Dict(
+        "routes" => [[r.nodes, r.levels] for r in mp.routes],
+        "capacity_cuts" => [[findall(c.members), c.rhs] for c in mp.cuts],
+        "subset_row_cuts" => [[collect(c.members), findall(c.memory)] for c in mp.sr_cuts],
+        "ng" => [[i for i in 1:inst.n if i in s.pricing.ng[c]] for c in 1:inst.n],
+    )
+    tmp = path * ".tmp"
+    open(tmp, "w") do io
+        JSON3.write(io, Dict("schema" => "evrp-bp-split/v1", "phase" => s.timefree ? 1 : 2,
+            "incumbent_hours" => isfinite(s.upper) ? s.upper : nothing, "instance_meta" => s.inst.meta,
+            "nodes" => [Dict("bound" => n.bound, "depth" => n.depth, "lo" => n.lo, "hi" => n.hi, "label" => n.label,
+                             "forbidden" => [[a, b] for (a, b) in n.forbidden]) for n in nodes],
+            "pool" => pool))
+    end
+    mv(tmp, path; force = true)
+end
+
+"""Root node, phase and column/cut pool of a subtree run: node `subtree_index` of `subtree_file`."""
+function load_subtree(inst::Instance, p::BPParameters)
+    data = JSON3.read(read(p.subtree_file, String))
+    for key in ("seed", "config_sha")
+        haskey(inst.meta, key) && string(get(data[:instance_meta], Symbol(key), nothing)) != string(inst.meta[key]) &&
+            error("$(p.subtree_file) was split on another instance ($(key))")
+    end
+    spec = data[:nodes][p.subtree_index+1]
+    forbidden = Tuple{Int,Int}[(Int(x[1]), Int(x[2])) for x in spec[:forbidden]]
+    node = BBNode(1, 0, Float64(spec[:bound]), forbidden, Int(spec[:lo]), Int(spec[:hi]),
+                  "subtree $(p.subtree_index) ($(spec[:label]))")
+    (node, Int(data[:phase]), get(data, :pool, nothing))
+end
+
+"""Load a split run's pool (see `write_split`) into a fresh master."""
+function load_pool!(s::BPState{W}, pool) where {W}
+    inst, mp, ws, n = s.inst, s.master, s.pricing, s.inst.n
+    for (c, members) in enumerate(pool[:ng])
+        ws.ng[c] = nodeset(Val(W), Int.(members))
+    end
+    for (nodes, levels) in pool[:routes]
+        add_column!(mp, inst, Route(inst, Int.(nodes), Float64.(levels)))
+    end
+    refresh_ng!(s)
+    for (members, rhs) in pool[:capacity_cuts]
+        add_cut!(mp, inst, CapacityCut(BitVector(i in members for i in 1:n), Float64(rhs)))
+    end
+    for (members, memory) in pool[:subset_row_cuts]
+        add_sr_cut!(mp, SubsetRowCut((Int(members[1]), Int(members[2]), Int(members[3])),
+                                     BitVector(i in memory for i in 1:n)))
+    end
+    note!(s, @sprintf("pool of the split run: %d columns, %d capacity and %d subset-row cuts", length(mp.z),
+        length(mp.cuts), length(mp.sr_cuts)))
+end
+
+"""
+Best-bound tree search from the root, or from `top` (a subtree run's root).
+Returns (closed, lower bound over unexplored nodes, explored, open, root LP, root bound).
+"""
+function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = nothing)
     inst, p, mp = s.inst, s.params, s.master
     open_nodes = BinaryMinHeap{Tuple{Float64,Int,Int}}()
     store = Dict{Int,BBNode}()
     next_id = Ref(1)
     # Every route carries at most `payload`, so at least this many are needed.
     least = ceil(Int, sum(inst.demand) / (inst.payload + EPS) - 1e-12)
-    root = BBNode(1, 0, floor_bound, Tuple{Int,Int}[], least, inst.fleet, "root")
+    root = top === nothing ? BBNode(1, 0, floor_bound, Tuple{Int,Int}[], least, inst.fleet, "root") :
+        BBNode(1, 0, max(floor_bound, top.bound), copy(top.forbidden), max(least, top.lo), min(inst.fleet, top.hi),
+               top.label)
     store[1] = root
     push!(open_nodes, (root.bound, 0, 1))
     explored = 0
     pending = Inf
     closed = true
     root_lp, root_bound = NaN, -Inf
+    # Split run: hand the open nodes to subtree runs once there are enough
+    # (or, forced, whatever is open when time runs out).
+    function split_here!(force::Bool)
+        cutoff = prune_value(s)
+        live = [store[k] for (b, _, k) in open_nodes.valtree if b < cutoff - tolerance(s, cutoff)]
+        (force ? !isempty(live) : length(live) >= p.split_nodes) || return false
+        write_split(s, live)
+        note!(s, @sprintf("split: %d open nodes written to %s (least bound %.6f)", length(live),
+            p.split_file, minimum(n -> n.bound, live)))
+        true
+    end
+    function reopen!(n::BBNode, b::Float64)
+        store[n.id] = BBNode(n.id, n.depth, b, n.forbidden, n.lo, n.hi, n.label)
+        push!(open_nodes, (b, -n.depth, n.id))
+    end
     while !isempty(open_nodes)
         bound, _, id = pop!(open_nodes)
         node = pop!(store, id)
+        adopt_incumbents!(s) && fix_arcs!(s)
         cutoff = prune_value(s)
         bound >= cutoff - tolerance(s, cutoff) && continue
         if timed_out(s) || explored >= p.max_nodes
             pending = min(pending, bound)
             closed = false
+            p.split_nodes > 0 && (reopen!(node, bound); split_here!(true))
             break
         end
         explored += 1
@@ -829,6 +1033,7 @@ function search!(s::BPState, floor_bound::Float64)
             root_lp = lpvalue
             note!(s, @sprintf("%s root: lp %.6f bound %.6f, %d columns",
                 s.timefree ? "relaxed" : "exact", root_lp, root_bound, length(mp.z)))
+            adopt_incumbents!(s)
             mip_heuristic!(s; seconds = p.root_mip_time)
             if p.lns_time > 0 && s.upper > nbound + tolerance(s, nbound)
                 before = s.upper
@@ -844,9 +1049,29 @@ function search!(s::BPState, floor_bound::Float64)
         if result == :timeout
             pending = min(pending, max(node.bound, nbound))
             closed = false
+            p.split_nodes > 0 && (reopen!(node, max(node.bound, nbound)); split_here!(true))
             break
         end
         result in (:pruned, :infeasible) && continue
+        if result == :undecided
+            # Exact pricing could not settle the node within its round limit
+            # (typically Farkas pricing of an infeasible node). Branch on the LP
+            # at hand: the children keep the node's bound, and their smaller
+            # graphs are easier to price. With nothing to branch on, the node
+            # stays open and its bound counts in the final one.
+            here = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label)
+            children = isempty(z) ? BBNode[] : branch_children(s, here, z, next_id)
+            if isempty(children)
+                pending = min(pending, nbound)
+                closed = false
+                note!(s, @sprintf("node %d left open at bound %.6f: undecided, nothing to branch on", node.id, nbound))
+            end
+            for c in children
+                store[c.id] = c
+                push!(open_nodes, (c.bound, -c.depth, c.id))
+            end
+            continue
+        end
         if all(v -> v < 1e-6 || v > 1 - 1e-6, z)
             integer_solution!(s, [k for k in eachindex(z) if z[k] > 0.5], "integral LP at node $(id)")
             continue
@@ -860,6 +1085,10 @@ function search!(s::BPState, floor_bound::Float64)
         for c in children
             store[c.id] = c
             push!(open_nodes, (c.bound, -c.depth, c.id))
+        end
+        if p.split_nodes > 0 && length(open_nodes) >= p.split_nodes && split_here!(false)
+            closed = false
+            break
         end
         explored % p.mip_every == 0 && mip_heuristic!(s)
         fix_arcs!(s)
@@ -911,7 +1140,10 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Backend) wh
     windows = any(isfinite, inst.tw_close[1:inst.n]) || any(>(0), inst.tw_open[1:inst.n])
     s = BPState{W}(inst, params, env, mp, ws, BackwardSpace{W}(inst, ws.R), start, params.relax_charging_time,
                    params.relax_horizon && !windows, Route[], Inf, Inf,
-                   Route[], 0, 0, 0.0, 0.0, Dict{String,Any}[], nothing, -Inf, Inf, 0)
+                   Route[], 0, 0, 0.0, 0.0, Dict{String,Any}[], nothing, -Inf, Inf, 0,
+                   copy(inst.usable), Inf, Dict{String,Float64}())
+    top, phase, pool = isempty(params.subtree_file) ? (nothing, 1, nothing) : load_subtree(inst, params)
+    phase == 2 && (s.timefree = false)
 
     seeded = Route[]
     for steps in inst.initial_routes
@@ -942,9 +1174,12 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Backend) wh
     note!(s, @sprintf("%d customers, %d chargers, %d trucks, %d seed columns",
         inst.n, inst.m, inst.fleet, length(mp.z)))
 
-    closed, lower, explored, open_count, root_lp, root_bound = search!(s, -Inf)
+    top === nothing || note!(s, @sprintf("%s of %s: bound %.6f, routes %d..%d, %d successions forbidden",
+        top.label, params.subtree_file, top.bound, top.lo, top.hi, length(top.forbidden)))
+    pool === nothing || load_pool!(s, pool)
+    closed, lower, explored, open_count, root_lp, root_bound = search!(s, -Inf, top)
     relaxed_optimum = NaN
-    phases = 1
+    phases = phase
     if s.timefree
         if closed
             relaxed_optimum = min(s.upper, s.relaxed_upper)
@@ -957,7 +1192,7 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Backend) wh
             note!(s, "relaxed optimum needs charging time: exact time-aware search from bound $(lower)")
             s.timefree = false
             phases = 2
-            closed, lower2, explored2, open_count, _, _ = search!(s, lower)
+            closed, lower2, explored2, open_count, _, _ = search!(s, lower, top)
             explored += explored2
             lower = max(lower, min(lower2, s.upper))
         end
@@ -977,6 +1212,7 @@ function _solve(::Val{W}, inst::Instance, params::BPParameters, env::Backend) wh
     status == "OPTIMAL" && (lower = s.upper)
     note!(s, @sprintf("%s: incumbent %.6f, bound %.6f, %d nodes, %d open", status, s.upper, lower,
         explored, open_count))
+    inst.usable .= s.base_usable   # the certificate re-simulates the routes on the full graph
     BPResult(status, s.upper, lower, s.incumbent, relaxed_optimum, phases, root_lp, root_bound,
              explored, open_count, length(mp.z), s.rounds, s.exact_rounds, elapsed(s),
              s.pricing_seconds, s.master_seconds, s.log)

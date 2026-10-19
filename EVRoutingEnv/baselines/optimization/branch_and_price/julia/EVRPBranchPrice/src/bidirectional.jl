@@ -2,14 +2,15 @@
 # without time windows; see pricing.jl for the relaxation itself).
 #
 # Forward labels (the `Label`s of pricing.jl) grow from the depot and stop once
-# their load exceeds half the payload. Backward labels grow from the depot
-# towards the start and stop likewise. A route is assembled at the first
-# customer u where its prefix load exceeds C/2: the prefix up to u is a
-# forward label (every earlier forward label had load <= C/2, so it was
-# extended), and the suffix after u carries less than C/2, so every backward
-# label along it was extended too. Routes that never exceed C/2 are completed
-# by the forward search. Dominance in either direction keeps a label at least
-# as good for every join, so the minimum reduced cost is exact.
+# their load exceeds hf (by default half the payload C). Backward labels grow
+# from the depot towards the start and stop once their load exceeds
+# hb = C - hf. A route is assembled at the first customer u where its prefix
+# load exceeds hf: the prefix up to u is a forward label (every earlier forward
+# label had load <= hf, so it was extended), and the suffix after u carries
+# less than C - hf = hb, so every backward label along it was extended too.
+# Routes that never exceed hf are completed by the forward search. Dominance in
+# either direction keeps a label at least as good for every join, so the
+# minimum reduced cost is exact.
 #
 # A backward label at node u describes the suffix u -> ... -> depot:
 # * cost:  reduced cost of the suffix arcs (u's own dual sits on the arc into u,
@@ -40,13 +41,16 @@ mutable struct BackwardSpace{W}
     pool::Vector{BLabel{W}}
     buckets::Vector{Vector{Int}}
     bcost::Vector{Vector{Float64}}
+    bload::Vector{Vector{Float64}}
+    bng::Vector{Vector{NodeSet{W}}}
     heap::BinaryMinHeap{Tuple{Float64,Int}}
     prefix::Matrix{Float64}   # least prefix cost depot -> v within r capacity units
     slack::Matrix{Float64}    # dominance correction between first customers
 end
 
 BackwardSpace{W}(inst::Instance, R::Int) where {W} = BackwardSpace{W}(
-    BLabel{W}[], [Int[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N], BinaryMinHeap{Tuple{Float64,Int}}(),
+    BLabel{W}[], [Int[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N],
+    [NodeSet{W}[] for _ in 1:inst.N], BinaryMinHeap{Tuple{Float64,Int}}(),
     zeros(inst.N, R + 1), zeros(inst.n + 1, inst.n + 1),
 )
 
@@ -103,7 +107,8 @@ end
 function insert_backward!(bs::BackwardSpace{W}, inst::Instance, restr::Restrictions{W}, ws::PricingWorkspace{W},
                           lab::BLabel{W}, cap::Int) where {W}
     dom(a, b) = backward_dominates(inst, restr, bs, ws, a, b)
-    idx = sorted_insert!(dom, bs.pool, bs.buckets[lab.node], bs.bcost[lab.node], lab, cap)
+    v = lab.node
+    idx = sorted_insert!(dom, bs.pool, bs.buckets[v], bs.bcost[v], bs.bload[v], bs.bng[v], lab, cap)
     idx == 0 && return false
     push!(bs.heap, (lab.load, idx))
     true
@@ -112,7 +117,7 @@ end
 @inline succession_earning(ws::PricingWorkspace, l::Int, w::Int, n::Int) =
     ws.has_cuts && w <= n ? ws.rho[l, w] : 0.0
 
-"""Forward labels from the depot up to half the payload. Returns (complete, found, min rc)."""
+"""Forward labels from the depot up to load `half`. Returns (complete, found, min rc)."""
 function forward_pass!(ws::PricingWorkspace{W}, inst::Instance, restr::Restrictions{W}, nbrs, κ::Float64,
                        rc_tol::Float64, cap::Int, levels::Vector{Float64}, top::Float64, topb::Float64,
                        half::Float64, deadline::Float64, label_limit::Int) where {W}
@@ -122,6 +127,8 @@ function forward_pass!(ws::PricingWorkspace{W}, inst::Instance, restr::Restricti
     empty!(ws.pool)
     foreach(empty!, ws.buckets)
     foreach(empty!, ws.bcost)
+    foreach(empty!, ws.bload)
+    foreach(empty!, ws.bng)
     ws.heap = BinaryMinHeap{Tuple{Float64,Int}}()
     push!(ws.pool, Label{W}(depot, 0, 0.0, 0.0, 0.0, inst.start_battery, 0.0, NodeSet{W}(), depot, zero(SRBits), true))
     push!(ws.heap, (0.0, 1))
@@ -176,7 +183,7 @@ function forward_pass!(ws::PricingWorkspace{W}, inst::Instance, restr::Restricti
     (true, found, min_rc)
 end
 
-"""Backward labels from the depot up to half the payload. Returns whether it completed."""
+"""Backward labels from the depot up to load `half`. Returns whether it completed."""
 function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Instance, restr::Restrictions{W},
                         κ::Float64, cap::Int, topb::Float64, half::Float64, deadline::Float64,
                         label_limit::Int) where {W}
@@ -184,6 +191,8 @@ function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Ins
     empty!(bs.pool)
     foreach(empty!, bs.buckets)
     foreach(empty!, bs.bcost)
+    foreach(empty!, bs.bload)
+    foreach(empty!, bs.bng)
     bs.heap = BinaryMinHeap{Tuple{Float64,Int}}()
     push!(bs.pool, BLabel{W}(depot, 0, 0.0, 0.0, 0.0, NodeSet{W}(), depot, zero(SRBits), true))
     push!(bs.heap, (0.0, 1))
@@ -243,10 +252,16 @@ function price_bidirectional!(
     restr::Restrictions{W}; exact::Bool, max_columns::Int, rc_tol::Float64, time_limit::Float64,
     label_limit::Int, bucket_cap::Int, cost_scale::Float64, cuts::Vector{CapacityCut}, σ::Vector{Float64},
     sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
+    forward_share::Float64 = 0.5,
 ) where {W}
     t0 = time()
     n, N, depot = inst.n, inst.N, inst.depot
-    half = inst.payload / 2
+    # Forward labels are extended up to `hf`, backward ones up to `hb`. A join
+    # needs every suffix after the first customer beyond `hf` to have been
+    # grown backward, which hf + hb >= payload guarantees (the slack covers the
+    # load tolerance). The backward pass is the slower one per unit of load.
+    hf = forward_share * inst.payload
+    hb = inst.payload - hf + 1e-7
     top = maximum(inst.levels)
     topb = top * inst.battery
     @inbounds for i in 1:N, j in 1:N
@@ -284,17 +299,17 @@ function price_bidirectional!(
     # The two halves share only read-only pricing data, so with more than one
     # Julia thread the backward pass runs alongside the forward one.
     task = Threads.nthreads() > 1 ?
-        Threads.@spawn(backward_pass!(bs, ws, inst, restr, κ, cap, topb, half, deadline, label_limit)) : nothing
-    fcomplete, found, min_rc = forward_pass!(ws, inst, restr, nbrs, κ, rc_tol, cap, [top], top, topb, half,
+        Threads.@spawn(backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : nothing
+    fcomplete, found, min_rc = forward_pass!(ws, inst, restr, nbrs, κ, rc_tol, cap, [top], top, topb, hf,
                                              deadline, label_limit)
     bcomplete = task === nothing ?
-        (fcomplete && backward_pass!(bs, ws, inst, restr, κ, cap, topb, half, deadline, label_limit)) : fetch(task)
+        (fcomplete && backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : fetch(task)
     complete = fcomplete && bcomplete
 
     # ---- joins at customers where the forward load first exceeds C/2 ----
     if complete
         for u in 1:n
-            fwd = [k for k in ws.buckets[u] if ws.pool[k].load > half + 1e-12]
+            fwd = [k for k in ws.buckets[u] if ws.pool[k].load > hf + 1e-12]
             isempty(fwd) && continue
             bwd = sort!([k for k in bs.buckets[u] if bs.pool[k].alive]; by = k -> bs.pool[k].cost)
             isempty(bwd) && continue

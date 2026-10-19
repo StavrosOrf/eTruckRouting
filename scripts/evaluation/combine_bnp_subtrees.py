@@ -22,20 +22,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
-
-from scripts.evaluation.solve_branch_and_price import attach_validation, build_env
 
 GAP_TOL = 1e-6
 
 
-def combine(out: Path, seed: int) -> dict:
+def combine(out: Path, seed: int, *, keep: bool = True) -> dict:
+    """Combined certificate; with ``keep`` the split run's own is moved aside first."""
     split = json.loads((out / f"split_{seed}.json").read_text())
     kept = out / f"seed_{seed}.split.json"
-    if not kept.exists():
+    if keep and not kept.exists():
         (out / f"seed_{seed}.json").rename(kept)
-    head = json.loads(kept.read_text())
+    head = json.loads((kept if kept.exists() else out / f"seed_{seed}.json").read_text())
 
     subtrees, best = [], head
     lower = float("inf")
@@ -92,6 +92,26 @@ def combine(out: Path, seed: int) -> dict:
     return combined
 
 
+def live_bound(out: Path, seed: int, subtrees: list[dict]) -> float:
+    """Least bound over subtrees, unfinished ones at the last tree bound their log reports (monitoring only)."""
+    pattern = re.compile(r"tree: .* bound ([-0-9.eE+]+),")
+    lower = float("inf")
+    for row in subtrees:
+        if row["status"] != "PENDING":
+            bound = row.get("best_bound_hours")
+            lower = min(lower, float("inf") if bound is None else bound)
+            continue
+        bound = row["split_bound_hours"]
+        log = out / f"subtrees_{seed}" / f"sub_{row['index']}.log"
+        if log.exists():
+            for line in log.read_text(errors="replace").splitlines():
+                match = pattern.search(line)
+                if match:
+                    bound = max(row["split_bound_hours"], float(match.group(1)))
+        lower = min(lower, bound)
+    return lower
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", type=Path, required=True)
@@ -99,7 +119,19 @@ def main(argv=None) -> int:
     parser.add_argument("--config", default="EVRoutingEnv/config_files/config_joint.yaml")
     parser.add_argument("--trucks", type=int)
     parser.add_argument("--customers", type=int)
+    parser.add_argument("--status", action="store_true", help="only print the current bounds; write nothing")
     args = parser.parse_args(argv)
+
+    if args.status:
+        certificate = combine(args.out, args.seed, keep=False)
+        info = certificate["parallel"]
+        shared = min((v for v in info["shared_incumbents"].values() if v is not None), default=None)
+        print(f"seed {args.seed}: objective {certificate['objective_hours']} bound {certificate['best_bound_hours']} "
+              f"gap {certificate['gap']} ({info['finished']}/{info['split_nodes']} subtrees finished; shared {shared}; "
+              f"live bound {live_bound(args.out, args.seed, info['subtrees'])})")
+        return 0
+    # the env stack is slow to import, so only the replay path loads it
+    from scripts.evaluation.solve_branch_and_price import attach_validation, build_env
 
     certificate = combine(args.out, args.seed)
     ok, reason = attach_validation(build_env(args), certificate, args.seed, args.config)

@@ -1,6 +1,6 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-19T12:22:29.178304+02:00 (Amsterdam time). Earlier observations below are historical.
+Updated 2026-10-19T21:25:38.227006+02:00 (Amsterdam time). Earlier observations below are historical.
 
 The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
 
@@ -8,14 +8,17 @@ The goal remains **active and unmet**: at least 99% successful depot-return comp
 
 | Cohort | Array | Running / queued allocations | Target decisions per run |
 | --- | --- | --- | --- |
-| Capacity / graph messages | 28279539 | 5 / 0 | 12M; five seeds per recipe |
-| Imitation + progress | 28279541 | 5 / 0 | 12M; five seeds per recipe |
+| Capacity / graph messages | 28279539 | 3 / 0 | 12M; five seeds per recipe |
+| Imitation + progress | 28279541 | 0 / 0 | screened out; partial checkpoints retained |
 | Undiscounted / cost emphasis | 28279544 | 5 / 0 | 12M; five seeds per recipe |
-| Progress features | 28279546 | 5 / 0 | 12M; five seeds per recipe |
-| Original finalists | 28279550 | 5 / 0 | 12M; five seeds per recipe |
-| Larger expert dataset | 28279916 + 28280299 | 5 / 0 | 1M initially; gated 4M / 12M |
+| Progress features | 28279546 | 1 / 0 | 12M; five seeds per recipe |
+| Original finalists | 28279550 | 0 / 0 | 12M; five seeds per recipe |
+| Larger expert dataset | 28285204 | 0 / 3 | 4M; gated 12M |
+| Matched recovery data (gated) | not submitted | 0 / 0 | 1M; gated 12M |
+| Routing action edges / critic gradients (gated) | not submitted | 0 / 0 | 1M; gated 12M |
+| Packing profiles (two / three runs per A100) | 28305475 / 28305476 | 0 / 2 | 16,384; throughput measurement |
 
-Observed training allocations: **30 total**, including **30 running** and **0 pending**. Six active cohorts need at most 30 allocations at their final stage. Each A100 allocation packs up to two runs; coordinators and CPU evaluation jobs are not training allocations.
+Observed training allocations: **14 total**, including **9 running** and **5 pending**. The recovery cohort may start only after the original cohort finishes all five seeds and releases its slots. This keeps the maximum at 30 even when the other families reach their final stages. Existing full cohorts pack two runs per A100. The new action-edge cohort will use two or three according to the queued profiles. Action-edge v16 replaces screened-out imitation slots after both profiles terminate. Coordinators and CPU evaluation jobs are excluded from training counts.
 
 ## Overnight checkpoint recovery
 
@@ -23,7 +26,34 @@ Previous long-running arrays failed around 02:20 on October 19 while PyTorch wro
 
 Full states now use compressed, flushed atomic writes with explicit I/O errors and bounded retries; inference weights remain ordinary Torch files written atomically. A real checkpoint compression round trip preserved model, optimizer, simulator and RNG values while reducing 193 MiB to 107 MiB. Running recovery logs show restored interaction counts and further updates. The separate live checkpoint audit passed for all ten capacity policies after each advanced by at least 102,400 decisions; their compressed files passed archive CRC checks and full-state loading. Artifacts are under `recovery_20261019/`.
 
-## Latest independent development comparison
+## Larger-data PPO development comparison
+
+The comparison after 1M additional PPO steps completed on the same opened 128 development cases, with three training seeds and six independent cached references. The table reports checkpoint-selection best actors; BC0 and final actors were also evaluated. Final validation and test remain unopened. Costs include successful episodes only; completion includes all failures.
+
+| Recipe | Mean completion | Mean successful operating hours | Mean paired BKS excess |
+| --- | --- | --- | --- |
+| large_fresh_cost40 | 98.44% | 139.62 | 25.52% |
+| large_warm_cost40 | 98.44% | 131.12 | 18.14% |
+| large_warm_mc_cost40 | 97.92% | 134.60 | 20.28% |
+
+The warm cost recipe improves the earlier leading 32.50% excess to 18.14%, with completion rising from 97.92% to 98.44%. It still misses both targets. The warm cost and warm MC recipes advanced to 4M decisions in array 28285204, coordinator 28285206. The MC treatment combines removal of the delivery bonus with GAE one; this screen does not isolate their effects.
+
+## Completed matured-control development comparison
+
+Three training seeds, the same 128 opened development cases and six independent cached references. Old control runs completed 12M decisions; larger-data warm recipes have different inherited training histories. This is not a comparison at equal total compute. Costs include successful episodes only.
+
+| Recipe | Mean completion | Successful operating hours | Mean paired BKS excess |
+| --- | --- | --- | --- |
+| large_warm_cost40 | 98.44% | 131.12 | 18.14% |
+| large_warm_mc_cost40 | 97.92% | 134.60 | 20.28% |
+| bc_progress | 97.66% | 145.94 | 33.91% |
+| v2_shield | 95.05% | 147.99 | 34.86% |
+| bc_links_progress | 97.92% | 151.23 | 37.06% |
+| links_shield | 96.61% | 155.16 | 39.30% |
+| shield | 97.66% | 152.66 | 40.18% |
+| progress_links_shield | 98.70% | 157.82 | 41.40% |
+
+## Earlier PPO development comparison
 
 CPU jobs 28278836 and 28278837 completed a 42-policy comparison: 14 recipes, three training seeds each, 128 shared scenarios at validation offset 2,000, and six cached independent reference methods. The bank is reused development validation. Training budgets differ between recipes. Costs exclude failed episodes; completion statistics retain every failure.
 
@@ -44,7 +74,7 @@ CPU jobs 28278836 and 28278837 completed a 42-policy comparison: 14 recipes, thr
 | progress_links_shield | 97.66% | 161.43 | 45.42% |
 | bc_gamma1_control | 96.61% | 157.73 | 46.73% |
 
-No recipe satisfies both targets. Cost emphasis currently has the lowest cost among recipes completing over 95% of cases: 97.92% completion, 145.98 hours and 32.50% mean paired excess. Travel still accounts for about 31.25 percentage points of its pooled successful-pair excess. The stronger retained-expert-loss recipes lose reliability; the retention cohort was screened out during its interrupted 4M stage and is not resumed. This is an early stopping decision, not a convergence result.
+In this earlier comparison no recipe satisfies both targets. Cost emphasis has the lowest cost among recipes completing over 95% of cases: 97.92% completion, 145.98 hours and 32.50% mean paired excess. Travel still accounts for about 31.25 percentage points of its pooled successful-pair excess. The stronger retained-expert-loss recipes lose reliability; the retention cohort was screened out during its interrupted 4M stage and is not resumed. This is an early stopping decision, not a convergence result.
 
 Artifacts: `results/california_graphppo/intermediate_20261019_1020/` contains frozen policies, scenario results, provenance hashes, independent paired costs, training-seed uncertainty and cost components.
 
@@ -58,21 +88,76 @@ All warm-start seeds use the same frozen seed-zero parent. Their seed variabilit
 
 Initial array **28279916** retains its original six run definitions in three allocations. Supplementary array **28280299** adds three disjoint runs in two allocations, giving nine runs and five allocations in this cohort. CPU job **28280300** waits for both arrays and compares BC-only, selection-best PPO and final PPO checkpoints on the opened 128-case development bank. Coordinator **28280303** waits for that report before the standard validation-gated 4M promotion, which retains at most two recipes. The original pending CPU jobs (28279949 / 28279953) were cancelled with zero runtime when this treatment was registered; no GPU training was restarted. A zero-runtime premature submission (28279715) was cancelled before input setup completed; it produced no training artifacts.
 
+## Recovery-data continuation
+
+The frozen BC-only failure replays matched all nine original development outcomes. These time-limit failures repeatedly charged at full battery and moved between chargers while customers remained. A controlled training-only gradient audit measured median weighted critic-to-policy encoder gradient norm ratio 2.05 and near-zero mean cosine; this does not establish critic interference as the cause.
+
+On 128 train-only cases, the original-plan teacher retained 68 cases at 80% teacher control and 18 at 50%, largely because its labels became invalid after student deviations. The explicit mask-respecting recovery expert retained 126 and 119 cases, respectively, with zero final rejected labels. The pure nominal control retained 127. These are mixed collection behaviors, not deployed GraphPPO results.
+
+Pilot data audits passed in an existing campaign allocation and standalone CPU job 28296798. Full collection 28297279 completed in 1:03:01 on 4,096 fresh training cases (700128–704223), with one shared initial ALNS plan per case and teacher probabilities 100%, 80% and 50%. The full archive integrity audit passed. It retained 4,008 nominal-teacher episodes, 3,965 at 80% teacher control and 3,886 at 50%, with zero final rejected labels. Archives are in campaign-owned scratch storage. These collection outcomes are not deployed neural-policy performance.
+
+Recovery bootstrap 28318317 waits for lightweight original-cohort completion coordinator 28318314; all ten original runs and data collection have finished. The former pending metadata jobs were cancelled at zero runtime and replaced with one-CPU jobs. It verifies full data hashes, unchanged physical configuration and parent weights, all original five-seed 12M completion records, absence of original training jobs, and the 30-allocation limit. Only then may it launch nine BC+PPO runs packed into five allocations. It compares nominal, 80% and 50% data from the same cases; all start from the fixed seed-zero 1M warm-cost actor. It selects at most two recipes for 4M, then expands to five seeds for 12M. No solver chooses actions at neural-policy deployment.
+
+Both the larger-data and recovery cohorts freeze and score best/final actors at 4M before further training can overwrite them. All readouts use the opened 128-case development bank; the shared final validation and locked test remain protected.
+
+## Trained-policy failure readout
+
+Six first-failure replays from the 1M warm-cost and warm-MC actors matched their original outcomes. Warm-cost failures still looped through chargers. The selected MC trajectories included two exhausted feasible-action sets and a retirement with one customer left. Counterfactual queries exposed legal-action fallback in all three MC cases and one warm-cost case. Enabling the existing work-escape predicate rejected no additional recorded choices. This is a diagnosis of selected failure trajectories, not measured population frequency or a demonstrated fix. Physical execution, current training masks and expert-data collection settings were preserved. Artifacts: `results/california_graphppo/trained_1m_mask_diagnostic_20261019/`.
+
+## Energy-mask inference experiments and initialization budget
+
+The optimistic energy/payload check uses observable state, minimum energy multipliers and charging connectivity. It preserved all 11,920 decisions in 252 successful independent reference routes. On six frozen warm actors and the same 128 development cases, warm-cost metrics were unchanged (98.44%, 131.12 hours, 18.14% paired excess). Warm MC completion changed from 97.92% to 98.18%, with essentially unchanged excess (20.28% to 20.29%). This is not a substantial improvement or a newly trained policy.
+
+The separate 1.2-factor energy-risk restriction is stronger than a necessary physical-feasibility test. With fallback included, it rejects two decisions on one successful independent route; that scenario has no remaining observed successful route in the two-reference audit pool. It failed the predeclared coverage gate and is not promoted into training. The existing BKS pool is unchanged. Vectorized candidate calculations matched scalar results on 9,035 legal candidates across 542 recorded decisions; this is an implementation audit on those trajectories.
+
+The 1M counts in the larger-data warm recipes are additional PPO interaction budgets. Their common parent was selected after 3,174,400 PPO steps. The fixed seed-zero actor used by recovery v15 inherits a selected chain of 4,096,000 PPO steps plus the earlier and larger-data BC phases. Fresh and warm recipes have matched additional PPO budgets, not matched total training histories. Warm fine-tuning seed variability is conditional on the common parent. Details: `results/california_graphppo/initialization_lineage_20261019.json`.
+
+The completed matured-control comparison scored 18 selected original, progress and imitation actors after their three-seed 12M run budgets, alongside six cached larger-data warm actors. The inherited training budgets differ. Both imitation recipes met the prespecified dominated-cohort screen; their paired excess was 37.06% and 33.91%, versus 18.14% for warm cost, with lower completion. Their pending coordinator was cancelled and the last four runs stopped gracefully with checkpoints retained. The progress cohort remains active because one recipe achieved 98.70% completion, so it did not meet the screening rule. This is compute screening on opened development cases; final validation and test remain unopened.
+
+## Frozen-policy decoding study
+
+CPU job 28309962 compares the three selected warm-cost actors under greedy decoding and sampling temperatures 0.25, 0.5 and 1.0. Each positive temperature has three predefined policy RNG repetitions per actor, independently seeded from the simulator. Every executed trajectory and failure is retained; there is no best-over-rollouts selection. Repetitions are not treated as independent trained policies.
+
+All three zero-temperature replays must exactly match the cached greedy outcomes, costs and action-call counts on 384 actor/case pairs. The study uses only the same opened 128 development cases and six cached references, with unchanged weights and physical configuration. A discrepancy in a live run between sampled training completion and one greedy validation checkpoint motivated this comparison; different scenario banks also contribute, so that observation alone does not establish a decoding effect.
+
+| Decoder | Mean completion | Successful operating hours | Mean paired BKS excess |
+| --- | --- | --- | --- |
+| greedy_repeat | 98.44% | 131.12 | 18.14% |
+| sampling_0p25 | 98.78% | 132.64 | 18.90% |
+| sampling_0p5 | 98.78% | 131.95 | 18.93% |
+| sampling_1p0 | 98.18% | 135.10 | 21.58% |
+
+Job 28309962 completed in 30:16. All 384 greedy replay controls exactly matched cached costs and outcomes. Positive temperatures modestly changed reliability but all worsened BKS excess; none meets both targets, so sampling is not promoted as a solution.
+
+## Queued mature-cohort compute screens
+
+CPU jobs 28309429 (capacity) and 28309430 (objective) each wait for their first three training allocations to finish. They require both recipes to have completed 12M decisions in seeds 0, 1 and 2, freeze the selected actors, and evaluate the same 128 opened development cases against the unchanged six-method reference pool. The anchor is the cached three-seed larger-data warm-cost result; inherited training histories differ.
+
+The prespecified rule stops remaining training only when neither recipe improves mean completion over the anchor and both have at least ten percentage points more paired BKS excess. A graceful stop retains partial checkpoints; a dependent CPU job verifies terminal accounting and full-state loading, then rechecks shared evaluation readiness. Already completed five-seed cohorts and active coordinators are preserved. These screens add no GPU allocations and do not open final validation or test.
+
+## Routing-edge GraphPPO ablation
+
+A new optional action-GCN residual learns routing relationships between feasible candidate actions from observed graph travel and energy features. The physical action set, hard masks and simulator are unchanged. An additional treatment blocks only critic-loss gradients into the shared encoder; actor gradients still train the complete encoder and action network. Zero-output gates preserved parent logits and values exactly on 128 training states. The actual 4,096-step GPU PPO pilot completed, changed encoder and gate parameters, and produced loadable policy and full training checkpoints. These are implementation and training-path results, not evidence of improved held-out performance.
+
+Registered cohort `ca10t3d_action_edges_v16` has nine matched runs: three seeds each for the standard GCN, routing-edge gates, and gates with critic-gradient isolation. All use the same 4,008 nominal-teacher episodes, fixed parent and 20 BC epochs. Queued bootstrap 28307255 waits for packing profiles 28305475 and 28305476, then checks data/source/parent hashes, completed imitation screening and the global allocation limit. The predeclared profile rule selects two or three runs per A100 before initial submission. It evaluates BC0, selected PPO and final PPO at 1M, promotes at most two recipes to 4M, then expands to five seeds at 12M.
+
+The new cohort replaces imitation training slots; recovery v15 separately replaces original-cohort slots after all five original seeds complete. Both remain in the shared nine-cohort final-evaluation hold. The common evaluator now uses the audited source that reads both legacy and edge-gated model configurations.
+
 ## Larger-data startup and BC-only readout
 
 The following 64-case results are reused checkpoint-selection observations. They are not the independent 128-case development comparison. Operating hours include successful episodes only.
 
 | Run | BC epochs | PPO decisions logged | Initial completion | Initial operating hours |
 | --- | --- | --- | --- | --- |
-| large_fresh_cost40_s0 | 20/20 | 358,400 | 93.75% | 126.40 |
-| large_warm_cost40_s0 | 20/20 | 358,400 | 95.31% | 120.87 |
-| large_fresh_cost40_s1 | 20/20 | 358,400 | 93.75% | 124.66 |
-| large_warm_cost40_s1 | 20/20 | 368,640 | 96.88% | 122.19 |
-| large_fresh_cost40_s2 | 20/20 | 286,720 | 96.88% | 125.03 |
-| large_warm_cost40_s2 | 20/20 | 307,200 | 95.31% | 120.04 |
-| large_warm_mc_cost40_s0 | 20/20 | 348,160 | 96.88% | 121.66 |
-| large_warm_mc_cost40_s1 | 20/20 | 348,160 | 98.44% | 124.29 |
-| large_warm_mc_cost40_s2 | 20/20 | 563,200 | 96.88% | 124.13 |
+| large_fresh_cost40_s0 | 20/20 | 993,280 | 93.75% | 126.40 |
+| large_warm_cost40_s0 | 20/20 | 993,280 | 95.31% | 120.87 |
+| large_fresh_cost40_s1 | 20/20 | 993,280 | 93.75% | 124.66 |
+| large_warm_cost40_s1 | 20/20 | 993,280 | 96.88% | 122.19 |
+| large_fresh_cost40_s2 | 20/20 | 993,280 | 96.88% | 125.03 |
+| large_warm_cost40_s2 | 20/20 | 993,280 | 95.31% | 120.04 |
+| large_warm_mc_cost40_s0 | 20/20 | 993,280 | 96.88% | 121.66 |
+| large_warm_mc_cost40_s1 | 20/20 | 993,280 | 98.44% | 124.29 |
+| large_warm_mc_cost40_s2 | 20/20 | 993,280 | 96.88% | 124.13 |
 
 Early evaluation monitor: 28280824; state: `completed`. It uses one CPU while awaiting the nine immutable BC-only policies, then submits one packed CPU evaluation on 128 opened development cases. The 1M comparison reuses those results only after checking policy weights, configuration, source, masks and scenario coverage; otherwise it evaluates BC-only policies itself.
 
@@ -84,7 +169,7 @@ Early BC-only scoring job: **28281262**.
 | bc0_large_warm_cost40 | 90.62% | 136.21 | 25.56% |
 | bc0_large_warm_mc_cost40 | 91.67% | 139.41 | 27.29% |
 
-These are BC-only policies, before any PPO update. Warm starts share one pretrained parent; seed variability is conditional on that parent. Final validation and test remain unopened.
+These are the additional-BC checkpoints before PPO updates in this cohort. Warm starts inherit a parent already selected after 3,174,400 PPO steps; seed variability is conditional on that parent. Final validation and test remain unopened.
 
 ## Completed reference-mask availability audit
 
@@ -94,7 +179,7 @@ The combined new reference pool contains a mask-admissible successful route on a
 
 ## Final evaluation protocol
 
-All seven registered cohorts share one final selection; retention is explicitly screened out, leaving six active cohorts and a maximum of 30 final-stage training allocations. The evaluator supports all trained mask flags and normalizes only four declared policy restrictions; physical/configuration and source hashes are checked. The disjoint 512-case final validation bank and locked 1,000-case test remain unopened. The test requires both target metrics and complete independent feasible-reference coverage on validation.
+All nine registered cohorts share one final selection; retention and imitation are explicitly screened out. Recovery v15 replaces the original cohort’s training slots after it completes, giving a maximum of 30 concurrent training allocations; completed original policies remain selection candidates. The evaluator supports all trained mask flags and normalizes only four declared policy restrictions; physical/configuration and source hashes are checked. The disjoint 512-case final validation bank and locked 1,000-case test remain unopened. The test requires both target metrics and complete independent feasible-reference coverage on validation.
 
 Current machine-readable observations: `results/california_graphppo/status.json`.
 

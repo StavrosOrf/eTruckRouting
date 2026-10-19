@@ -72,6 +72,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--action-entity-links", action="store_true")
     parser.add_argument("--nonlinear-edge-messages", action="store_true")
+    parser.add_argument("--action-edge-gating", action="store_true")
+    parser.add_argument("--critic-encoder-stop-gradient", action="store_true")
     parser.add_argument("--progress-action-features", action="store_true")
     parser.add_argument("--completion-shield", action="store_true")
     parser.add_argument("--completion-capacity-lookahead", action="store_true")
@@ -336,6 +338,8 @@ def main() -> None:
         normalize_action_features=arguments.normalize_action_features,
         action_entity_links=arguments.action_entity_links,
         nonlinear_edge_messages=arguments.nonlinear_edge_messages,
+        action_edge_gating=arguments.action_edge_gating,
+        critic_encoder_stop_gradient=arguments.critic_encoder_stop_gradient,
         progress_action_features=arguments.progress_action_features,
     )
     probe.close()
@@ -416,7 +420,14 @@ def main() -> None:
             raise SystemExit(
                 f"{arguments.init_from} was trained on a different observation width"
             )
-        trainer.policy.load_state_dict(source.state_dict())
+        if policy_config.action_edge_gating and not source.config.action_edge_gating:
+            migrated = trainer.policy.load_state_dict(source.state_dict(), strict=False)
+            missing = set(migrated.missing_keys)
+            expected = {name for name in trainer.policy.state_dict() if ".edge_gate." in name}
+            if migrated.unexpected_keys or missing != expected:
+                raise ValueError("parent migration may initialize only new routing edge gates")
+        else:
+            trainer.policy.load_state_dict(source.state_dict())
         trainer.policy.to(trainer.device)
         torch.set_rng_state(initialization_rng[0])
         if initialization_rng[1] is not None:

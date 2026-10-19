@@ -25,6 +25,7 @@ from algo.canonical_state import (
     scatter_logits,
     unpack_flat_observation,
 )
+from algo.action_pair_features import ACTION_PAIR_FEATURE_DIM, action_pair_features
 from algo.progress_features import (
     PROGRESS_FEATURE_DIM,
     ProgressActionFeatures,
@@ -67,6 +68,8 @@ class CanonicalPolicyConfig:
     ablate_state_pooling: bool = False
     normalize_action_features: bool = False
     action_entity_links: bool = False
+    action_edge_gating: bool = False
+    critic_encoder_stop_gradient: bool = False
     nonlinear_edge_messages: bool = False
     progress_action_features: bool = False
     progress_station_ids: tuple[int, ...] = ()
@@ -75,6 +78,8 @@ class CanonicalPolicyConfig:
     feature_schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if self.action_edge_gating and self.action_head != "complete_gcn":
+            raise ValueError("action edge gating requires complete_gcn")
         object.__setattr__(
             self, "progress_station_ids", tuple(self.progress_station_ids)
         )
@@ -195,6 +200,7 @@ class CanonicalActorCritic(nn.Module):
             num_layers=config.action_head_layers,
             attention_heads=config.action_attention_heads,
             dropout=config.action_head_dropout,
+            edge_feature_dim=ACTION_PAIR_FEATURE_DIM if config.action_edge_gating else 0,
         )
         self.progress_features = (
             ProgressActionFeatures(
@@ -290,9 +296,14 @@ class CanonicalActorCritic(nn.Module):
             # pooling contributes to the *policy* rather than crippling value
             # estimation as well.
             head_input = torch.zeros_like(embedding)
-        head_output = self.action_head(head_input, action_rows, ptr)
+        if self.config.action_edge_gating:
+            edges = action_pair_features(tensors, feasible)
+            head_output = self.action_head(head_input, action_rows, ptr, edges)
+        else:
+            head_output = self.action_head(head_input, action_rows, ptr)
         logits = scatter_logits(head_output.logits, head_output.ptr, feasible)
-        values = self.value_head(embedding).squeeze(-1)
+        value_input = embedding.detach() if self.config.critic_encoder_stop_gradient else embedding
+        values = self.value_head(value_input).squeeze(-1)
         return PolicyOutput(logits=logits, values=values, feasible_mask=feasible)
 
     def predict_values(self, observation: torch.Tensor) -> torch.Tensor:
@@ -302,7 +313,8 @@ class CanonicalActorCritic(nn.Module):
         bootstrapping must not require a valid action distribution.
         """
         embedding = self.encoder(self.unpack(observation))
-        return self.value_head(embedding).squeeze(-1)
+        value_input = embedding.detach() if self.config.critic_encoder_stop_gradient else embedding
+        return self.value_head(value_input).squeeze(-1)
 
     @torch.no_grad()
     def act(

@@ -21,9 +21,9 @@ end
     bs = B.BackwardSpace{W}(inst, ws.R)
     restr = B.Restrictions{W}(inst, Tuple{Int,Int}[])
     π = fill(6.0, inst.n)
-    bidirectional(τ, cuts) = B.price_bidirectional!(ws, bs, inst, π, 0.0, restr; exact = true, max_columns = 200,
-        rc_tol = 1e-6, time_limit = 60.0, label_limit = typemax(Int), bucket_cap = 64, cost_scale = 1.0,
-        cuts = B.CapacityCut[], σ = Float64[], sr_cuts = cuts, τ = τ)
+    bidirectional(τ, cuts; share = 0.5) = B.price_bidirectional!(ws, bs, inst, π, 0.0, restr; exact = true,
+        max_columns = 200, rc_tol = 1e-6, time_limit = 60.0, label_limit = typemax(Int), bucket_cap = 64,
+        cost_scale = 1.0, cuts = B.CapacityCut[], σ = Float64[], sr_cuts = cuts, τ = τ, forward_share = share)
     monodirectional(τ, cuts) = B.price!(ws, inst, π, 0.0, restr; exact = true, timefree = true, untimed = true,
         sr_cuts = cuts, τ = τ)
 
@@ -36,6 +36,10 @@ end
         @test isapprox(mono.min_rc, bi.min_rc; atol = 1e-8)
         for res in (mono, bi), (r, rc) in zip(res.routes, res.rcs)
             @test isapprox(rc, reduced_cost(inst, r, π, cuts, τ); atol = 1e-8)
+        end
+        # any split of the payload between the two directions is exact
+        for share in (0.3, 0.65, 0.9)
+            @test isapprox(bidirectional(τ, cuts; share = share).min_rc, mono.min_rc; atol = 1e-8)
         end
     end
 

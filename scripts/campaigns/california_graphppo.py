@@ -245,6 +245,9 @@ def prepare(destination: Path, arm_set="base"):
 
 def train_bundle(destination, bundle, budget, width):
     manifest = json.loads((destination / "manifest.json").read_text())
+    width = int(manifest.get("runs_per_allocation", 2)) if width is None else width
+    if width not in (2, 3):
+        raise ValueError("supported packing widths are two or three runs")
     runs = manifest["runs"][bundle * width : (bundle + 1) * width]
     if not runs:
         raise ValueError("empty bundle")
@@ -416,7 +419,10 @@ def submit(destination, bundles, budget):
     # additionally bound overlap between cohorts with different stage sizes.
     name = destination.name
     manifest = json.loads((destination / "manifest.json").read_text())
-    if not 1 <= bundles <= (len(manifest["runs"]) + 1) // 2:
+    width = int(manifest.get("runs_per_allocation", 2))
+    if width not in (2, 3):
+        raise ValueError("unsupported training packing width")
+    if not 1 <= bundles <= (len(manifest["runs"]) + width - 1) // width:
         raise ValueError("bundle count exceeds available experiments")
     if budget < 1:
         raise ValueError("transition budget must be positive")
@@ -458,7 +464,7 @@ def submit(destination, bundles, budget):
     job = subprocess.check_output(command, text=True).strip()
     with (destination / "submissions.jsonl").open("a") as handle:
         handle.write(
-            json.dumps({"job": job, "budget": budget, "bundles": bundles, "time_limit": time_limit, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
+            json.dumps({"job": job, "budget": budget, "bundles": bundles, "runs_per_allocation": width, "time_limit": time_limit, "afterany": dependencies, "declared_afterany": declared_dependencies}) + "\n"
         )
     print(job, flush=True)
 
@@ -471,7 +477,7 @@ def main():
     parser.add_argument("--directory", type=Path, default=DEFAULT)
     parser.add_argument("--bundle", type=int, default=0)
     parser.add_argument("--bundles", type=int, default=2)
-    parser.add_argument("--width", type=int, default=2)
+    parser.add_argument("--width", type=int, default=None)
     parser.add_argument(
         "--arm-set",
         choices=("base", "progress", "imitation", "capacity", "objective", "retention", "cost_finetune", "large_expert"),

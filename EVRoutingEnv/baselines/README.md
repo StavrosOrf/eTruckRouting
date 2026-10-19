@@ -8,7 +8,7 @@ literature baselines are archived in self-contained folders.
 | Folder | Contents |
 |---|---|
 | `heuristics/` | Greedy, classical VRP, energy-path, and ALNS policies |
-| `optimization/` | Fleet-level CP-SAT, deterministic lower-bound, and perfect-information solvers |
+| `optimization/` | Fleet-level CP-SAT, deterministic lower-bound, and perfect-information solvers; `branch_and_price/` (exact, Julia) and `routingblocks_alns/` (RoutingBlocks ALNS with exact charging pricing, near-optimal at every size) |
 | `legacy/` | Older per-truck Gurobi models retained for inherited experiments |
 
 Import executable baselines through their grouped module paths, for example

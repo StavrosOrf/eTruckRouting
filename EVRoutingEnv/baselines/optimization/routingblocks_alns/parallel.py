@@ -99,7 +99,7 @@ def solve_parallel(instance: dict, parameters: SearchParameters, workers: int, o
         progress = (time.time() - started) / budget
         adopt_all = round_index == 0 or not p.pool
         for k, pipe in enumerate(pipes):
-            adopt = best_routes if (not adopt_all and k % 2 == 1) else None
+            adopt = best_routes if (not adopt_all and k >= workers * (1.0 - p.adopt_fraction) - 1e-9) else None
             pipe.send(("advance", span, progress, span / budget, adopt))
         absorb([receive(pipe) for pipe in pipes])
         round_index += 1

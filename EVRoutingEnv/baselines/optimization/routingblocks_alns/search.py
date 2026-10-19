@@ -47,19 +47,23 @@ class SearchParameters:
     surrogate_soc: float = 1.0
     min_removed_fraction: float = 0.05
     max_removed_fraction: float = 0.30
-    max_removed: int = 40
+    max_removed: int = 20
+    min_largest_destroy: int = 5  # small instances still need destroys big enough to restructure a route
     granularity: int = 30
     delta_local_search: float = 0.5
+    local_search_operators: str = "extended"  # "extended" adds segment swaps 0-3, 1-2, 2-2
+    local_search_scope: str = "changed"  # "changed" routes only, or "all"
     adaptive_smoothing: float = 0.2
     adaptive_period: int = 50
     penalty_period: int = 50
     initial_penalty: float = 100.0
     target_feasibility: float = 0.9
-    start_temperature: float = 0.004  # fraction of the incumbent cost
+    start_temperature: float = 0.01  # fraction of the incumbent cost
     end_temperature: float = 0.0002
     spare_routes: int = 2
     pool: bool = True
     pool_interval_seconds: float = 120.0
+    adopt_fraction: float = 0.5  # parallel: share of workers that restart from the shared best each round
     pool_elite_tolerance: float = 0.03  # routes of candidates within this of the best join the pool
     pool_seconds: float = 20.0  # HiGHS budget per set-partitioning solve; the last one is carved out of the limit
     score_new_best: float = 9.0
@@ -266,6 +270,12 @@ class Search:
             rb.operators.SwapOperator_1_1(self.instance, arcs),
             rb.operators.InterRouteTwoOptOperator(self.instance, arcs),
         ]
+        if p.local_search_operators == "extended":
+            self.ls_operators += [
+                rb.operators.SwapOperator_0_3(self.instance, arcs),
+                rb.operators.SwapOperator_1_2(self.instance, arcs),
+                rb.operators.SwapOperator_2_2(self.instance, arcs),
+            ]
         self.alns = rb.AdaptiveLargeNeighborhood(self.rb_random, p.adaptive_smoothing)
         self.alns.add_destroy_operator(RandomRemovalOperator(self.rb_random))
         self.alns.add_destroy_operator(NonEmptyRouteRemoval(self.evaluation, self.instance, self.rb_random))
@@ -296,9 +306,9 @@ class Search:
     def routes_of(solution: rb.Solution) -> list[tuple]:
         out = []
         for route in solution:
-            seq = tuple(node.vertex_id for node in route if not node.vertex.is_depot)
-            if seq:
-                out.append(seq)
+            ids = [node.vertex_id for node in route]
+            if len(ids) > 2:  # depot, customers..., depot
+                out.append(tuple(ids[1:-1]))
         return out
 
     def exact_cost(self, routes) -> float:
@@ -386,15 +396,26 @@ class Search:
 
             spare = max(0, min(p.spare_routes, self.fleet - len(self.current_routes)))
             solution = self.to_rb(self.current_routes, spare)
-            q_hi = min(p.max_removed, max(2, int(self.n * p.max_removed_fraction)))
+            q_hi = min(self.n, p.max_removed, max(p.min_largest_destroy, int(self.n * p.max_removed_fraction)))
             q_lo = min(q_hi, max(1, int(self.n * p.min_removed_fraction)))
             q = self.rb_random.randint(q_lo, q_hi)
             destroy, repair = self.alns.generate(self.evaluation, solution, q)
 
-            candidates = [self.routes_of(solution)]
+            repaired = self.routes_of(solution)
+            candidates = [repaired]
             if solution.cost < self._surrogate(self.current_routes) * (1 + p.delta_local_search):
-                self.local_search.optimize(solution, self.ls_operators)
-                candidates.append(self.routes_of(solution))
+                if p.local_search_scope == "changed":
+                    # Optimise only the routes destroy/repair touched: the stock search
+                    # sweeps every route, which at 200 customers costs ~90 ms per call.
+                    kept = set(self.current_routes)
+                    changed = [r for r in repaired if r not in kept]
+                    untouched = [r for r in repaired if r in kept]
+                    sub = self.to_rb(changed, 1 if len(changed) < self.fleet else 0)
+                    self.local_search.optimize(sub, self.ls_operators)
+                    candidates.append(untouched + self.routes_of(sub))
+                else:
+                    self.local_search.optimize(solution, self.ls_operators)
+                    candidates.append(self.routes_of(solution))
             self.window.append((solution.cost_components[1], solution.cost_components[2],
                                 solution.cost_components[3]))
 

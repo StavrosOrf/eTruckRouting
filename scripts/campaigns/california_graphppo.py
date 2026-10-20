@@ -500,6 +500,7 @@ def submit(destination, bundles, budget):
     command = [
         "sbatch",
         "--parsable",
+        "--account=" + resources.get("account", "tdsei17344"),
         "--job-name",
         name,
         f"--time={time_limit}",

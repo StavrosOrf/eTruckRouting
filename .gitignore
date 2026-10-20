@@ -209,6 +209,7 @@ __marimo__/
 visualizations/
 results/
 uv.lock
+
 /EVRoutingEnv/data/vis_data/
 gnn_plots/
 wandb/

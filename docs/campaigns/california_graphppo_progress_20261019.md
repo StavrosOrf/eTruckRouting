@@ -1,6 +1,6 @@
 # California GraphPPO progress and available performance
 
-Updated 2026-10-20T10:12:53.121307+00:00. Scheduler observation: 2026-10-20T12:12:49.785496+02:00.
+Updated 2026-10-20T10:32:13.980887+00:00. Scheduler observation: 2026-10-20T12:32:10.566312+02:00.
 
 Goal active and unmet: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independent feasible BKS, five training seeds and protected final evaluation.
 
@@ -58,6 +58,8 @@ All rows use the same opened 128 development cases. Neural recipes have three ev
 | ppo1m_final_edge_control_cost40 | BC-only or selected/final actor after 1M additional PPO | 98.9583% | 132.96 | 19.59% |
 | ppo1m_final_edge_route_cost40 | BC-only or selected/final actor after 1M additional PPO | 98.6979% | 130.67 | 17.98% |
 | ppo1m_final_edge_route_criticstop | BC-only or selected/final actor after 1M additional PPO | 99.7396% | 165.77 | 50.12% |
+| large_warm_cost40@4M | Selected or final actor after completed 4M additional PPO run budgets | 97.9167% | 131.23 | 18.68% |
+| ppo4m_final_large_warm_cost40@4M | Selected or final actor after completed 4M additional PPO run budgets | 99.4792% | 133.15 | 19.91% |
 
 ## Current campaign
 
@@ -81,7 +83,7 @@ The new target-message branch is zero initialized and preserves the parent predi
 
 ## Completed-recipe 4M readout
 
-The frozen 4M readout is running in owned job 28360521, step 0, using two CPUs and no GPU access. No additional allocation is requested. The full-family readout can reuse the identical sealed scores after checking source, weights, configuration, mask flags and case bank, so these actors need not be rescored. No 4M performance result is claimed until the score summary exists.
+The frozen 4M readout is completed in owned job 28360521, step 0, using two CPUs and no GPU access. No additional allocation is requested. The full-family readout can reuse the identical sealed scores after checking source, weights, configuration, mask flags and case bank, so these actors need not be rescored. The completed warm-cost selected actors give 97.92% completion and 18.68% paired excess; the fixed final 4M actors give 99.48% and 19.91%. Additional standard PPO has not closed the operating-cost gap.
 
 ## Observed training speed
 

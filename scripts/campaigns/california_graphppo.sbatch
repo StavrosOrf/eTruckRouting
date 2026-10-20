@@ -14,8 +14,12 @@ transition_budget="$2"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 # The supervisor preserves SLURM GPU visibility and forwards signals to every
 # trainer. Each trainer writes a complete checkpoint at its next update.
-/gpfs/home2/sorfanoudakis/EVRP/.venv/bin/python \
-  /gpfs/home2/sorfanoudakis/EVRP/scripts/campaigns/california_graphppo.py train \
+# sbatch executes a spool copy, so BASH_SOURCE cannot locate the checkout.
+# The manifest is the authority for the interpreter and checkout location.
+campaign_python="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$campaign_dir/manifest.json")"
+campaign_workspace="$("$campaign_python" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).parents[2])' "$campaign_python")"
+"$campaign_python" \
+  "$campaign_workspace/scripts/campaigns/california_graphppo.py" train \
   --directory "$campaign_dir" --bundle "$SLURM_ARRAY_TASK_ID" \
   --budget "$transition_budget" &
 supervisor_pid=$!

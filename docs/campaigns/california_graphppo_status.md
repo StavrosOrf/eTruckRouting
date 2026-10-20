@@ -1,6 +1,6 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-20T12:12:49.785496+02:00 (Europe/Berlin). Earlier observations below are historical.
+Updated 2026-10-20T12:32:10.566312+02:00 (Europe/Berlin). Earlier observations below are historical.
 
 The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
 
@@ -162,7 +162,7 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 | large_warm_cost40_s1 | completed milestone | 0 | 3,993,600 |
 | large_warm_mc_cost40_s1 | completed milestone | 0 | 3,993,600 |
 | large_warm_cost40_s2 | completed milestone | 0 | 3,993,600 |
-| large_warm_mc_cost40_s2 | PPO | 0 | 1,413,120 |
+| large_warm_mc_cost40_s2 | PPO | 0 | 1,679,360 |
 | recovery_nominal_s0 | completed milestone | 20 | 993,280 |
 | recovery_teacher80_s0 | completed milestone | 20 | 993,280 |
 | recovery_teacher50_s0 | completed milestone | 20 | 993,280 |
@@ -171,7 +171,7 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 | recovery_teacher50_s1 | completed milestone | 20 | 993,280 |
 | recovery_nominal_s2 | completed milestone | 20 | 993,280 |
 | recovery_teacher80_s2 | completed milestone | 20 | 993,280 |
-| recovery_teacher50_s2 | PPO | 20 | 174,080 |
+| recovery_teacher50_s2 | PPO | 20 | 419,840 |
 | edge_control_cost40_s0 | queued | 0 | 0 |
 | edge_route_cost40_s0 | queued | 0 | 0 |
 | edge_control_cost40_s1 | queued | 0 | 0 |
@@ -179,10 +179,10 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 | edge_control_cost40_s2 | queued | 0 | 0 |
 | edge_route_cost40_s2 | queued | 0 | 0 |
 | message_control_s0 | completed milestone | 0 | 0 |
-| message_target_s0 | BC | 8 | 0 |
-| message_target_identity_s0 | BC | 7 | 0 |
+| message_target_s0 | PPO | 20 | 102,400 |
+| message_target_identity_s0 | PPO | 20 | 40,960 |
 | message_control_s1 | completed milestone | 0 | 0 |
-| message_target_s1 | BC | 8 | 0 |
+| message_target_s1 | PPO | 20 | 92,160 |
 | message_target_identity_s1 | queued | 0 | 0 |
 | message_control_s2 | completed milestone | 0 | 0 |
 | message_target_s2 | queued | 0 | 0 |

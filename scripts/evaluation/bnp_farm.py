@@ -113,6 +113,20 @@ def upper_bound(farm: Path) -> tuple[float, str | None]:
     return best, where
 
 
+class _Moved(Exception):
+    """An item file moved (another farm process claimed or finished it) while it was being read."""
+
+
+def _items(directory: Path) -> list[dict]:
+    items = []
+    for path in directory.glob("*.json"):
+        try:
+            items.append(_read(path))
+        except (FileNotFoundError, json.JSONDecodeError) as err:
+            raise _Moved(str(path)) from err
+    return items
+
+
 def live_bound(item: dict, log: Path) -> float:
     bound = item["bound"]
     if log.exists():
@@ -124,9 +138,20 @@ def live_bound(item: dict, log: Path) -> float:
 def summary(farm: Path) -> dict:
     d = _dirs(farm)
     upper, where = upper_bound(farm)
-    queued = [_read(p) for p in d["queue"].glob("*.json")]
-    running = [_read(p) for p in d["running"].glob("*.json")]
-    done = [_read(p) for p in d["done"].glob("*.json")]
+    # Other farm processes move items between the directories at any time. A
+    # rename is atomic and every item reaches its next directory before it
+    # leaves the last, so a listing in this order never misses one; only a
+    # read of a file that has just moved fails, and then the snapshot is retaken.
+    for attempt in range(20):
+        try:
+            queued = _items(d["queue"])
+            running = _items(d["running"])
+            done = _items(d["done"])
+            break
+        except _Moved:
+            time.sleep(0.2)
+    else:
+        raise RuntimeError(f"no consistent snapshot of {farm} after 20 tries")
     bounds = [i["bound"] for i in queued] + [live_bound(i, d["work"] / i["id"] / "log") for i in running]
     lower = min(bounds, default=float("inf"))
     # split items are covered by their children, retried ones went back to the queue
@@ -156,7 +181,10 @@ def cmd_prune(args) -> int:
         closed += 1
         for path in d["queue"].glob("*.json"):
             if path.stem == root or path.stem.startswith(root + "."):
-                item = _read(path)
+                try:
+                    item = _read(path)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    continue               # claimed meanwhile: its worker stops at the next poll
                 item.update(outcome="closed", closed_by=str(result.resolve()), finished=time.time())
                 _write(d["done"] / path.name, item)
                 path.unlink(missing_ok=True)
@@ -225,6 +253,37 @@ def _finish(farm: Path, item: dict, returncode: int) -> str:
     return outcome
 
 
+def reap(farm: Path, slack: float = 1800.0) -> int:
+    """Return items whose worker cannot still be running (its time budget is long over) to the queue.
+
+    A worker stops at its budget and its farm process records the outcome
+    within a poll, so an item still running `slack` seconds after that was
+    orphaned by a farm process that died (crash, or its allocation ended).
+    """
+    d = _dirs(farm)
+    count = 0
+    for path in d["running"].glob("*.json"):
+        try:
+            item = _read(path)
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        started = item.get("started")
+        if started is None or time.time() - started < item.get("budget", 7200.0) + slack:
+            continue
+        for key in ("host", "pid", "started", "budget"):
+            item.pop(key, None)
+        item.update(outcome="retry", reaped=time.time())
+        _write(d["queue"] / path.name, item)
+        path.unlink(missing_ok=True)
+        count += 1
+    return count
+
+
+def cmd_reap(args) -> int:
+    print(f"{reap(args.farm, args.slack)} orphaned items back in the queue")
+    return 0
+
+
 def _job_end() -> float:
     """End of the current Slurm allocation (epoch seconds), or +inf outside Slurm."""
     job = os.environ.get("SLURM_JOB_ID")
@@ -265,7 +324,9 @@ def cmd_work(args) -> int:
             primal[k] = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                          env={**os.environ, "EVRP_BP_THREADS": "1"})
 
+    d_running = farm / "running"
     while not stopping:
+        reap(farm)
         for key, (proc, item) in workers.items():
             if proc.poll() is None and _cancelled(farm, key):
                 proc.terminate()
@@ -290,6 +351,8 @@ def cmd_work(args) -> int:
             for stale in ("result.json", "split.json"):
                 (work / stale).unlink(missing_ok=True)
             budget = min(args.worker_time, left)
+            item["budget"] = budget
+            _write(d_running / f"{item['id']}.json", item)
             command = [str(args.runner), meta["instance"], str(work / "result.json"), *WORKER_DEFAULTS,
                        "--time_limit", str(int(budget)), "--subtree_file", item["split"],
                        "--subtree_index", str(item["index"]), "--incumbent_dir", str(farm / "incumbents"),
@@ -383,6 +446,9 @@ def main(argv=None) -> int:
     p.add_argument("--closed-dir", required=True, help="subtrees_<seed> directory of the split's own subtree runs")
     p = sub.add_parser("status")
     p.add_argument("--farm", type=Path, required=True)
+    p = sub.add_parser("reap")
+    p.add_argument("--farm", type=Path, required=True)
+    p.add_argument("--slack", type=float, default=1800.0, help="seconds past an item's budget before it is reaped")
     p = sub.add_parser("finalize")
     p.add_argument("--farm", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -393,7 +459,7 @@ def main(argv=None) -> int:
     p.add_argument("--extra-results", help="directory of earlier subtree results (e.g. OUT/subtrees_<seed>)")
     p.add_argument("--overwrite", action="store_true")
     args = parser.parse_args(argv)
-    return {"init": cmd_init, "work": cmd_work, "prune": cmd_prune, "status": cmd_status,
+    return {"init": cmd_init, "work": cmd_work, "prune": cmd_prune, "status": cmd_status, "reap": cmd_reap,
             "finalize": cmd_finalize}[args.command](args)
 
 

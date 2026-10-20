@@ -1,103 +1,86 @@
 # California GraphPPO progress and available performance
 
-Updated 2026-10-19T23:31:12.400392+02:00 (Europe/Berlin).
+Updated 2026-10-20T08:09:51.686812+00:00. Scheduler observation: 2026-10-20T10:09:50.745606+02:00.
 
-Goal is active and unmet: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independent feasible BKS, with five training seeds and protected final evaluation.
+Goal active and unmet: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independent feasible BKS, five training seeds and protected final evaluation.
+
+## Latest findings
+
+- The completed three-seed action-edge comparison gives routing gates 98.95833% completion, 129.37 successful operating hours and 16.92% paired BKS excess. This is the lowest excess among the evaluated primary GraphPPO recipes, but misses both targets.
+- Its matched standard action-GCN control achieves 99.21875%, 131.36 hours and 18.04% excess. Critic-encoder detachment gives 100% completion but 161.92 hours and 46.75% excess. Standard control and routing gates were promoted; critic detachment was not.
+- For routing gates, travel contributes 16.59 excess percentage points and charging 0.32. On successful pairs, the policy uses 5.72 trucks versus 4.27 for the references. Routing gates improve cost without yet solving fleet allocation or travel efficiency.
+- The policies use CanonicalActorCritic with a heterogeneous state GNN and ragged complete-GCN action head, optimized end to end by PPO. They do not instantiate the original PPOVariableActionGNN class. This retains the graph/variable-action/PPO structure, but is a different implementation; exact implementation parity has not been established.
+- The current input adapter has EVRP-specific node/action schemas, saved batching ceilings and a station-connectivity cache. Variable candidate counts do not establish support for arbitrary new graph schemas or action semantics. Train-only physical-node relabeling changed 22.40–25.78% of frozen PPO greedy choices, exposing ID sensitivity; this does not establish its contribution to the California cost gap.
+- All current stronger recipes use behavior-cloning and warm-start initialization followed by PPO. All encoder/action/value parameters remain trainable. No teacher or solver chooses actions at neural deployment. Fine-tuning seeds share one fixed parent; inherited training budgets differ from fresh recipes.
 
 ## Completed performance comparisons
 
-Every row below uses the same opened 128-case development bank. Neural recipes have three evaluated training seeds; inherited training budgets differ. Warm starts share one fixed parent. Sampling repetitions are policy RNG repetitions, not extra training seeds. Operating hours and paired excess condition on successful episodes; completion retains every failure. Excess is the mean of per-case ratios. The per-case BKS pool is an oracle reference, not one deployed policy or a certified optimum.
+All rows use the same opened 128 development cases. Neural recipes have three evaluated training seeds. Costs and paired excess condition on success; completion retains failures. Paired excess averages per-case ratios. The reference pool is a per-case feasible oracle, not a deployed single policy or certified optimum. These reused development results are not final validation or test evidence.
 
 | Approach | Stage | Completion | Successful operating hours | Mean paired BKS excess |
 | --- | --- | --- | --- | --- |
-| Independent BKS pool (per-case oracle) | Reference coverage, not one policy | 100.00% | 113.20 | 0.00% |
-| heuristic | Independent reference | 96.88% | 277.30 | 150.19% |
-| mpc | Independent reference | 94.53% | 316.57 | 179.34% |
-| alns | Independent reference | 100.00% | 263.17 | 137.98% |
-| cpsat | Independent reference | 100.00% | 264.60 | 138.75% |
-| alns_planned | Independent reference | 98.44% | 112.11 | 1.73% |
-| cpsat_planned | Independent reference | 99.22% | 116.27 | 5.15% |
-| bc0_large_fresh_cost40 | 20 BC epochs; zero new PPO steps | 92.97% | 141.29 | 28.00% |
-| bc0_large_warm_cost40 | 20 BC epochs; zero new PPO steps | 90.62% | 136.21 | 25.56% |
-| bc0_large_warm_mc_cost40 | 20 BC epochs; zero new PPO steps | 91.67% | 139.41 | 27.29% |
-| large_fresh_cost40 | Selected checkpoint through 1M additional PPO decisions | 98.44% | 139.62 | 25.52% |
-| large_warm_cost40 | Selected checkpoint through 1M additional PPO decisions | 98.44% | 131.12 | 18.14% |
-| large_warm_mc_cost40 | Selected checkpoint through 1M additional PPO decisions | 97.92% | 134.60 | 20.28% |
-| ppo1m_final_large_fresh_cost40 | Final at 1M additional PPO decisions | 98.18% | 138.77 | 25.40% |
-| ppo1m_final_large_warm_cost40 | Final at 1M additional PPO decisions | 98.70% | 132.18 | 19.65% |
-| ppo1m_final_large_warm_mc_cost40 | Final at 1M additional PPO decisions | 98.44% | 135.97 | 21.38% |
-| bc_links_progress | Selected checkpoint after completed 12M run budgets | 97.92% | 151.23 | 37.06% |
-| bc_progress | Selected checkpoint after completed 12M run budgets | 97.66% | 145.94 | 33.91% |
-| links_shield | Selected checkpoint after completed 12M run budgets | 96.61% | 155.16 | 39.30% |
-| progress_links_shield | Selected checkpoint after completed 12M run budgets | 98.70% | 157.82 | 41.40% |
-| shield | Selected checkpoint after completed 12M run budgets | 97.66% | 152.66 | 40.18% |
-| v2_shield | Selected checkpoint after completed 12M run budgets | 95.05% | 147.99 | 34.86% |
-| sampling_0p25 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.78% | 132.64 | 18.90% |
-| sampling_0p5 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.78% | 131.95 | 18.93% |
-| sampling_1p0 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.18% | 135.10 | 21.58% |
-| bc_nonlinear_cost40 | Selected checkpoint after completed 12M run budgets | 96.88% | 138.77 | 26.39% |
-| bc_nonlinear_gamma1 | Selected checkpoint after completed 12M run budgets | 98.96% | 146.55 | 32.76% |
-| bc_capacity_links | Selected checkpoint after completed 12M run budgets | 98.18% | 151.88 | 36.90% |
-| bc_capacity_nonlinear_links | Selected checkpoint after completed 12M run budgets | 97.92% | 142.09 | 28.97% |
-
-## Main findings
-
-- The leading selected warm-cost actor family remains at 98.44% completion, 131.12 successful operating hours and 18.14% paired BKS excess. Its excess bootstrap 95% interval is 15.69–20.45%; the 5% target is not supported.
-- PPO improves its warm BC-only starting policy from 90.63% completion and 25.56% excess. The parent had already received 3,174,400 selected PPO decisions. These are warm-started end-to-end runs; teacher or solver inference is not used when deploying the neural policy.
-- Travel contributes 17.37 of the 18.14 excess percentage points; charging contributes 0.75. On successful paired cases the policy uses 5.65 trucks versus 4.26 for the references. Assignment and routing efficiency remain the main measured cost weaknesses.
-- Completed sampling variants reached up to 98.78% completion but worsened cost excess. All 384 greedy replay controls matched; sampling is not promoted as a solution.
-- Existing completion/capacity masks preserved all 11,920 actions on 252 successful independent reference routes. Stronger risk masking failed its reference-coverage gate. Observed route availability supports improving learned decisions; it does not prove every mask is harmless.
-- Actual full-campaign checkpoints confirm PPO changes the graph encoder, action network and value network after BC. Both routing-edge variants also changed their gates; all inspected neural weights were finite. Critic-gradient detachment still permits actor gradients through the encoder. This establishes end-to-end training, not a held-out performance gain.
-- The reward printed in training logs is the simulator episode reward. The vector worker separately adds terminal success/failure shaping to the PPO reward. The logged reward therefore omits the configured 24,000 success bonus; source inspection found no missing-bonus defect.
+| Independent BKS pool (per-case oracle) | Reference coverage, not one policy | 100.0000% | 113.20 | 0.00% |
+| heuristic | Independent reference | 96.8750% | 277.30 | 150.19% |
+| mpc | Independent reference | 94.5312% | 316.57 | 179.34% |
+| alns | Independent reference | 100.0000% | 263.17 | 137.98% |
+| cpsat | Independent reference | 100.0000% | 264.60 | 138.75% |
+| alns_planned | Independent reference | 98.4375% | 112.11 | 1.73% |
+| cpsat_planned | Independent reference | 99.2188% | 116.27 | 5.15% |
+| bc0_large_fresh_cost40 | 20 BC epochs; zero new PPO steps | 92.9688% | 141.29 | 28.00% |
+| bc0_large_warm_cost40 | 20 BC epochs; zero new PPO steps | 90.6250% | 136.21 | 25.56% |
+| bc0_large_warm_mc_cost40 | 20 BC epochs; zero new PPO steps | 91.6667% | 139.41 | 27.29% |
+| large_fresh_cost40 | Selected checkpoint through 1M additional PPO decisions | 98.4375% | 139.62 | 25.52% |
+| large_warm_cost40 | Selected checkpoint through 1M additional PPO decisions | 98.4375% | 131.12 | 18.14% |
+| large_warm_mc_cost40 | Selected checkpoint through 1M additional PPO decisions | 97.9167% | 134.60 | 20.28% |
+| ppo1m_final_large_fresh_cost40 | Final at 1M additional PPO decisions | 98.1771% | 138.77 | 25.40% |
+| ppo1m_final_large_warm_cost40 | Final at 1M additional PPO decisions | 98.6979% | 132.18 | 19.65% |
+| ppo1m_final_large_warm_mc_cost40 | Final at 1M additional PPO decisions | 98.4375% | 135.97 | 21.38% |
+| bc_links_progress | Selected checkpoint after completed 12M run budgets | 97.9167% | 151.23 | 37.06% |
+| bc_progress | Selected checkpoint after completed 12M run budgets | 97.6562% | 145.94 | 33.91% |
+| links_shield | Selected checkpoint after completed 12M run budgets | 96.6146% | 155.16 | 39.30% |
+| progress_links_shield | Selected checkpoint after completed 12M run budgets | 98.6979% | 157.82 | 41.40% |
+| shield | Selected checkpoint after completed 12M run budgets | 97.6562% | 152.66 | 40.18% |
+| v2_shield | Selected checkpoint after completed 12M run budgets | 95.0521% | 147.99 | 34.86% |
+| sampling_0p25 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.7847% | 132.64 | 18.90% |
+| sampling_0p5 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.7847% | 131.95 | 18.93% |
+| sampling_1p0 | Same frozen warm-cost actors; 3 policy RNG repetitions per actor | 98.1771% | 135.10 | 21.58% |
+| bc_nonlinear_cost40 | Selected checkpoint after completed 12M run budgets | 96.8750% | 138.77 | 26.39% |
+| bc_nonlinear_gamma1 | Selected checkpoint after completed 12M run budgets | 98.9583% | 146.55 | 32.76% |
+| bc_capacity_links | Selected checkpoint after completed 12M run budgets | 98.1771% | 151.88 | 36.90% |
+| bc_capacity_nonlinear_links | Selected checkpoint after completed 12M run budgets | 97.9167% | 142.09 | 28.97% |
+| bc0_edge_control_cost40 | BC-only or selected/final actor after 1M additional PPO | 93.4896% | 140.35 | 26.76% |
+| bc0_edge_route_cost40 | BC-only or selected/final actor after 1M additional PPO | 93.7500% | 141.02 | 28.52% |
+| bc0_edge_route_criticstop | BC-only or selected/final actor after 1M additional PPO | 94.2708% | 140.46 | 27.79% |
+| edge_control_cost40 | BC-only or selected/final actor after 1M additional PPO | 99.2188% | 131.36 | 18.04% |
+| edge_route_cost40 | BC-only or selected/final actor after 1M additional PPO | 98.9583% | 129.37 | 16.92% |
+| edge_route_criticstop | BC-only or selected/final actor after 1M additional PPO | 100.0000% | 161.92 | 46.75% |
+| ppo1m_final_edge_control_cost40 | BC-only or selected/final actor after 1M additional PPO | 98.9583% | 132.96 | 19.59% |
+| ppo1m_final_edge_route_cost40 | BC-only or selected/final actor after 1M additional PPO | 98.6979% | 130.67 | 17.98% |
+| ppo1m_final_edge_route_criticstop | BC-only or selected/final actor after 1M additional PPO | 99.7396% | 165.77 | 50.12% |
 
 ## Current campaign
 
-Scheduler observation: 2026-10-19T23:31:11.752163+02:00. New training uses one model per GPU allocation, nine CPUs and seven rollout workers; current warm/recovery/action-edge families allow six/eight/nine allocations plus four objective continuations within a global bound of 27. Future stages keep the five-allocation default. Four objective models resume on one-model MIG allocations after clean A100 checkpoint exits. One queued recovery pilot packs two models per MIG, with staggered BC. No GraphPPO campaign work is submitted to cbuild. The global training limit remains 30 allocations. The original new-family arrays use MIG; nine unstarted tasks moved to supplemental H100 arrays, and replacement coordinators wait for both arrays. SLURM disallowed live throttle changes and mixed-partition shared jobs; no running model was restarted.
+Training queue entries: 6; states: {'PENDING': 6}. Current maximum simultaneous training allocations: 6, below the global limit of 30. New submissions permit only gpu_mig and gpu_a100. H100 and cbuild are excluded.
 
-| Family | Training array | Current milestone |
-| --- | --- | --- |
-| Larger-data warm cost / MC | 28320619 + 28344289 | Three seeds per recipe; continue 1M → 4M |
-| Nominal / 80% teacher / 50% teacher recovery data | 28320624 + 28344292 + 28348662 | Three seeds per recipe; BC20 then 1M PPO |
-| Standard action GCN / routing gates / gates with critic detachment | 28320681 + 28344295 | Three seeds per recipe; BC20 then 1M PPO |
-| Objective controls | 28348611 | Six completed models skipped; four full states resume toward 12M |
-| Original and progress cohorts | Completed | All five seeds per recipe reached 12M; await shared selection |
-| Capacity controls | 28279539 | Screened out after completed three-seed 12M comparison; partial final seeds retained |
-
-The completed capacity evaluation used two CPUs and zero GPUs in the owned warm-training MIG allocation, step 28320619_0.0. Its checkpoint/terminal-state verification also completed in that allocation without another GPU reservation. Its pending GPU allocation was cancelled at zero runtime. Unexecuted A100 packing profiles were also cancelled; there are no measured packing-profile results. Future continuation arrays skip finished bundles while preserving the full seed manifest and saved rollout-worker layouts.
-
-## Policy drift diagnostic and resource pilot
-
-On 128 fixed teacher-80 pilot training states from 119 scenarios, exact teacher-action loss rose during PPO. These are disjoint pilot training cases, not the full-data BC holdout or held-out performance evidence. Snapshots use seed zero; equivalent actions can exist. The gated variants were compared at the same 460,800 PPO decisions.
-
-| Actor | BC teacher-action loss | Current PPO teacher-action loss | Mean KL from BC to PPO |
+| Family | Training array | Allocation layout | Remaining milestone |
 | --- | --- | --- | --- |
-| Standard action GCN (563,200 PPO decisions) | 1.50 | 7.24 | 5.01 |
-| Routing gates (460,800) | 1.41 | 5.61 | 3.31 |
-| Routing gates + critic detachment (460,800) | 1.45 | 20.56 | 17.53 |
+| Larger-data warm cost / MC | 28360521 | One model per MIG | Five actors completed 4M; last MC seed resumes 1M → 4M |
+| Recovery-data mixtures | 28360534 | One model per MIG | Eight actors completed 1M; last teacher50 seed BC20 + 1M |
+| Standard action GCN / routing gates | 28360721 | Three models per A100 | Six actors continue 1M → 4M |
+| Objective controls | 28360730 | Two models per A100 | Six actors completed 12M; four full states resume ~8M → 12M |
 
-This flags stronger off-policy drift with critic detachment in one seed. It does not establish a causal mechanism, a route-cost regression, or final model quality. The three-seed BC/selected/final evaluation remains required before promotion.
-
-Live warm PPO memory was 4.58 GiB of proportional host memory and 2,176 MiB of resident GPU memory. Pilot 28348662 packs two unstarted recovery runs in one nine-CPU/60-GiB MIG allocation, retains seven workers per model, and staggers BC until the first model enters PPO below a conservative host-memory guard. It is queued; packing throughput and peak memory have not been measured.
-
-An overlapping two-CPU watcher will score the six seed-zero actors after terminal 1M completion, using the existing 128 cases and cached seed-zero warm anchor. This exploratory preview will be labelled separately; five-seed final evidence and unopened final/test banks remain required.
+Every model retains nine CPUs and seven rollout workers. The allocation change preserves model, data, masks, rewards, interaction budgets and saved RNG/optimizer states. Immediate continuation failures came from node-local scratch quota exhaustion before training resumed; runtime caches now use shared workspace storage. Previously queued H100 jobs had already terminated when the new restriction was applied. Their completed results are retained.
 
 ## Observed training speed
 
-Measured from current training logs at 2026-10-19T23:31:11.752163+02:00; intervals include intervening selection validation, exclude BC, and are short-run observations.
-
-| GPU family | Models in PPO | PPO decisions so far per running model | Decisions/s per model |
-| --- | --- | --- | --- |
-| Larger-data 4M | 5 | 2,140,160–2,170,880 | 218–225 |
-| Recovery 1M | 5 | 829,440–942,080 | 216–224 |
-| Action-edge 1M | 5 | 716,800–921,600 | 189–222 |
-
-At roughly 190–240 decisions/s, one additional million decisions takes about 1.2–1.5 hours of PPO wall time per model. Add BC, startup, checkpoint I/O, the stage evaluation and any queue delay; this is an estimate, not a completed-stage runtime guarantee. Larger-data counters include the completed first 1M stage.
+Completed initial single-model MIG BC20 + 1M stages took 93–112 minutes, excluding queue wait and the separate paired evaluation. PPO-only logs previously measured roughly 190–240 decisions/s. Packed A100 throughput is not yet measured for this stage. The owned-MIG experiment completed its first recovery actor; its second failed before creating a resumable state when the parent ended. No steady two-recovery-model packing throughput claim is supported.
 
 ## Next steps
 
-1. The capacity screen completed and met the preregistered dominated-cohort stopping rule: completion 98.18% / 97.92%, excess 36.90% / 28.97%. Both remaining allocations exited cleanly. All four partial full states loaded and matched saved counters (9.67M–9.96M decisions); two A100 allocations were released. The objective screen did not meet its stopping rule, so its remaining seeds continue.
-2. Complete the matched recovery and action-edge 1M comparisons: evaluate BC-only, selected PPO and final PPO actors using the same six independent reference methods. Judge reliability and cost together.
-3. Continue at most two qualifying recipes per new family to 4M. Freeze and evaluate selected and final 4M actors before further updates; then expand promoted recipes to five training seeds and 12M.
-4. After all registered cohorts finish or are explicitly screened out, perform shared selection on 512 disjoint final-validation cases. Open the locked 1,000-case test only if both validation targets pass. Neither bank has been opened.
+1. Confirm resumed training starts with shared runtime caches; measure packed A100 throughput and memory on the live jobs.
+2. Complete the three-seed recovery BC-only/selected/final 1M comparison and freeze selected/final 4M actors from the warm and action-edge cohorts before further training.
+3. Document architecture fidelity explicitly: separate the generic graph/candidate-action interface from the EVRP adapter; remove ordinal ID dependence and preserve ownership/destination information through explicit relations in a controlled future ablation. Do not claim arbitrary-schema support or exact original-class parity from current results.
+4. Promote at most two qualifying recipes per family, expand to five training seeds and 12M, then perform shared selection on 512 disjoint final-validation cases after all registered cohorts finish or are screened out.
+5. Open the locked 1,000-case test only after both final-validation targets pass. Report certified optimality only with valid independent bounds. Final validation and test remain unopened.
 
-Sources: [comparison CSV](../../results/california_graphppo/performance_comparison_20261019.csv), [live status](california_graphppo_status.md), and scientific summaries referenced in the comparison JSON.
+Sources: [comparison CSV](../../results/california_graphppo/performance_comparison_20261019.csv), [scheduler status](california_graphppo_status.md), [implementation audit](../../results/california_graphppo/GPU_policy_recovery_20261020/implementation_audit.json).

@@ -876,3 +876,62 @@ The train-only teacher-retention diagnostic compared BC and stable current PPO w
 A live owned-allocation inspection found about 4.58 GiB aggregate proportional host memory and 2,176 MiB GPU residency for warm PPO. Recovery packing pilot 28348662 replaces pending H100 elements 5 and 8 with one MIG allocation (9 CPUs, 60 GiB, shared GPU), retaining each registered model’s seven-worker partition. BC is staggered until the first model has entered PPO and its process-tree RSS is below 12 GiB. The nominal BC host-memory projection is 31.64 GiB; recovery teacher-50 has about 5% more decisions, still within the declared host reserve. Replacement coordinator 28348663 depends on original MIG array 28320624, remaining H100 array 28344292 and packed job 28348662. The removed unmaterialized pending task handles are absent; this site does not expose their individual sacct rows, so zero-runtime accounting is claimed only for the cancelled coordinator. The pre-cancellation state was checked pending at zero elapsed. No runtime packing improvement is claimed while the pilot is queued. Current maximum simultaneous allocations is 27, including four objective continuations.
 
 An exploratory seed-zero 1M preview is registered on the same opened 128 cases, with the unchanged six independent references and cached warm seed-zero anchor. It requires all six seed-zero training tasks to finish successfully before freezing selected actors. A two-CPU/zero-GPU overlap watcher runs within existing warm allocation 28320671 (unified session 73272). It does not promote recipes, estimate between-seed uncertainty, open final validation/test, or replace the complete three-/five-seed protocol. Artifacts are under `seed0_1m_preview_20261019/`.
+
+## 2026-10-20: implementation identity, current results, and GPU restriction
+
+A read-only audit of all 103 available campaign `run_config.json` files found
+`state_encoder=hetero_graph` and `action_head=complete_gcn` in every run. The main
+campaign instantiates `CanonicalActorCritic` through the canonical PPO trainer,
+not the historical `PPOVariableActionGNN` class. The initial campaign plan
+explicitly chose this path. It retains heterogeneous state message passing,
+ragged feasible candidate-action graphs, shared candidate scoring, and end-to-end
+PPO. Exact implementation parity with the historical runner has not been
+established and must not be implied. Actual saved-checkpoint deltas independently
+show encoder, action-head and value-head updates during PPO.
+
+The current EVRP adapter defines typed feature schemas, candidate semantics,
+saved padding ceilings, and station connectivity. The architecture's variable
+candidate count does not establish arbitrary-schema or arbitrary-action-semantic
+support. On 128 fixed training-only states, three consistent physical-node
+relabelings changed 22.40–25.78% of frozen PPO greedy choices while preserving
+physical features, masks and candidate semantics. This exposes representation
+ID dependence; it does not prove its causal contribution to route cost. Generic
+graph/action adapters, explicit semantic relations and removal of ordinal ID
+features require a separately controlled future revision.
+
+The completed three-seed action-edge 1M development evaluation reports:
+
+| Recipe | Completion | Successful operating hours | Paired BKS excess |
+| --- | --- | --- | --- |
+| Standard complete action GCN | 99.21875% | 131.36 | 18.04% |
+| Routing edge gates | 98.95833% | 129.37 | 16.92% |
+| Routing gates + critic encoder detachment | 100% | 161.92 | 46.75% |
+
+These use the same opened 128-case development bank and fixed warm parent;
+cost metrics condition on successful episodes. Only the first two recipes were
+promoted to 4M. The full goal remains unmet. The 512-case final validation and
+locked 1,000-case test remain unopened. The comparison CSV now has 38 completed
+rows. These are not certified optimality results.
+
+By the current observation all earlier H100 tasks had terminated; several
+continuations had failed before trainer startup because node-local scratch
+quota was exhausted. Runtime caches now use shared workspace storage. New
+launcher submissions permit only gpu_mig and gpu_a100, honoring both user bans
+(H100 and cbuild). The unfinished actors were resubmitted without changing
+scientific sources, saved states, rewards, masks or budgets. Pending-only array
+migration packed six resumed action-edge actors into two A100 allocations and
+four objective actors into two A100 allocations; each model retains nine CPUs
+and seven rollout workers. One warm and one recovery continuation use MIG.
+The six current training allocations contain twelve models; they were all
+PENDING at the recorded observation. Packed A100 throughput is unmeasured.
+Future four-family default throttles bound allocations to twenty, below thirty.
+
+The earlier owned-MIG overlap completed recovery_teacher50_s1 at 1M; the second
+actor failed before creating a resumable checkpoint as the parent ended. The
+remaining recovery_teacher50_s2 is queued separately. No steady two-model
+packing speedup is established. Completed single-model MIG initial BC20+1M
+stages took 93–112 minutes, excluding queue and paired evaluation.
+
+Operational records, original launcher backup, manifests before allocation
+changes, submission journals and implementation evidence:
+`results/california_graphppo/GPU_policy_recovery_20261020/`.

@@ -110,6 +110,34 @@ at the bound it was split with. A subtree that finishes proves that it holds
 nothing better than its final incumbent. The combined status is `OPTIMAL`
 once every subtree has finished and the bounds meet.
 
+### Farm (subtrees that do not close in one run)
+
+`scripts/evaluation/bnp_farm.py` turns the open nodes of a split into a work
+queue of files that any number of allocations share:
+
+```bash
+F=results/branch_and_price/farm_50x100/seed_1
+python -m scripts.evaluation.bnp_farm init --farm $F --instance $OUT/instances/seed_1.json \
+    --split $OUT/split_1.json --skip-closed $OUT/subtrees_1 --incumbents $OUT/incumbents_1
+sbatch scripts/slurm/bnp_farm.sbatch $F            # once per allocation that is free
+python -m scripts.evaluation.bnp_farm status --farm $F
+python -m scripts.evaluation.bnp_farm finalize --farm $F --out $OUT --seed 1 --trucks 50 --customers 100 \
+    --extra-results $OUT/subtrees_1
+```
+
+Each worker is one single-threaded solver process. It searches one item for a
+time budget (2 h by default). If the item's subtree has not closed by then,
+the worker writes its open nodes, with the column and cut pool, and each
+becomes a new item. Claims are atomic renames, so farm processes in different
+allocations never take the same item.
+
+The queued and running items cover exactly the unexplored part of the tree,
+so the least of their bounds is the farm's lower bound. When nothing is
+queued or running, the best incumbent is optimal. `prune` closes items under
+split nodes that the original subtree runs closed meanwhile. `reap` (which
+every farm process also runs) returns items orphaned by a farm process that
+died to the queue, once their worker's budget is long over.
+
 In campaigns, method `bnp` (`run_canonical_campaign.build_policy`) builds
 `policy.BranchAndPricePolicy`; set `certificate_dir` to reuse offline
 certificates. The policy plays the planned steps and falls back to the greedy
@@ -138,7 +166,7 @@ bundled instances.
 Upstream has no licence file. This package is derived from its design, so keep
 it private until the authors grant permission.
 
-## Results so far (2026-10-19)
+## Results so far (2026-10-20)
 
 | Instances | Outcome |
 |---|---|
@@ -147,5 +175,7 @@ it private until the authors grant permission.
 | 20 x 50 (seed 0) | proven optimal: 132.284230 h, at the root with lm-SR3 cuts in about 500 s |
 | campaign test set, 300 scenarios at 2 x 10 | all proven optimal in 5 minutes |
 | 10T3D GraphPPO campaign, 128 validation scenarios at 10 x 30 | 119 proven optimal, 8 within 0.15-4.4%, 1 without a root within 900 s. Executed plans: 127/128 success, 4.7% below the campaign's best-known reference in operating hours (`results/branch_and_price/ca10t3d_validation_2000/comparison_graphppo.json`) |
-| 50 x 100 (seed 1) | root bound 350.74 h, incumbent 354.16 h after 110 nodes (0.96% gap; run continuing) |
-| 128 x 200 (seed 1) | the first exact root pricing round exceeds 20 minutes; run continuing |
+| 50 x 100, test seeds 2000000002, 2000000005, 2000000006 | proven optimal: 170.877737 h (309 nodes, 2 h wall on 14 cores), 153.917183 h (6,918 nodes), 188.646416 h (split runs plus the farm); every plan replays in the env at the certified travel time, without charger-port conflicts (`results/branch_and_price/ca_50x100_par/seed_<seed>.json`, `.farm.json`) |
+| 50 x 100, test seeds 2000000000, 2000000001, 2000000007 | certified gaps 0.13%, 0.17%, 0.17% on 2026-10-20 09:30; farms continuing |
+| 50 x 100, seed 1 and test seeds 2000000004, 2000000003 | certified gaps 0.51%, 0.67%, 1.09%; farms continuing. A single serial tree on seed 1 stayed at its root bound (350.74 h) for 23 h and 535 nodes |
+| 128 x 200 (seed 1) | incumbent 848.098 h, certified bound 839.88 h (0.97%); root certified in 52 minutes (more than 8 h before the pricing speed-up); 28 subtrees continuing |

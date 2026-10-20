@@ -6,11 +6,13 @@
 # negative column the node LP value itself is. Children inherit the parent's
 # bound, and the global bound is the least bound over open nodes.
 #
-# Branching. (1) a fractional number of routes; (2) the most fractional
-# customer succession y_ij (j directly after i among customers, the depot as
-# both ends). Forbidding a succession only removes arcs of the pricing search,
-# so no new dual is introduced. With every y_ij integral each customer has one
-# successor, so every column in the support follows a fixed customer
+# Branching. (1) a fractional number of routes; (2) a fractional customer
+# edge x_ij = y_ij + y_ji or customer succession y_ij (j directly after i
+# among customers, the depot as both ends), chosen by strong branching.
+# Forbidding successions only removes arcs of the pricing search; requiring
+# an edge adds a node-local row x_ij >= 1 whose dual is earned on both
+# successions, like a capacity cut's. With every y_ij integral each customer
+# has one successor, so every column in the support follows a fixed customer
 # sequence; columns sharing a sequence differ only in their charging stops,
 # and taking the cheapest of each is an integer solution no costlier than the
 # LP. Hence the node is solved and the rule is complete.
@@ -34,7 +36,7 @@ Base.@kwdef struct BPParameters
     cut_violation::Float64 = 0.05
     cut_tailoff::Float64 = 1e-4
     subset_row_cuts::Int = 20      # per round, after capacity cuts are exhausted (0 = off)
-    subset_row_limit::Int = 128    # in total (at most MAX_SUBSET_ROW); each cut slows exact pricing
+    subset_row_limit::Int = 256    # in total (at most MAX_SUBSET_ROW); each cut slows exact pricing
     bucket_cap::Int = 64
     max_columns::Int = 300
     heuristic_pricing::Bool = true
@@ -44,6 +46,8 @@ Base.@kwdef struct BPParameters
     relax_horizon::Bool = true   # phase 1 without windows: drop the horizon too
     bidirectional::Bool = true   # bidirectional pricing in that (untimed) mode
     forward_share::Float64 = 0.5 # payload share grown forward (the rest backward); exact for any value
+    suffix_bounds::Bool = true   # exact pricing and enumeration prune forward labels with backward-label bounds
+    enum_backward_share::Float64 = 1.0  # payload share of the backward pass bounding an enumeration
     exact_fallback::Bool = true
     rc_tol::Float64 = 1e-6
     gap_tol::Float64 = 1e-6
@@ -51,6 +55,7 @@ Base.@kwdef struct BPParameters
     capacity_unit::Float64 = 0.05
     mip_every::Int = 25
     strong_branching::Int = 8    # candidates scored by child LPs over current columns (0 = off)
+    edge_branching::Bool = false # also branch on customer edges y_ij + y_ji (see branch_children)
     dive_time::Float64 = 300.0   # diving heuristic budget at the root (0 = off)
     dive_every::Int = 200        # repeat the dive every this many nodes (0 = root only)
     mip_time::Float64 = 60.0
@@ -95,6 +100,7 @@ struct BBNode
     lo::Int
     hi::Int
     label::String
+    edges::Vector{Tuple{Int,Int}}   # customer edges the node's routes must use (rows y_ij + y_ji >= 1)
 end
 
 mutable struct BPState{W}
@@ -117,7 +123,7 @@ mutable struct BPState{W}
     master_seconds::Float64
     log::Vector{Dict{String,Any}}
     # duals and value of the exactly converged root LP, for reduced-cost arc fixing
-    root_duals::Union{Nothing,Tuple{Vector{Float64},Float64,Vector{Float64},Vector{Float64}}}
+    root_duals::Union{Nothing,Tuple}   # master_duals: (π, κ, σ, τ, μ, edges)
     root_z::Float64
     fixed_at::Float64       # incumbent value at the last fixing pass
     arcs_fixed::Int
@@ -370,7 +376,7 @@ end
 
 """One pricing round in the mode of the current phase."""
 function price_round(s::BPState{W}, restr::Restrictions{W}, π, κ, σ, τ; exact::Bool, farkas::Bool,
-                     time_limit::Float64, wide::Bool = false) where {W}
+                     time_limit::Float64, wide::Bool = false, μ::Vector{Float64} = Float64[]) where {W}
     p, mp = s.params, s.master
     cap = wide ? p.wide_bucket_cap : p.bucket_cap
     if s.timefree && s.untimed && p.bidirectional
@@ -378,14 +384,15 @@ function price_round(s::BPState{W}, restr::Restrictions{W}, π, κ, σ, τ; exac
                              max_columns = p.max_columns, rc_tol = p.rc_tol, time_limit = time_limit,
                              label_limit = p.label_limit, bucket_cap = cap,
                              cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ,
-                             sr_cuts = mp.sr_cuts, τ = τ, full_graph = wide, forward_share = p.forward_share)
+                             sr_cuts = mp.sr_cuts, τ = τ, full_graph = wide, forward_share = p.forward_share,
+                             edges = mp.edges, μ = μ, suffix_bounds = p.suffix_bounds)
     else
         price!(s.pricing, s.inst, π, κ, restr; exact = exact, timefree = s.timefree,
                untimed = s.timefree && s.untimed,
                max_columns = p.max_columns, rc_tol = p.rc_tol, time_limit = time_limit,
                label_limit = p.label_limit, bucket_cap = cap,
                cost_scale = farkas ? 0.0 : 1.0, cuts = mp.cuts, σ = σ, sr_cuts = mp.sr_cuts, τ = τ,
-               full_graph = wide)
+               full_graph = wide, edges = mp.edges, μ = μ)
     end
 end
 
@@ -415,6 +422,7 @@ function dive!(s::BPState{W}, node::BBNode, budget::Float64) where {W}
     inst, p, mp = s.inst, s.params, s.master
     deadline = min(s.start + p.time_limit, time() + budget)
     forbidden = copy(node.forbidden)
+    set_edges!(mp, node.edges)
     fixed = 0
     while time() < deadline
         restr = Restrictions{W}(inst, forbidden)
@@ -422,10 +430,10 @@ function dive!(s::BPState{W}, node::BBNode, budget::Float64) where {W}
         while time() < deadline
             solve_lp!(mp)
             artificial_mass(mp) > 1e-7 && (note!(s, "dive: infeasible after $(fixed) fixings"); return false)
-            π, κ, σ, τ = master_duals(mp)
+            π, κ, σ, τ, μ = master_duals(mp)
             # the wide level: narrow pricing misses too much at 100+ customers
             res = price_round(s, restr, π, κ, σ, τ; exact = false, farkas = false,
-                              time_limit = deadline - time(), wide = true)
+                              time_limit = deadline - time(), wide = true, μ = μ)
             added = count(r -> add_column!(mp, inst, r), res.routes)
             added == 0 && break
             s.timefree || restrict!(mp, restr.forbidden, node.lo, node.hi, true)
@@ -470,6 +478,7 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
     node.lo > node.hi && return (:infeasible, bound, Float64[], NaN)
     restr = Restrictions{W}(inst, node.forbidden)
     restrict!(mp, restr.forbidden, node.lo, node.hi, !s.timefree)
+    set_edges!(mp, node.edges)
     # pricing level: 0 narrow heuristic, 1 wide heuristic, 2 exact
     first_level = p.heuristic_pricing ? 0 : 2
     level = first_level
@@ -486,12 +495,12 @@ function solve_node!(s::BPState{W}, node::BBNode; certify::Bool = true) where {W
             continue
         end
         farkas = mp.phase_one
-        π, κ, σ, τ = master_duals(mp)
+        π, κ, σ, τ, μ = master_duals(mp)
         exact = level == 2
         limit = p.time_limit - elapsed(s)
         exact && (limit = min(limit, farkas ? p.farkas_time : p.exact_round_time))
         res = price_round(s, restr, π, κ, σ, τ; exact = exact, farkas = farkas, time_limit = limit,
-                          wide = level == 1)
+                          wide = level == 1, μ = μ)
         s.pricing_seconds += res.seconds
         s.rounds += 1
         if res.exact && !farkas
@@ -566,12 +575,12 @@ function fix_arcs!(s::BPState)
     isfinite(upper) && upper < s.fixed_at - 1e-9 || return 0
     s.fixed_at = upper
     inst, ws, bs, mp = s.inst, s.pricing, s.backward, s.master
-    π, κ, σ, _ = s.root_duals
+    π, κ, σ, _, μ, edges = s.root_duals
     n, N, depot, R = inst.n, inst.N, inst.depot, ws.R
     gap = upper - s.root_z + tolerance(s, upper)
     earn = copy(π)
-    if any(>(1e-12), σ)
-        succession_duals!(ws.rho, mp.cuts, σ, n)
+    if any(>(1e-12), σ) || any(>(1e-12), μ)
+        succession_duals!(ws.rho, mp.cuts, σ, n, edges, μ)
         for w in 1:n
             earn[w] = π[w] + maximum(view(ws.rho, :, w))
         end
@@ -636,13 +645,24 @@ function close_by_enumeration!(s::BPState{W}, node::BBNode, lp::Float64, duals) 
     threshold <= p.enum_gap * max(1.0, abs(cutoff)) || return :open
     # an attempt at a similar threshold already ran out of time or routes
     threshold < 0.5 * s.enum_failed || return :open
-    π, κ, σ, τ = duals
+    π, κ, σ, τ, μ, edges = duals
     restr = Restrictions{W}(inst, node.forbidden)
     t = time()
-    res = enumerate_routes!(s.pricing, inst, π, κ, restr; threshold = threshold + tolerance(s, cutoff),
-                            timefree = s.timefree, untimed = s.timefree && s.untimed, cuts = mp.cuts, σ = σ,
-                            sr_cuts = mp.sr_cuts, τ = τ, time_limit = min(p.enum_time, p.time_limit - elapsed(s)),
-                            label_limit = p.enum_label_limit, route_cap = p.enum_route_cap)
+    # The MIP below leaves out the node's edge rows: a relaxation, so a node
+    # with no solution under the cutoff is closed all the same, and any
+    # solution it finds is feasible for the problem (it then is the cutoff).
+    limit = min(p.enum_time, p.time_limit - elapsed(s))
+    res = if s.timefree && s.untimed && p.suffix_bounds
+        enumerate_routes_bounded!(s.pricing, s.backward, inst, π, κ, restr; threshold = threshold + tolerance(s, cutoff),
+                                  cuts = mp.cuts, σ = σ, sr_cuts = mp.sr_cuts, τ = τ, time_limit = limit,
+                                  label_limit = p.enum_label_limit, route_cap = p.enum_route_cap, edges = edges, μ = μ,
+                                  share = p.enum_backward_share)
+    else
+        enumerate_routes!(s.pricing, inst, π, κ, restr; threshold = threshold + tolerance(s, cutoff),
+                          timefree = s.timefree, untimed = s.timefree && s.untimed, cuts = mp.cuts, σ = σ,
+                          sr_cuts = mp.sr_cuts, τ = τ, time_limit = limit,
+                          label_limit = p.enum_label_limit, route_cap = p.enum_route_cap, edges = edges, μ = μ)
+    end
     if !res.exact
         s.enum_failed = min(s.enum_failed, threshold)
         note!(s, @sprintf("enumeration at node %d (threshold %.4f) gave up after %.0fs, %d labels",
@@ -741,43 +761,79 @@ function mip_heuristic!(s::BPState; seconds::Float64 = s.params.mip_time)
     improve!(s, chosen, "restricted-master MIP")
 end
 
+"""
+Children of a node whose LP `z` is fractional. Candidates, most fractional
+first: the route count; customer edges x_ij = y_ij + y_ji (travel times are
+nearly symmetric, so forbidding one orientation alone often only reverses a
+route; the 0-branch forbids both orientations, the 1-branch adds the row
+x_ij >= 1); customer successions y_ij, which keep the rule complete when
+every edge is integral but an orientation is not. Strong branching scores
+the leading candidates by child LPs over the current columns.
+"""
 function branch_children(s::BPState{W}, node::BBNode, z::Vector{Float64}, next_id::Ref{Int}) where {W}
-    inst, mp = s.inst, s.master
+    inst, mp, n = s.inst, s.master, s.inst.n
     routes = sum(z)
-    child(bound, forbidden, lo, hi, lab) = BBNode((next_id[] += 1), node.depth + 1, bound, forbidden, lo, hi, lab)
+    child(bound, forbidden, lo, hi, lab, edges = node.edges) =
+        BBNode((next_id[] += 1), node.depth + 1, bound, forbidden, lo, hi, lab, edges)
     if abs(routes - round(routes)) > 1e-6
         f, c = floor(Int, routes), ceil(Int, routes)
         return [child(node.bound, node.forbidden, node.lo, min(node.hi, f), "routes<=$(f)"),
                 child(node.bound, node.forbidden, max(node.lo, c), node.hi, "routes>=$(c)")]
     end
     y = succession_flows(mp, z)
-    fractional = [(min(v - floor(v), ceil(v) - v), pair) for (pair, v) in y]
-    filter!(f -> f[1] > 1e-6, fractional)
-    isempty(fractional) && return BBNode[]
-    sort!(fractional; by = f -> (-f[1], f[2]))
-    branches(pair) = (force_succession!(copy(node.forbidden), inst, pair...), vcat(node.forbidden, [pair]))
-    pick = fractional[1][2]
-    k = min(s.params.strong_branching, length(fractional))
+    frac(v) = min(v - floor(v), ceil(v) - v)
+    candidates = Tuple{Float64,Bool,Tuple{Int,Int}}[]    # (fractionality, is edge, pair)
+    if s.params.edge_branching
+        x = Dict{Tuple{Int,Int},Float64}()
+        for ((a, b), v) in y
+            (a <= n && b <= n) || continue
+            x[minmax(a, b)] = get(x, minmax(a, b), 0.0) + v
+        end
+        for (e, v) in x
+            frac(v) > 1e-6 && push!(candidates, (frac(v), true, e))
+        end
+    end
+    for (pair, v) in y
+        frac(v) > 1e-6 && push!(candidates, (frac(v), false, pair))
+    end
+    isempty(candidates) && return BBNode[]
+    sort!(candidates; by = c -> (-c[1], !c[2], c[3]))
+    # (forbidden, edges) of the 1-branch and the 0-branch
+    function branches((_, edge, (i, j)))
+        edge && return ((node.forbidden, vcat(node.edges, [(i, j)])),
+                        (vcat(node.forbidden, [(i, j), (j, i)]), node.edges))
+        ((force_succession!(copy(node.forbidden), inst, i, j), node.edges),
+         (vcat(node.forbidden, [(i, j)]), node.edges))
+    end
+    pick = candidates[1]
+    k = min(s.params.strong_branching, length(candidates))
     if k > 1 && !timed_out(s)
         # Child LPs over the current columns: not bounds (pricing could still
         # lower them), only a ranking of how much each candidate moves the LP.
+        # A child LP at or above the cutoff counts as the gap (it may need an
+        # artificial for want of columns, at big-M cost).
         parent = sum(mp.routes[q].travel * z[q] for q in eachindex(z))
+        cutoff = prune_value(s)
+        cap = isfinite(cutoff) ? max(cutoff - parent, 1e-6) : Inf
         best = -Inf
-        for (_, pair) in fractional[1:k]
-            gains = map(branches(pair)) do forbidden
+        for c in candidates[1:k]
+            gains = map(branches(c)) do (forbidden, edges)
+                set_edges!(mp, edges)
                 restrict!(mp, Restrictions{W}(inst, forbidden).forbidden, node.lo, node.hi, !s.timefree)
-                max(solve_lp!(mp) - parent, 1e-6)
+                clamp(solve_lp!(mp) - parent, 1e-6, cap)
             end
             score = gains[1] * gains[2]
-            score > best && ((best, pick) = (score, pair))
+            score > best && ((best, pick) = (score, c))
         end
+        set_edges!(mp, node.edges)
     end
-    i, j = pick
-    one_branch, zero_branch = branches(pick)
+    (one_forbidden, one_edges), (zero_forbidden, zero_edges) = branches(pick)
+    _, edge, (i, j) = pick
     d = inst.depot
     name(a) = a == d ? "D" : string(a)
-    [child(node.bound, one_branch, node.lo, node.hi, "$(name(i))->$(name(j))=1"),
-     child(node.bound, zero_branch, node.lo, node.hi, "$(name(i))->$(name(j))=0")]
+    arrow = edge ? "-" : "->"
+    [child(node.bound, one_forbidden, node.lo, node.hi, "$(name(i))$(arrow)$(name(j))=1", one_edges),
+     child(node.bound, zero_forbidden, node.lo, node.hi, "$(name(i))$(arrow)$(name(j))=0", zero_edges)]
 end
 
 """
@@ -789,7 +845,8 @@ rounds resume.
 """
 function strengthen_root!(s::BPState, node::BBNode, result, nbound, z, lpvalue)
     inst, p, mp = s.inst, s.params, s.master
-    resolve(certify) = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root"); certify = certify)
+    resolve(certify) = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root", node.edges);
+                                   certify = certify)
     adapted = 0
     # Stages: :fast rounds use LPs converged under heuristic pricing and add
     # capacity cuts only; :capacity rounds certify every LP; :subset_row rounds
@@ -895,7 +952,8 @@ function write_split(s::BPState, nodes::Vector{BBNode})
         JSON3.write(io, Dict("schema" => "evrp-bp-split/v1", "phase" => s.timefree ? 1 : 2,
             "incumbent_hours" => isfinite(s.upper) ? s.upper : nothing, "instance_meta" => s.inst.meta,
             "nodes" => [Dict("bound" => n.bound, "depth" => n.depth, "lo" => n.lo, "hi" => n.hi, "label" => n.label,
-                             "forbidden" => [[a, b] for (a, b) in n.forbidden]) for n in nodes],
+                             "forbidden" => [[a, b] for (a, b) in n.forbidden],
+                             "edges" => [[a, b] for (a, b) in n.edges]) for n in nodes],
             "pool" => pool))
     end
     mv(tmp, path; force = true)
@@ -910,8 +968,9 @@ function load_subtree(inst::Instance, p::BPParameters)
     end
     spec = data[:nodes][p.subtree_index+1]
     forbidden = Tuple{Int,Int}[(Int(x[1]), Int(x[2])) for x in spec[:forbidden]]
+    edges = Tuple{Int,Int}[(Int(x[1]), Int(x[2])) for x in get(spec, :edges, [])]
     node = BBNode(1, 0, Float64(spec[:bound]), forbidden, Int(spec[:lo]), Int(spec[:hi]),
-                  "subtree $(p.subtree_index) ($(spec[:label]))")
+                  "subtree $(p.subtree_index) ($(spec[:label]))", edges)
     (node, Int(data[:phase]), get(data, :pool, nothing))
 end
 
@@ -947,20 +1006,22 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
     next_id = Ref(1)
     # Every route carries at most `payload`, so at least this many are needed.
     least = ceil(Int, sum(inst.demand) / (inst.payload + EPS) - 1e-12)
-    root = top === nothing ? BBNode(1, 0, floor_bound, Tuple{Int,Int}[], least, inst.fleet, "root") :
+    root = top === nothing ? BBNode(1, 0, floor_bound, Tuple{Int,Int}[], least, inst.fleet, "root", Tuple{Int,Int}[]) :
         BBNode(1, 0, max(floor_bound, top.bound), copy(top.forbidden), max(least, top.lo), min(inst.fleet, top.hi),
-               top.label)
+               top.label, copy(top.edges))
     store[1] = root
     push!(open_nodes, (root.bound, 0, 1))
     explored = 0
     pending = Inf
     closed = true
     root_lp, root_bound = NaN, -Inf
+    stuck = BBNode[]     # undecided nodes with nothing to branch on (still open)
     # Split run: hand the open nodes to subtree runs once there are enough
     # (or, forced, whatever is open when time runs out).
     function split_here!(force::Bool)
         cutoff = prune_value(s)
         live = [store[k] for (b, _, k) in open_nodes.valtree if b < cutoff - tolerance(s, cutoff)]
+        append!(live, [n for n in stuck if n.bound < cutoff - tolerance(s, cutoff)])
         (force ? !isempty(live) : length(live) >= p.split_nodes) || return false
         write_split(s, live)
         note!(s, @sprintf("split: %d open nodes written to %s (least bound %.6f)", length(live),
@@ -968,7 +1029,7 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
         true
     end
     function reopen!(n::BBNode, b::Float64)
-        store[n.id] = BBNode(n.id, n.depth, b, n.forbidden, n.lo, n.hi, n.label)
+        store[n.id] = BBNode(n.id, n.depth, b, n.forbidden, n.lo, n.hi, n.label, n.edges)
         push!(open_nodes, (b, -n.depth, n.id))
     end
     while !isempty(open_nodes)
@@ -1011,7 +1072,7 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
             end
         end
         if certified && result == :solved
-            here0 = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label)
+            here0 = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label, node.edges)
             close_by_enumeration!(s, here0, lpvalue, master_duals(mp)) == :closed && continue
         end
         if id == 1
@@ -1027,8 +1088,8 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
                 # The dive left the master restricted; re-solve the root as it was.
                 # Its bound is already certified and the dive only added
                 # columns, so heuristic convergence suffices to branch on.
-                result, nbound, z, lpvalue = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root");
-                                                         certify = false)
+                result, nbound, z, lpvalue = solve_node!(s, BBNode(1, 0, nbound, node.forbidden, node.lo, node.hi, "root",
+                                                                   node.edges); certify = false)
             end
             root_lp = lpvalue
             note!(s, @sprintf("%s root: lp %.6f bound %.6f, %d columns",
@@ -1058,12 +1119,14 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
             # (typically Farkas pricing of an infeasible node). Branch on the LP
             # at hand: the children keep the node's bound, and their smaller
             # graphs are easier to price. With nothing to branch on, the node
-            # stays open and its bound counts in the final one.
-            here = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label)
+            # stays open and its bound counts in the final one (and a split
+            # hands it on).
+            here = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label, node.edges)
             children = isempty(z) ? BBNode[] : branch_children(s, here, z, next_id)
             if isempty(children)
                 pending = min(pending, nbound)
                 closed = false
+                push!(stuck, here)
                 note!(s, @sprintf("node %d left open at bound %.6f: undecided, nothing to branch on", node.id, nbound))
             end
             for c in children
@@ -1076,7 +1139,7 @@ function search!(s::BPState, floor_bound::Float64, top::Union{Nothing,BBNode} = 
             integer_solution!(s, [k for k in eachindex(z) if z[k] > 0.5], "integral LP at node $(id)")
             continue
         end
-        here = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label)
+        here = BBNode(node.id, node.depth, nbound, node.forbidden, node.lo, node.hi, node.label, node.edges)
         children = branch_children(s, here, z, next_id)
         if isempty(children)
             integer_solution!(s, cheapest_per_sequence(mp, z), "integral successions at node $(id)")

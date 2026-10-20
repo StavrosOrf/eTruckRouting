@@ -1,8 +1,16 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-19T23:31:11.752163+02:00 (Europe/Berlin). Earlier observations below are historical.
+Updated 2026-10-20T10:09:50.745606+02:00 (Europe/Berlin). Earlier observations below are historical.
 
 The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
+## Latest completed action-edge comparison
+
+Three fine-tuning seeds conditional on the same fixed parent, 128 reused development cases; costs condition on success. Standard end-to-end control: 99.21875% completion, 131.36 hours, 18.04% paired BKS excess. Routing gates: 98.95833%, 129.37 hours, 16.92% excess. Gates with critic-encoder detachment: 100%, 161.92 hours, 46.75% excess. Only standard control and routing gates were promoted to 4M. The 5% cost target remains unmet; final validation and test remain unopened.
+
+Physical-node relabeling on 128 fixed train-only states changed 22.40–25.78% of frozen PPO greedy choices across three permutations while preserving physical features, masks and action semantics. This implementation is not strictly node-label invariant. This is a representation diagnostic, not evidence that ID sensitivity causes the California cost gap.
+
+The prior owned-MIG packing step ended with the warm parent. Its first recovery model completed 1M; its second failed before creating a resumable checkpoint. No steady two-recovery-model packing throughput result is claimed. The one unfinished recovery actor is now queued independently. Initial completed single-model MIG BC20+1M runs took 93–112 minutes, including startup and BC; queue wait and separate evaluation are excluded.
+
 
 ## Current training
 
@@ -10,15 +18,15 @@ The goal remains **active and unmet**: at least 99% successful depot-return comp
 | --- | --- | --- | --- |
 | Capacity / graph messages | 28279539 | 0 / 0 | screened out; partial checkpoints retained |
 | Imitation + progress | 28279541 | 0 / 0 | screened out; partial checkpoints retained |
-| Undiscounted / cost emphasis | 28348611 | 0 / 4 | 12M; five seeds per recipe |
+| Undiscounted / cost emphasis | 28360730 | 0 / 2 | 12M; five seeds per recipe |
 | Progress features | 28279546 | 0 / 0 | completed 12M; five seeds per recipe |
 | Original finalists | 28279550 | 0 / 0 | completed 12M; five seeds per recipe |
-| Larger expert dataset | 28320619 + 28344289 | 5 / 1 | 4M; gated 12M |
-| Matched recovery data (gated) | 28320624 + 28344292 + 28348662 | 5 / 3 | 1M; gated 12M |
-| Routing action edges / critic gradients (gated) | 28320681 + 28344295 | 5 / 4 | 1M; gated 12M |
+| Larger expert dataset | 28360521 | 0 / 1 | 4M; gated 12M |
+| Matched recovery data (gated) | 28360534 | 0 / 1 | 1M; gated 12M |
+| Routing action edges / critic gradients (gated) | 28360721 | 0 / 2 | 4M; gated 12M |
 | Packing profiles (two / three runs per A100) | 28305475 / 28305476 | 0 / 0 | cancelled at zero runtime; no measurement |
 
-Training queue entries: **27**, including **15 running** and **12 pending tasks**. Array throttles currently bound simultaneous training allocations to **27**, within the global limit of 30. The original and progress cohorts have completed all five seeds. New warm, recovery and action-edge arrays run one model per GPU allocation, with nine CPUs and seven rollout workers per model; current warm/recovery/action-edge stages may use six/eight/nine allocations after unused reservations were released; future stages retain the five-allocation default. Four objective models continue on single-model MIG allocations. A queued recovery pilot packs two registered models per MIG with staggered BC; runtime efficiency remains unmeasured. The unexecuted A100 packing profiles were cancelled at zero runtime. The current-stage bound is 27 allocations, and future stage defaults preserve the global cap of 30. Coordinators and CPU evaluation jobs are excluded from training counts.
+Training queue entries: **6**, including **0 running** and **6 pending tasks**. Array throttles currently bound simultaneous training allocations to **6**, within the global limit of 30. Only MIG and A100 are permitted for new campaign submissions; H100 and cbuild are excluded. Warm and recovery continuations use MIG. Action-edge models pack three per A100 allocation; objective models pack two. Every model keeps nine CPUs and seven rollout workers. Node-local scratch quota failures were repaired by moving runtime caches to shared workspace storage. Completed models are skipped and full states resume. Coordinators and evaluation jobs are excluded from training counts.
 
 Campaign coordination and evaluation use **gpu_mig** or **gpu_h100** (one GPU, up to nine CPUs and 60 GiB). Existing new-family arrays use **gpu_mig**; supplemental arrays for nine previously unstarted tasks use **gpu_h100**, and unfinished objective models continue on **gpu_mig** after clean A100 checkpoint exits. No active campaign job uses cbuild. Eight zero-runtime auxiliary jobs were migrated with dependencies preserved; scientific source and completed evaluation inputs are intact.
 
@@ -126,30 +134,27 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 
 | Run | Phase | BC epochs completed | PPO decisions logged |
 | --- | --- | --- | --- |
-| large_warm_cost40_s0 | PPO | 0 | 2,140,160 |
-| large_warm_mc_cost40_s0 | PPO | 0 | 2,170,880 |
-| large_warm_cost40_s1 | PPO | 0 | 2,140,160 |
-| large_warm_mc_cost40_s1 | PPO | 0 | 2,150,400 |
-| large_warm_cost40_s2 | PPO | 0 | 2,140,160 |
-| large_warm_mc_cost40_s2 | not started | 0 | 0 |
-| recovery_nominal_s0 | PPO | 20 | 921,600 |
-| recovery_teacher80_s0 | PPO | 20 | 890,880 |
-| recovery_teacher50_s0 | PPO | 20 | 829,440 |
-| recovery_nominal_s1 | PPO | 20 | 942,080 |
-| recovery_teacher80_s1 | PPO | 20 | 921,600 |
-| recovery_teacher50_s1 | not started | 0 | 0 |
-| recovery_nominal_s2 | not started | 0 | 0 |
-| recovery_teacher80_s2 | not started | 0 | 0 |
-| recovery_teacher50_s2 | not started | 0 | 0 |
-| edge_control_cost40_s0 | PPO | 20 | 921,600 |
-| edge_route_cost40_s0 | PPO | 20 | 757,760 |
-| edge_route_criticstop_s0 | PPO | 20 | 788,480 |
-| edge_control_cost40_s1 | PPO | 20 | 829,440 |
-| edge_route_cost40_s1 | PPO | 20 | 716,800 |
-| edge_route_criticstop_s1 | not started | 0 | 0 |
-| edge_control_cost40_s2 | not started | 0 | 0 |
-| edge_route_cost40_s2 | not started | 0 | 0 |
-| edge_route_criticstop_s2 | not started | 0 | 0 |
+| large_warm_cost40_s0 | completed milestone | 0 | 3,993,600 |
+| large_warm_mc_cost40_s0 | completed milestone | 0 | 3,993,600 |
+| large_warm_cost40_s1 | completed milestone | 0 | 3,993,600 |
+| large_warm_mc_cost40_s1 | completed milestone | 0 | 3,993,600 |
+| large_warm_cost40_s2 | completed milestone | 0 | 3,993,600 |
+| large_warm_mc_cost40_s2 | queued | 0 | 0 |
+| recovery_nominal_s0 | completed milestone | 20 | 993,280 |
+| recovery_teacher80_s0 | completed milestone | 20 | 993,280 |
+| recovery_teacher50_s0 | completed milestone | 20 | 993,280 |
+| recovery_nominal_s1 | completed milestone | 20 | 993,280 |
+| recovery_teacher80_s1 | completed milestone | 20 | 993,280 |
+| recovery_teacher50_s1 | completed milestone | 20 | 993,280 |
+| recovery_nominal_s2 | completed milestone | 20 | 993,280 |
+| recovery_teacher80_s2 | completed milestone | 20 | 993,280 |
+| recovery_teacher50_s2 | queued | 0 | 0 |
+| edge_control_cost40_s0 | queued | 0 | 0 |
+| edge_route_cost40_s0 | queued | 0 | 0 |
+| edge_control_cost40_s1 | queued | 0 | 0 |
+| edge_route_cost40_s1 | queued | 0 | 0 |
+| edge_control_cost40_s2 | queued | 0 | 0 |
+| edge_route_cost40_s2 | queued | 0 | 0 |
 
 ## Frozen-policy decoding study
 

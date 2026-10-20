@@ -372,6 +372,8 @@ function price!(
     cost_scale::Float64 = 1.0, cuts::Vector{CapacityCut} = CapacityCut[], σ::Vector{Float64} = Float64[],
     sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
     threshold::Float64 = -Inf, route_cap::Int = typemax(Int),
+    edges::Vector{Tuple{Int,Int}} = Tuple{Int,Int}[], μ::Vector{Float64} = Float64[],
+    keep_bound::Bool = false,   # ws.bound already holds (stronger) completion bounds for these duals
 ) where {W}
     # threshold > -Inf: enumeration mode, collect every route with reduced cost <= threshold
     listing = threshold > -Inf
@@ -386,9 +388,9 @@ function price!(
     @inbounds for i in 1:N, j in 1:N
         ws.cmod[i, j] = cost_scale * inst.hours[i, j] - (j <= n ? π[j] : 0.0)
     end
-    ws.has_cuts = any(>(1e-12), σ)
+    ws.has_cuts = any(>(1e-12), σ) || any(>(1e-12), μ)
     if ws.has_cuts
-        succession_duals!(ws.rho, cuts, σ, n)
+        succession_duals!(ws.rho, cuts, σ, n, edges, μ)
         cut_slack!(ws.slack, ws.rho, n)
         for w in 1:n
             ws.earn[w] = π[w] + maximum(view(ws.rho, :, w))
@@ -396,7 +398,7 @@ function price!(
     else
         ws.earn .= π
     end
-    completion_bound!(ws, inst, ws.earn, cost_scale)
+    keep_bound || completion_bound!(ws, inst, ws.earn, cost_scale)
     set_subset_rows!(ws, sr_cuts, τ, n)
     cap = exact ? typemax(Int) : bucket_cap
     untimed && (timefree || error("untimed pricing requires the time-free relaxation"))
@@ -534,7 +536,9 @@ bound against the threshold.
 """
 function enumerate_routes!(ws::PricingWorkspace{W}, inst::Instance, π, κ, restr::Restrictions{W};
                            threshold::Float64, timefree::Bool, untimed::Bool, cuts, σ, sr_cuts, τ,
-                           time_limit::Float64, label_limit::Int, route_cap::Int) where {W}
+                           time_limit::Float64, label_limit::Int, route_cap::Int,
+                           edges::Vector{Tuple{Int,Int}} = Tuple{Int,Int}[], μ::Vector{Float64} = Float64[],
+                           keep_bound::Bool = false) where {W}
     saved = ws.ng
     everyone = nodeset(Val(W), 1:inst.n)
     ws.ng = fill(everyone, inst.n)
@@ -542,7 +546,8 @@ function enumerate_routes!(ws::PricingWorkspace{W}, inst::Instance, π, κ, rest
     try
         price!(ws, inst, π, κ, restr; exact = true, timefree = timefree, untimed = untimed,
                cuts = cuts, σ = σ, sr_cuts = sr_cuts, τ = τ, threshold = threshold,
-               route_cap = route_cap, time_limit = time_limit, label_limit = label_limit)
+               route_cap = route_cap, time_limit = time_limit, label_limit = label_limit, edges = edges, μ = μ,
+               keep_bound = keep_bound)
     finally
         ws.ng = saved
         ws.enumerating = false

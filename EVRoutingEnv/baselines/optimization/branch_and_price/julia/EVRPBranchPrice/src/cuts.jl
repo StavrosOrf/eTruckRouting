@@ -37,6 +37,21 @@ function succession_duals!(rho::Matrix{Float64}, cuts::Vector{CapacityCut}, σ::
 end
 
 """
+rho as above plus the duals mu of edge-branching rows y_ij + y_ji >= 1,
+earned on both successions i -> j and j -> i (both customers).
+"""
+function succession_duals!(rho::Matrix{Float64}, cuts::Vector{CapacityCut}, σ::Vector{Float64}, n::Int,
+                           edges::Vector{Tuple{Int,Int}}, μ::Vector{Float64})
+    succession_duals!(rho, cuts, σ, n)
+    for ((i, j), m) in zip(edges, μ)
+        m > 1e-12 || continue
+        rho[i, j] += m
+        rho[j, i] += m
+    end
+    rho
+end
+
+"""
 slack[a, b] = min(0, min_w rho[a, w] - rho[b, w]): a label whose last
 customer is `a` dominates one with last customer `b` only if its cost is lower
 by at least -slack[a, b] (w ranges over customers; the depot earns nothing).

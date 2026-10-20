@@ -46,12 +46,14 @@ mutable struct BackwardSpace{W}
     heap::BinaryMinHeap{Tuple{Float64,Int}}
     prefix::Matrix{Float64}   # least prefix cost depot -> v within r capacity units
     slack::Matrix{Float64}    # dominance correction between first customers
+    bmin::Matrix{Float64}     # least backward label cost at v by load after v (units, cumulative)
+    suffix::Matrix{Float64}   # completion bound from the backward labels (see suffix_bound!)
 end
 
 BackwardSpace{W}(inst::Instance, R::Int) where {W} = BackwardSpace{W}(
     BLabel{W}[], [Int[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N], [Float64[] for _ in 1:inst.N],
     [NodeSet{W}[] for _ in 1:inst.N], BinaryMinHeap{Tuple{Float64,Int}}(),
-    zeros(inst.N, R + 1), zeros(inst.n + 1, inst.n + 1),
+    zeros(inst.N, R + 1), zeros(inst.n + 1, inst.n + 1), zeros(inst.N, R + 1), zeros(inst.N, R + 1),
 )
 
 # Mirror of `completion_bound!`: least reduced cost of a path from the depot
@@ -86,6 +88,64 @@ function prefix_bound!(bs::BackwardSpace, ws::PricingWorkspace, inst::Instance, 
             end
             h[v, r+1] = best
         end
+    end
+end
+
+"""
+Completion bound for forward labels from the backward labels of the same
+exact pricing call, which hold every suffix (up to dominance) whose part after
+its first node carries at most `hb` and that could still close a route with
+reduced cost <= `threshold`. `bs.suffix[v, r+1]` bounds the reduced cost
+(less kappa) of any completion of a forward label at v with r capacity units
+left:
+* if r units fit in hb, the part after v is one of the backward labels at v,
+  less the subset-row refund a join at v can earn (the penalties of the cuts
+  holding v; see the join in `price_bidirectional!`);
+* otherwise also a step to any next customer j over charger detours followed
+  by the bound at j, or straight to the depot, as in the q-route bound.
+What the pieces leave out (ng and battery compatibility, the penalties of the
+middle part, branching restrictions there) only lowers it. Valid for routes
+with reduced cost <= `threshold` only: a backward label that could not reach
+it was never generated.
+"""
+function suffix_bound!(ws::PricingWorkspace, bs::BackwardSpace, inst::Instance, hb::Float64, scale::Float64)
+    n, N, depot, R, unit = inst.n, inst.N, inst.depot, ws.R, ws.unit
+    B, T, cp, du, earn = bs.bmin, bs.suffix, ws.cpath, ws.dunits, ws.earn
+    fill!(B, Inf)
+    @inbounds for b in bs.pool
+        b.alive || continue
+        u = b.node
+        u == depot && continue
+        after = b.load - (u <= n ? inst.demand[u] : 0.0)
+        a = clamp(floor(Int, after / unit - 1e-9), 0, R)
+        b.cost < B[u, a+1] && (B[u, a+1] = b.cost)
+    end
+    @inbounds for v in 1:N, r in 1:R
+        B[v, r+1] = min(B[v, r+1], B[v, r])
+    end
+    @inbounds for r in 0:R
+        fits = (r + 1) * unit <= hb + 1e-9
+        for v in 1:N
+            v == depot && (T[v, r+1] = -Inf; continue)
+            credit = v <= n && ws.has_sr ? srpen(ws.sr_pen, ws.sr_mask[v]) : 0.0
+            best = B[v, r+1] - credit
+            if !fits
+                cp[v, depot] < Inf && (best = min(best, scale * cp[v, depot]))
+                for j in 1:n
+                    d = du[j]
+                    d <= r || continue
+                    c = cp[v, j]
+                    c < Inf || continue
+                    val = scale * c - earn[j] + T[j, r-d+1]
+                    val < best && (best = val)
+                end
+            end
+            T[v, r+1] = best
+        end
+    end
+    # both bounds are valid, so is the larger
+    @inbounds for v in 1:N, r in 0:R
+        T[v, r+1] > ws.bound[v, r+1] && (ws.bound[v, r+1] = T[v, r+1])
     end
 end
 
@@ -186,7 +246,7 @@ end
 """Backward labels from the depot up to load `half`. Returns whether it completed."""
 function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Instance, restr::Restrictions{W},
                         κ::Float64, cap::Int, topb::Float64, half::Float64, deadline::Float64,
-                        label_limit::Int) where {W}
+                        label_limit::Int; threshold::Float64 = -Inf) where {W}
     n, N, depot = inst.n, inst.N, inst.depot
     empty!(bs.pool)
     foreach(empty!, bs.buckets)
@@ -234,7 +294,8 @@ function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Ins
             end
             # the prefix arriving at v (v included) carries at most payload - (suffix after v)
             after = load - (customer ? inst.demand[v] : 0.0)
-            cost + bs.prefix[v, capacity_units(ws, inst, after)+1] - κ >= 0.0 && continue
+            completion = cost + bs.prefix[v, capacity_units(ws, inst, after)+1] - κ
+            (threshold > -Inf ? completion > threshold : completion >= 0.0) && continue
             ng = customer ? with(u_lab.ng & ws.ng[v], v) : u_lab.ng
             insert_backward!(bs, inst, restr, ws,
                              BLabel{W}(v, ui, cost, load, need, ng, customer ? v : u_lab.first, sr, true), cap)
@@ -243,33 +304,18 @@ function backward_pass!(bs::BackwardSpace{W}, ws::PricingWorkspace{W}, inst::Ins
     true
 end
 
-"""
-Bidirectional exact (or capped heuristic) pricing of the time-free untimed
-relaxation. Same contract as `price!`.
-"""
-function price_bidirectional!(
-    ws::PricingWorkspace{W}, bs::BackwardSpace{W}, inst::Instance, π::Vector{Float64}, κ::Float64,
-    restr::Restrictions{W}; exact::Bool, max_columns::Int, rc_tol::Float64, time_limit::Float64,
-    label_limit::Int, bucket_cap::Int, cost_scale::Float64, cuts::Vector{CapacityCut}, σ::Vector{Float64},
-    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
-    forward_share::Float64 = 0.5,
-) where {W}
-    t0 = time()
-    n, N, depot = inst.n, inst.N, inst.depot
-    # Forward labels are extended up to `hf`, backward ones up to `hb`. A join
-    # needs every suffix after the first customer beyond `hf` to have been
-    # grown backward, which hf + hb >= payload guarantees (the slack covers the
-    # load tolerance). The backward pass is the slower one per unit of load.
-    hf = forward_share * inst.payload
-    hb = inst.payload - hf + 1e-7
-    top = maximum(inst.levels)
-    topb = top * inst.battery
+"""Reduced arc costs, cut earnings, dominance slacks, q-route bounds and subset-row state of both directions."""
+function bidirectional_duals!(ws::PricingWorkspace, bs::BackwardSpace, inst::Instance, π::Vector{Float64},
+                              cost_scale::Float64, cuts::Vector{CapacityCut}, σ::Vector{Float64},
+                              sr_cuts::Vector{SubsetRowCut}, τ::Vector{Float64}, edges::Vector{Tuple{Int,Int}},
+                              μ::Vector{Float64})
+    n, N = inst.n, inst.N
     @inbounds for i in 1:N, j in 1:N
         ws.cmod[i, j] = cost_scale * inst.hours[i, j] - (j <= n ? π[j] : 0.0)
     end
-    ws.has_cuts = any(>(1e-12), σ)
+    ws.has_cuts = any(>(1e-12), σ) || any(>(1e-12), μ)
     if ws.has_cuts
-        succession_duals!(ws.rho, cuts, σ, n)
+        succession_duals!(ws.rho, cuts, σ, n, edges, μ)
         cut_slack!(ws.slack, ws.rho, n)
         for w in 1:n
             ws.earn[w] = π[w] + maximum(view(ws.rho, :, w))
@@ -293,17 +339,53 @@ function price_bidirectional!(
     completion_bound!(ws, inst, ws.earn, cost_scale)
     prefix_bound!(bs, ws, inst, ws.earn, cost_scale)
     set_subset_rows!(ws, sr_cuts, τ, n)
+end
+
+"""
+Bidirectional exact (or capped heuristic) pricing of the time-free untimed
+relaxation. Same contract as `price!`.
+"""
+function price_bidirectional!(
+    ws::PricingWorkspace{W}, bs::BackwardSpace{W}, inst::Instance, π::Vector{Float64}, κ::Float64,
+    restr::Restrictions{W}; exact::Bool, max_columns::Int, rc_tol::Float64, time_limit::Float64,
+    label_limit::Int, bucket_cap::Int, cost_scale::Float64, cuts::Vector{CapacityCut}, σ::Vector{Float64},
+    sr_cuts::Vector{SubsetRowCut} = SubsetRowCut[], τ::Vector{Float64} = Float64[], full_graph::Bool = false,
+    forward_share::Float64 = 0.5,
+    edges::Vector{Tuple{Int,Int}} = Tuple{Int,Int}[], μ::Vector{Float64} = Float64[],
+    suffix_bounds::Bool = true,
+) where {W}
+    t0 = time()
+    n, N, depot = inst.n, inst.N, inst.depot
+    # Forward labels are extended up to `hf`, backward ones up to `hb`. A join
+    # needs every suffix after the first customer beyond `hf` to have been
+    # grown backward, which hf + hb >= payload guarantees (the slack covers the
+    # load tolerance). The backward pass is the slower one per unit of load.
+    hf = forward_share * inst.payload
+    hb = inst.payload - hf + 1e-7
+    top = maximum(inst.levels)
+    topb = top * inst.battery
+    bidirectional_duals!(ws, bs, inst, π, cost_scale, cuts, σ, sr_cuts, τ, edges, μ)
     cap = exact ? typemax(Int) : bucket_cap
     nbrs = (exact || full_graph) ? inst.out : ws.near
     deadline = t0 + time_limit
-    # The two halves share only read-only pricing data, so with more than one
-    # Julia thread the backward pass runs alongside the forward one.
-    task = Threads.nthreads() > 1 ?
-        Threads.@spawn(backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : nothing
-    fcomplete, found, min_rc = forward_pass!(ws, inst, restr, nbrs, κ, rc_tol, cap, [top], top, topb, hf,
-                                             deadline, label_limit)
-    bcomplete = task === nothing ?
-        (fcomplete && backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : fetch(task)
+    if exact && suffix_bounds
+        # Backward first: its labels bound every forward completion far more
+        # tightly than the q-routes (see suffix_bound!).
+        bcomplete = backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)
+        bcomplete && suffix_bound!(ws, bs, inst, hb, cost_scale)
+        fcomplete, found, min_rc = bcomplete ?
+            forward_pass!(ws, inst, restr, nbrs, κ, rc_tol, cap, [top], top, topb, hf, deadline, label_limit) :
+            (false, Tuple{Float64,Int,Int,Float64}[], Inf)
+    else
+        # The two halves share only read-only pricing data, so with more than
+        # one Julia thread the backward pass runs alongside the forward one.
+        task = Threads.nthreads() > 1 ?
+            Threads.@spawn(backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : nothing
+        fcomplete, found, min_rc = forward_pass!(ws, inst, restr, nbrs, κ, rc_tol, cap, [top], top, topb, hf,
+                                                 deadline, label_limit)
+        bcomplete = task === nothing ?
+            (fcomplete && backward_pass!(bs, ws, inst, restr, κ, cap, topb, hb, deadline, label_limit)) : fetch(task)
+    end
     complete = fcomplete && bcomplete
 
     # ---- joins at customers where the forward load first exceeds C/2 ----
@@ -368,4 +450,33 @@ function join_route(ws::PricingWorkspace, bs::BackwardSpace, inst::Instance, fk:
     end
     levels[end] = 0.0
     Route(inst, nodes, levels)
+end
+
+"""
+`enumerate_routes!` for the time-free untimed relaxation, pruned by
+backward-label completion bounds: a backward pass at the same duals over
+`share` of the payload keeps every suffix that could still close a route
+with reduced cost <= `threshold` (ng memory: a relaxation of the elementary
+suffixes), and `suffix_bound!` turns it into a bound for every forward
+partial route. With `share = 1` that bound is the exact ng completion.
+"""
+function enumerate_routes_bounded!(ws::PricingWorkspace{W}, bs::BackwardSpace{W}, inst::Instance, π, κ,
+                                   restr::Restrictions{W}; threshold::Float64, cuts, σ, sr_cuts, τ,
+                                   time_limit::Float64, label_limit::Int, route_cap::Int,
+                                   edges::Vector{Tuple{Int,Int}} = Tuple{Int,Int}[], μ::Vector{Float64} = Float64[],
+                                   share::Float64 = 1.0) where {W}
+    t0 = time()
+    bidirectional_duals!(ws, bs, inst, π, 1.0, cuts, σ, sr_cuts, τ, edges, μ)
+    hb = share * inst.payload + 1e-7
+    topb = maximum(inst.levels) * inst.battery
+    complete = backward_pass!(bs, ws, inst, restr, κ, typemax(Int), topb, hb, t0 + time_limit, label_limit;
+                              threshold = threshold)
+    complete || return PricingResult(Route[], Float64[], Inf, false, length(bs.pool), time() - t0)
+    suffix_bound!(ws, bs, inst, hb, 1.0)
+    backward = length(bs.pool)
+    res = enumerate_routes!(ws, inst, π, κ, restr; threshold = threshold, timefree = true, untimed = true,
+                            cuts = cuts, σ = σ, sr_cuts = sr_cuts, τ = τ, time_limit = time_limit - (time() - t0),
+                            label_limit = label_limit, route_cap = route_cap, edges = edges, μ = μ,
+                            keep_bound = true)
+    PricingResult(res.routes, res.rcs, res.min_rc, res.exact, res.labels + backward, time() - t0)
 end

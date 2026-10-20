@@ -388,7 +388,13 @@ def train_bundle(destination, bundle, budget, width):
             MKL_NUM_THREADS="1",
             OPENBLAS_NUM_THREADS="1",
         )
-        scratch = Path(os.environ.get("TMPDIR", "/tmp")) / f"evrp_{os.getpid()}_{slot}"
+        # Node-local scratch can exhaust its user quota before a resumed
+        # trainer even starts. Keep runtime caches on the shared workspace;
+        # the location does not affect simulator inputs or saved RNG state.
+        scratch_root = Path(manifest.get(
+            "runtime_scratch_root", str(ROOT / "results/california_graphppo/runtime_cache")
+        ))
+        scratch = scratch_root / f"evrp_{os.environ.get('SLURM_JOB_ID', 'local')}_{os.getpid()}_{slot}"
         scratch.mkdir(parents=True, exist_ok=True)
         environment.update(
             TMPDIR=str(scratch),
@@ -480,8 +486,8 @@ def submit(destination, bundles, budget):
     time_limit = "04:00:00" if budget <= 1_000_000 else "08:00:00" if budget <= 4_000_000 else "12:00:00"
     resources = manifest.get("slurm_resources", {})
     partition = resources.get("partition", "gpu_a100")
-    if partition not in ("gpu_a100", "gpu_mig", "gpu_h100"):
-        raise ValueError("training must use a GPU partition")
+    if partition not in ("gpu_a100", "gpu_mig"):
+        raise ValueError("campaign policy permits only gpu_mig and gpu_a100; H100 and cbuild are excluded")
     cpus_per_task = int(resources.get("cpus_per_task", 18))
     memory = resources.get("memory", "120G")
     if cpus_per_task < 2 * width:

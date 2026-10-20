@@ -33,6 +33,10 @@ mutable struct Master
     sr_cuts::Vector{SubsetRowCut}
     sr_rows::Vector{ConstraintRef}
     known_sr::Set{NTuple{3,Int}}
+    # node-local edge-branching rows y_ij + y_ji >= 1 (customers i < j)
+    edges::Vector{Tuple{Int,Int}}
+    edge_rows::Vector{ConstraintRef}
+    edge_art::Vector{VariableRef}
     big_m::Float64
 end
 
@@ -47,7 +51,8 @@ function Master(inst::Instance, backend::Backend; threads::Int, big_m::Float64, 
     Master(model, cover, fleet_max, fleet_min, art, VariableRef[], Route[],
            Vector{Tuple{Int,Int}}[], falses(0), falses(0), falses(0), falses(0), false, falses(0), Set{UInt64}(),
            CapacityCut[], ConstraintRef[], Set{BitVector}(),
-           SubsetRowCut[], ConstraintRef[], Set{NTuple{3,Int}}(), big_m)
+           SubsetRowCut[], ConstraintRef[], Set{NTuple{3,Int}}(),
+           Tuple{Int,Int}[], ConstraintRef[], VariableRef[], big_m)
 end
 
 """
@@ -80,6 +85,10 @@ function add_column!(mp::Master, inst::Instance, r::Route)
     end
     for (cut, row) in zip(mp.sr_cuts, mp.sr_rows)
         e = sr_coefficient(cut, r.customers)
+        e > 0 && set_normalized_coefficient(row, z, Float64(e))
+    end
+    for (edge, row) in zip(mp.edges, mp.edge_rows)
+        e = edge_entries(edge, succ)
         e > 0 && set_normalized_coefficient(row, z, Float64(e))
     end
     push!(mp.z, z)
@@ -141,13 +150,47 @@ function retry_lp!(model::Model, attempt::Int)
     end
 end
 
-"""Cover duals, the combined route-count dual, capacity-cut and subset-row duals."""
+"""
+Cover duals, the combined route-count dual, capacity-cut and subset-row
+duals, then the duals of the active edge-branching rows and those edges.
+"""
 function master_duals(mp::Master)
     π = Float64[dual(c) for c in mp.cover]
     κ = dual(mp.fleet_max) + dual(mp.fleet_min)
     σ = Float64[dual(c) for c in mp.cut_rows]
     τ = Float64[dual(c) for c in mp.sr_rows]
-    π, κ, σ, τ
+    μ = Float64[dual(c) for c in mp.edge_rows]
+    π, κ, σ, τ, μ, copy(mp.edges)
+end
+
+"""Times the customer successions `succ` use edge (i, j) in either orientation."""
+edge_entries(edge::Tuple{Int,Int}, succ::Vector{Tuple{Int,Int}}) =
+    count(p -> p == edge || p == (edge[2], edge[1]), succ)
+
+"""
+Make exactly the rows y_ij + y_ji >= 1 of `edges` active (the 1-branches of
+edge branching on the path to the current node). Each row has an artificial,
+like a capacity cut, so phase one can prove a node infeasible.
+"""
+function set_edges!(mp::Master, edges::Vector{Tuple{Int,Int}})
+    want = Set(edges)
+    keep = [k for k in eachindex(mp.edges) if mp.edges[k] in want]
+    for k in eachindex(mp.edges)
+        k in keep && continue
+        delete(mp.model, mp.edge_rows[k])
+        delete(mp.model, mp.edge_art[k])
+    end
+    mp.edges, mp.edge_rows, mp.edge_art = mp.edges[keep], mp.edge_rows[keep], mp.edge_art[keep]
+    for edge in edges
+        edge in mp.edges && continue
+        art = @variable(mp.model, lower_bound = 0.0)
+        set_objective_coefficient(mp.model, art, mp.phase_one ? 1.0 : mp.big_m)
+        terms = [(k, e) for (k, e) in ((k, edge_entries(edge, mp.succ[k])) for k in eachindex(mp.z)) if e > 0]
+        row = @constraint(mp.model, art + sum(Float64(e) * mp.z[k] for (k, e) in terms; init = 0.0) >= 1.0)
+        push!(mp.edges, edge)
+        push!(mp.edge_rows, row)
+        push!(mp.edge_art, art)
+    end
 end
 
 """Add a globally valid subset-row cut (z = 0 satisfies it, so no artificial)."""
@@ -177,7 +220,7 @@ function add_cut!(mp::Master, inst::Instance, cut::CapacityCut)
 end
 
 column_values(mp::Master) = isempty(mp.z) ? Float64[] : value.(mp.z)
-artificial_mass(mp::Master) = sum(value.(mp.artificial))
+artificial_mass(mp::Master) = sum(value.(mp.artificial)) + sum(value.(mp.edge_art); init = 0.0)
 
 """
 Switch between the real objective and phase one (minimise artificial use),
@@ -189,7 +232,7 @@ function set_phase_one!(mp::Master, on::Bool, big_m::Float64)
     for (k, z) in enumerate(mp.z)
         set_objective_coefficient(mp.model, z, on ? 0.0 : mp.routes[k].travel)
     end
-    for a in mp.artificial
+    for a in Iterators.flatten((mp.artificial, mp.edge_art))
         set_objective_coefficient(mp.model, a, on ? 1.0 : big_m)
     end
     mp.phase_one = on

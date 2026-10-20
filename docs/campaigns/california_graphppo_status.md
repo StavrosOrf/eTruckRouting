@@ -1,8 +1,29 @@
 # California 10T3D GraphPPO campaign status
 
-Updated 2026-10-20T10:09:50.745606+02:00 (Europe/Berlin). Earlier observations below are historical.
+Updated 2026-10-20T12:12:49.785496+02:00 (Europe/Berlin). Earlier observations below are historical.
 
 The goal remains **active and unmet**: at least 99% successful depot-return completion and at most 5% mean paired operating-hours excess against independently built feasible BKS, with five training seeds and a locked 1,000-scenario evaluation. These BKS comparisons are not certified optimality gaps.
+
+## Actual GPU gate and full-cohort launch
+
+MIG pilot 28365564 completed successfully: three recipes each completed 4,096 actual PPO decisions with seven workers. Encoder, action and value weights changed and remained finite; enabled target and semantic branches changed too. All full checkpoints loaded. This is optimizer/checkpoint evidence, not held-out route performance.
+
+The audited bootstrap submitted array 28367215 with six new runs, reusing three completed controls. It permits three concurrent MIG allocations. Current training states appear in the table below. The warm-cost 4M readout now runs in a two-CPU, zero-GPU step of the existing warm-MC allocation because the pilot had insufficient remaining wall time.
+
+## Message and identity architecture ablation
+
+Prepared six new runs across two recipes and three seeds, with three completed matched controls frozen from v16 instead of retraining. The original graph messages condition on source, target and edge, while the canonical encoder previously conditioned on source and edge before aggregation. An optional zero-initialized target projection restores this dependency; a second option replaces ordinal IDs with explicit physical equality, destination, claim and assignment relations. This is an architectural ablation, not an exact replica of the original implementation or arbitrary-schema support.
+
+Legacy-default logits and values are exactly preserved on 128 training states across separate source processes. New branches receive finite gradients. The identity variant gives identical logits across three physical-node relabelings and retains that property after three tiny optimizer updates; saved predictions reload exactly. These are train-only representation/optimization findings, not route-performance evidence. GPU pilot 28365564 completed 4,096 actual PPO decisions per recipe and released the full cohort. The protected final hold now covers ten cohorts. Five future families reserve at most 25 allocations in total, below 30.
+
+## Paired action-edge uncertainty readout
+
+On jointly successful cases, routing gates minus the standard control change paired BKS excess by -0.97 percentage points (hierarchical bootstrap 95% interval -4.22 to +2.47). Per-seed differences are -2.20, +2.56 and -3.28 points. This does not establish a consistent advantage across three fine-tuning seeds. Critic detachment minus routing gates is +30.26 points (22.51 to 39.28), with worse successful cost in every seed. These are post-hoc development contrasts, conditional on the common parent; the existing promotion protocol is unchanged. Physical scenario payloads and execution configurations match aside from declared policy-mask flags.
+
+## Completed warm-cost 4M snapshots
+
+The three warm-cost runs have reached 4,001,792 decisions. Six selected/final actors are now frozen for a three-seed readout while the MC recipe remains unfinished. The CPU readout is attached after the required GPU pilot gate and bootstrap, with a twelve-minute remaining-time guard and no extra allocation. The full 4M stage may reuse completed sealed outputs only when weights, configuration, source, masks and case bank match. No 4M score is available yet.
+
 ## Latest completed action-edge comparison
 
 Three fine-tuning seeds conditional on the same fixed parent, 128 reused development cases; costs condition on success. Standard end-to-end control: 99.21875% completion, 131.36 hours, 18.04% paired BKS excess. Routing gates: 98.95833%, 129.37 hours, 16.92% excess. Gates with critic-encoder detachment: 100%, 161.92 hours, 46.75% excess. Only standard control and routing gates were promoted to 4M. The 5% cost target remains unmet; final validation and test remain unopened.
@@ -21,14 +42,16 @@ The prior owned-MIG packing step ended with the warm parent. Its first recovery 
 | Undiscounted / cost emphasis | 28360730 | 0 / 2 | 12M; five seeds per recipe |
 | Progress features | 28279546 | 0 / 0 | completed 12M; five seeds per recipe |
 | Original finalists | 28279550 | 0 / 0 | completed 12M; five seeds per recipe |
-| Larger expert dataset | 28360521 | 0 / 1 | 4M; gated 12M |
-| Matched recovery data (gated) | 28360534 | 0 / 1 | 1M; gated 12M |
+| Larger expert dataset | 28360521 | 1 / 0 | 4M; gated 12M |
+| Matched recovery data (gated) | 28360534 | 1 / 0 | 1M; gated 12M |
 | Routing action edges / critic gradients (gated) | 28360721 | 0 / 2 | 4M; gated 12M |
+| Target-conditioned messages / identity relations | 28367215 | 3 / 3 | 1M; gated 12M |
 | Packing profiles (two / three runs per A100) | 28305475 / 28305476 | 0 / 0 | cancelled at zero runtime; no measurement |
+| Message/identity GPU PPO pilot | 28365564 | 0 / 0 | 4,096 PPO decisions × three sequential models |
 
-Training queue entries: **6**, including **0 running** and **6 pending tasks**. Array throttles currently bound simultaneous training allocations to **6**, within the global limit of 30. Only MIG and A100 are permitted for new campaign submissions; H100 and cbuild are excluded. Warm and recovery continuations use MIG. Action-edge models pack three per A100 allocation; objective models pack two. Every model keeps nine CPUs and seven rollout workers. Node-local scratch quota failures were repaired by moving runtime caches to shared workspace storage. Completed models are skipped and full states resume. Coordinators and evaluation jobs are excluded from training counts.
+Training queue entries: **12**, including **5 running** and **7 pending tasks**. Array throttles currently bound simultaneous training allocations to **9**, within the global limit of 30. Only MIG and A100 are permitted for new campaign submissions; H100 and cbuild are excluded. Warm and recovery continuations use MIG. Action-edge models pack three per A100 allocation; objective models pack two. Every model keeps nine CPUs and seven rollout workers. Node-local scratch quota failures were repaired by moving runtime caches to shared workspace storage. Completed models are skipped and full states resume. Coordinators and evaluation jobs are excluded from training counts.
 
-Campaign coordination and evaluation use **gpu_mig** or **gpu_h100** (one GPU, up to nine CPUs and 60 GiB). Existing new-family arrays use **gpu_mig**; supplemental arrays for nine previously unstarted tasks use **gpu_h100**, and unfinished objective models continue on **gpu_mig** after clean A100 checkpoint exits. No active campaign job uses cbuild. Eight zero-runtime auxiliary jobs were migrated with dependencies preserved; scientific source and completed evaluation inputs are intact.
+Campaign coordination and evaluation use gpu_mig; the message/identity GPU pilot uses gpu_mig after zero-runtime migration from A100 based on scheduler estimates. Historical H100 tasks had already terminated before the latest user restriction. New campaign submissions permit only MIG/A100. Completed results and frozen scientific source inputs are retained.
 
 ## Overnight checkpoint recovery
 
@@ -139,7 +162,7 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 | large_warm_cost40_s1 | completed milestone | 0 | 3,993,600 |
 | large_warm_mc_cost40_s1 | completed milestone | 0 | 3,993,600 |
 | large_warm_cost40_s2 | completed milestone | 0 | 3,993,600 |
-| large_warm_mc_cost40_s2 | queued | 0 | 0 |
+| large_warm_mc_cost40_s2 | PPO | 0 | 1,413,120 |
 | recovery_nominal_s0 | completed milestone | 20 | 993,280 |
 | recovery_teacher80_s0 | completed milestone | 20 | 993,280 |
 | recovery_teacher50_s0 | completed milestone | 20 | 993,280 |
@@ -148,13 +171,22 @@ New stages use one model per MIG slice, nine CPUs and seven rollout workers. The
 | recovery_teacher50_s1 | completed milestone | 20 | 993,280 |
 | recovery_nominal_s2 | completed milestone | 20 | 993,280 |
 | recovery_teacher80_s2 | completed milestone | 20 | 993,280 |
-| recovery_teacher50_s2 | queued | 0 | 0 |
+| recovery_teacher50_s2 | PPO | 20 | 174,080 |
 | edge_control_cost40_s0 | queued | 0 | 0 |
 | edge_route_cost40_s0 | queued | 0 | 0 |
 | edge_control_cost40_s1 | queued | 0 | 0 |
 | edge_route_cost40_s1 | queued | 0 | 0 |
 | edge_control_cost40_s2 | queued | 0 | 0 |
 | edge_route_cost40_s2 | queued | 0 | 0 |
+| message_control_s0 | completed milestone | 0 | 0 |
+| message_target_s0 | BC | 8 | 0 |
+| message_target_identity_s0 | BC | 7 | 0 |
+| message_control_s1 | completed milestone | 0 | 0 |
+| message_target_s1 | BC | 8 | 0 |
+| message_target_identity_s1 | queued | 0 | 0 |
+| message_control_s2 | completed milestone | 0 | 0 |
+| message_target_s2 | queued | 0 | 0 |
+| message_target_identity_s2 | queued | 0 | 0 |
 
 ## Frozen-policy decoding study
 
@@ -223,7 +255,7 @@ The combined new reference pool contains a mask-admissible successful route on a
 
 ## Final evaluation protocol
 
-All nine registered cohorts share one final selection; retention and imitation are explicitly screened out. Recovery v15 replaces the original cohort’s training slots after it completes, giving a maximum of 30 concurrent training allocations; completed original policies remain selection candidates. The evaluator supports all trained mask flags and normalizes only four declared policy restrictions; physical/configuration and source hashes are checked. The disjoint 512-case final validation bank and locked 1,000-case test remain unopened. The test requires both target metrics and complete independent feasible-reference coverage on validation.
+All ten registered cohorts share one final selection; capacity, retention and imitation are explicitly screened out. Five potentially active families reserve at most 25 future training allocations, below the global limit of 30; completed qualifying original policies remain selection candidates. The evaluator supports the trained mask flags and excludes only four declared policy restriction flags when comparing execution configurations. Physical descriptors and frozen source inputs are checked. The disjoint 512-case final-validation bank and locked 1,000-case test remain unopened. Opening the test requires both validation targets and complete independent feasible-reference coverage.
 
 Current machine-readable observations: `results/california_graphppo/status.json`.
 

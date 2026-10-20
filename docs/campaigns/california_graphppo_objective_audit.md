@@ -935,3 +935,132 @@ stages took 93–112 minutes, excluding queue and paired evaluation.
 Operational records, original launcher backup, manifests before allocation
 changes, submission journals and implementation evidence:
 `results/california_graphppo/GPU_policy_recovery_20261020/`.
+
+## 2026-10-20: target-conditioned messages and relational identity experiment
+
+Source inspection found a substantive difference from the original
+`EdgeConditionedConv`: the original message MLP consumes source, target and edge
+features jointly. The canonical nonlinear message used source and edge before
+aggregation; target state entered the subsequent update. The new frozen source
+`source_message_identity_v17` adds optional target-embedding projections inside
+the nonlinear pair message. A second option replaces numeric identity features
+with explicit co-location, route-destination, claimed-owner and preassigned-owner
+relations. This is a controlled architecture revision; it is not an exact copy
+of the original class, nor support for arbitrary external schemas.
+
+Both options default false. New branches initialize at zero without perturbing
+the parent's RNG stream. Independent old/new source processes produced exactly
+equal legacy-default logits and values on all 128 fixed training states. New
+branches had finite nonzero gradients. The identity variant produced exactly
+equal logits under three consistent physical-node relabelings. That property
+persisted after three small training-only optimizer updates; checkpoints
+reloaded with exactly equal predictions. Ownership adapter equalities were
+also inspected explicitly. These findings concern representation and optimizer
+behavior, not held-out route quality. The raw observation schema, simulator,
+execution legality and policy masks are unchanged; all 35 Python files in the
+anchored models/state/utils subtree match the prior frozen source.
+
+New cohort `ca10t3d_message_identity_v17` has two new recipes × three seeds.
+Three completed matched routing-gate controls were frozen from v16 at 1,001,472
+steps before their 4M continuation. They are included in the 1M evaluation but
+marked comparison-only and skipped by training and promotion. This avoids
+repeating the control compute. New runs use the same fixed warm parent,
+184,063 nominal-teacher transitions from 4,008 train-only episodes, BC20,
+reward/mask settings and 1M/4M/12M schedule. Fine-tuning seed variability remains
+conditional on that parent. At most two new recipes advance, with five seeds
+required at final maturity.
+
+A100 pilot **28361332** runs three sequential models in one nine-CPU/60-GiB
+allocation: one BC epoch and 4,096 actual CUDA PPO decisions per model. Its
+success gate checks finite trained weights, nonzero encoder/action/value/new
+branch parameter changes and full training-state loads. Only after this gate
+and unchanged source/data/parent-control checks pass does the inline bootstrap
+submit six new full runs (maximum three MIG allocations), skipping the three
+completed controls. These pilot models are not final candidates. Throughput and
+route-quality improvements are unmeasured. The future shared evaluation source
+switches to the compatible v17 source only after the actual GPU gate passes.
+
+The final hold now covers ten cohorts; no final-validation or locked-test data
+were opened. The conservative five-active-family future bound is 25 training
+allocations, below 30. At the latest scheduler observation, all seven current
+campaign allocations, including the GPU pilot, were pending on MIG/A100. H100
+and cbuild remain excluded. Current best three-seed primary development excess
+remains 16.92%, so the full goal is active and unmet.
+
+Protocol, audit programs, train-only optimizer/checkpoint evidence, legacy
+parity outputs and GPU job handle:
+`results/california_graphppo/message_identity_preflight_20261020/`.
+
+## 2026-10-20: paired contrasts, auxiliary scratch repair, and completed 4M readout
+
+The paired action-edge analysis used the same three fine-tuning seeds and 128
+opened cases, retaining failures in reliability and joint quality metrics. On
+jointly successful cases, routing gates minus standard control changed BKS
+excess by -0.973 percentage points; the 5,000-replicate seed/scenario bootstrap
+95% interval was [-4.223, +2.471]. Seed differences were -2.199, +2.556 and
+-3.276 points. This does not establish a consistent improvement across three
+seeds. Critic detachment minus routing gates increased paired excess by 30.259
+points, interval [22.510, 39.275], worsening successful cost in every seed.
+Promotion gates are unchanged. Source and scenario checks found one physical
+instance per seed across all 768 reference and 1,152 candidate rows; differing
+stored scenario hashes reflect the four declared policy restriction settings,
+not different physical instances. Execution configurations were checked using
+the frozen report helper. Evidence: `action_edge_contrasts_20261020/`.
+
+The previous node-local scratch repair covered training but left auxiliary
+paths exposed. Fourteen active root/workspace coordinator and evaluation
+helpers now create shared runtime directories, and evaluation children receive
+TMPDIR explicitly for transport caches. Before editing, completed input-lock
+inventories were checked and pinned none of these mutable root helpers. Frozen
+neural/simulator sources and completed evaluation copies were left intact.
+Original helper versions and SHA transitions are under
+`coordinator_runtime_20261020/`. Parsing and frozen-input checks completed;
+these pending auxiliary jobs have not yet executed the repaired paths.
+
+All three warm-cost models completed 4,001,792 additional PPO decisions. Their
+six selected/final actors were frozen for a three-seed 4M readout while the
+separate warm-MC recipe remains unfinished. The readout uses only the opened
+128 cases, after the queued GPU pilot completes its required gate and bootstrap,
+with a twelve-minute remaining-time guard and no new allocation. The full-family
+4M driver can reuse completed sealed readout outputs only after checking source,
+weights, model configuration, mask flags and case bank. Cached rows become
+frozen inputs; unmatched actors are evaluated normally. No 4M performance result
+is claimed yet. Actors, driver and 209 frozen inputs are recorded under
+`warm_cost4m_readout_20261020/`.
+
+At 11:22 local time, the unstarted A100 GPU pilot 28361332 was cancelled at zero
+runtime and replaced by MIG pilot **28365564**, preserving nine CPUs, 60 GiB,
+three sequential recipes and the 4,096-step per-recipe PPO gate. Scheduler dry
+runs estimated a new short MIG request at October 20 16:22 versus October 22
+04:15 for A100; these are observations, not reserved starts or promises. No
+running model was restarted. The existing long continuations stay diversified
+across MIG/A100. New-job GPU partitions remain restricted to MIG/A100; no H100
+or cbuild submission was made. The site rejected a zero-GPU auxiliary request
+in a GPU partition, so no such job was submitted. Seven current campaign
+training/pilot allocations remain pending; the goal is active and unmet.
+
+## 2026-10-20: finish paired 4M evaluation before 12M continuation
+
+The warm, recovery, action-edge and message/identity controllers now require a
+completed selected/final three-seed paired 4M summary before dispatching the
+12M continuation. The 4M drivers prefer CPU scoring inside the existing
+nine-CPU coordinator allocation when at least twelve minutes remain. Otherwise
+they schedule the existing separate score job, and the controller schedules a
+dependent continuation coordinator rather than immediately advancing training.
+Model weights, raw observations, masks, rewards, physical execution, training
+budgets, recipe ranking and thresholds are unchanged. Frozen actors and cached
+identical outputs remain supported. This uses the already opened 128-case
+bank; final validation512 and locked test1000 remain protected.
+
+Eight mutable cohort helpers changed. Their originals and SHA transitions are
+under `promotion_gate_20261020/`. Completed evaluation input locks pin none of
+the edited helpers, and scientific source snapshots were left intact. Parsing
+and static path inspection completed; runtime execution of this revised gate
+awaits the queued training stages. No new training allocation was added.
+
+A read-only attempt to estimate a CPU-only evaluation on Rome found no compute
+budget for that partition under the project account. No CPU job was submitted;
+MIG/A100 scheduling is retained. All seven current training/pilot allocations
+remain live and pending. The preceding goal turn made progress by completing
+cache guards and moving the zero-runtime pilot; this turn tightened the paired
+promotion gate. The full performance goal remains active and unmet.

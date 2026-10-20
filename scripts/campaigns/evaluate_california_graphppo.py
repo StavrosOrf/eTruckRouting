@@ -294,11 +294,15 @@ def run_methods(root, methods_path, split, count, offset, output):
     namespace = 1_000_000_000 if split == "validation" else 2_000_000_000
     expected = set(range(namespace + offset, namespace + offset + count))
     archive_incomplete(output, split, methods, expected)
-    scratch = Path(os.environ.get("TMPDIR", "/tmp")) / f"evrp_eval_{os.getpid()}"
+    # Child evaluation processes also use tempfile for transport caches.
+    # Select shared scratch explicitly even when called outside a coordinator.
+    runtime_root = Path(base["python"]).parents[2] / "results/california_graphppo/runtime_cache"
+    scratch = runtime_root / f"evaluation_{os.environ.get('SLURM_JOB_ID', 'local')}_{os.getpid()}"
     scratch.mkdir(parents=True, exist_ok=True)
     environment = dict(
         os.environ,
         PYTHONPATH=base["source"],
+        TMPDIR=str(scratch),
         OMP_NUM_THREADS="1",
         MKL_NUM_THREADS="1",
         OPENBLAS_NUM_THREADS="1",

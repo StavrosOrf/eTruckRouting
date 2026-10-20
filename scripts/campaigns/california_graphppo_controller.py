@@ -365,6 +365,11 @@ def main():
     parser.add_argument("--next-budget", type=int, default=4_000_000)
     args = parser.parse_args()
     root = args.directory.resolve()
+    # Auxiliary work must not inherit the exhausted node-local scratch quota.
+    coordinator_runtime = root.parent / "runtime_cache" / ("coordinator_" + os.environ.get("SLURM_JOB_ID", str(os.getpid())))
+    coordinator_runtime.mkdir(parents=True, exist_ok=True)
+    os.environ["TMPDIR"] = str(coordinator_runtime)
+    os.environ["MPLCONFIGDIR"] = str(coordinator_runtime / "matplotlib")
     current = (args.current or root).resolve()
     if args.action == "schedule":
         print(schedule(root, args.dependency, current, args.next_budget), flush=True)

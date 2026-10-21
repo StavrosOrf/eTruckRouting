@@ -431,6 +431,25 @@ def _parse_hos(block: dict | None, max_time: float) -> HoursOfServiceConfig:
     )
 
 
+def _parse_request_windows(block: dict | None) -> dict:
+    """The static context's window distribution (same rules as static windows)."""
+    windows = dict(block or {})
+    _unknown_keys(windows, {
+        "enabled", "earliest_min", "earliest_max", "window_width_min", "window_width_max",
+    }, "requests.time_windows")
+    if not _bool(windows.get("enabled", False), "requests.time_windows.enabled"):
+        return windows
+    earliest_min = _finite(windows.get("earliest_min", 0.0), "requests.time_windows.earliest_min")
+    earliest_max = _finite(windows.get("earliest_max", 0.0), "requests.time_windows.earliest_max")
+    width_min = _finite(windows.get("window_width_min", 1.0), "requests.time_windows.window_width_min",
+                        strict=True)
+    width_max = _finite(windows.get("window_width_max", width_min), "requests.time_windows.window_width_max",
+                        strict=True)
+    if earliest_max < earliest_min or width_max < width_min:
+        raise ValueError("requests.time_windows bounds must satisfy min <= max")
+    return windows
+
+
 def _parse_requests(block: dict | None, max_time: float) -> RequestsConfig:
     if block is None:
         return RequestsConfig()
@@ -472,7 +491,7 @@ def _parse_requests(block: dict | None, max_time: float) -> RequestsConfig:
         static_context_size=_integer(
             block.get("static_context_size", 230), "requests.static_context_size", low=1
         ),
-        time_windows=dict(block.get("time_windows") or {}),
+        time_windows=_parse_request_windows(block.get("time_windows")),
         deadline_type=_choice(block.get("deadline_type", "hard"), {"hard", "soft"}, "requests.deadline_type"),
         allow_preemptive_returns=_bool(
             block.get("allow_preemptive_returns", False), "requests.allow_preemptive_returns"

@@ -1265,7 +1265,9 @@ class EventDrivenTruckEnv(gym.Env):
             truck_id=truck.truck_id,
             data={
                 "destination": target_node,
-                "distance": actual_travel_time * truck.base_speed,
+                # As in _execute_navigation_action: the path length is nominal
+                # time x speed; traffic delay does not lengthen the road.
+                "distance": travel_time * truck.base_speed,
                 "travel_time": actual_travel_time,
                 "discharge": discharge,
                 "departure_time": departure,

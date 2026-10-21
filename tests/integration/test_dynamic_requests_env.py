@@ -592,3 +592,28 @@ def test_perfect_information_pickup_deadline_uses_the_realized_leg() -> None:
     request.pickup = dataclasses.replace(request.pickup, latest=midpoint)
     feasible = evaluate_request_slot(env, truck, request.request_id).feasible
     assert feasible == (env.global_clock + realized <= midpoint)
+
+
+def test_C23_the_last_hard_pickup_still_meets_the_window_nominally() -> None:
+    """Loading takes time: a load at the latest pickup still delivers on time."""
+    for seed in range(5):
+        env = _env(SAME_DAY, seed=seed)
+        depot = int(env.joint_instance.depot_node)
+        requests = env.request_engine.registry.requests()
+        assert requests
+        for r in requests:
+            drive = env.transport_graph.get_time_distance(depot, int(r.delivery.node))
+            assert r.pickup.service_hours > 0.0
+            assert r.pickup.latest + r.pickup.service_hours + drive <= r.delivery.latest + 1e-9
+
+
+def test_request_legs_report_the_nominal_distance() -> None:
+    """Traffic delays a leg; it does not lengthen the road (as in static mode)."""
+    env = build("seattle", trucks=2, requests=SAME_DAY)
+    rollout(env, 1, choose(env, "greedy", 1))
+    legs = [e for t in env.trucks for e in t.event_history if e["event_type"] == "ROUTING_END"]
+    assert legs
+    for event in legs:
+        origin, destination = int(event["details"]["origin"]), int(event["location"])
+        nominal = env.transport_graph.get_time_distance(origin, destination)
+        assert event["details"]["distance_km"] == pytest.approx(nominal * env.trucks[0].base_speed)

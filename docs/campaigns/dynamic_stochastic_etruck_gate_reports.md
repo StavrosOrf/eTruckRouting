@@ -23,6 +23,8 @@ The three ignored modules need `osmium`, which the project dependencies do not i
 
 Each of these failed before any change in this branch, or fails on files this work did not touch.
 
+All of them are fixed since; see `dynamic_stochastic_etruck_audit.md`.
+
 | Test | Cause |
 |---|---|
 | `tests/unit/test_contract_chains.py`, `test_od_tree_sums.py`, `test_road_graph_speed_cap.py` | `ModuleNotFoundError: osmium` at collection |

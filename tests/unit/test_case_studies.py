@@ -34,6 +34,17 @@ def case(request):
     return path, meta, load_config(str(ROOT / meta["config_file"]))
 
 
+MATRICES = ("od_energy_kwh.npy", "od_time_h.npy", "od_node_ids.npy")
+
+
+def _matrices_built(path: Path) -> None:
+    """The all-pairs matrices of the 10^4-node cases (600 MB each) are gitignored."""
+    missing = [name for name in MATRICES if not (path / name).exists()]
+    if missing:
+        pytest.skip(f"{path.name}: {', '.join(missing)} not built in this checkout "
+                    "(rebuild with scripts/casestudies/submit_npy_build.sh)")
+
+
 def _generated_only(meta):
     """The imported California data keeps its own quirks (missing pairs, Level 2 stations, negative legs)."""
     if not meta.get("generated", True):
@@ -51,9 +62,9 @@ def test_files_follow_the_california_format(case):
             assert (path / name).exists()
         return
     if meta.get("format") == "npy":
-        for name in ("od_energy_kwh.npy", "od_time_h.npy", "od_node_ids.npy", "station_info_dict.json",
-                     "waiting_time_lookup.json", "metadata.json"):
+        for name in ("station_info_dict.json", "waiting_time_lookup.json", "metadata.json"):
             assert (path / name).exists(), name
+        _matrices_built(path)
         n = meta["counts"]["nodes"]
         ids = np.load(path / "od_node_ids.npy")
         energy, time = np.load(path / "od_energy_kwh.npy", mmap_mode="r"), np.load(path / "od_time_h.npy", mmap_mode="r")
@@ -108,6 +119,7 @@ def test_nearby_stations_were_merged(case):
 def test_network_is_asymmetric_in_energy_and_time(case):
     path, meta, _ = case
     if meta.get("format") == "npy":
+        _matrices_built(path)
         rng = np.random.default_rng(0)
         n = meta["counts"]["nodes"]
         i, j = rng.integers(0, n, 400_000), rng.integers(0, n, 400_000)
@@ -133,6 +145,7 @@ def test_matrix_case_loads_into_the_environment_graph(case):
     path, meta, config = case
     if meta.get("format") != "npy":
         pytest.skip("matrix case studies only")
+    _matrices_built(path)
     graph = MatrixTransportationGraph.from_config(config["network"], resolve_network_data_dir(config["network"]))
     assert graph.num_nodes == meta["counts"]["nodes"]
     assert len(graph.get_charging_nodes()) == meta["counts"]["chargers"]

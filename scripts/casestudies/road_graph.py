@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import osmium
 from scipy.sparse import coo_matrix, csr_matrix, diags
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import cg
@@ -93,6 +92,8 @@ class RoadNetwork:
 
 def extract(pbf: Path, bbox: tuple[float, float, float, float], max_class: int = len(CLASSES) - 1) -> RoadNetwork:
     """Read drivable ways (road class index <= max_class) that touch bbox=(min_lat, min_lon, max_lat, max_lon)."""
+    import osmium
+
     mnla, mnlo, mxla, mxlo = bbox
     fp = osmium.FileProcessor(str(pbf)).with_locations().with_filter(osmium.filter.KeyFilter("highway"))
     ctrl_nodes: dict[int, int] = {}
@@ -198,6 +199,8 @@ def load_places(pbf: Path, kinds=("city", "town", "village"), min_pop: int = 500
     ``PLACE_KIND_POPULATION_FALLBACK[kind]`` (flagged ``population_is_assumed: True``) instead of being
     dropped; use this where population tagging on place nodes is sparse (see above).
     """
+    import osmium
+
     out = []
     fp = osmium.FileProcessor(str(pbf)).with_filter(osmium.filter.KeyFilter("place"))
     for o in fp:

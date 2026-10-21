@@ -8,6 +8,11 @@ import sys
 import pytest
 
 
+# A warm run takes about 5 s, but a cold start on a shared network filesystem
+# spends up to a minute importing; the limit only guards against a hang.
+TIMEOUT_SECONDS = 600
+
+
 @pytest.mark.integration
 def test_seeded_cli_solve_and_cross_process_replay(tmp_path):
     artifact = tmp_path / "plan.json"
@@ -36,7 +41,7 @@ def test_seeded_cli_solve_and_cross_process_replay(tmp_path):
         capture_output=True,
         text=True,
         check=True,
-        timeout=60,
+        timeout=TIMEOUT_SECONDS,
     )
     payload = json.loads(artifact.read_text())
     assert payload["solution"]["status"] == "FEASIBLE"
@@ -50,7 +55,7 @@ def test_seeded_cli_solve_and_cross_process_replay(tmp_path):
         capture_output=True,
         text=True,
         check=True,
-        timeout=60,
+        timeout=TIMEOUT_SECONDS,
     )
     result = json.loads(replay.stdout.splitlines()[-1])
     assert result["verified"]

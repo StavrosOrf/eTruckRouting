@@ -72,15 +72,23 @@ def component_action(env, truck, by_kind) -> int | None:
     """Fixed rules for the opt-in components, shared by every navigator user.
 
     Public stations: at a busy station, always queue (plan section 5.5).
-    Hours of service: when the mask allows no driving, charge if possible (a
-    charge counts as break time) and otherwise take the rest the clock
-    requires (plan section 6.7). Returns None in legacy configurations.
+    Hours of service: when the mask allows no driving because of the driving
+    rules, charge if possible (a charge counts as break time) and otherwise
+    take the rest the clock requires (plan section 6.7: rest when the mask
+    requires it). When driving is blocked for another reason, such as no
+    request released yet, no rest is due and the caller decides. Returns None
+    in legacy configurations.
     """
     queue = by_kind.get(ActionKind.QUEUE)
     if queue:
         return queue[0].index
     rests = by_kind.get(ActionKind.REST_BREAK, []) + by_kind.get(ActionKind.REST_DAILY, [])
     if not rests or any(by_kind.get(kind) for kind in _NAVIGATION_KINDS):
+        return None
+    from EVRoutingEnv.state.feasibility import FeasibilityReason, joint_action_feasibility
+
+    hos_reasons = {FeasibilityReason.HOS_DRIVING_LIMIT, FeasibilityReason.HOS_SHIFT_WINDOW}
+    if not any(decision.reason in hos_reasons for decision in joint_action_feasibility(env)):
         return None
     charges = by_kind.get(ActionKind.CHARGE, [])
     if charges:

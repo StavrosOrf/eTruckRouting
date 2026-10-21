@@ -99,8 +99,11 @@ def test_time_window_variant_yaml_is_directly_runnable() -> None:
 
 @pytest.mark.integration
 def test_joint_reset_creates_one_shared_fleet_instance() -> None:
+    config = _joint_config()
+    # The shipped configs use one 150 kW class; set three to check the assignment.
+    config["charging"]["station_power_classes_kw"] = [150.0, 350.0, 750.0]
     env = EventDrivenTruckEnv(
-        _joint_config(),
+        config,
         verbose=False,
         enable_plotting=False,
     )

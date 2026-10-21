@@ -542,7 +542,14 @@ class RequestEngine:
                 "extra": {"container_kg": float(low + (high - low) * float(u[2]))},
             }
         else:
-            latest_pickup = close - self._hours[self._index[depot], self._index[customer]]
+            # The truck leaves only after loading, so the last pickup that can
+            # still meet the window nominally starts loading_service_hours
+            # before ``close - d(depot, customer)`` (plan 7.2: loads whose
+            # window can no longer be met nominally are masked).
+            latest_pickup = (
+                close - self._hours[self._index[depot], self._index[customer]]
+                - self.config.loading_service_hours
+            )
             candidate = {
                 "kind": RequestKind.SAME_DAY,
                 "pickup": Stop(
@@ -554,7 +561,8 @@ class RequestEngine:
                 "demand": demand, "reveal": reveal, "release": release, "extra": {},
             }
             if self.deadline_type == "hard" and latest_pickup < release - 1e-9:
-                self._drops.append((reveal, "euro"))
+                # EURO's filter has no loading time; this drop is the extension's.
+                self._drops.append((reveal, "witness"))
                 return None
         verdict = self._witness(env, depot, candidate)
         if verdict != "ok":

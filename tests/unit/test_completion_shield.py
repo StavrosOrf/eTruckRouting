@@ -9,7 +9,8 @@ from EVRoutingEnv.state.feasibility import ActionKind, FeasibilityResult
 
 
 def environment(other_capacity=4.0, escape_energy=8.0):
-    task = SimpleNamespace(is_available=True, preassigned_to=None, demand=5.0)
+    # The shield looks tasks up by node, so the stub customer sits at node 1.
+    task = SimpleNamespace(node_id=1, is_available=True, preassigned_to=None, demand=5.0)
     trucks = [
         SimpleNamespace(
             truck_id=0,

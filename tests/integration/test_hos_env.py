@@ -250,3 +250,51 @@ def test_B15_direct_construction_rejects_long_horizons() -> None:
     config["hours_of_service"] = US
     with pytest.raises(ValueError, match="weekly limits"):
         EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
+
+
+def test_greedy_rests_only_when_the_driving_rules_block_driving() -> None:
+    """Plan 6.7: the navigator rests when the mask requires it, not whenever it
+    has nothing to drive to."""
+    from EVRoutingEnv.baselines.heuristics.component_baselines import GreedyDispatchPolicy
+
+    late = {**SAME_DAY, "time_windows": {**SAME_DAY["time_windows"], "earliest_min": 6.0},
+            "mode": "drayage"}
+    terminal = {"name": "Port of Seattle, Terminal 18", "lat": 47.578, "lon": -122.353}
+    env = build("seattle", trucks=1, requests=late, hours_of_service=US,
+                drayage={"terminals": [terminal]})
+    observation, info = env.reset(seed=0)
+    assert not env.request_engine.registry.revealed()
+    decisions = joint_action_feasibility(env)
+    assert decisions[_kind_index(env, ActionKind.REST_DAILY)].feasible
+    # Nothing is released yet and stations are barred before the first origin:
+    # waiting, not a 10 h rest at t = 0.
+    assert GreedyDispatchPolicy()(env, observation, info) == _kind_index(env, ActionKind.WAIT)
+
+    # Same instant, but now the shift's driving is spent: stations are barred
+    # by the driving rules, so the daily rest is due.
+    env = build("seattle", trucks=1, requests={**late, "mode": "same_day"}, hours_of_service=US)
+    observation, info = env.reset(seed=0)
+    assert not env.request_engine.registry.revealed()
+    _set_clock(env, 0, driving_in_shift=11.0, driving_since_break=0.0)
+    reasons = {d.reason for d in joint_action_feasibility(env)}
+    assert FeasibilityReason.HOS_DRIVING_LIMIT in reasons or FeasibilityReason.HOS_SHIFT_WINDOW in reasons
+    assert GreedyDispatchPolicy()(env, observation, info) == _kind_index(env, ActionKind.REST_DAILY)
+
+
+def test_a_window_check_counts_the_rests_inserted_in_the_leg() -> None:
+    """Rests placed anywhere are fixed at departure, so a leg that only its rests
+    make late is refused by the mask instead of failing the truck on arrival."""
+    env = build("seattle", trucks=1, stops=4, hours_of_service=US)
+    env.reset(seed=0)
+    index, decision = next(
+        (i, d) for i, d in enumerate(joint_action_feasibility(env))
+        if d.feasible and d.action_kind is ActionKind.CUSTOMER
+    )
+    hours = env.transport_graph.get_time_distance(int(env.trucks[0].current_node), decision.target_node)
+    # The shift's driving runs out halfway: a 10 h daily rest goes inside the leg.
+    _set_clock(env, 0, driving_in_shift=11.0 - hours / 2, driving_since_break=0.0)
+    task = env.task_registry.task_for_node(decision.target_node)
+    task.earliest_service, task.latest_service = 0.0, env.global_clock + hours + 1.0
+    assert joint_action_feasibility(env)[index].reason is FeasibilityReason.TIME_WINDOW_EXPIRED
+    task.latest_service = env.global_clock + hours + 12.0  # room for the rest
+    assert joint_action_feasibility(env)[index].feasible

@@ -142,3 +142,18 @@ def test_loading_option_and_in_flight_option() -> None:
     assert parsed.loading == "at_depot" and parsed.in_flight_information == "nominal_eta"
     with pytest.raises(ValueError, match="in_flight_information"):
         _parse(_config(observation={"in_flight_information": "psychic"}))
+
+
+def test_request_windows_reject_unknown_keys_and_reversed_bounds() -> None:
+    def windows(**block):
+        return _config(requests={"mode": "same_day", "time_windows": {"enabled": True, **block}},
+                       depot_charging={"enabled": False})
+
+    with pytest.raises(ValueError, match="unknown requests.time_windows keys"):
+        _parse(windows(window_width=4.0))  # a typo must not fall back to the default
+    with pytest.raises(ValueError, match="min <= max"):
+        _parse(windows(earliest_min=5.0, earliest_max=2.0))
+    with pytest.raises(ValueError, match="window_width_min"):
+        _parse(windows(window_width_min=0.0))
+    parsed = _parse(windows(earliest_min=1.0, earliest_max=4.0, window_width_min=2.0, window_width_max=3.0))
+    assert parsed.requests.time_windows["earliest_max"] == 4.0

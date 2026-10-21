@@ -35,7 +35,7 @@ $S_k = (t_k, \kappa_k, \{s^v_k\}_{v \in V}, R_k, I_k)$ where:
 
 The observation is the versioned feature snapshot `joint-fleet-v7` (`state/features.py`). Its v6 columns are unchanged when the new blocks are disabled.
 
-**In-flight information.** With `observation.in_flight_information: realized` (the legacy default), a truck that is mid-leg exposes its realized arrival time and energy. With `nominal_eta`, it exposes departure plus nominal time, nominal energy and nominal service time, as a telematics ETA would. All new components are tested for non-anticipativity under `nominal_eta`.
+**In-flight information.** With `observation.in_flight_information: realized` (the legacy default), a truck that is mid-leg exposes its realized arrival time and energy. With `nominal_eta`, it exposes departure plus nominal time, nominal energy and nominal service time, as a telematics ETA would; a truck already in service also shows its nominal service time, not the realized unloading draw. All new components are tested for non-anticipativity under `nominal_eta`.
 
 ## 3. Exogenous information $W_{k+1}$
 
@@ -84,7 +84,7 @@ where $e$ is the epoch index, $d_{0c}$ and $d_{c0}$ the nominal travel times fro
 
 Drops caused only by hours of service are counted.
 
-**Same-day requests.** A same-day request picks up at the depot, with pickup window [release, $\ell - d_{0c}$] and the configured loading time, then delivers to $c$ within its window.
+**Same-day requests.** A same-day request picks up at the depot, with pickup window [release, $\ell - d_{0c} - \sigma_L$], where $\sigma_L$ is the configured loading time, then delivers to $c$ within its window. A load that starts at the latest pickup therefore still arrives by $\ell$ nominally.
 
 **Drayage requests.** A drayage request moves one container: import (terminal → customer) or export (customer → terminal). It has a hard earliest pickup at the origin and a soft deadline at the destination; origin and destination processing take 2 and 4 min (Xiao §3.1, §5.2.1).
 
@@ -146,7 +146,7 @@ The mask never reads hidden queue state.
 
 **Placement of rests.**
 
-- `rest_locations: anywhere` (Goel 2009/2010): a leg that exceeds the allowance has the required rests inserted inside it, as late as possible. The arrival time includes them.
+- `rest_locations: anywhere` (Goel 2009/2010): a leg that exceeds the allowance has the required rests inserted inside it, as late as possible. The arrival time includes them, and so does the mask's check of a hard time window at the leg's end.
 - `stops_only` (Bai; Kahlert, Wang & Mårtensson 2026): the mask rejects a leg whose nominal driving (or 2.5× nominal with `time_guard: worst_case`) exceeds the allowance (`HOS_DRIVING_LIMIT`, `HOS_SHIFT_WINDOW`). A realized overrun gets one counted roadside break.
 
 A truck over its limits can still rest, charge, or end its shift at the depot, so hours of service alone never empty the feasible set.

@@ -485,6 +485,17 @@ def _truck_history(env, truck) -> list[float]:
             "discharge": nominal_energy if math.isfinite(nominal_energy) else 0.0,
             "unloading_time": _nominal_service_hours(env, destination),
         }
+    elif (
+        _in_flight_mode(env) == "nominal_eta"
+        and env.truck_states[tid] in {"unloading", "waiting_for_service"}
+        and ("unloading_duration" in data or "unloading_time" in data)
+    ):
+        # The unloading draw is realized when service starts (static: at
+        # departure); until it ends a dispatcher knows only the nominal time.
+        nominal = _nominal_service_hours(env, int(truck.current_node))
+        data = {**data, "unloading_duration": nominal, "unloading_time": nominal}
+        if env.truck_states[tid] == "unloading" and truck.unloading_start_time is not None:
+            event_time = max(env.global_clock, truck.unloading_start_time + nominal)
     queue_position = -1
     reserved = False
     stations = getattr(env, "public_stations", None)

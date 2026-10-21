@@ -598,6 +598,68 @@ def hos_leg_check(env: Any, truck: Any, target_node: int, kind: ActionKind):
     )
 
 
+def hos_leg_hours(env: Any, truck: Any, driving_hours: float) -> float:
+    """Elapsed hours of a leg, including the rests placed inside it.
+
+    With ``rest_locations: anywhere`` the rests a leg needs are fixed at
+    departure (Goel 2009) and lengthen it, so a time-window check must count
+    them, exactly as ``HosTracker.plan_leg`` will. With ``stops_only`` a
+    feasible leg fits the allowance and holds none. A truck with no allowance
+    left is refused by ``hos_leg_check`` instead.
+    """
+    from EVRoutingEnv.models.core.hours_of_service import (
+        HosActivity,
+        HosInfeasible,
+        advance_to,
+        driving_allowance,
+        insert_rests,
+    )
+
+    hos = getattr(env, "hos", None)
+    if (
+        hos is None
+        or hos.config.rest_locations != "anywhere"
+        or not math.isfinite(driving_hours)
+        or driving_hours <= 0.0
+    ):
+        return driving_hours
+    clock = advance_to(hos.regime, hos.clock(truck.truck_id), float(env.global_clock), HosActivity.IDLE)
+    if driving_allowance(hos.regime, clock) <= 1e-9:
+        return driving_hours
+    try:
+        segments, _ = insert_rests(hos.regime, clock, driving_hours)
+    except HosInfeasible:
+        return math.inf
+    return sum(hours for _, hours in segments)
+
+
+def _hos_window_check(env: Any, truck: Any, decision: FeasibilityResult):
+    """A static customer's hard window, counting the rests inside the leg."""
+    hos = getattr(env, "hos", None)
+    if (
+        hos is None
+        or hos.config.rest_locations != "anywhere"
+        or decision.action_kind is not ActionKind.CUSTOMER
+        or getattr(env, "request_engine", None) is not None
+    ):
+        return None
+    target = int(decision.target_node)
+    task = env.task_registry.task_for_node(target)
+    if not math.isfinite(task.latest_service):
+        return None
+    realized = realized_route_costs(env, truck, target)
+    hours = (
+        realized["travel_time_hours"] if realized is not None
+        else _nominal_hours(env, int(truck.current_node), target)
+    )
+    arrival = float(env.global_clock) + hos_leg_hours(env, truck, hours)
+    if max(arrival, float(task.earliest_service)) > float(task.latest_service) + 1e-9:
+        return FeasibilityResult.reject(
+            FeasibilityReason.TIME_WINDOW_EXPIRED, decision.action_kind, target_node=target
+        )
+    return None
+
+
 def _component_leg_checks(env: Any, truck: Any, target_node: int, kind: ActionKind):
     """Rules shared by every action that drives the active truck somewhere."""
     stations = getattr(env, "public_stations", None)
@@ -637,6 +699,9 @@ def extension_route_check(env: Any, truck: Any, decision: FeasibilityResult) -> 
     if not getattr(env, "components_enabled", False):
         return decision
     objection = _component_leg_checks(env, truck, decision.target_node, decision.action_kind)
+    if objection is not None:
+        return objection
+    objection = _hos_window_check(env, truck, decision)
     if objection is not None:
         return objection
     engine = getattr(env, "request_engine", None)
@@ -793,10 +858,10 @@ def evaluate_request_slot(env: Any, truck: Any, slot: int) -> FeasibilityResult:
     now = float(env.global_clock)
     if engine.deadline_type == "hard" or engine.is_drayage:
         realized = realized_route_costs(env, truck, target)
-        arrival = now + (
+        arrival = now + hos_leg_hours(env, truck, (
             realized["travel_time_hours"] if realized is not None
             else _nominal_hours(env, int(truck.current_node), target)
-        )
+        ))
         if not math.isfinite(arrival) or arrival > request.pickup.latest + 1e-9:
             return FeasibilityResult.reject(
                 FeasibilityReason.TIME_WINDOW_EXPIRED, kind, target_node=target

@@ -4,13 +4,17 @@ import copy
 
 import numpy as np
 import pytest
-
 from extension_harness import InvariantChecker, build, choose, rollout
 
 from EVRoutingEnv.models.simulation import queueing
 from EVRoutingEnv.models.simulation.public_station_queue import QueueEntry
+from EVRoutingEnv.state.feasibility import (
+    ActionKind,
+    FeasibilityReason,
+    joint_action_feasibility,
+)
 from EVRoutingEnv.state.features import CHARGER_FEATURES
-from EVRoutingEnv.state.feasibility import ActionKind, FeasibilityReason, joint_action_feasibility
+
 
 pytestmark = pytest.mark.integration
 
@@ -324,3 +328,116 @@ def test_iid_stationary_waits_draw_once_per_visit() -> None:
     draws = env.public_stations.drawn_waits
     visits = sum(env.public_stations.visits.values())
     assert len(draws) == visits
+
+
+# --- regressions from the local code review ------------------------------------
+
+
+def _facade(trucks=4):
+    env = build("seattle", trucks=trucks, stops=4, public_charging=KULLMAN)
+    env.reset(seed=0)
+    node = sorted(env.public_stations.queues)[0]
+    station = env.public_stations.queues[node]
+    _quiet(station)
+    station.ports = station.ports[:2]
+    return env, env.public_stations, node, station
+
+
+def _pushes(facade, clock):
+    pushed = []
+    facade.drain(clock, lambda truck, time, data: pushed.append((truck, time, data["token"])),
+                 lambda *args, **kwargs: None)
+    return pushed
+
+
+def test_two_ports_freeing_together_wake_both_queued_trucks() -> None:
+    env, facade, node, station = _facade()
+    now = env.global_clock
+    facade.start_charging(0, node, 1.0, now)
+    facade.start_charging(1, node, 1.0, now)
+    facade.join(2, node, now)
+    facade.join(3, node, now)
+    first = _pushes(facade, now)
+    assert [(t, time) for t, time, _ in first] == [(2, pytest.approx(now + 1.0))]
+    facade.queue_at(node, now + 1.0)  # truck 2's wake-up fires
+    second = _pushes(facade, now + 1.0)
+    assert [(t, time) for t, time, _ in second] == [(3, pytest.approx(now + 1.0))]
+    assert station.reserved_for(2) and station.reserved_for(3)
+
+
+def test_a_released_reservation_passes_to_the_next_queued_truck() -> None:
+    env, facade, node, station = _facade()
+    station.ports = station.ports[:1]
+    now = env.global_clock
+    facade.start_charging(0, node, 1.0, now)
+    facade.join(1, node, now)
+    facade.join(2, node, now)
+    _pushes(facade, now)
+    facade.queue_at(node, now + 1.0)
+    assert station.reserved_for(1)
+    facade.release_reservation(1, node, now + 1.0)  # case A5
+    woken = _pushes(facade, now + 1.0)
+    assert [(t, time) for t, time, _ in woken] == [(2, pytest.approx(now + 1.0))]
+    assert station.reserved_for(2)
+
+
+def test_closure_invalidates_pending_wake_ups() -> None:
+    env, facade, node, station = _facade()
+    station.ports = station.ports[:1]
+    now = env.global_clock
+    facade.start_charging(0, node, 2.0, now)
+    facade.join(1, node, now)
+    [(truck, time, token)] = _pushes(facade, now)
+    facade.set_station_available(node, False, clock=now + 0.5)
+    assert facade.confirm_reservation(1, node, token, time) is False
+
+
+def test_closure_drops_a_reservation_not_yet_scheduled() -> None:
+    env, facade, node, station = _facade()
+    station.ports = station.ports[:1]
+    now = env.global_clock
+    facade.start_charging(0, node, 1.0, now)
+    facade.join(1, node, now)
+    # No drain in between: truck 1's port is reserved but its wake-up is not
+    # yet scheduled when the station closes and sends it away.
+    facade.queue_at(node, now + 1.0)
+    assert station.reserved_for(1)
+    assert 1 in facade.set_station_available(node, False, clock=now + 1.0)
+    assert _pushes(facade, now + 1.0) == []
+    assert 1 not in facade.scheduled
+
+
+def test_queries_keep_the_fleet_first_tie_rule() -> None:
+    env = _single()
+    action, node = _nearest_feasible_charger(env)
+    station = env.public_stations.queues[node]
+    _quiet(station, busy_until=env.global_clock + 10.0)
+    truck = _arrive(env, action)
+    station._next_arrival = (env.global_clock, station._arrivals_k)  # an outside car, same instant
+    joint_action_feasibility(env)  # mask query
+    env.get_canonical_features()  # feature query
+    assert station.queue == []
+    env._execute_extra_action(truck, ActionKind.QUEUE)
+    station.advance(env.global_clock)
+    assert [entry.kind for entry in station.queue] == ["fleet", "outside"]
+
+
+def test_closing_the_private_depot_charger_works() -> None:
+    from extension_harness import SAME_DAY
+
+    env = build("seattle", trucks=1, requests=SAME_DAY, public_charging=KULLMAN,
+                depot_charging={"enabled": True})
+    env.reset(seed=0)
+    depot = env.request_engine.depot
+    env.set_charger_available(depot, False)
+    assert env.charging_station.station_available[depot] is False
+
+
+def test_closure_logs_the_departure_of_a_released_reservation() -> None:
+    env, facade, node, station = _facade()
+    station.ports = station.ports[:1]
+    now = env.global_clock
+    facade.join(7, node, now)  # free port: reserved at once
+    assert station.reserved_for(7)
+    station.close(now)
+    assert ("fleet", 7, now, 0) in station.log.departures

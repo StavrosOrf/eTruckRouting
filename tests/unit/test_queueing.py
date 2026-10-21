@@ -72,7 +72,7 @@ def test_transient_wait_matches_matrix_exponential(c, u) -> None:
 def test_transient_wait_at_age_zero_is_exact() -> None:
     # A newcomer behind n >= c vehicles waits for n - c + 1 completions at rate c mu.
     c, mu = 3, 2.0
-    for n in range(0, 9):
+    for n in range(9):
         expected = max(0, n - c + 1) / (c * mu)
         assert q.expected_wait_given_memory(c, 4.0, mu, n, 0.0) == pytest.approx(expected)
 

@@ -3,6 +3,7 @@ Truck class representing individual delivery vehicles.
 """
 import math
 
+
 class Truck:
     """Represents a delivery truck with battery, route, and state information."""
     

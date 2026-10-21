@@ -616,14 +616,17 @@ def _component_leg_checks(env: Any, truck: Any, target_node: int, kind: ActionKi
             FeasibilityReason.STATION_HOP_LIMIT, kind, target_node=int(target_node)
         )
     engine = getattr(env, "request_engine", None)
-    if engine is not None and engine.is_drayage and kind is ActionKind.CHARGER:
-        if engine.container(truck.truck_id) is None and int(truck.current_node) == int(
-            env.joint_instance.depot_node
-        ):
-            # Xiao et al. (2025) sec. 3.1: the first stop after the depot is an origin.
-            return FeasibilityResult.reject(
-                FeasibilityReason.DRAYAGE_ORIGIN_FIRST, kind, target_node=int(target_node)
-            )
+    if (
+        engine is not None
+        and engine.is_drayage
+        and kind is ActionKind.CHARGER
+        and engine.container(truck.truck_id) is None
+        and int(truck.current_node) == int(env.joint_instance.depot_node)
+    ):
+        # Xiao et al. (2025) sec. 3.1: the first stop after the depot is an origin.
+        return FeasibilityResult.reject(
+            FeasibilityReason.DRAYAGE_ORIGIN_FIRST, kind, target_node=int(target_node)
+        )
     return hos_leg_check(env, truck, target_node, kind)
 
 
@@ -634,7 +637,16 @@ def extension_route_check(env: Any, truck: Any, decision: FeasibilityResult) -> 
     if not getattr(env, "components_enabled", False):
         return decision
     objection = _component_leg_checks(env, truck, decision.target_node, decision.action_kind)
-    return decision if objection is None else objection
+    if objection is not None:
+        return objection
+    engine = getattr(env, "request_engine", None)
+    if engine is not None and engine.energy_scale(truck.truck_id) != 1.0:
+        # evaluate_joint_route prices an empty truck; a loaded drayage leg to a
+        # charger draws more (Kancharla & Ramadurai 2020).
+        energy = _leg_energy_check(env, truck, decision.target_node, decision.action_kind)
+        if not energy.feasible:
+            return energy
+    return decision
 
 
 def extension_charge_check(env: Any, truck: Any, decision: FeasibilityResult) -> FeasibilityResult:
@@ -668,8 +680,9 @@ def _leg_energy_check(env: Any, truck: Any, target_node: int, kind: ActionKind):
         else nominal * _energy_multiplier(env)
     )
     engine = getattr(env, "request_engine", None)
-    if engine is not None and realized is None:
-        # Drayage with a load-dependent energy model scales loaded legs.
+    if engine is not None:
+        # Drayage with a load-dependent energy model scales loaded legs, both
+        # nominal and realized (execution scales the realized draw the same way).
         required *= engine.energy_scale(truck.truck_id)
     if required > float(truck.current_battery) + 1e-9:
         return FeasibilityResult.reject(
@@ -779,7 +792,11 @@ def evaluate_request_slot(env: Any, truck: Any, slot: int) -> FeasibilityResult:
         return FeasibilityResult.reject(FeasibilityReason.PAYLOAD_EXCEEDED, kind, target_node=target)
     now = float(env.global_clock)
     if engine.deadline_type == "hard" or engine.is_drayage:
-        arrival = now + _nominal_hours(env, int(truck.current_node), target)
+        realized = realized_route_costs(env, truck, target)
+        arrival = now + (
+            realized["travel_time_hours"] if realized is not None
+            else _nominal_hours(env, int(truck.current_node), target)
+        )
         if not math.isfinite(arrival) or arrival > request.pickup.latest + 1e-9:
             return FeasibilityResult.reject(
                 FeasibilityReason.TIME_WINDOW_EXPIRED, kind, target_node=target

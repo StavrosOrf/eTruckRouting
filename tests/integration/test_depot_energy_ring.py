@@ -5,10 +5,12 @@ from copy import deepcopy
 
 import pytest
 
+
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.utils.utils import load_config
+
 
 pytestmark = pytest.mark.integration
 

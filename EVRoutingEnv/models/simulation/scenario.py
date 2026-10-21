@@ -68,6 +68,9 @@ class ScenarioRandomStreams:
         return self.descriptor.as_dict()
 
     def _seed_for(self, stream: str, key: Any = None) -> int:
+        return int.from_bytes(self._digest(stream, key), byteorder="little", signed=False)
+
+    def _digest(self, stream: str, key: Any = None) -> bytes:
         payload = {
             "scenario_seed": self.descriptor.seed,
             "scenario_version": self.descriptor.version,
@@ -80,8 +83,7 @@ class ScenarioRandomStreams:
             separators=(",", ":"),
             ensure_ascii=True,
         ).encode("utf-8")
-        digest = hashlib.blake2b(encoded, digest_size=16).digest()
-        return int.from_bytes(digest, byteorder="little", signed=False)
+        return hashlib.blake2b(encoded, digest_size=16).digest()
 
     def generator(self, stream: str) -> np.random.Generator:
         """Return a stateful generator isolated from every other named stream."""
@@ -113,7 +115,21 @@ class ScenarioRandomStreams:
         return np.random.default_rng(self._seed_for(stream, key=_normalise_key(key)))
 
     def uniforms(self, stream: str, key: Any, size: int = 1) -> np.ndarray:
-        """``size`` deterministic U[0, 1) values for one event identity."""
+        """``size`` deterministic U[0, 1) values for one event identity.
+
+        One or two values come straight from the 128-bit digest (53 bits each),
+        which avoids building a generator for every outside-traffic event; more
+        values come from a keyed generator, so a size-3 draw does not extend a
+        size-2 one. These keyed draws are new with the opt-in components and
+        are not used by legacy code, whose draws are unchanged.
+        """
+        if size <= 2:
+            digest = self._digest(stream, _normalise_key(key))
+            words = (
+                int.from_bytes(digest[:8], "little"),
+                int.from_bytes(digest[8:], "little"),
+            )
+            return np.asarray([(word >> 11) * 2.0**-53 for word in words[:size]])
         return self.keyed_generator(stream, key).random(size)
 
     def exponential(self, stream: str, key: Any, mean: float) -> float:

@@ -668,8 +668,13 @@ class ChargingStation:
         self,
         charger_node: int,
         available: bool,
+        clock: float | None = None,
     ) -> list[int]:
-        """Set station availability and release queued trucks on closure."""
+        """Set station availability and release queued trucks on closure.
+
+        ``clock`` is unused here; stations with timed state (public queues)
+        close at that time.
+        """
         if charger_node not in self.station_available:
             raise KeyError(f"node {charger_node} is not a charging station")
         available = bool(available)

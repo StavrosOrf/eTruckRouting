@@ -25,6 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
+
 SCHEMA = "evrp-bp-instance/v1"
 
 # 0.001 SoC is 0.4 kWh on a 400 kWh battery: well below one leg's energy grain.
@@ -95,7 +96,9 @@ def export_nominal_instance(env, *, objective: str = "travel", warm_start=None, 
     routes (environment node ids, e.g. an ALNS plan) that the solver completes
     with its own optimal charging stops.
     """
-    from EVRoutingEnv.baselines.optimization.exact_optimization import refuse_unrevealed_requests
+    from EVRoutingEnv.baselines.optimization.exact_optimization import (
+        refuse_unrevealed_requests,
+    )
 
     refuse_unrevealed_requests(env, "the nominal instance export (branch-and-price, RoutingBlocks)")
     if objective not in ("travel", "operating"):

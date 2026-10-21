@@ -33,10 +33,10 @@ from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     decode_feasible_actions,
 )
 from EVRoutingEnv.baselines.optimization.exact_optimization import (
-    expected_station_wait,
-    refuse_unrevealed_requests,
     PlanSolution,
+    expected_station_wait,
     planned_route_can_return,
+    refuse_unrevealed_requests,
 )
 from EVRoutingEnv.models.core.customer import TaskStatus
 

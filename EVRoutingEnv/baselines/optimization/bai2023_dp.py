@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+
 
 T_DRIVE = 4.5
 T_REST = 0.75

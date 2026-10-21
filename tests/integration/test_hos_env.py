@@ -4,12 +4,23 @@ import copy
 import dataclasses
 
 import pytest
-
-from extension_harness import SAME_DAY, InvariantChecker, audit_violations, build, choose, rollout
+from extension_harness import (
+    SAME_DAY,
+    InvariantChecker,
+    audit_violations,
+    build,
+    choose,
+    rollout,
+)
 
 from EVRoutingEnv.models.core import hours_of_service as h
 from EVRoutingEnv.models.environment.hos_tracker import HosTracker
-from EVRoutingEnv.state.feasibility import ActionKind, FeasibilityReason, joint_action_feasibility
+from EVRoutingEnv.state.feasibility import (
+    ActionKind,
+    FeasibilityReason,
+    joint_action_feasibility,
+)
+
 
 pytestmark = pytest.mark.integration
 
@@ -71,9 +82,10 @@ def test_B7_long_legs_get_their_rests_inside_and_arrive_exactly(monkeypatch) -> 
     recorded = []
     original = HosTracker.plan_leg
 
-    def spy(self, truck, driving_hours):
-        clock = self.clock(truck.truck_id)
-        segments = original(self, truck, driving_hours)
+    def spy(self, truck, departure, driving_hours):
+        # Planning starts from the clock brought to the departure time.
+        clock = h.advance_to(self.regime, self.clock(truck.truck_id), departure, h.HosActivity.IDLE)
+        segments = original(self, truck, departure, driving_hours)
         recorded.append((clock, driving_hours, segments))
         return segments
 
@@ -167,8 +179,15 @@ def test_B11_handling_longer_than_the_session_gives_no_credit_and_no_negative_ti
 def test_B12_resting_after_charging_frees_the_port_for_the_next_truck() -> None:
     charging = copy.deepcopy(build("seattle").config["charging"])
     charging["port_capacity_scale"] = 1e-9  # one port everywhere
+    for seed in range(20):
+        if _b12_case(seed, charging):
+            return
+    pytest.fail("no seed where the second truck queued behind the first")
+
+
+def _b12_case(seed, charging) -> bool:
     env = build("seattle", trucks=2, stops=3, hours_of_service=US, charging=charging)
-    env.reset(seed=5)
+    env.reset(seed=seed)
     decisions = joint_action_feasibility(env)
     charger = min(
         (env.transport_graph.get_time_distance(int(env.trucks[0].current_node), d.target_node), i)
@@ -195,8 +214,13 @@ def test_B12_resting_after_charging_frees_the_port_for_the_next_truck() -> None:
         )
         for truck in env.trucks
     )
-    (first_start, first_end), (second_start, _) = sessions
+    (_, first_end), (second_start, _) = sessions
+    second = min(env.trucks, key=lambda t: -next(
+        e["timestamp"] for e in t.event_history if e["event_type"] == "CHARGING_START"))
+    if not any(e["event_type"] == "WAITING_END" for e in second.event_history):
+        return False  # it arrived after the port was free: not this case
     assert second_start == pytest.approx(first_end)
+    return True
 
 
 def test_B13_over_limits_at_the_depot_end_shift_and_rests_remain() -> None:

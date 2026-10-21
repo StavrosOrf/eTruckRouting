@@ -32,6 +32,10 @@ from EVRoutingEnv.evaluation.artifacts import (
     scenario_static_inputs,
 )
 from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
+from EVRoutingEnv.models.core.hours_of_service import HosActivity
+from EVRoutingEnv.models.core.hours_of_service import apply as hos_apply
+from EVRoutingEnv.models.core.hours_of_service import driving_allowance as hos_allowance
+from EVRoutingEnv.models.core.requests import RequestStatus
 from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.core.truck import Truck
 from EVRoutingEnv.models.environment.event_handlers import (
@@ -40,26 +44,25 @@ from EVRoutingEnv.models.environment.event_handlers import (
     EventHandler,
     EventType,
 )
-from EVRoutingEnv.models.core.hours_of_service import HosActivity
-from EVRoutingEnv.models.core.hours_of_service import apply as hos_apply
-from EVRoutingEnv.models.core.hours_of_service import driving_allowance as hos_allowance
 from EVRoutingEnv.models.environment.extension_config import parse_extension_config
 from EVRoutingEnv.models.environment.hos_tracker import HosTracker
-from EVRoutingEnv.models.environment.request_engine import RequestEngine, RequestTaskView
-from EVRoutingEnv.models.core.requests import RequestStatus
 from EVRoutingEnv.models.environment.joint_instance import (
     JointRoutingInstance,
     generate_joint_routing_instance,
+)
+from EVRoutingEnv.models.environment.request_engine import (
+    RequestEngine,
+    RequestTaskView,
 )
 from EVRoutingEnv.models.environment.route_certificate import replay_routes
 from EVRoutingEnv.models.environment.route_walk import RouteWalkTopology
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
+from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
 from EVRoutingEnv.models.simulation.public_charging import (
     PublicChargingStation,
     StationaryWaitChargingStation,
 )
-from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
 from EVRoutingEnv.models.simulation.scenario import ScenarioRandomStreams
 from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
 from EVRoutingEnv.state.action_mask import (
@@ -73,12 +76,12 @@ from EVRoutingEnv.state.feasibility import (
     evaluate_depot_action,
     evaluate_duration_charge,
     evaluate_extra_action,
-    evaluate_request_slot,
     evaluate_joint_route,
+    evaluate_request_slot,
+    evaluate_target_soc_charge,
     extension_charge_check,
     extension_route_check,
     hos_leg_check,
-    evaluate_target_soc_charge,
     joint_action_feasibility,
     realized_route_costs,
 )
@@ -831,6 +834,15 @@ class EventDrivenTruckEnv(gym.Env):
         if self.public_stations is not None:
             self.public_stations.drain(self.global_clock, self._push_ready, self._push_system_event)
 
+    def _fleet_queued_publicly(self) -> bool:
+        """Some live truck is queued at a public station (eager reference)."""
+        stations = self.public_stations
+        return stations is not None and any(
+            not (truck.is_complete or truck.failed)
+            and stations.queue_position(truck.truck_id) is not None
+            for truck in self.trucks
+        )
+
     def _handle_station_event(self, event: Event) -> None:
         self.public_stations.handle_eager_event(
             int(event.data["node"]), self.global_clock, self._push_ready
@@ -1133,11 +1145,21 @@ class EventDrivenTruckEnv(gym.Env):
             "event_queue", "truck_states", "truck_routes", "truck_initial_plans",
             "trucks", "waiting_start_times", "truck_ready_times",
             "_penalized_failed_trucks", "_penalized_completed_trucks",
-            "hos", "public_stations", "request_engine",
+            "hos", "public_stations",
+            # Depot loading replays its witness with legacy semantics (below).
+            *(() if self.request_mode == "at_depot" else ("request_engine",)),
         ):
             setattr(shadow, name, copy.deepcopy(getattr(self, name), memo))
         shadow.verbose = shadow.enable_plotting = False
         shadow._certificate_replay = True
+        if self.request_mode == "at_depot":
+            # The witness is a legacy (implicit-loading) route set; replay it with
+            # legacy semantics. Depot pickups take no time in this mode
+            # (_build_at_depot), so loading each truck's witness customers at
+            # t = 0 follows the same timeline and also certifies depot loading.
+            shadow.request_engine = None
+            shadow.dynamic_requests = False
+            shadow.components_enabled = shadow.public_stations is not None or shadow.hos is not None
         shadow.event_handler = EventHandler(False)
         shadow.charging_curve_model = ChargingCurveModel(verbose=False, record_power_curve=False)
         shadow.charging_logger = None
@@ -1233,7 +1255,7 @@ class EventDrivenTruckEnv(gym.Env):
         arrival = departure + actual_travel_time
         segments = None
         if self.hos is not None:
-            segments = self.hos.plan_leg(truck, actual_travel_time)
+            segments = self.hos.plan_leg(truck, departure, actual_travel_time)
             arrival += HosTracker.rest_hours_in(segments)
             truck.pending_hos_segments = segments
         truck.start_routing(destination=target_node, timestamp=departure)
@@ -1639,6 +1661,20 @@ class EventDrivenTruckEnv(gym.Env):
                 # Exogenous information at or past the horizon can no longer
                 # matter, and must not truncate the episode by itself.
                 if event.time >= self.max_time:
+                    if (
+                        event.data["kind"] == "station_event"
+                        and event.time > self.max_time
+                        and self._fleet_queued_publicly()
+                    ):
+                        # Eager reference only: a queued truck waits for this
+                        # outside traffic. The lazy simulator holds its port
+                        # reservation as a truck event past the horizon, which
+                        # truncates; truncate exactly the same way.
+                        self.global_clock = self.max_time
+                        self.active_truck_id = None
+                        self._truncation_reason = "time_limit_exhausted"
+                        self.termination_reason = self._truncation_reason
+                        return
                     continue
                 # The eager queue reference is debug-only: once no truck is
                 # live, outside traffic cannot matter and must not move the
@@ -1996,10 +2032,9 @@ class EventDrivenTruckEnv(gym.Env):
                         print(f"  Skipping TRUCK_ROUTING for truck {truck.truck_id} (status: {status})")
                     continue
 
-                if self.public_stations is not None:
-                    truck.stations_since_stop = (
-                        truck.stations_since_stop + 1 if destination in self.charging_nodes else 0
-                    )
+                truck.stations_since_stop = (
+                    truck.stations_since_stop + 1 if destination in self.charging_nodes else 0
+                )
                 if self.hos is not None and "hos_segments" in event.data:
                     segments = event.data["hos_segments"]
                     self.hos.commit_leg(truck, event.data["departure_time"], segments)
@@ -2428,6 +2463,11 @@ class EventDrivenTruckEnv(gym.Env):
             to_node=target_node
         )
         
+        if self.request_engine is not None:
+            # Kancharla & Ramadurai (2020): a loaded drayage leg draws more,
+            # also on the way to a charger.
+            discharge *= self.request_engine.energy_scale(truck.truck_id)
+
         # Check if truck can make it
         if discharge > truck.current_battery + 1e-9:
             if self.verbose:
@@ -2486,7 +2526,7 @@ class EventDrivenTruckEnv(gym.Env):
         completion_time = departure_time + actual_travel_time
         hos_segments = None
         if self.hos is not None:
-            hos_segments = self.hos.plan_leg(truck, actual_travel_time)
+            hos_segments = self.hos.plan_leg(truck, departure_time, actual_travel_time)
             completion_time += HosTracker.rest_hours_in(hos_segments)
             truck.pending_hos_segments = hos_segments
 
@@ -3045,8 +3085,7 @@ class EventDrivenTruckEnv(gym.Env):
     def set_charger_available(self, charger_node: int, available: bool) -> None:
         """Apply a station closure/reopening and wake trucks released from queue."""
         released_trucks = self.charging_station.set_station_available(
-            int(charger_node),
-            available,
+            int(charger_node), available, clock=self.global_clock,
         )
         for truck_id in released_trucks:
             heapq.heappush(

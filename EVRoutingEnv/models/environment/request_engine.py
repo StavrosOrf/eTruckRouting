@@ -30,6 +30,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
@@ -102,7 +103,7 @@ class RequestTaskView:
     more than one live request: such code must be migrated to request ids.
     """
 
-    _STATUS = {
+    _STATUS: ClassVar[dict] = {
         RequestStatus.OPEN: TaskStatus.UNASSIGNED,
         RequestStatus.CLAIMED_PICKUP: TaskStatus.CLAIMED,
         RequestStatus.LOADING: TaskStatus.CLAIMED,
@@ -220,6 +221,8 @@ class RequestEngine:
         self.delivery_config = delivery_config
         self.registry = RequestRegistry(self.config.max_requests)
         self.terminals: tuple[int, ...] = ()
+        self._drayage_pool: list[int] | None = None
+        self._terminals_near: dict[int, tuple[int, ...]] = {}
 
     # -- properties used by the feasibility engine ----------------------------
 
@@ -294,8 +297,12 @@ class RequestEngine:
         return max((r.delivery.service_hours for r in live if r.delivery.node == node), default=0.0)
 
     def all_resolved_on_time(self) -> bool:
-        """Every request revealed and served on time (vacuously true if none)."""
-        return all(r.status is RequestStatus.SERVED for r in self.registry.requests())
+        """Every revealed request served on time (vacuously true if none).
+
+        Only revealed requests count: whether more are coming is not known to
+        the fleet. At the end of an episode every request has been revealed.
+        """
+        return all(r.status is RequestStatus.SERVED for r in self.registry.revealed())
 
     # -- episode generation --------------------------------------------------
 
@@ -347,6 +354,12 @@ class RequestEngine:
             float(env.config["truck"]["battery_capacity"]), 1.0,
         )
         customers = [topology.nodes[i] for i in topology.customers]
+        if self.is_drayage:
+            # Terminals are neither depot nor customer; with a service radius
+            # the pool was narrowed once at init.
+            customers = self._drayage_pool if self._drayage_pool is not None else [
+                node for node in customers if node not in self.terminals
+            ]
         self._customer_pool = customers
         pick = int(self.streams.keyed_generator("request_static_context", "depot").integers(len(customers)))
         return int(customers[pick])
@@ -389,9 +402,44 @@ class RequestEngine:
         """Map each drayage terminal to the nearest non-station node (at init)."""
         if not self.is_drayage:
             return
-        index, _, _ = env.transport_graph.cost_matrices()
+        from EVRoutingEnv.models.environment.route_walk import RouteWalkTopology
+
+        index, _, hours = env.transport_graph.cost_matrices()
         self._index = index
         self.terminals = self._resolve_terminals(env, depot=-1)
+        self._drayage_pool = None
+        radius = self.drayage_config.service_radius_hours
+        if radius is not None:
+            # Drayage is regional: depot and customers lie within a nominal
+            # radius of some terminal, both ways. Static, so computed once.
+            topology = RouteWalkTopology.for_graph(
+                env.transport_graph, env.charging_nodes,
+                float(env.config["truck"]["battery_capacity"]), 1.0,
+            )
+            self._drayage_pool = [
+                int(topology.nodes[i]) for i in topology.customers
+                if int(topology.nodes[i]) not in self.terminals
+                and any(
+                    hours[index[int(topology.nodes[i])], index[t]] <= radius
+                    and hours[index[t], index[int(topology.nodes[i])]] <= radius
+                    for t in self.terminals
+                )
+            ]
+            needed = self.config.static_context_size + 1  # the context and the depot
+            if len(self._drayage_pool) < needed:
+                raise ValueError(
+                    f"drayage.service_radius_hours={radius:g} leaves {len(self._drayage_pool)} "
+                    f"network nodes around the terminals, but the static context and depot "
+                    f"need {needed}; widen the radius or shrink requests.static_context_size"
+                )
+            # Each customer is paired only with terminals within the radius.
+            self._terminals_near = {
+                node: tuple(
+                    t for t in self.terminals
+                    if hours[index[node], index[t]] <= radius and hours[index[t], index[node]] <= radius
+                )
+                for node in self._drayage_pool
+            }
 
     def _resolve_terminals(self, env, depot: int) -> tuple[int, ...]:
         path = os.path.join(resolve_network_data_dir(env.config["network"]), "vis_data", "nodes.json")
@@ -481,7 +529,8 @@ class RequestEngine:
         service = float(context.service[service_i])
         if self.is_drayage:
             u = self.streams.uniforms("request_epoch", (source, key, "drayage", position), 3)
-            terminal = self.terminals[int(u[1] * len(self.terminals)) % len(self.terminals)]
+            terminals = self._terminals_near.get(customer) or self.terminals
+            terminal = terminals[int(u[1] * len(terminals)) % len(terminals)]
             importing = float(u[0]) < self.drayage_config.import_share
             origin, destination = (terminal, customer) if importing else (customer, terminal)
             low, high = self.drayage_config.container_mass_kg
@@ -576,7 +625,7 @@ class RequestEngine:
                                  loaded=self.is_drayage and position == 1)
             if legs is None:
                 return None
-            for kind, value, hours, after in legs:
+            for kind, _station, hours, after in legs:
                 if kind == "drive" and with_hos:
                     driven = _hos_drive(regime, clock, hours, anywhere)
                     if driven is None:

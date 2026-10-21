@@ -32,17 +32,19 @@ from time import perf_counter
 
 import numpy as np
 
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
-from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv  # noqa: E402
-from EVRoutingEnv.utils.utils import load_config, resolve_network_data_dir  # noqa: E402
-from scripts.analysis.analyze_scenario_resets import (  # noqa: E402
+from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
+from EVRoutingEnv.utils.utils import load_config, resolve_network_data_dir
+from scripts.analysis.analyze_scenario_resets import (
     LegLookup,
     distribution,
     extract_witness,
 )
+
 
 RESET_FIELDS = (
     "variant", "seed", "certified", "error", "reset_ms", "generation_attempts",

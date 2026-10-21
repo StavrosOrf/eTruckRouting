@@ -17,7 +17,6 @@ All of them read the hard-feasible action set and never relax it.
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 
@@ -71,7 +70,8 @@ class KullmanMyopicPolicy:
         stations = getattr(env, "public_stations", None)
 
         if grouped.get(ActionKind.QUEUE):
-            observed = stations.queue_at(node, env.global_clock).queue_length()
+            # As the environment saw it: the fleet truck arrived first.
+            observed = stations.queue_at(node, env.global_clock, fleet_arrival=True).queue_length()
             params = stations.station_parameters(node)
             expected = queueing.mean_queue_length(
                 params.ports, params.mean_arrival_rate, params.service_rate
@@ -88,7 +88,7 @@ class KullmanMyopicPolicy:
         if customers:
             return min(customers, key=lambda a: _travel_hours(env, node, a.target_node)).index
         chargers = grouped.get(ActionKind.CHARGER, [])
-        if chargers and _stations_since_customer(truck) < self.MAX_STATIONS_BETWEEN_CUSTOMERS:
+        if chargers and truck.stations_since_stop < self.MAX_STATIONS_BETWEEN_CUSTOMERS:
             def cost(action):
                 wait = 0.0
                 if stations is not None:
@@ -103,17 +103,6 @@ class KullmanMyopicPolicy:
             return depot[0].index
         others = [a for a in candidates if a.kind is not ActionKind.QUEUE]
         return (others or candidates)[0].index
-
-
-def _stations_since_customer(truck) -> int:
-    """Consecutive charger arrivals since the last customer or depot stop."""
-    count = 0
-    for event in reversed(truck.event_history):
-        if event["event_type"] == "CUSTOMER_SERVICE_COMPLETE":
-            break
-        if event["event_type"] == "CHARGING_START":
-            count += 1
-    return count
 
 
 @dataclass(frozen=True)

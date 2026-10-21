@@ -3,20 +3,22 @@
 import copy
 import dataclasses
 import itertools
-import math
 
 import pytest
-
 from extension_harness import SAME_DAY, InvariantChecker, build, choose, rollout
 
 from EVRoutingEnv.models.core.requests import RequestStatus
-from EVRoutingEnv.models.environment.request_engine import hindsight_problem, kancharla_power_ratio
+from EVRoutingEnv.models.environment.request_engine import (
+    hindsight_problem,
+    kancharla_power_ratio,
+)
 from EVRoutingEnv.state.feasibility import (
     ActionKind,
     FeasibilityReason,
     _leg_energy_check,
     joint_action_feasibility,
 )
+
 
 pytestmark = pytest.mark.integration
 
@@ -138,8 +140,9 @@ def test_C7_static_mode_keeps_the_legacy_late_arrival_failure() -> None:
     from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
     from EVRoutingEnv.utils.utils import load_config
 
-    env = EventDrivenTruckEnv(load_config("EVRoutingEnv/config_files/config_joint_time_windows.yaml"),
-                              verbose=False, enable_plotting=False)
+    config = copy.deepcopy(load_config("EVRoutingEnv/config_files/config_joint_time_windows.yaml"))
+    config["environment"]["num_trucks"] = 1
+    env = EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
     env.reset(seed=0)
     decisions = joint_action_feasibility(env)
     index = next(i for i, d in enumerate(decisions) if d.feasible and d.action_kind is ActionKind.CUSTOMER)
@@ -289,16 +292,116 @@ def test_C19_load_dependent_energy_scales_only_loaded_legs() -> None:
     assert ratio > 1.0 and loaded == pytest.approx(nominal * ratio)
 
 
+def test_C19_a_loaded_leg_to_a_charger_is_scaled_too() -> None:
+    from EVRoutingEnv.baselines.optimization.perfect_information import _clone
+
+    env = _drayage(energy_model="kancharla_ramadurai_2020")
+    container = _load_container(env)
+    ratio = kancharla_power_ratio(container.extra["container_kg"], env.request_engine.base_speed_kmh)
+    empty = _clone(env)
+    empty.request_engine.energy_scale = lambda truck_id: 1.0  # the same truck, priced empty
+    index = _nearest_charger(env)
+    node = env.charging_nodes[index]
+    needed = _leg_energy_check(empty, empty.trucks[0], node, ActionKind.CHARGER).required_energy
+    # Between the empty and the loaded requirement: only the empty truck may go.
+    for state in (env, empty):
+        state.trucks[0].current_battery = needed * (1.0 + ratio) / 2.0
+    assert joint_action_feasibility(empty)[index].feasible
+    assert joint_action_feasibility(env)[index].reason is FeasibilityReason.INSUFFICIENT_ENERGY
+    # Executed: the loaded truck draws ratio times the energy of the empty one.
+    for state in (env, empty):
+        state.trucks[0].current_battery = state.trucks[0].battery_capacity
+        state.step(index)
+    drawn = [s.trucks[0].battery_capacity - s.trucks[0].current_battery for s in (env, empty)]
+    assert ratio > 1.0 and drawn[1] > 0.0 and drawn[0] == pytest.approx(ratio * drawn[1])
+
+
 def test_C20_a_terminal_off_the_map_is_rejected_at_init() -> None:
     with pytest.raises(ValueError, match="km from the nearest"):
         build("seattle", requests=DRAYAGE, drayage={"terminals": [{"name": "Nowhere", "lat": 0.0, "lon": 0.0}]})
 
 
+TACOMA = {"name": "Port of Tacoma, Husky Terminal", "lat": 47.273, "lon": -122.41}
+
+
+def test_drayage_customers_pair_only_with_terminals_within_the_radius() -> None:
+    radius = 0.5
+    env = build("seattle", trucks=1, requests={**DRAYAGE, "static_context_size": 10},
+                drayage={"terminals": [TERMINAL, TACOMA], "service_radius_hours": radius})
+    env.reset(seed=0)
+    hours = env.transport_graph.get_time_distance
+    requests = env.request_engine.registry.requests()
+    assert requests
+    for r in requests:
+        importing = r.kind.value == "drayage_import"
+        terminal, customer = (r.pickup.node, r.delivery.node) if importing else (r.delivery.node, r.pickup.node)
+        assert terminal in env.request_engine.terminals
+        assert max(hours(terminal, customer), hours(customer, terminal)) <= radius + 1e-9
+
+
+def test_a_radius_too_small_for_the_static_context_is_rejected_at_init() -> None:
+    # 0.3 h around the two ports leaves 11 nodes: a context of 10 plus the depot.
+    blocks = {"drayage": {"terminals": [TERMINAL, TACOMA], "service_radius_hours": 0.3}}
+    build("seattle", trucks=1, requests={**DRAYAGE, "static_context_size": 10}, **blocks)
+    with pytest.raises(ValueError, match="static context"):
+        build("seattle", trucks=1, requests={**DRAYAGE, "static_context_size": 11}, **blocks)
+
+
+def test_hidden_requests_do_not_count_as_unserved() -> None:
+    env = _env()
+    registry = env.request_engine.registry
+    assert any(r.status is RequestStatus.HIDDEN for r in registry.requests())
+    for request in registry.revealed():
+        request.status = RequestStatus.SERVED
+    assert env.task_registry.all_served()
+
+
+def test_metric_snapshots_count_elapsed_loading_and_window_waits() -> None:
+    from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
+
+    seen = set()
+    for seed in (1, 2):
+        env = _env(trucks=2, seed=seed)
+        slots = range(env.num_charging_nodes, env.num_charging_nodes + env.fixed_num_stops)
+        for _ in range(8):
+            decisions = joint_action_feasibility(env)
+            env.step(next((i for i in slots if decisions[i].feasible),
+                          next(i for i, d in enumerate(decisions) if d.feasible)))
+            if env._episode_ended:
+                break
+            clock, service, window = env.global_clock, 0.0, 0.0
+            for truck in env.trucks:
+                state = env.truck_states[truck.truck_id]
+                last = {e["event_type"]: e["timestamp"] for e in truck.event_history}
+                if state == "loading":
+                    elapsed = clock - last["LOADING_START"]
+                    service += elapsed
+                elif state == "unloading":
+                    service += clock - truck.unloading_start_time
+                elif state == "waiting_for_service":
+                    elapsed = clock - last["ROUTING_END"]
+                    window += elapsed
+                if state in {"loading", "waiting_for_service"} and elapsed > 0.0:
+                    seen.add(state)
+            metrics = extract_operational_metrics(env)
+            assert metrics.total_service_time == pytest.approx(
+                sum(t.total_unloading_time for t in env.trucks) + service)
+            assert metrics.total_time_window_waiting == pytest.approx(
+                sum(t.time_window_waiting_time for t in env.trucks) + window)
+    assert seen == {"loading", "waiting_for_service"}
+
+
 def test_day_ahead_planners_refuse_unrevealed_requests() -> None:
     from EVRoutingEnv.baselines.heuristics.alns import solve_alns_plan
-    from EVRoutingEnv.baselines.heuristics.canonical_baselines import RollingHorizonMPCPolicy
-    from EVRoutingEnv.baselines.optimization.branch_and_price.export import export_nominal_instance
-    from EVRoutingEnv.baselines.optimization.exact_optimization import solve_nominal_plan
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
+        RollingHorizonMPCPolicy,
+    )
+    from EVRoutingEnv.baselines.optimization.branch_and_price.export import (
+        export_nominal_instance,
+    )
+    from EVRoutingEnv.baselines.optimization.exact_optimization import (
+        solve_nominal_plan,
+    )
 
     env = _env()
     for call in (lambda: solve_alns_plan(env), lambda: solve_nominal_plan(env),
@@ -320,7 +423,9 @@ def test_dynamic_baselines_run_clean(policy) -> None:
 
 
 def test_static_instance_with_depot_loading() -> None:
-    from EVRoutingEnv.baselines.heuristics.component_baselines import GreedyDispatchPolicy
+    from EVRoutingEnv.baselines.heuristics.component_baselines import (
+        GreedyDispatchPolicy,
+    )
 
     env = build("california", trucks=2, stops=6, problem={"loading": "at_depot"},
                 depot_charging={"enabled": False})
@@ -385,7 +490,9 @@ def _li_oracle(env) -> int:
 
 
 def test_li_2022_orienteering_with_release_dates_matches_the_hindsight_search() -> None:
-    from EVRoutingEnv.baselines.optimization.perfect_information import solve_request_hindsight
+    from EVRoutingEnv.baselines.optimization.perfect_information import (
+        solve_request_hindsight,
+    )
 
     checked = 0
     for seed in range(40):
@@ -406,10 +513,82 @@ def test_li_2022_orienteering_with_release_dates_matches_the_hindsight_search() 
         if not 2 <= count <= 6:
             continue
         oracle = _li_oracle(rebuilt)
-        solution = solve_request_hindsight(rebuilt, routing_actions=False)
+        solution = solve_request_hindsight(
+            rebuilt, routing_actions=False, canonical_loading=True, wait_only_at_depot=True,
+        )
         assert solution.proven_optimal
         assert solution.served_on_time == oracle, (seed, count)
         checked += 1
         if checked == 6:
             return
     assert checked >= 3
+
+
+def test_waiting_only_at_the_depot_is_refused_with_time_windows() -> None:
+    from EVRoutingEnv.baselines.optimization.perfect_information import (
+        solve_request_hindsight,
+    )
+
+    env = _env(SAME_DAY)  # windows enabled
+    with pytest.raises(ValueError, match="time windows"):
+        solve_request_hindsight(env, wait_only_at_depot=True)
+
+
+def test_A17_depot_charging_with_fewer_ports_than_trucks_is_fleet_fcfs() -> None:
+    env = build("seattle", trucks=3, requests=INITIAL, depot_charging={"enabled": True, "ports": 1})
+    env.config["truck"]["initial_battery"] = 50.0
+    env.reset(seed=0)
+    depot = env.request_engine.depot
+    assert env.charging_station.private_node == depot
+    assert depot not in env.public_stations.queues if env.public_stations is not None else True
+    full = env.num_navigation_actions + env.charge_action_values.index(max(env.charge_action_values))
+    while not env._episode_ended and sum(
+        any(e["event_type"] == "CHARGING_END" for e in t.event_history) for t in env.trucks
+    ) < 3:
+        truck = env.trucks[env.active_truck_id]
+        assert len(env.charging_station.charger_occupancy[depot]) <= 1
+        if not any(e["event_type"] == "CHARGING_START" for e in truck.event_history) and \
+                joint_action_feasibility(env)[full].feasible:
+            env.step(full)
+        else:
+            env.step(_kind(env, ActionKind.END_SHIFT))
+    sessions = sorted(
+        (next(e["timestamp"] for e in t.event_history if e["event_type"] == "CHARGING_START"),
+         next(e["timestamp"] for e in t.event_history if e["event_type"] == "CHARGING_END"))
+        for t in env.trucks
+    )
+    for (_, end), (start, _) in zip(sessions, sessions[1:]):
+        assert start == pytest.approx(end)  # one port, first come first served
+
+
+def test_perfect_information_mask_uses_realized_scaled_energy_and_time() -> None:
+    env = _drayage(energy_model="kancharla_ramadurai_2020")
+    container = _load_container(env)
+    truck = env.trucks[0]
+    destination = int(container.delivery.node)
+    env._perfect_information = True
+    from EVRoutingEnv.state.feasibility import realized_route_costs
+
+    realized = realized_route_costs(env, truck, destination)
+    required = _leg_energy_check(env, truck, destination, ActionKind.CUSTOMER).required_energy
+    assert required == pytest.approx(realized["energy_kwh"] * env.request_engine.energy_scale(0))
+
+
+def test_perfect_information_pickup_deadline_uses_the_realized_leg() -> None:
+    from EVRoutingEnv.state.feasibility import (
+        evaluate_request_slot,
+        realized_route_costs,
+    )
+
+    env = _env()
+    env.step(_nearest_charger(env))
+    truck = env.trucks[0]
+    request = next(r for r in env.request_engine.registry.revealed() if r.status is RequestStatus.OPEN)
+    depot = int(request.pickup.node)
+    nominal = env.transport_graph.get_time_distance(int(truck.current_node), depot)
+    env._perfect_information = True
+    realized = realized_route_costs(env, truck, depot)["travel_time_hours"]
+    midpoint = env.global_clock + 0.5 * (nominal + realized)
+    request.pickup = dataclasses.replace(request.pickup, latest=midpoint)
+    feasible = evaluate_request_slot(env, truck, request.request_id).feasible
+    assert feasible == (env.global_clock + realized <= midpoint)

@@ -16,6 +16,8 @@ from EVRoutingEnv.models.core.hours_of_service import (
     TOLERANCE,
     DriverClock,
     HosActivity,
+    HosInfeasible,
+    _shift_driving_limit,
     advance_to,
     apply,
     driving_allowance,
@@ -42,7 +44,7 @@ class HosTracker:
         self._clocks = {tid: DriverClock.fresh(0.0) for tid in range(self.num_trucks)}
         self.unplanned_breaks = 0
         self.unplanned_violations = 0
-        self.rest_hours_total = {tid: 0.0 for tid in range(self.num_trucks)}
+        self.rest_hours_total = dict.fromkeys(range(self.num_trucks), 0.0)
 
     # -- queries -------------------------------------------------------------
 
@@ -70,8 +72,8 @@ class HosTracker:
             kind = "blocked"
         return [
             max(0.0, regime.driving_before_break - clock.driving_since_break),
-            max(0.0, regime.shift_driving_hours - clock.driving_in_shift),
-            min(window_left(regime, clock), 1e6),
+            max(0.0, _shift_driving_limit(regime, clock) - clock.driving_in_shift),
+            min(max(0.0, window_left(regime, clock)), 1e6),
             clock.break_streak,
             float(clock.split_first_taken),
             float(kind is not None),
@@ -105,25 +107,30 @@ class HosTracker:
             details={"kind": kind, "start": float(start), "end": float(end), "roadside": roadside},
         )
 
-    def plan_leg(self, truck, driving_hours: float) -> list[tuple[str, float]]:
+    def plan_leg(self, truck, departure: float, driving_hours: float) -> list[tuple[str, float]]:
         """Split a realized leg into driving and rests, as late as possible.
 
         ``anywhere`` (Goel 2009/2010) always inserts. ``stops_only`` only inserts
         when the realized driving overruns the allowance the mask granted on
-        nominal time: an unplanned roadside break, counted and reported.
+        nominal time: an unplanned roadside break, counted and reported. The
+        clock is first brought to the departure time, as commit_leg will do.
         """
-        clock = self.clock(truck.truck_id)
+        driving_hours = float(driving_hours)
+        if not math.isfinite(driving_hours) or driving_hours < 0.0:
+            raise ValueError("driving_hours must be finite and non-negative")
+        clock = advance_to(self.regime, self.clock(truck.truck_id), departure, HosActivity.IDLE)
         if (
             self.config.rest_locations == "stops_only"
             and driving_hours <= driving_allowance(self.regime, clock) + TOLERANCE
         ):
-            return [(HosActivity.DRIVE.value, float(driving_hours))]
+            return [(HosActivity.DRIVE.value, driving_hours)]
         try:
             segments, _ = insert_rests(self.regime, clock, driving_hours)
-        except ValueError:
-            # Bai's per-trip cap has no reset: drive on and report the violation.
+        except HosInfeasible as error:
+            # Bai's per-trip cap has no reset: keep the rests already placed,
+            # drive the rest of the leg and report the violation.
             self.unplanned_violations += 1
-            return [(HosActivity.DRIVE.value, float(driving_hours))]
+            segments = [*error.segments, (HosActivity.DRIVE, error.remaining_hours)]
         if self.config.rest_locations == "stops_only":
             self.unplanned_breaks += sum(
                 activity is not HosActivity.DRIVE for activity, _ in segments

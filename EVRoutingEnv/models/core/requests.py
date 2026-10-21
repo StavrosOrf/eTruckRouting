@@ -181,10 +181,10 @@ class RequestRegistry:
         return [r for r in self._requests if r.status is not RequestStatus.HIDDEN]
 
     def get(self, request_id: int) -> Request:
-        try:
-            return self._requests[int(request_id)]
-        except IndexError as error:
-            raise KeyError(f"no request {request_id}") from error
+        request_id = int(request_id)
+        if not 0 <= request_id < len(self._requests):
+            raise KeyError(f"no request {request_id}")
+        return self._requests[request_id]
 
     def live_at_node(self, node: int) -> list[Request]:
         return [
@@ -298,9 +298,11 @@ class RequestRegistry:
             request_id, RequestStatus.SERVED_LATE if late else RequestStatus.SERVED
         )
         request.served_at = float(timestamp)
-        request.delay_hours = max(
-            0.0, float(request.service_started_at or timestamp) - request.delivery.latest
-        ) if math.isfinite(request.delivery.latest) else 0.0
+        started = timestamp if request.service_started_at is None else request.service_started_at
+        request.delay_hours = (
+            max(0.0, float(started) - request.delivery.latest)
+            if math.isfinite(request.delivery.latest) else 0.0
+        )
         return request
 
     def lose(self, request_id: int, timestamp: float) -> Request:

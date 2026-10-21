@@ -81,7 +81,7 @@ class StationParameters:
     def arrival_rate(self, time: float) -> float:
         if self.hourly_profile is None:
             return self.mean_arrival_rate
-        return self.mean_arrival_rate * self.hourly_profile[int(math.floor(time)) % 24]
+        return self.mean_arrival_rate * self.hourly_profile[math.floor(time) % 24]
 
     @property
     def max_arrival_rate(self) -> float:
@@ -403,6 +403,8 @@ class StationQueue:
         for port in self.ports:
             if port.occupant is not None and port.busy_until is None:
                 released.append(port.occupant.key)
+                if self.log is not None:
+                    self.log.departures.append(("fleet", port.occupant.key, time, port.index))
                 port.occupant = None
         return released
 

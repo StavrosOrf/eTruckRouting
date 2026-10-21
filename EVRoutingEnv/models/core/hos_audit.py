@@ -174,9 +174,10 @@ def hos_audit(intervals, settings: AuditSettings) -> list[HosViolation]:
         if since > limits["drive_before_break"] + EPS:
             violations.append(HosViolation(end, "break", f"{since:.6f} h without a break"))
         shift_limit = limits["shift_drive"]
-        if eu and settings.eu_extended_daily_driving:
-            if index in extended_shifts or extended_used < 2:
-                shift_limit = 10.0
+        if eu and settings.eu_extended_daily_driving and (
+            index in extended_shifts or extended_used < 2
+        ):
+            shift_limit = 10.0
         if settings.regime == "bai2023_simplified":
             if total > shift_limit + EPS:
                 violations.append(HosViolation(end, "trip_driving", f"{total:.6f} h driving"))
@@ -244,13 +245,14 @@ def intervals_from_event_log(log: dict, *, handling_overhead_hours: float = 0.0)
             duration = float(details.get("wait_duration_hours", 0.0))
             intervals.append((time - duration, time, HosActivity.WINDOW_WAIT))
     # Roadside rests split the driving interval that contains them.
+    ordered_rests = sorted(rests)
     result: list[tuple[float, float, HosActivity]] = []
     for start, end, activity in intervals:
         if activity is not HosActivity.DRIVE:
             result.append((start, end, activity))
             continue
         cursor = start
-        for rest_start, rest_end, _ in sorted(rests):
+        for rest_start, rest_end, _ in ordered_rests:
             if rest_start >= cursor - EPS and rest_end <= end + EPS:
                 if rest_start > cursor + EPS:
                     result.append((cursor, rest_start, HosActivity.DRIVE))

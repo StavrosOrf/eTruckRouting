@@ -19,7 +19,6 @@ perfect-information copies duplicate them safely.
 
 from __future__ import annotations
 
-import heapq
 import math
 
 from EVRoutingEnv.models.simulation import queueing
@@ -111,20 +110,40 @@ class PublicChargingStation(_PublicMixin, ChargingStation):
         station = self.queues[int(node)]
         if not self.eager:
             made = station.advance(clock, fleet_arrival=fleet_arrival)
-            self._check_lazy_reservations(made)
+            self._absorb(int(node), made)
         return station
 
-    def _check_lazy_reservations(self, made) -> None:
-        # Lazy reservations must coincide with the scheduled events (or be
-        # made at the very instant the event is due): a divergence means the
-        # prediction and the simulation disagree, which is a bug.
+    def _absorb(self, node: int, made) -> None:
+        """Account for every port a station reserved for a fleet truck.
+
+        A reservation with a scheduled wake-up must match its prediction (a
+        mismatch would be a bug). Any other (two ports freeing at once, a
+        released reservation passing on) is woken at once; one in the past
+        would have been missed, which is also a bug.
+        """
         for truck_id, time in made:
             scheduled = self.scheduled.get(truck_id)
-            if scheduled is not None and abs(scheduled[0] - time) > 1e-9:
-                raise RuntimeError(
-                    f"lazy reservation for truck {truck_id} at {time} differs from "
-                    f"its prediction {scheduled[0]}"
-                )
+            if scheduled is not None:
+                if abs(scheduled[0] - time) > 1e-9:
+                    raise RuntimeError(
+                        f"lazy reservation for truck {truck_id} at {time} differs from "
+                        f"its prediction {scheduled[0]}"
+                    )
+                continue
+            if time < self.now - 1e-9:
+                raise RuntimeError(f"reservation for truck {truck_id} at {time} was missed")
+            self._immediate.append((int(truck_id), node, float(time)))
+
+    def _collect(self, node: int, station: StationQueue) -> None:
+        """Reservations made outside an advance (join, release, reopen)."""
+        made, station.reservations = station.reservations, []
+        self._absorb(node, made)
+
+    def _unschedule(self, truck_id: int) -> None:
+        """Drop a pending wake-up, scheduled or still to be, and invalidate its token."""
+        self.scheduled.pop(truck_id, None)
+        self._immediate = [entry for entry in self._immediate if entry[0] != truck_id]
+        self.reservation_tokens[truck_id] = self.reservation_tokens.get(truck_id, 0) + 1
 
     def _station_of(self, truck_id: int) -> int | None:
         return self.truck_station.get(int(truck_id))
@@ -166,12 +185,7 @@ class PublicChargingStation(_PublicMixin, ChargingStation):
         self.charger_waitlist[node].append(
             {"truck_id": truck_id, "sequence": self.waitlist_sequence_counter}
         )
-        made = station.reservations
-        station.reservations = []
-        for reserved_truck, time in made:
-            # Reserved on the spot (all ports free behind a just-cleared queue).
-            self.scheduled.pop(reserved_truck, None)
-            self._immediate.append((reserved_truck, node, time))
+        self._collect(node, station)
         self.dirty_nodes.add(node)
 
     def start_charging(self, truck_id, charger_node, charge_hours, global_clock):
@@ -214,33 +228,39 @@ class PublicChargingStation(_PublicMixin, ChargingStation):
             station = self.queue_at(node, self.now, fleet_arrival=True)
             self.observe(truck_id, node, self.now, station)
             station.fleet_release(truck_id, self.now)
-            self.scheduled.pop(truck_id, None)
+            self._unschedule(truck_id)
+            self._collect(node, station)
             self.dirty_nodes.add(node)
             self.truck_station.pop(int(truck_id), None)
         super().remove_from_waitlist(truck_id, charger_node)
 
     def release_reservation(self, truck_id: int, node: int, clock: float) -> None:
         """Case A5: nothing to charge at the head; the next entry starts now."""
-        station = self.queue_at(node, clock)
+        station = self.queue_at(node, clock, fleet_arrival=True)
         station.fleet_release(truck_id, clock)
-        self.scheduled.pop(truck_id, None)
+        self._unschedule(truck_id)
+        self._collect(int(node), station)
         self.truck_station.pop(int(truck_id), None)
         self.released_without_charge.append((int(truck_id), int(node), float(clock)))
         super().remove_from_waitlist(truck_id, node)
         self.dirty_nodes.add(int(node))
 
-    def set_station_available(self, charger_node, available):
+    def set_station_available(self, charger_node, available, clock=None):
         node = int(charger_node)
+        if node not in self.queues:
+            return super().set_station_available(charger_node, available)
+        clock = self.now if clock is None else float(clock)
         released = super().set_station_available(charger_node, available)
-        station = self.queue_at(node, self.now)
+        station = self.queue_at(node, clock, fleet_arrival=True)
         if not available:
-            released = sorted(set(released) | set(station.close(self.now)))
+            released = sorted(set(released) | set(station.close(clock)))
             for truck_id in released:
-                self.scheduled.pop(truck_id, None)
+                self._unschedule(truck_id)
                 if self.truck_station.get(int(truck_id)) == node:
                     self.truck_station.pop(int(truck_id))
         else:
-            station.reopen(self.now)
+            station.reopen(clock)
+            self._collect(node, station)
         self.dirty_nodes.add(node)
         return released
 
@@ -313,7 +333,7 @@ class PublicChargingStation(_PublicMixin, ChargingStation):
             return False
         if env.truck_states[truck.truck_id] != "ready" or truck.must_leave_charger:
             return False
-        station = self.queue_at(node, env.global_clock)
+        station = self.queue_at(node, env.global_clock, fleet_arrival=True)
         if (
             station.position(truck.truck_id) is not None
             or station.reserved_for(truck.truck_id)
@@ -350,10 +370,10 @@ class PublicChargingStation(_PublicMixin, ChargingStation):
         )
         indicator = -1.0
         if cfg.information == "occupancy_indicator":
-            station = self.queue_at(node, clock)
+            station = self.queue_at(node, clock, fleet_arrival=True)
             indicator = float(station.up_ports() > 0 and not any(p.free for p in station.ports))
         if live:
-            station = self.queue_at(node, clock)
+            station = self.queue_at(node, clock, fleet_arrival=True)
             in_system, busy, queued, up, observed_at = (
                 station.in_system(), station.busy_ports(), station.queue_length(),
                 station.up_ports(), clock,
@@ -380,7 +400,7 @@ class StationaryWaitChargingStation(_PublicMixin, ChargingStation):
 
     def begin_episode(self, streams) -> None:
         self.streams = streams
-        self.visits = {node: 0 for node in self.charging_nodes}
+        self.visits = dict.fromkeys(self.charging_nodes, 0)
         self.outside_wait_until: dict[int, tuple[int, float]] = {}
         self.cleared: dict[int, int] = {}  # truck -> station whose outside wait it passed
         self.drawn_waits: list[tuple[int, int, float]] = []

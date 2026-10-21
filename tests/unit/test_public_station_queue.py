@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 
 from EVRoutingEnv.models.simulation import queueing as q
-from EVRoutingEnv.models.simulation.public_station_queue import StationParameters, StationQueue
+from EVRoutingEnv.models.simulation.public_station_queue import (
+    StationParameters,
+    StationQueue,
+)
 from EVRoutingEnv.models.simulation.scenario import ScenarioRandomStreams
 
 

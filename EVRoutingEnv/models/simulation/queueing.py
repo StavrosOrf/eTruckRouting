@@ -130,7 +130,7 @@ def sample_stationary_count(
         return min(index, c - 1)
     rho = arrival_rate / (c * service_rate)
     # Inverse CDF of the number of failures before the first success.
-    excess = int(math.floor(math.log1p(-second) / math.log(rho))) if rho > 0 else 0
+    excess = math.floor(math.log1p(-second) / math.log(rho)) if rho > 0 else 0
     return c + max(0, excess)
 
 
@@ -184,15 +184,19 @@ def birth_death_generator(
 
 @lru_cache(maxsize=256)
 def _spectrum(servers: int, arrival_rate: float, service_rate: float, size: int) -> _Spectrum:
-    generator = birth_death_generator(servers, arrival_rate, service_rate, size)
+    from scipy.linalg import eigh_tridiagonal
+
     pi = stationary_distribution(servers, arrival_rate, service_rate, size)
     sqrt_pi = np.sqrt(pi)
-    # The truncated chain is reversible, so Pi^1/2 Q Pi^-1/2 is symmetric.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        symmetric = sqrt_pi[:, None] * generator / sqrt_pi[None, :]
-    symmetric = 0.5 * (symmetric + symmetric.T)
-    eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
-    waits = np.array([newcomer_wait(servers, service_rate, n) for n in range(size)])
+    # The truncated chain is reversible, so Pi^1/2 Q Pi^-1/2 is the symmetric
+    # tridiagonal matrix with off-diagonals sqrt(lambda * min(n + 1, c) mu).
+    n = np.arange(size)
+    births = np.where(n + 1 < size, arrival_rate, 0.0)
+    deaths = np.minimum(n, servers) * service_rate
+    diagonal = -(births + deaths)
+    off = np.sqrt(arrival_rate * np.minimum(n[1:], servers) * service_rate)
+    eigenvalues, eigenvectors = eigh_tridiagonal(diagonal, off)
+    waits = np.array([newcomer_wait(servers, service_rate, k) for k in range(size)])
     weighted = eigenvectors.T @ (sqrt_pi * waits)
     return _Spectrum(size, sqrt_pi, eigenvalues, eigenvectors, weighted)
 

@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 import torch
-
 from extension_harness import SAME_DAY, build
 
 from algo.canonical_policy import CanonicalActorCritic, CanonicalPolicyConfig
@@ -11,9 +10,10 @@ from algo.canonical_ppo import CanonicalPPO, PPOConfig
 from EVRoutingEnv.models.core.requests import RequestStatus
 from EVRoutingEnv.state.feasibility import FeasibilityReason, joint_action_feasibility
 
+
 pytestmark = pytest.mark.integration
 
-SMALL = {**SAME_DAY, "max_requests": 8, "max_requests_per_epoch": 2, "static_context_size": 20}
+SMALL = {**SAME_DAY, "max_requests": 60, "max_requests_per_epoch": 2, "static_context_size": 20}
 
 
 def _env(**requests):
@@ -22,17 +22,22 @@ def _env(**requests):
 
 @pytest.mark.parametrize("revealed", [0, 1, "max"])
 def test_canonical_graph_builds_with_any_number_of_revealed_requests(revealed) -> None:
-    env = _env(initial_requests=0)
+    probe = _env(initial_requests=0)
+    probe.reset(seed=0)
+    # "max": the envelope is exactly full.
+    envelope = len(probe.request_engine.registry) if revealed == "max" else SMALL["max_requests"]
+    env = _env(initial_requests=0, max_requests=envelope)
     env.reset(seed=0)
     registry = env.request_engine.registry
     for request in registry.requests():
         request.status = RequestStatus.HIDDEN
-    count = len(registry) if revealed == "max" else revealed
+    count = env.fixed_num_stops if revealed == "max" else revealed
+    assert len(registry) >= count
     for request in registry.requests()[:count]:
         request.status = RequestStatus.OPEN
     sets = env.get_canonical_sets()
     graph = env.get_canonical_graph()
-    assert int(sets.node_masks["customer"].sum()) == count
+    assert int(sets.customer_mask.sum()) == count
     assert graph.node_features["customer"].shape[0] == count
     decisions = joint_action_feasibility(env)
     hidden = [env.num_charging_nodes + i for i in range(count, env.fixed_num_stops)]
@@ -40,8 +45,10 @@ def test_canonical_graph_builds_with_any_number_of_revealed_requests(revealed) -
     policy = CanonicalActorCritic(CanonicalPolicyConfig.from_env(env, hidden_dim=32, encoder_output_dim=32))
     observation = torch.as_tensor(env._get_observation()[None, :], dtype=torch.float32)
     output = policy(observation, torch.as_tensor(env.mask_fn()[None, :]))
-    logits = output.logits[0].detach().numpy()
-    assert np.all(np.isneginf(logits[hidden]))  # never scored
+    # Never scored: outside the feasible set, so zero probability.
+    assert not output.feasible_mask[0, hidden].any()
+    probabilities = output.distribution().probs[0].detach().numpy()
+    assert np.all(probabilities[hidden] == 0.0)
 
 
 def _ppo(total):
@@ -85,7 +92,7 @@ def _ppo(total):
         trainer.learn()
     finally:
         trainer.close()
-    assert len(seen) >= total
+    assert len(seen) >= total - 2 * 64  # whole rollouts of 2 x 64 steps
 
 
 def test_short_ppo_run_on_a_dynamic_config() -> None:

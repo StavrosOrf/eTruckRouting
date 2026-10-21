@@ -50,7 +50,16 @@ OFF_DUTY = frozenset({HosActivity.REST_BREAK, HosActivity.REST_DAILY})
 
 
 class HosInfeasible(ValueError):
-    """No rest can restore a driving allowance (e.g. Bai's per-trip cap)."""
+    """No rest can restore a driving allowance (e.g. Bai's per-trip cap).
+
+    Raised by ``insert_rests`` with the segments placed so far and the driving
+    hours still to go, so a caller can report the violation and drive on.
+    """
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.segments: list[tuple[HosActivity, float]] = []
+        self.remaining_hours = 0.0
 
 
 @dataclass(frozen=True)
@@ -232,13 +241,16 @@ def required_rest(regime: HosRegime, clock: DriverClock) -> tuple[str | None, fl
         clock.driving_in_shift >= _shift_driving_limit(regime, clock) - TOLERANCE
         or window_left(regime, clock) <= TOLERANCE
     )
-    if shift_spent:
-        if regime.daily_rest_hours is None:
-            raise HosInfeasible(
-                f"{regime.name}: the per-trip driving limit is exhausted and no rest resets it"
-            )
-        return "daily", rest_hours(regime, clock, "daily")
-    return "break", rest_hours(regime, clock, "break")
+    if not shift_spent:
+        # A break that ends after the window closes restores nothing.
+        rested = apply(regime, clock, HosActivity.REST_BREAK, rest_hours(regime, clock, "break"))
+        if driving_allowance(regime, rested) > TOLERANCE:
+            return "break", rest_hours(regime, clock, "break")
+    if regime.daily_rest_hours is None:
+        raise HosInfeasible(
+            f"{regime.name}: the per-trip driving limit is exhausted and no rest resets it"
+        )
+    return "daily", rest_hours(regime, clock, "daily")
 
 
 def _close_streak(regime: HosRegime, clock: DriverClock) -> DriverClock:
@@ -396,7 +408,11 @@ def insert_rests(
             segments.append((HosActivity.DRIVE, allowance))
             clock = apply(regime, clock, HosActivity.DRIVE, allowance)
             remaining -= allowance
-        kind, hours = required_rest(regime, clock)
+        try:
+            kind, hours = required_rest(regime, clock)
+        except HosInfeasible as error:
+            error.segments, error.remaining_hours = segments, remaining
+            raise
         activity = HosActivity.REST_DAILY if kind == "daily" else HosActivity.REST_BREAK
         segments.append((activity, hours))
         clock = apply(regime, clock, activity, hours)

@@ -117,6 +117,22 @@ def test_ids_follow_reveal_order_and_are_never_reused() -> None:
         registry.add(Request(1, RequestKind.SAME_DAY, None, Stop(5), 1.0, 0.0, -1.0))
 
 
+def test_negative_ids_are_not_slots() -> None:
+    registry = RequestRegistry(2)
+    registry.add(_request(0))
+    with pytest.raises(KeyError):
+        registry.get(-1)
+
+
+def test_a_service_started_at_time_zero_is_not_missing() -> None:
+    registry = RequestRegistry(1)
+    registry.add(Request(0, RequestKind.STATIC_DELIVERY, None, Stop(10, 0.0, 0.0, 0.1), 1.0, 0.0, 0.0))
+    registry.reveal(0, 0.0)
+    registry.claim_delivery(0, 1, 0.0)
+    registry.start_service(0, 1, 0.0)
+    assert registry.complete_service(0, 1, 0.1, late=False).delay_hours == 0.0
+
+
 def test_C14_exceeding_the_envelope_raises_rather_than_truncating() -> None:
     registry = RequestRegistry(1)
     registry.add(_request(0))

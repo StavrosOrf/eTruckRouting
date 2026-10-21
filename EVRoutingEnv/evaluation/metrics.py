@@ -95,7 +95,7 @@ def extract_operational_metrics(env) -> OperationalMetrics:
         elif state == "waiting_for_requests":
             start, kind = getattr(truck, "request_wait_start_time", None), "request_wait"
         elif state == "loading":
-            start, kind = truck.unloading_start_time, "service"
+            start, kind = getattr(truck, "loading_start_time", None), "service"
         elif state == "charging":
             start, kind = truck.charge_start_time, "charging"
         elif state == "unloading":
@@ -103,28 +103,20 @@ def extract_operational_metrics(env) -> OperationalMetrics:
         elif state == "waiting_to_charge":
             start, kind = env.waiting_start_times.get(truck.truck_id), "queue"
         elif state == "waiting_for_service":
-            task = next(
+            # Arrival precedes the queued window-opening event (static
+            # customers, or a request's pickup/delivery stop).
+            event = next(
                 (
-                    task
-                    for task in tasks
-                    if task.claimed_by == truck.truck_id and not task.is_served
+                    event
+                    for event in env.event_queue
+                    if event.truck_id == truck.truck_id
+                    and event.data.get("reason") in {"service_window_open", "request_window_open"}
                 ),
                 None,
             )
-            if task is not None:
-                # Arrival precedes the queued service-window-opening event.
-                event = next(
-                    (
-                        event
-                        for event in env.event_queue
-                        if event.truck_id == truck.truck_id
-                        and event.data.get("reason") == "service_window_open"
-                    ),
-                    None,
-                )
-                if event is not None:
-                    start = event.time - float(event.data["wait_duration"])
-                    kind = "window"
+            if event is not None:
+                start = event.time - float(event.data["wait_duration"])
+                kind = "window"
         if start is not None and kind is not None:
             partial[kind] += max(0.0, float(env.global_clock) - start)
 

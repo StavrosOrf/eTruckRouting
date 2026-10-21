@@ -347,6 +347,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
 
     charger_type_codes = {"Level2": 0, "DCFast": 1}
     charger_rows = []
+    present = _trucks_present(env) if getattr(env, "public_stations", None) is not None else {}
     for node in sorted(env.charging_nodes):
         end_times = [
             env.charging_station.truck_charge_end_time[truck_id]
@@ -367,7 +368,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 len(env.charging_station.charger_waitlist[node]),
                 known_workload,
                 *_depot_columns(env, int(node), depot_node),
-                *_charger_v7(env, int(node)),
+                *_charger_v7(env, int(node), present),
             ]
         )
 
@@ -553,16 +554,21 @@ def _truck_v7(env, truck) -> list[float]:
     return [*hos_columns, *cargo, *queue]
 
 
-def _charger_v7(env, node: int) -> list[float]:
+def _trucks_present(env) -> dict[int, set[int]]:
+    """Fleet trucks physically at each node (not routing, still in service)."""
+    present: dict[int, set[int]] = {}
+    for truck in env.trucks:
+        if env.truck_states[truck.truck_id] not in {"routing", "complete", "failed"}:
+            present.setdefault(int(truck.current_node), set()).add(truck.truck_id)
+    return present
+
+
+def _charger_v7(env, node: int, present: dict[int, set[int]]) -> list[float]:
     stations = getattr(env, "public_stations", None)
     if stations is not None:
-        present = {
-            truck.truck_id
-            for truck in env.trucks
-            if int(truck.current_node) == node
-            and env.truck_states[truck.truck_id] not in {"routing", "complete", "failed"}
-        }
-        return stations.feature_row(node, env.active_truck_id, env.global_clock, present)
+        return stations.feature_row(
+            node, env.active_truck_id, env.global_clock, present.get(node, set())
+        )
     station = env.charging_station
     return [
         float(len(station.charger_occupancy[node])),

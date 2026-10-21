@@ -6,10 +6,15 @@ import os
 
 import pytest
 
+
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
-from EVRoutingEnv.models.environment.event_handlers import SYSTEM_TRUCK_ID, Event, EventType
+from EVRoutingEnv.models.environment.event_handlers import (
+    SYSTEM_TRUCK_ID,
+    Event,
+    EventType,
+)
 from EVRoutingEnv.utils.utils import load_config
 
 
@@ -70,7 +75,9 @@ def test_system_event_at_the_head_never_reads_or_changes_the_last_truck() -> Non
 
 
 def test_system_events_at_or_past_the_horizon_are_dropped_and_never_truncate() -> None:
-    from EVRoutingEnv.baselines.heuristics.canonical_baselines import GreedyHeuristicPolicy
+    from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
+        GreedyHeuristicPolicy,
+    )
 
     env = _env(2)
     observation, info = env.reset(seed=0)

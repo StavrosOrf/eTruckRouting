@@ -139,6 +139,8 @@ class DrayageConfig:
     energy_model: str = "network"
     max_terminal_distance_km: float = 5.0
     container_mass_kg: tuple[float, float] = (10_000.0, 20_000.0)
+    # Depot and customers within this nominal travel time of a terminal.
+    service_radius_hours: float | None = None
 
 
 @dataclass(frozen=True)
@@ -492,6 +494,7 @@ def _parse_drayage(block: dict | None) -> DrayageConfig | None:
     _unknown_keys(block, {
         "terminals", "import_share", "origin_service_hours", "destination_service_hours",
         "delay_penalty_per_hour", "energy_model", "max_terminal_distance_km", "container_mass_kg",
+        "service_radius_hours",
     }, "drayage")
     terminals = []
     for index, item in enumerate(block.get("terminals") or ()):
@@ -529,6 +532,10 @@ def _parse_drayage(block: dict | None) -> DrayageConfig | None:
             block.get("max_terminal_distance_km", 5.0), "drayage.max_terminal_distance_km", strict=True
         ),
         container_mass_kg=(float(mass[0]), float(mass[1])),
+        service_radius_hours=(
+            None if block.get("service_radius_hours") is None
+            else _finite(block["service_radius_hours"], "drayage.service_radius_hours", strict=True)
+        ),
     )
 
 

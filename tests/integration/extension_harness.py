@@ -8,13 +8,18 @@ import os
 
 import numpy as np
 
+
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/evrp_matplotlib")
 
 from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     GreedyHeuristicPolicy,
     RandomFeasiblePolicy,
 )
-from EVRoutingEnv.models.core.hos_audit import AuditSettings, hos_audit, intervals_from_event_log
+from EVRoutingEnv.models.core.hos_audit import (
+    AuditSettings,
+    hos_audit,
+    intervals_from_event_log,
+)
 from EVRoutingEnv.models.core.requests import RequestStatus
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
 from EVRoutingEnv.state.feasibility import FeasibilityReason
@@ -67,7 +72,9 @@ def build(map_name="seattle", *, trucks=2, stops=4, max_time=None, **blocks) -> 
 
 def policy_for(name, seed):
     if name == "greedy":
-        from EVRoutingEnv.baselines.heuristics.component_baselines import GreedyDispatchPolicy
+        from EVRoutingEnv.baselines.heuristics.component_baselines import (
+            GreedyDispatchPolicy,
+        )
 
         return None, GreedyHeuristicPolicy(), GreedyDispatchPolicy()
     return None, RandomFeasiblePolicy(seed), RandomFeasiblePolicy(seed)
@@ -110,6 +117,19 @@ class InvariantChecker:
         # 2. Battery within [0, capacity].
         for truck in env.trucks:
             assert -1e-9 <= truck.current_battery <= truck.battery_capacity + 1e-9
+        # The station-hop counter (read by the feasibility engine and Kullman's
+        # policy) matches the arrival log: station arrivals since the last
+        # arrival anywhere else (customer, pickup or depot).
+        public = set(map(int, env.charging_nodes))
+        for truck in env.trucks:
+            count = 0
+            for event in reversed(truck.event_history):
+                if event["event_type"] != "ROUTING_END":
+                    continue
+                if int(event["location"]) not in public:
+                    break
+                count += 1
+            assert truck.stations_since_stop == count
         # 3. Port accounting per station; one session per truck.
         stations = env.public_stations
         if stations is not None and hasattr(stations, "queues"):
@@ -212,9 +232,14 @@ def mask_matches_execution(env, sample: int = 6, rng=None) -> None:
             assert clone.termination_reason == f"invalid_action:{decisions[index].reason.value}"
 
 
-def perturb_after(env, cutoff: float, salt: int = 99991) -> None:
-    """Resample every exogenous draw made after ``cutoff`` (non-anticipativity)."""
+def perturb_after(env, cutoff: float, salt: int = 99991) -> dict:
+    """Resample every exogenous draw made after ``cutoff`` (non-anticipativity).
+
+    Returns a counter of the draws actually resampled, so a test can check the
+    perturbation was not vacuous.
+    """
     streams = env.scenario_random_streams
+    counter = {"late_draws": 0}
     originals = {
         "uniforms": streams.uniforms,
         "exponential": streams.exponential,
@@ -223,7 +248,9 @@ def perturb_after(env, cutoff: float, salt: int = 99991) -> None:
     }
 
     def late() -> bool:
-        return env.global_clock > cutoff + 1e-12
+        is_late = env.global_clock > cutoff + 1e-12
+        counter["late_draws"] += is_late
+        return is_late
 
     def salted(key):
         return ("perturbed", salt, key)
@@ -236,13 +263,15 @@ def perturb_after(env, cutoff: float, salt: int = 99991) -> None:
         stream, salted(key) if late() else key)
     streams.standard_normal = lambda stream, key: originals["standard_normal"](
         stream, salted(key) if late() else key)
+    return counter
 
 
-def perturb_hidden_requests(env, cutoff: float) -> None:
+def perturb_hidden_requests(env, cutoff: float) -> int:
     """Change every request revealed after ``cutoff`` (same ids and times)."""
     engine = env.request_engine
     if engine is None:
-        return
+        return 0
+    changed = 0
     customers = [int(node) for node in engine.context.customers]
     for request in engine.registry.requests():
         if request.reveal_time > cutoff + 1e-12:
@@ -252,6 +281,8 @@ def perturb_hidden_requests(env, cutoff: float) -> None:
                                                       request.delivery.latest,
                                                       request.delivery.service_hours)
             request.demand = max(0.5, request.demand * 0.5)
+            changed += 1
+    return changed
 
 
 def nonfinite(values) -> bool:

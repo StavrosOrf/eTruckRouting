@@ -365,7 +365,14 @@ class RequestHindsightSolution:
     proven_optimal: bool
 
 
-def solve_request_hindsight(env, *, max_nodes: int = 200_000, routing_actions: bool = True):
+def solve_request_hindsight(
+    env,
+    *,
+    max_nodes: int = 200_000,
+    routing_actions: bool = True,
+    canonical_loading: bool = False,
+    wait_only_at_depot: bool = False,
+):
     """Clairvoyant search over a request-mode episode (plan section 7.4).
 
     Every branch steps a copy of the environment, so the future requests,
@@ -374,6 +381,13 @@ def solve_request_hindsight(env, *, max_nodes: int = 200_000, routing_actions: b
     problem, not a policy. The objective is Voccia's: requests served on time.
     ``routing_actions=False`` drops charger and charge actions, which is exact
     when the battery cannot run out (energy disabled in the oracle tests).
+    ``canonical_loading`` loads at the depot in increasing request id. It is
+    exact for the served-on-time count when loading takes no time and trucks
+    never return with cargo: every load can then move to the departure instant,
+    and a request whose pickup deadline precedes that instant could not be
+    delivered on time anyway. Both conditions are checked.
+    ``wait_only_at_depot`` is exact when no delivery window opens after a
+    truck can arrive: time windows must be disabled, which is checked.
     """
     from EVRoutingEnv.models.core.requests import RequestStatus
     from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
@@ -381,6 +395,13 @@ def solve_request_hindsight(env, *, max_nodes: int = 200_000, routing_actions: b
     if getattr(env, "request_engine", None) is None:
         raise ValueError("solve_request_hindsight requires a request-engine mode")
     _require_initial_state(env)
+    requests = env.extensions.requests
+    if canonical_loading and (requests.loading_service_hours > 0.0 or requests.allow_preemptive_returns):
+        raise ValueError(
+            "canonical_loading is exact only with zero loading time and no preemptive returns"
+        )
+    if wait_only_at_depot and requests.time_windows.get("enabled", False):
+        raise ValueError("wait_only_at_depot is exact only with time windows disabled")
 
     def served(state):
         return sum(r.status is RequestStatus.SERVED for r in state.request_engine.registry.requests())
@@ -407,9 +428,19 @@ def solve_request_hindsight(env, *, max_nodes: int = 200_000, routing_actions: b
             exhausted = False
             break
         decisions = joint_action_feasibility(state)
+        truck_now = state.trucks[state.active_truck_id]
+        registry = state.request_engine.registry
+        at_depot = int(truck_now.current_node) == int(state.joint_instance.depot_node)
+        on_board = [r.request_id for r in registry.on_board(truck_now.truck_id)]
         for index, decision in enumerate(decisions):
             if not decision.feasible or decision.action_kind in skipped:
                 continue
+            if decision.action_kind is ActionKind.WAIT and wait_only_at_depot and not at_depot:
+                continue
+            if canonical_loading and at_depot and decision.action_kind is ActionKind.CUSTOMER:
+                slot = index - state.num_charging_nodes
+                if registry.get(slot).status is RequestStatus.OPEN and on_board and slot < max(on_board):
+                    continue
             child = _clone(state)
             truck = int(child.active_truck_id)
             child.step(index)

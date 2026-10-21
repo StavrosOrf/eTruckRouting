@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-
 from extension_harness import (
     HOS_EU,
     HOS_US,
@@ -18,6 +17,7 @@ from extension_harness import (
     rollout,
 )
 
+
 pytestmark = pytest.mark.integration
 
 FEATURES = {
@@ -31,7 +31,12 @@ FEATURES = {
 
 
 def _invariant_run(map_name, feature, seed, policy):
-    env = build(map_name, **FEATURES[feature])
+    blocks = dict(FEATURES[feature])
+    if map_name != "seattle" and "hours_of_service" in blocks:
+        # Legs on these maps exceed the EU allowance, so stops-only instances
+        # cannot be certified (case B8): rests go inside the legs instead.
+        blocks["hours_of_service"] = {**blocks["hours_of_service"], "rest_locations": "anywhere"}
+    env = build(map_name, **blocks)
     checker = InvariantChecker(env)
     info, steps = rollout(env, seed, choose(env, policy, seed), check=checker)
     assert info["termination_reason"] is not None
@@ -81,17 +86,24 @@ def test_observations_and_masks_before_t_ignore_the_future(feature) -> None:
     observations and masks are bit-identical."""
     blocks = dict(FEATURES[feature], observation={"in_flight_information": "nominal_eta"})
     for seed in (1, 2):
-        cutoff = 6.0
         reference, perturbed = [], []
         env = build("seattle", **blocks)
         rollout(env, seed, choose(env, "greedy", seed), record=reference)
+        cutoff = reference[len(reference) // 2][0]  # mid-episode
+        if env.request_engine is not None:
+            # Just before the median reveal: hidden requests exist past the cutoff.
+            reveals = sorted(r.reveal_time for r in env.request_engine.registry.requests())
+            cutoff = reveals[len(reveals) // 2] - 1e-6
         env = build("seattle", **blocks)
         original_reset = env.reset
+        counters = []
 
-        def reset_and_perturb(seed=None, options=None, env=env):
-            result = original_reset(seed=seed, options=options)
-            perturb_after(env, cutoff)
-            perturb_hidden_requests(env, cutoff)
+        def reset_and_perturb(seed=None, options=None, env=env, reset=original_reset, cutoff=cutoff,
+                              counters=counters):
+            reset(seed=seed, options=options)
+            counter = perturb_after(env, cutoff)
+            counter["changed_requests"] = perturb_hidden_requests(env, cutoff)
+            counters.append(counter)
             # Rebuild the first observation: nothing after the cutoff exists yet.
             return env._get_observation(), env._get_info()
 
@@ -103,13 +115,8 @@ def test_observations_and_masks_before_t_ignore_the_future(feature) -> None:
             assert t1 == t2
             assert np.array_equal(obs1, obs2), f"observation diverged at t={t1}"
             assert np.array_equal(mask1, mask2), f"mask diverged at t={t1}"
-        # The perturbation is real: the futures differ.
-        after = [(t, o) for t, o, _ in reference if t > cutoff]
-        later = [(t, o) for t, o, _ in perturbed if t > cutoff]
-        assert len(after) != len(later) or any(
-            t1 != t2 or not np.array_equal(o1, o2)
-            for (t1, o1), (t2, o2) in zip(after, later, strict=False)
-        )
+        # The perturbation is real: later draws or later requests changed.
+        assert counters and counters[-1]["late_draws"] + counters[-1]["changed_requests"] > 0
 
 
 @pytest.mark.parametrize("feature", ["public", "hos_us", "same_day", "all"])

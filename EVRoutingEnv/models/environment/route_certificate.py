@@ -246,6 +246,14 @@ def replay_routes(env, routes, *, step=None):
         else:
             task = env.task_registry.task_for_node(node)
             action = env.num_charging_nodes + task.task_id
+        # Components may need an action first (an HOS rest at the last stop
+        # before a violation, or joining a busy public queue); the witness
+        # action is then retried when this truck is next active.
+        prelude = getattr(env, "_certificate_prelude", None)
+        inserted = prelude(tid, action) if prelude is not None else None
+        if inserted is not None:
+            positions[tid] -= 1
+            action = inserted
         trace.append((tid, action))
         step(action)
         if env.invalid_action_count or any(truck.failed for truck in env.trucks):

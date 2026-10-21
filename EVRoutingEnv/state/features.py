@@ -16,7 +16,9 @@ from EVRoutingEnv.state.feasibility import (
 
 
 # v6 exposes action budgets, committed activity outcomes and FCFS queue order.
-SCHEMA_VERSION = "joint-fleet-v6"
+# v7 appends hours-of-service, cargo, public-station information and request
+# columns; with every opt-in component disabled the v6 columns are unchanged.
+SCHEMA_VERSION = "joint-fleet-v7"
 
 NODE_TYPES = ("truck", "customer", "charger")
 EDGE_FEATURES = ("nominal_energy_kwh", "nominal_travel_hours", "reachable")
@@ -49,6 +51,51 @@ GLOBAL_HISTORY_FEATURES = (
     "invalid_actions_terminate", "max_time", "remaining_time",
 )
 
+# Appended in v7. Values are -1 when hours of service are disabled.
+TRUCK_HOS_FEATURES = (
+    "drive_left_before_break",
+    "drive_left_in_shift",
+    "window_left_hours",
+    "nondriving_streak_hours",
+    "eu_split_first_part_taken",
+    "rest_required_now",
+)
+TRUCK_V7_FEATURES = (
+    *TRUCK_HOS_FEATURES,
+    "on_board_count",
+    "on_board_demand",
+    "in_station_queue",
+    "committed_to_charge",
+)
+# Public-station information (Kullman et al. 2021 sec. 2.2; Dastpak et al.
+# 2024). Without outside traffic the fleet-only state is fully observed.
+CHARGER_V7_FEATURES = (
+    "observed_busy_ports",
+    "observed_queue_length",
+    "observation_age_hours",
+    "observed_available_ports",
+    "expected_wait_given_memory",
+    "known_utilization_prior",
+    "occupancy_indicator",  # real-time "all up ports busy" (Dastpak et al. 2024), else -1
+)
+CUSTOMER_V7_FEATURES = (
+    "request_kind_code",
+    "request_status_code",
+    "has_pickup",
+    "pickup_node",
+    "pickup_earliest",
+    "pickup_latest",
+    "pickup_service_hours",
+    "release_time",
+    "delay_hours",
+)
+GLOBAL_V7_FEATURES = (
+    "requests_revealed",
+    "requests_served_on_time",
+    "requests_served_late",
+    "requests_lost",
+)
+
 TRUCK_FEATURES = (
     "current_node",
     "battery_kwh",
@@ -67,6 +114,7 @@ TRUCK_FEATURES = (
     "battery_minus_depot_energy",
     *DEPOT_FEATURES,
     *TRUCK_HISTORY_FEATURES,
+    *TRUCK_V7_FEATURES,
 )
 CUSTOMER_FEATURES = (
     "task_id",
@@ -84,6 +132,7 @@ CUSTOMER_FEATURES = (
     "service_started_at",
     "served_at",
     *DEPOT_FEATURES,
+    *CUSTOMER_V7_FEATURES,
 )
 CHARGER_FEATURES = (
     "node_id",
@@ -95,6 +144,7 @@ CHARGER_FEATURES = (
     "waitlist_length",
     "known_workload_hours",
     *DEPOT_FEATURES,
+    *CHARGER_V7_FEATURES,
 )
 # The campaign objective is fleet travel hours, and the action head scores each
 # candidate from its own row plus a pooled state embedding. Without these
@@ -140,6 +190,7 @@ GLOBAL_FEATURES = (
     "customers_served",
     "all_customers_served",
     *GLOBAL_HISTORY_FEATURES,
+    *GLOBAL_V7_FEATURES,
 )
 
 
@@ -232,6 +283,10 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 "waiting_for_task",
                 "complete",
                 "failed",
+                # Appended in v7.
+                "resting",
+                "waiting_for_requests",
+                "loading",
             )
         )
     }
@@ -259,12 +314,13 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 headroom,
                 *depot_columns,
                 *_truck_history(env, truck),
+                *_truck_v7(env, truck),
             ]
         )
 
     task_status_codes = {status: index for index, status in enumerate(TaskStatus)}
     customer_rows = []
-    for task in env.task_registry.tasks():
+    for task in ([] if getattr(env, "dynamic_requests", False) else env.task_registry.tasks()):
         has_time_window = math.isfinite(task.latest_service)
         customer_rows.append(
             [
@@ -283,8 +339,11 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 _optional_value(task.service_started_at),
                 _optional_value(task.served_at),
                 *_depot_columns(env, int(task.node_id), depot_node),
+                *_static_request_columns(task),
             ]
         )
+    if getattr(env, "dynamic_requests", False):
+        customer_rows = _request_rows(env, depot_node)
 
     charger_type_codes = {"Level2": 0, "DCFast": 1}
     charger_rows = []
@@ -308,6 +367,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
                 len(env.charging_station.charger_waitlist[node]),
                 known_workload,
                 *_depot_columns(env, int(node), depot_node),
+                *_charger_v7(env, int(node)),
             ]
         )
 
@@ -317,16 +377,21 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
     kind_codes = {kind: index for index, kind in enumerate(ActionKind)}
     reason_codes = {reason: index for index, reason in enumerate(FeasibilityReason)}
     action_rows = []
-    for decision, target, charge_value, routing in zip(
+    engine = getattr(env, "request_engine", None)
+    for index, (decision, target, charge_value, routing) in enumerate(zip(
         decisions,
         action_targets,
         charge_values,
         routing_columns,
         strict=True,
-    ):
+    )):
         demand = 0.0
         if decision.action_kind is ActionKind.CUSTOMER and target >= 0:
-            demand = env.task_registry.task_for_node(target).demand
+            if engine is not None:
+                # Several live requests may share a node: use the slot's request.
+                demand = engine.registry.get(index - env.num_charging_nodes).demand
+            else:
+                demand = env.task_registry.task_for_node(target).demand
         action_rows.append(
             [
                 kind_codes[decision.action_kind],
@@ -360,6 +425,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
             int(env.invalid_action_mode == "terminate"),
             env.max_time,
             max(0.0, env.max_time - env.global_clock),
+            *_global_v7(env),
         ],
         dtype=np.float32,
     )
@@ -397,22 +463,54 @@ def _truck_history(env, truck) -> list[float]:
         default=None,
     ) if not (truck.failed or truck.is_complete) else None
     data = {} if event is None else event.data
+    event_time = None if event is None else event.time
+    arrival_time = truck.route_arrival_time
+    if (
+        _in_flight_mode(env) == "nominal_eta"
+        and env.truck_states[tid] == "routing"
+        and truck.route_destination is not None
+    ):
+        # A dispatcher sees a telematics ETA, not the realized leg: departure
+        # plus nominal time, nominal energy, nominal service time.
+        origin, destination = int(truck.current_node), int(truck.route_destination)
+        nominal_hours = _path_value(env.transport_graph.get_time_distance, origin, destination)
+        nominal_energy = _path_value(env.transport_graph.get_path_energy, origin, destination)
+        start = (
+            env.global_clock if truck.routing_start_time is None else truck.routing_start_time
+        )
+        arrival_time = start + (nominal_hours if math.isfinite(nominal_hours) else 0.0)
+        event_time = max(env.global_clock, arrival_time)
+        data = {
+            "discharge": nominal_energy if math.isfinite(nominal_energy) else 0.0,
+            "unloading_time": _nominal_service_hours(env, destination),
+        }
     queue_position = -1
     reserved = False
-    for node in env.charging_nodes:
-        for position, entry in enumerate(env.charging_station.charger_waitlist[node]):
-            if entry["truck_id"] == tid:
-                queue_position = position
-        reserved |= tid in env.charging_station.pending_wake_trucks[node]
+    stations = getattr(env, "public_stations", None)
+    if stations is not None:
+        # Pooled FCFS position (Kullman's z_k) and the port reservation. When a
+        # port will free depends on unobserved outside services, so the queued
+        # truck's scheduled wake-up is not part of the state.
+        position = stations.queue_position(tid)
+        queue_position = -1 if position is None else position
+        reserved = stations.has_reservation(tid)
+        if env.truck_states[tid] == "waiting_to_charge":
+            event_time = None
+    else:
+        for node in env.charging_nodes:
+            for position, entry in enumerate(env.charging_station.charger_waitlist[node]):
+                if entry["truck_id"] == tid:
+                    queue_position = position
+            reserved |= tid in env.charging_station.pending_wake_trucks[node]
     return [
         _optional_value(truck.routing_start_time if env.truck_states[tid] == "routing" else None),
-        _optional_value(truck.route_arrival_time),
+        _optional_value(arrival_time),
         _optional_value(truck.charge_start_time),
         _optional_value(truck.unloading_start_time),
         _optional_value(truck.waiting_start_time),
         _optional_value(env.truck_ready_times.get(tid)),
-        -1.0 if event is None else event.time,
-        -1.0 if event is None else max(0.0, event.time - env.global_clock),
+        -1.0 if event_time is None else event_time,
+        -1.0 if event_time is None else max(0.0, event_time - env.global_clock),
         data.get("discharge", 0.0),
         data.get("charge_amount", 0.0),
         data.get("unloading_duration", data.get("unloading_time", 0.0)) or 0.0,
@@ -421,6 +519,93 @@ def _truck_history(env, truck) -> list[float]:
         int(truck.return_to_depot_pending),
         truck.completed_service_count,
     ]
+
+
+def _in_flight_mode(env) -> str:
+    extensions = getattr(env, "extensions", None)
+    return "realized" if extensions is None else extensions.in_flight_information
+
+
+def _nominal_service_hours(env, node: int) -> float:
+    """Base service time at a delivery node, without the stochastic draw."""
+    engine = getattr(env, "request_engine", None)
+    if engine is not None:
+        return engine.nominal_service_hours(node)
+    try:
+        return float(env.task_registry.task_for_node(node).base_service_time)
+    except KeyError:
+        return 0.0
+
+
+def _truck_v7(env, truck) -> list[float]:
+    hos = getattr(env, "hos", None)
+    hos_columns = [-1.0] * len(TRUCK_HOS_FEATURES) if hos is None else hos.feature_row(truck)
+    engine = getattr(env, "request_engine", None)
+    if engine is None:
+        cargo = [0.0, 0.0]
+    else:
+        cargo = [
+            float(len(engine.registry.on_board(truck.truck_id))),
+            float(engine.registry.on_board_demand(truck.truck_id)),
+        ]
+    stations = getattr(env, "public_stations", None)
+    queue = [0.0, 0.0] if stations is None else stations.truck_flags(truck.truck_id)
+    return [*hos_columns, *cargo, *queue]
+
+
+def _charger_v7(env, node: int) -> list[float]:
+    stations = getattr(env, "public_stations", None)
+    if stations is not None:
+        present = {
+            truck.truck_id
+            for truck in env.trucks
+            if int(truck.current_node) == node
+            and env.truck_states[truck.truck_id] not in {"routing", "complete", "failed"}
+        }
+        return stations.feature_row(node, env.active_truck_id, env.global_clock, present)
+    station = env.charging_station
+    return [
+        float(len(station.charger_occupancy[node])),
+        float(len(station.charger_waitlist[node])),
+        0.0,
+        float(station.charger_capacity[node]),
+        0.0,
+        0.0,
+        -1.0,
+    ]
+
+
+# Legacy task status in the request lifecycle (static_delivery has no pickup).
+_STATIC_STATUS = {
+    TaskStatus.UNASSIGNED: "open",
+    TaskStatus.CLAIMED: "claimed_delivery",
+    TaskStatus.IN_SERVICE: "in_service",
+    TaskStatus.SERVED: "served",
+}
+
+
+def _static_request_columns(task) -> list[float]:
+    from EVRoutingEnv.models.core.requests import RequestKind, RequestStatus
+
+    status = RequestStatus(_STATIC_STATUS[task.status])
+    return [
+        float(list(RequestKind).index(RequestKind.STATIC_DELIVERY)),
+        float(list(RequestStatus).index(status)),
+        0.0, -1.0, -1.0, -1.0, -1.0, 0.0, 0.0,
+    ]
+
+
+def _request_rows(env, depot_node: int) -> list[list[float]]:
+    return env.request_engine.feature_rows(env, depot_node)
+
+
+def _global_v7(env) -> list[float]:
+    engine = getattr(env, "request_engine", None)
+    if engine is not None:
+        return engine.global_columns()
+    tasks = env.task_registry.tasks()
+    served = sum(task.is_served for task in tasks)
+    return [float(len(tasks)), float(served), 0.0, 0.0]
 
 
 # Named blocks a component ablation may blank.  Zeroing rather than removing
@@ -687,16 +872,24 @@ def _action_metadata(env) -> tuple[list[int], list[float]]:
         return ([-1] * env.action_space.n, [0.0] * env.action_space.n)
     truck = env.trucks[env.active_truck_id]
     targets = [int(node) for node in env.charging_nodes]
+    engine = getattr(env, "request_engine", None)
     for offset in range(env.fixed_num_stops):
-        target = (
-            int(env.joint_instance.tasks[offset].node_id)
-            if offset < len(env.joint_instance.tasks)
-            else -1
-        )
+        if engine is not None:
+            target = engine.slot_target(truck, offset)
+        else:
+            target = (
+                int(env.joint_instance.tasks[offset].node_id)
+                if offset < len(env.joint_instance.tasks)
+                else -1
+            )
         targets.append(target)
     targets.append(int(env.joint_instance.depot_node))
     targets.extend([int(truck.current_node)] * env.num_charge_actions)
-    values = [0.0] * env.num_navigation_actions + list(env.charge_action_values)
+    extra = len(getattr(env, "extra_action_kinds", ()))
+    targets.extend([int(truck.current_node)] * extra)
+    values = (
+        [0.0] * env.num_navigation_actions + list(env.charge_action_values) + [0.0] * extra
+    )
     return targets, values
 
 

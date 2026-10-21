@@ -32,6 +32,8 @@ class ChargingStation:
             charging_config: Optional station-power assignment configuration
         """
         self.charging_nodes = charging_nodes
+        self.public_nodes = tuple(charging_nodes)
+        self.private_node: int | None = None
         self.transport_graph = transport_graph
         self.verbose = verbose
 
@@ -201,6 +203,14 @@ class ChargingStation:
 
     def reset(self):
         """Reset all charging station state for a new episode."""
+        if self.private_node is not None:
+            # Drop last episode's private depot charger.
+            node = self.private_node
+            self.private_node = None
+            self.charging_nodes = list(self.public_nodes)
+            for table in (self.charger_capacity, self.charger_type,
+                          self.charger_power_kw, self.charger_efficiency):
+                table.pop(node, None)
         self.charger_occupancy = {node: [] for node in self.charging_nodes}
         self.charger_queue = {node: [] for node in self.charging_nodes}
         self.truck_charge_end_time = {}
@@ -231,6 +241,35 @@ class ChargingStation:
             }
             for node in self.charging_nodes
         }
+
+    def add_private_charger(
+        self, node: int, ports: int, power_kw: float, efficiency: float, global_clock: float = 0.0
+    ) -> None:
+        """Fleet-only charger at the depot (Kullman et al. 2021 sec. 2.1).
+
+        Plain fleet FCFS with no outside traffic or outages. The station list
+        is copied, so the environment's public charger list never changes.
+        """
+        node = int(node)
+        if node in self.charger_capacity:
+            raise ValueError(f"node {node} is already a charging station")
+        self.private_node = node
+        self.charging_nodes = [*self.public_nodes, node]
+        self.charger_capacity[node] = float(ports)
+        self.charger_type[node] = "DCFast"
+        self.charger_power_kw[node] = float(power_kw)
+        self.charger_efficiency[node] = float(efficiency)
+        self.station_available[node] = True
+        self.charger_occupancy[node] = []
+        self.charger_queue[node] = []
+        self.charger_waitlist[node] = []
+        self.pending_wake_trucks[node] = set()
+        self.charger_stats[node] = {
+            "total_charge_sessions": 0, "total_charge_time": 0.0,
+            "total_trucks_served": set(), "occupancy_time": 0.0,
+            "last_update_time": float(global_clock), "queue_length": 0,
+        }
+        self.queue_history[node] = {"times": [], "occupancy": [], "waitlist": [], "truck_events": []}
 
     def get_waiting_time(self, charger_node: int, current_utilization: float) -> float:
         """

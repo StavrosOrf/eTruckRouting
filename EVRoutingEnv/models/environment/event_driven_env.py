@@ -35,10 +35,18 @@ from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
 from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.core.truck import Truck
 from EVRoutingEnv.models.environment.event_handlers import (
+    SYSTEM_TRUCK_ID,
     Event,
     EventHandler,
     EventType,
 )
+from EVRoutingEnv.models.core.hours_of_service import HosActivity
+from EVRoutingEnv.models.core.hours_of_service import apply as hos_apply
+from EVRoutingEnv.models.core.hours_of_service import driving_allowance as hos_allowance
+from EVRoutingEnv.models.environment.extension_config import parse_extension_config
+from EVRoutingEnv.models.environment.hos_tracker import HosTracker
+from EVRoutingEnv.models.environment.request_engine import RequestEngine, RequestTaskView
+from EVRoutingEnv.models.core.requests import RequestStatus
 from EVRoutingEnv.models.environment.joint_instance import (
     JointRoutingInstance,
     generate_joint_routing_instance,
@@ -47,6 +55,10 @@ from EVRoutingEnv.models.environment.route_certificate import replay_routes
 from EVRoutingEnv.models.environment.route_walk import RouteWalkTopology
 from EVRoutingEnv.models.simulation.charging_curve import ChargingCurveModel
 from EVRoutingEnv.models.simulation.charging_station import ChargingStation
+from EVRoutingEnv.models.simulation.public_charging import (
+    PublicChargingStation,
+    StationaryWaitChargingStation,
+)
 from EVRoutingEnv.models.simulation.delivery_simulator import DeliverySimulator
 from EVRoutingEnv.models.simulation.scenario import ScenarioRandomStreams
 from EVRoutingEnv.models.simulation.traffic_simulation import TrafficSimulator
@@ -55,9 +67,17 @@ from EVRoutingEnv.state.action_mask import (
     get_structural_action_mask,
 )
 from EVRoutingEnv.state.feasibility import (
+    ActionKind,
     FeasibilityReason,
+    at_depot_charger,
+    evaluate_depot_action,
     evaluate_duration_charge,
+    evaluate_extra_action,
+    evaluate_request_slot,
     evaluate_joint_route,
+    extension_charge_check,
+    extension_route_check,
+    hos_leg_check,
     evaluate_target_soc_charge,
     joint_action_feasibility,
     realized_route_costs,
@@ -151,6 +171,21 @@ class EventDrivenTruckEnv(gym.Env):
         if self.max_hop_energy_kwh < self.min_hop_energy_kwh:
             raise ValueError(
                 "environment.max_hop_energy_kwh must be at least min_hop_energy_kwh"
+            )
+        # Opt-in depot ring: every customer lies at least/at most this many
+        # nominal kWh from the depot in both directions. A floor above half the
+        # battery (after the minimum energy multiplier) makes charging necessary
+        # on every route. Unset keeps the original generator draws.
+        self.min_depot_energy_kwh = _nonnegative_finite(
+            env_config.get("min_depot_energy_kwh", 0.0),
+            "environment.min_depot_energy_kwh",
+        )
+        upper_depot = env_config.get("max_depot_energy_kwh")
+        self.max_depot_energy_kwh = (math.inf if upper_depot is None else
+            _nonnegative_finite(upper_depot, "environment.max_depot_energy_kwh"))
+        if self.max_depot_energy_kwh < self.min_depot_energy_kwh:
+            raise ValueError(
+                "environment.max_depot_energy_kwh must be at least min_depot_energy_kwh"
             )
         self.generation_attempts = _positive_integer(
             env_config.get("generation_attempts", 64), "environment.generation_attempts",
@@ -322,13 +357,14 @@ class EventDrivenTruckEnv(gym.Env):
             "station_power_classes_kw",
             [150.0],
         )
-        self.charging_station = ChargingStation(
+        self._station_arguments = dict(
             charging_nodes=self.charging_nodes,
             transport_graph=self.transport_graph,
             waiting_time_lookup_path=waiting_time_path,
             verbose=self.verbose,
             charging_config=station_charging_config,
         )
+        self.charging_station = ChargingStation(**self._station_arguments)
         
         # Initialize charging curve model
         self.charging_curve_model = ChargingCurveModel(verbose=self.verbose)
@@ -435,6 +471,20 @@ class EventDrivenTruckEnv(gym.Env):
         if self.sequential_routing and assignment != "preassigned":
             raise ValueError("sequential mode requires problem.assignment=preassigned")
         self.preassigned_customers = assignment == "preassigned"
+        if "deliveries_per_truck" in self.problem_config:
+            raise ValueError(
+                "problem.deliveries_per_truck was removed: the E-VRP has no per-truck "
+                "customer quota; bound routes by payload, battery, duration or time windows"
+            )
+        # Opt-in model components (public chargers, HOS, dynamic requests). All
+        # off by default, in which case nothing below changes legacy behaviour.
+        self.extensions = parse_extension_config(
+            self.config,
+            max_time=self.max_time,
+            sequential=self.sequential_routing,
+            preassigned=self.preassigned_customers,
+        )
+        self._configure_extensions()
 
         self.policy_action_mask = env_config.get("policy_action_mask", "hard")
         if self.policy_action_mask not in {"hard", "structural"}:
@@ -482,7 +532,7 @@ class EventDrivenTruckEnv(gym.Env):
 
         self.canonical_shape = CanonicalShapeSpec(
             max_trucks=canonical_trucks,
-            max_customers=stops_for_action_space,
+            max_customers=self.fixed_num_stops,
             max_chargers=self.num_charging_nodes,
             max_actions=self.action_space.n,
         )
@@ -498,7 +548,7 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             self.state_space_manager = StateSpace(
                 num_trucks=self.num_trucks,
-                num_stops=stops_for_action_space,
+                num_stops=self.fixed_num_stops,
                 max_time=self.max_time,
                 num_charging_nodes=self.num_charging_nodes,
             )
@@ -597,6 +647,7 @@ class EventDrivenTruckEnv(gym.Env):
         # Reset simulation time and event queue
         self.global_clock = 0.0
         self.event_queue = []
+        self._system_event_sequence = 0
         self.episode_reward = 0.0
         self.completed_delivery_reward = 0.0
         self._episode_ended = False
@@ -615,6 +666,10 @@ class EventDrivenTruckEnv(gym.Env):
 
         # Reset charging station state
         self.charging_station.reset()
+        if self.public_stations is not None:
+            self.public_stations.begin_episode(self.scenario_random_streams)
+        if self.hos is not None:
+            self.hos.reset()
 
         # Track actual routes for visualization
         self.truck_routes = {}  # truck_id -> list of (node, time, event_type)
@@ -662,6 +717,125 @@ class EventDrivenTruckEnv(gym.Env):
 
         return obs, info
 
+    def _configure_extensions(self) -> None:
+        """Size the action envelope and register the enabled components.
+
+        New action kinds are appended after the charge values, and only when
+        their component is enabled, so legacy envelopes keep their size.
+        """
+        extensions = self.extensions
+        self.request_mode = (
+            extensions.requests.mode
+            if extensions.requests.dynamic
+            else "at_depot" if extensions.loading == "at_depot" else "static"
+        )
+        # The request engine replaces the static task registry: same-day,
+        # drayage and depot loading of a static instance.
+        self.dynamic_requests = self.request_mode != "static"
+        self._system_event_handlers = {}
+        self._system_event_sequence = 0
+        # Component state; each stays None while its block is disabled.
+        self.components_enabled = (
+            extensions.public_charging.enabled
+            or extensions.hours_of_service.enabled
+            or self.dynamic_requests
+        )
+        self.public_stations = None
+        public = extensions.public_charging
+        if public.enabled:
+            facade = (
+                PublicChargingStation
+                if public.queue_model == "dynamic_mmc"
+                else StationaryWaitChargingStation
+            )
+            self.charging_station = facade(**self._station_arguments, public_config=public)
+            self.public_stations = self.charging_station
+            if public.debug_eager_public_queues:
+                self._system_event_handlers["station_event"] = "_handle_station_event"
+        self.hos = (
+            HosTracker(extensions.hours_of_service, self.num_trucks)
+            if extensions.hours_of_service.enabled
+            else None
+        )
+        self.request_engine = None
+        if self.dynamic_requests:
+            self.request_engine = RequestEngine(extensions, self.problem_config, self.delivery_config)
+            self.request_engine.resolve_terminals(self)
+            self._system_event_handlers.update(
+                epoch_boundary="_handle_request_reveal",
+                request_release="_handle_request_release",
+                request_expire="_handle_request_expire",
+            )
+        if extensions.public_charging.enabled:
+            traffic = self.config["public_charging"].setdefault("exogenous_traffic", {})
+            traffic["resolved_mean_service_hours"] = extensions.public_charging.mean_service_hours
+        if extensions.requests.dynamic:
+            # Slot r is request r: the envelope is the request budget.
+            self.fixed_num_stops = extensions.requests.max_requests
+            self.num_stops = self.fixed_num_stops
+            if "max_episode_steps" not in self.config["environment"]:
+                self.max_episode_steps = max(
+                    200,
+                    2 * (self.num_charging_nodes + 2)
+                    * (self.fixed_num_stops + self.num_trucks),
+                )
+        kinds = []
+        if (
+            extensions.public_charging.enabled
+            and extensions.public_charging.queue_policy == "kullman2021"
+        ):
+            kinds.append(ActionKind.QUEUE)
+        if extensions.hours_of_service.enabled:
+            kinds.extend((ActionKind.REST_BREAK, ActionKind.REST_DAILY))
+        if self.dynamic_requests:
+            kinds.extend((ActionKind.WAIT, ActionKind.END_SHIFT))
+        self.extra_action_kinds = tuple(kinds)
+        self.num_navigation_actions = self.num_charging_nodes + self.fixed_num_stops + 1
+        self.extra_action_offset = self.num_navigation_actions + self.num_charge_actions
+        self.action_space = spaces.Discrete(
+            self.extra_action_offset + len(self.extra_action_kinds)
+        )
+
+    def _push_system_event(self, time: float, kind: str, **data) -> None:
+        """Queue exogenous information; same-time events keep push order."""
+        self._system_event_sequence += 1
+        heapq.heappush(
+            self.event_queue,
+            Event(
+                time=float(time),
+                truck_id=SYSTEM_TRUCK_ID,
+                event_type=EventType.SYSTEM,
+                data={"kind": kind, **data},
+                sequence=self._system_event_sequence,
+            ),
+        )
+
+    def _handle_system_event(self, event: Event) -> None:
+        kind = event.data["kind"]
+        # Handlers are method names, not closures, so environment copies (the
+        # certificate shadow, perfect-information branches) dispatch to
+        # themselves rather than to the original.
+        handler = self._system_event_handlers.get(kind)
+        if handler is None:
+            raise RuntimeError(f"no handler registered for system event {kind!r}")
+        getattr(self, handler)(event)
+
+    def _push_ready(self, truck_id: int, time: float, data: dict) -> None:
+        heapq.heappush(
+            self.event_queue,
+            Event(time=float(time), event_type=EventType.TRUCK_READY, truck_id=int(truck_id), data=data),
+        )
+
+    def _sync_components(self) -> None:
+        """Let components schedule what a just-processed change implies."""
+        if self.public_stations is not None:
+            self.public_stations.drain(self.global_clock, self._push_ready, self._push_system_event)
+
+    def _handle_station_event(self, event: Event) -> None:
+        self.public_stations.handle_eager_event(
+            int(event.data["node"]), self.global_clock, self._push_ready
+        )
+
     def _schedule_initial_decisions(self) -> None:
         for i in range(self.num_trucks):
             self.truck_states[i] = "ready"  # All trucks start in ready state
@@ -680,6 +854,9 @@ class EventDrivenTruckEnv(gym.Env):
         """Create trucks sharing one depot and one fleet-owned task registry."""
         if self.instance_rng is None:
             raise RuntimeError("joint fleet generation requires an episode RNG")
+        if self.request_engine is not None and self.request_mode != "at_depot":
+            self._create_request_fleet()
+            return
 
         truck_config = self.config["truck"]
         payload_capacity = float(
@@ -728,6 +905,8 @@ class EventDrivenTruckEnv(gym.Env):
                 charge_transition=self._certificate_charge_transition,
                 min_hop_energy_kwh=self.min_hop_energy_kwh,
                 max_hop_energy_kwh=self.max_hop_energy_kwh,
+                min_depot_energy_kwh=self.min_depot_energy_kwh,
+                max_depot_energy_kwh=self.max_depot_energy_kwh,
                 generation_attempts=self.generation_attempts,
                 certify=lambda instance: self._certify_instance(instance, initial_batteries),
             )
@@ -750,6 +929,77 @@ class EventDrivenTruckEnv(gym.Env):
                     cache_path, {"instance": self.joint_instance, "trace": self.feasibility_witness}
                 )
         self._install_joint_instance(self.joint_instance, initial_batteries)
+        if self.request_engine is not None:
+            # problem.loading=at_depot: the certified static instance, served
+            # through depot manifests (the implicit-loading witness loads each
+            # truck's witness customers at t = 0, so it certifies this too).
+            self.request_engine.begin_episode(self)
+            self.task_registry = RequestTaskView(self.request_engine)
+            self._schedule_request_events()
+
+    def _create_request_fleet(self) -> None:
+        """Same-day or drayage: a depot and a hidden request stream, no static tasks."""
+        truck_config = self.config["truck"]
+        payload_capacity = float(self.problem_config.get(
+            "payload_capacity", truck_config.get("payload_capacity", 0.0),
+        ))
+        if payload_capacity <= 0.0:
+            raise ValueError("dynamic request modes require a positive payload_capacity")
+        if self.request_mode == "drayage" and payload_capacity < 1.0:
+            raise ValueError("drayage carries one container of demand 1: payload_capacity >= 1")
+        battery_capacity = float(truck_config["battery_capacity"])
+        initial_batteries = [self._initial_battery(battery_capacity) for _ in range(self.num_trucks)]
+        self.feasibility_witness = ()
+        depot = self.request_engine.begin_episode(self)
+        self.joint_instance = JointRoutingInstance(depot_node=depot, tasks=())
+        self.task_registry = RequestTaskView(self.request_engine)
+        for truck_id in range(self.num_trucks):
+            truck = Truck(
+                truck_id=truck_id,
+                truck_type="electric",
+                delivery_sequence=[depot],
+                initial_battery=initial_batteries[truck_id],
+                battery_capacity=battery_capacity,
+                base_speed=float(truck_config["base_speed"]),
+                enable_flexible_delivery_order=True,
+                payload_capacity=payload_capacity,
+            )
+            self.trucks.append(truck)
+            self.truck_routes[truck_id] = [(depot, 0.0, "start", truck.get_battery_percentage())]
+            self.truck_initial_plans[truck_id] = {"start": depot, "deliveries": [depot]}
+        self._schedule_request_events()
+
+    def _schedule_request_events(self) -> None:
+        engine = self.request_engine
+        depot = int(self.joint_instance.depot_node)
+        if self.extensions.depot_charging.enabled:
+            dcfast = self.charging_config.get("dcfast", {})
+            self.charging_station.add_private_charger(
+                depot,
+                self.extensions.depot_charging.ports or self.num_trucks,
+                self.extensions.depot_charging.power_kw,
+                float(dcfast.get("efficiency", 0.9)),
+            )
+        reveals: dict[float, list[int]] = {}
+        for request in engine.registry.requests():
+            reveals.setdefault(request.reveal_time, []).append(request.request_id)
+        # Reveals first: at equal times they precede releases and expiries.
+        for time in sorted(reveals):
+            self._push_system_event(time, "epoch_boundary", request_ids=reveals[time])
+        for request in engine.registry.requests():
+            if request.release_time > request.reveal_time:
+                self._push_system_event(
+                    request.release_time, "request_release",
+                    phase="release", request_ids=[request.request_id],
+                )
+            if (
+                request.pickup is not None
+                and math.isfinite(request.pickup.latest)
+                and engine.deadline_type == "hard"
+            ):
+                self._push_system_event(
+                    request.pickup.latest, "request_expire", request_id=request.request_id
+                )
 
     SCENARIO_CACHE_VERSION = 3  # at most one station between depot/customer stops
 
@@ -883,6 +1133,7 @@ class EventDrivenTruckEnv(gym.Env):
             "event_queue", "truck_states", "truck_routes", "truck_initial_plans",
             "trucks", "waiting_start_times", "truck_ready_times",
             "_penalized_failed_trucks", "_penalized_completed_trucks",
+            "hos", "public_stations", "request_engine",
         ):
             setattr(shadow, name, copy.deepcopy(getattr(self, name), memo))
         shadow.verbose = shadow.enable_plotting = False
@@ -907,7 +1158,11 @@ class EventDrivenTruckEnv(gym.Env):
         work is omitted on this private simulator state.
         """
         truck = self.trucks[self.active_truck_id]
-        if action >= self.num_navigation_actions:
+        if action >= self.extra_action_offset:
+            self._execute_extra_action(
+                truck, self.extra_action_kinds[action - self.extra_action_offset]
+            )
+        elif action >= self.num_navigation_actions:
             self._execute_charge_action(
                 truck, self.charge_action_values[action - self.num_navigation_actions],
                 truck.current_node,
@@ -928,6 +1183,369 @@ class EventDrivenTruckEnv(gym.Env):
         self._episode_end_flags = (terminated, truncated)
         if self._episode_ended:
             self.active_truck_id = None
+
+    # -- dynamic requests ------------------------------------------------------
+
+    def _handle_request_reveal(self, event: Event) -> None:
+        for request_id in event.data["request_ids"]:
+            self.request_engine.registry.reveal(int(request_id), self.global_clock)
+
+    def _handle_request_release(self, event: Event) -> None:
+        # Revealed earlier; now loadable. The event only wakes waiting trucks.
+        return None
+
+    def _handle_request_expire(self, event: Event) -> None:
+        """Hard deadlines: an open request is lost at its latest pickup time."""
+        registry = self.request_engine.registry
+        request = registry.get(int(event.data["request_id"]))
+        if request.status in (RequestStatus.OPEN, RequestStatus.CLAIMED_PICKUP):
+            registry.lose(request.request_id, self.global_clock)
+            self.completed_delivery_reward -= (
+                self.extensions.requests.lost_request_penalty_hours
+                * self.reward_config["time_multiplier"]
+            )
+
+    def _launch_leg(self, truck: Truck, target_node: int, extra: dict) -> bool:
+        """Dispatch one realized leg (request engine); False if the truck failed."""
+        current_node = int(truck.current_node)
+        target_node = int(target_node)
+        energy = self.transport_graph.get_path_energy(current_node, target_node)
+        travel_time = self.transport_graph.get_time_distance(current_node, target_node)
+        actual_travel_time, multiplier = self.traffic_simulator.apply_traffic(
+            travel_time=travel_time, current_time=self.global_clock,
+            from_node=current_node, to_node=target_node,
+        )
+        discharge = self.traffic_simulator.apply_energy_uncertainty(
+            base_energy=energy, traffic_multiplier=multiplier, current_time=self.global_clock,
+            from_node=current_node, to_node=target_node,
+        ) * self.request_engine.energy_scale(truck.truck_id)
+        if discharge > truck.current_battery + 1e-9:
+            self._fail_truck(truck, "insufficient_energy_after_realization")
+            return False
+        if current_node in self.charging_station.station_available and target_node != current_node:
+            self.charging_station.remove_from_waitlist(truck.truck_id, current_node)
+            self.charging_station.wake_waiting_trucks(
+                current_node, self.global_clock, self.event_queue, EventType, Event,
+                self.truck_states,
+            )
+        self._remove_pending_events(truck.truck_id, EventType.TRUCK_ROUTING)
+        departure = self.truck_ready_times.get(truck.truck_id, self.global_clock)
+        arrival = departure + actual_travel_time
+        segments = None
+        if self.hos is not None:
+            segments = self.hos.plan_leg(truck, actual_travel_time)
+            arrival += HosTracker.rest_hours_in(segments)
+            truck.pending_hos_segments = segments
+        truck.start_routing(destination=target_node, timestamp=departure)
+        heapq.heappush(self.event_queue, Event(
+            time=arrival,
+            event_type=EventType.TRUCK_ROUTING,
+            truck_id=truck.truck_id,
+            data={
+                "destination": target_node,
+                "distance": actual_travel_time * truck.base_speed,
+                "travel_time": actual_travel_time,
+                "discharge": discharge,
+                "departure_time": departure,
+                "unloading_time": None,
+                "task_id": None,
+                **extra,
+                **({} if segments is None else {"hos_segments": segments}),
+            },
+        ))
+        self.truck_states[truck.truck_id] = "routing"
+        truck.route_destination = target_node
+        truck.route_arrival_time = arrival
+        return True
+
+    def _execute_request_slot(self, truck: Truck, slot: int) -> float:
+        feasibility = evaluate_request_slot(self, truck, slot)
+        if not feasibility.feasible:
+            return self._reject_joint_action(truck, feasibility.reason)
+        registry = self.request_engine.registry
+        request = registry.get(slot)
+        tid = truck.truck_id
+        if request.status is RequestStatus.OPEN:
+            registry.claim_pickup(slot, tid, self.global_clock)
+            if int(request.pickup.node) == int(truck.current_node):
+                self._begin_pickup(truck, request)
+            else:
+                self._launch_leg(truck, request.pickup.node, {"request_id": slot, "stop": "pickup"})
+            return 0.0
+        registry.claim_delivery(slot, tid, self.global_clock)
+        if int(request.delivery.node) == int(truck.current_node):
+            self._begin_delivery(truck, request)
+        else:
+            self._launch_leg(truck, request.delivery.node, {"request_id": slot, "stop": "delivery"})
+        return 0.0
+
+    def _execute_request_depot(self, truck: Truck) -> float:
+        feasibility = evaluate_depot_action(self, truck)
+        if not feasibility.feasible:
+            return self._reject_joint_action(truck, feasibility.reason)
+        self._launch_leg(truck, self.joint_instance.depot_node, {"stop": "depot"})
+        return 0.0
+
+    def _request_arrival(self, truck: Truck, data: dict) -> None:
+        stop = data.get("stop")
+        if stop == "depot" or "request_id" not in data:
+            self._push_ready(truck.truck_id, self.global_clock, {"reason": "arrived_at_depot"})
+            return
+        request = self.request_engine.registry.get(int(data["request_id"]))
+        if stop == "pickup":
+            if request.status is RequestStatus.LOST:
+                # Case C3: lost en route; the claim lapsed with it.
+                truck._record_event(
+                    event_type="REQUEST_LOST_ON_ARRIVAL", timestamp=self.global_clock,
+                    details={"request_id": request.request_id},
+                )
+                self._push_ready(truck.truck_id, self.global_clock, {"reason": "arrived_at_delivery"})
+                return
+            self._begin_pickup(truck, request)
+        else:
+            self._begin_delivery(truck, request)
+
+    def _await_window(self, truck: Truck, request, opening: float, stop: str) -> bool:
+        """Wait at the stop until it opens (Xiao: early arrival waits)."""
+        if self.global_clock >= opening - 1e-9:
+            return False
+        self.truck_states[truck.truck_id] = "waiting_for_service"
+        self._push_ready(truck.truck_id, opening, {
+            "reason": "request_window_open", "request_id": request.request_id, "stop": stop,
+            "wait_duration": opening - self.global_clock,
+        })
+        return True
+
+    def _begin_pickup(self, truck: Truck, request) -> None:
+        if self._await_window(truck, request, request.pickup.earliest, "pickup"):
+            return
+        registry = self.request_engine.registry
+        registry.start_loading(request.request_id, truck.truck_id, self.global_clock)
+        truck.start_loading(self.global_clock, request.pickup.node, request.request_id)
+        hours = request.pickup.service_hours
+        self.truck_states[truck.truck_id] = "loading"
+        self._push_ready(truck.truck_id, self.global_clock + hours, {
+            "reason": "loading_complete", "request_id": request.request_id, "duration": hours,
+        })
+
+    def _begin_delivery(self, truck: Truck, request) -> None:
+        if self._await_window(truck, request, request.delivery.earliest, "delivery"):
+            return
+        registry = self.request_engine.registry
+        registry.start_service(request.request_id, truck.truck_id, self.global_clock)
+        if self.request_engine.is_drayage:
+            hours = request.delivery.service_hours
+        else:
+            hours = self.delivery_simulator.apply_unloading_time(
+                delivery_node=request.delivery.node, current_time=self.global_clock,
+                base_service_time=request.delivery.service_hours,
+            )
+        truck.start_unloading(timestamp=self.global_clock, delivery_node=request.delivery.node)
+        self.truck_states[truck.truck_id] = "unloading"
+        self._push_ready(truck.truck_id, self.global_clock + hours, {
+            "reason": "request_service_complete", "request_id": request.request_id,
+            "unloading_duration": hours,
+        })
+
+    def _request_ready_event(self, truck: Truck, event: Event) -> bool:
+        """Request-engine TRUCK_READY reasons; True when the event is consumed."""
+        reason = event.data.get("reason")
+        registry = self.request_engine.registry
+        if reason == "request_window_open":
+            if self.truck_states.get(truck.truck_id) != "waiting_for_service":
+                return True
+            wait = float(event.data["wait_duration"])
+            truck.add_time_window_waiting(wait, timestamp=self.global_clock)
+            if self.hos is not None:
+                self.hos.record(truck, HosActivity.WINDOW_WAIT, self.global_clock - wait, self.global_clock)
+            request = registry.get(int(event.data["request_id"]))
+            if event.data["stop"] == "pickup":
+                if request.status is RequestStatus.LOST:
+                    self.truck_states[truck.truck_id] = "ready"
+                    return False
+                self._begin_pickup(truck, request)
+            else:
+                self._begin_delivery(truck, request)
+            return True
+        if reason == "loading_complete":
+            request = registry.finish_loading(int(event.data["request_id"]), truck.truck_id)
+            hours = float(event.data["duration"])
+            truck.finish_loading(hours, self.global_clock, request.request_id)
+            truck.remaining_payload = max(0.0, truck.remaining_payload - request.demand)
+            if self.hos is not None:
+                self.hos.record(truck, HosActivity.SERVICE, self.global_clock - hours, self.global_clock)
+            return False
+        if reason == "request_service_complete":
+            request = registry.get(int(event.data["request_id"]))
+            hours = float(event.data["unloading_duration"])
+            late = request.service_started_at > request.delivery.latest + 1e-9
+            registry.complete_service(request.request_id, truck.truck_id, self.global_clock, late=late)
+            truck.finish_unloading(unloading_duration=hours, timestamp=self.global_clock)
+            truck.served_task_ids.append(request.request_id)
+            truck.remaining_payload = min(truck.payload_capacity, truck.remaining_payload + request.demand)
+            if self.hos is not None:
+                self.hos.record(truck, HosActivity.SERVICE, self.global_clock - hours, self.global_clock)
+            if not late:
+                self.completed_delivery_reward += self.reward_config["delivery_bonus"]
+            elif self.request_engine.deadline_type == "soft":
+                penalty = request.delay_hours * self.reward_config["time_multiplier"]
+                if self.request_engine.is_drayage and self.extensions.drayage.delay_penalty_per_hour:
+                    penalty = request.delay_hours * self.extensions.drayage.delay_penalty_per_hour
+                self.completed_delivery_reward -= penalty
+            return False
+        if reason == "wait_complete":
+            start = float(event.data["start"])
+            waited = self.global_clock - start
+            truck.request_wait_time += waited
+            truck.total_time_elapsed += waited
+            truck.request_wait_start_time = None
+            truck._record_event(event_type="IDLE_END", timestamp=self.global_clock,
+                                details={"idle_hours": waited})
+            if self.hos is not None:
+                self.hos.record(truck, HosActivity.IDLE, start, self.global_clock)
+            return False
+        return False
+
+    def _request_outcome(self) -> str:
+        metrics = self.request_engine.metrics(self.global_clock)
+        if self.task_registry.all_served() and all(truck.is_complete for truck in self.trucks):
+            return "success"
+        if metrics["requests_lost"]:
+            return "requests_lost"
+        if metrics["requests_served_late"]:
+            return "requests_late"
+        if all(truck.failed for truck in self.trucks):
+            return "all_trucks_failed"
+        return "fleet_stopped_with_unserved_requests"
+
+    def _release_if_nothing_to_charge(self, truck: Truck) -> None:
+        """Case A5: a truck reaching the head with no feasible charge level
+        releases the port at once and is free to leave."""
+        node = int(truck.current_node)
+        if not self.public_stations.has_reservation(truck.truck_id):
+            return
+        soc = truck.current_battery / truck.battery_capacity
+        if self.charging_action_mode == "target_soc":
+            can_charge = any(value > soc + 1e-9 for value in self.charge_action_values)
+        else:
+            can_charge = truck.current_battery < truck.battery_capacity - 1e-9
+        if can_charge and not truck.must_leave_charger:
+            return
+        self.public_stations.release_reservation(truck.truck_id, node, self.global_clock)
+        truck.must_leave_charger = True
+        truck._record_event(
+            event_type="PORT_RELEASED_UNUSED",
+            timestamp=self.global_clock,
+            details={"charger_node": node},
+        )
+
+    def _certificate_prelude(self, truck_id: int, action: int) -> int | None:
+        """An action a component requires before the witness action, if any.
+
+        Hours of service: a rest taken greedily at the last stop before the
+        witness leg would break a limit (plan section 6.6). Nothing is relaxed:
+        if no rest makes the leg legal, the witness fails and the instance is
+        rejected.
+        """
+        truck = self.trucks[truck_id]
+        stations = self.public_stations
+        if stations is not None and action < self.extra_action_offset:
+            charging = action >= self.num_navigation_actions
+            if charging and stations.awaiting_decision(self, truck):
+                return self.extra_action_offset + self.extra_action_kinds.index(ActionKind.QUEUE)
+            if not charging and stations.committed(truck_id):
+                # The witness skips a charge it no longer needs, but the head of
+                # a Kullman queue must charge: take the smallest feasible level.
+                for index in range(self.num_charge_actions):
+                    candidate = self.num_navigation_actions + index
+                    value = self.charge_action_values[index]
+                    if extension_charge_check(self, truck, evaluate_target_soc_charge(
+                        truck=truck, truck_state=self.truck_states[truck_id],
+                        charger_node=truck.current_node, charging_nodes=self.charging_nodes,
+                        target_soc=float(value),
+                        station_available=self.charging_station.station_available.get(
+                            int(truck.current_node), False),
+                    ) if self.charging_action_mode == "target_soc" else evaluate_duration_charge(
+                        truck=truck, truck_state=self.truck_states[truck_id],
+                        charger_node=truck.current_node, charging_nodes=self.charging_nodes,
+                        charge_hours=float(value),
+                        station_available=self.charging_station.station_available.get(
+                            int(truck.current_node), False),
+                    )).feasible:
+                        return candidate
+        if self.hos is None or action >= self.num_navigation_actions:
+            return None
+        if action < self.num_charging_nodes:
+            target, kind = self.charging_nodes[action], ActionKind.CHARGER
+        elif action == self.num_charging_nodes + self.fixed_num_stops:
+            target, kind = self.joint_instance.depot_node, ActionKind.DEPOT
+        else:
+            target = self.joint_instance.tasks[action - self.num_charging_nodes].node_id
+            kind = ActionKind.CUSTOMER
+        if hos_leg_check(self, truck, target, kind) is None:
+            return None
+        clock = self.hos.clock(truck_id)
+        leg = self.hos.planned_leg_hours(self, truck, target)
+        after_break = hos_apply(
+            self.hos.regime, clock, HosActivity.REST_BREAK,
+            self.hos.rest_action_hours(truck_id, "break"),
+        )
+        fits_after_break = (
+            hos_allowance(self.hos.regime, after_break) > 1e-9
+            if self.hos.config.rest_locations == "anywhere"
+            else leg <= hos_allowance(self.hos.regime, after_break) + 1e-9
+        )
+        rest = ActionKind.REST_BREAK if fits_after_break else ActionKind.REST_DAILY
+        if not evaluate_extra_action(self, truck, rest).feasible:
+            return None
+        return self.extra_action_offset + self.extra_action_kinds.index(rest)
+
+    def _execute_extra_action(self, truck: Truck, kind: ActionKind) -> float:
+        """Execute an appended action through the shared feasibility engine."""
+        feasibility = evaluate_extra_action(self, truck, kind)
+        if not feasibility.feasible:
+            return self._reject_joint_action(truck, feasibility.reason)
+        if kind is ActionKind.QUEUE:
+            node = int(truck.current_node)
+            self.public_stations.join(truck.truck_id, node, self.global_clock)
+            self.truck_states[truck.truck_id] = "waiting_to_charge"
+            if truck.truck_id not in self.waiting_start_times:
+                self.waiting_start_times[truck.truck_id] = self.global_clock
+                truck.start_waiting(timestamp=self.global_clock, reason="charger_queue")
+            return 0.0
+        if kind in (ActionKind.REST_BREAK, ActionKind.REST_DAILY):
+            rest_kind = "break" if kind is ActionKind.REST_BREAK else "daily"
+            hours = self.hos.rest_action_hours(truck.truck_id, rest_kind)
+            self._remove_pending_events(truck.truck_id, EventType.TRUCK_READY)
+            heapq.heappush(
+                self.event_queue,
+                Event(
+                    time=self.global_clock + hours,
+                    event_type=EventType.TRUCK_READY,
+                    truck_id=truck.truck_id,
+                    data={"reason": "rest_complete", "kind": rest_kind, "start": self.global_clock},
+                ),
+            )
+            self.truck_states[truck.truck_id] = "resting"
+            truck.rest_start_time = self.global_clock
+            return 0.0
+        if kind is ActionKind.WAIT:
+            # Idle until the next request information or wait_hours (Voccia).
+            upcoming = self.request_engine.next_information_time(self.global_clock)
+            wake = self.global_clock + self.extensions.requests.wait_hours
+            if upcoming is not None:
+                wake = min(wake, upcoming)
+            truck.request_wait_start_time = self.global_clock
+            truck._record_event(event_type="IDLE_START", timestamp=self.global_clock)
+            self.truck_states[truck.truck_id] = "waiting_for_requests"
+            self._push_ready(truck.truck_id, wake, {"reason": "wait_complete", "start": self.global_clock})
+            return 0.0
+        if kind is ActionKind.END_SHIFT:
+            truck.battery_at_completion = truck.current_battery
+            truck.mark_complete(timestamp=self.global_clock)
+            self.truck_states[truck.truck_id] = "complete"
+            return 0.0
+        raise ValueError(f"unknown appended action {kind}")
 
     def _initial_battery(self, battery_capacity: float) -> float:
         """Resolve the configured initial SoC using the instance RNG."""
@@ -1012,7 +1630,30 @@ class EventDrivenTruckEnv(gym.Env):
         Advance simulation clock to next event that requires a decision.
         Process events until we find a TRUCK_READY event that can actually proceed.
         """
-        while self.event_queue:
+        while True:
+            self._sync_components()
+            if not self.event_queue:
+                break
+            if self.event_queue[0].event_type is EventType.SYSTEM:
+                event = heapq.heappop(self.event_queue)
+                # Exogenous information at or past the horizon can no longer
+                # matter, and must not truncate the episode by itself.
+                if event.time >= self.max_time:
+                    continue
+                # The eager queue reference is debug-only: once no truck is
+                # live, outside traffic cannot matter and must not move the
+                # clock (the lazy simulator has no such events at all).
+                if event.data["kind"] == "station_event" and all(
+                    truck.is_complete or truck.failed for truck in self.trucks
+                ):
+                    continue
+                if event.time < self.global_clock - 1e-9:
+                    raise RuntimeError(
+                        f"event time reversal: {event.time} < {self.global_clock}"
+                    )
+                self.global_clock = event.time
+                self._handle_system_event(event)
+                continue
             pending_truck = self.trucks[self.event_queue[0].truck_id]
             if pending_truck.is_complete or pending_truck.failed:
                 heapq.heappop(self.event_queue)
@@ -1063,6 +1704,8 @@ class EventDrivenTruckEnv(gym.Env):
                 # This can happen when a truck gets woken early (port freed) but also had
                 # a scheduled event based on predicted wait time
                 reason = event.data.get("reason", "")
+                if self.request_engine is not None and self._request_ready_event(truck, event):
+                    continue
                 if reason == "service_window_open":
                     if not self.joint_routing or self.task_registry is None:
                         raise RuntimeError(
@@ -1086,6 +1729,11 @@ class EventDrivenTruckEnv(gym.Env):
                         wait_duration,
                         timestamp=self.global_clock,
                     )
+                    if self.hos is not None:
+                        self.hos.record(
+                            truck, HosActivity.WINDOW_WAIT,
+                            self.global_clock - wait_duration, self.global_clock,
+                        )
                     unloading_duration = float(
                         event.data.get("unloading_duration", 0.0)
                     )
@@ -1109,6 +1757,16 @@ class EventDrivenTruckEnv(gym.Env):
                     )
                     self.truck_states[truck.truck_id] = "unloading"
                     continue
+                if reason == "port_reserved":
+                    if self.truck_states.get(truck.truck_id) != "waiting_to_charge" or (
+                        not self.public_stations.confirm_reservation(
+                            truck.truck_id,
+                            int(event.data["charger_node"]),
+                            int(event.data["token"]),
+                            self.global_clock,
+                        )
+                    ):
+                        continue
                 if reason in [
                     "recheck_gating",
                     "recheck_after_arrival",
@@ -1144,6 +1802,10 @@ class EventDrivenTruckEnv(gym.Env):
                         charge_duration=charge_duration,
                         timestamp=self.global_clock
                     )
+                    if self.hos is not None:
+                        self.hos.record_charge(
+                            truck, self.global_clock - charge_duration, self.global_clock
+                        )
                     
                     # Log charging session if logger is enabled
                     if self.charging_logger:
@@ -1191,6 +1853,18 @@ class EventDrivenTruckEnv(gym.Env):
                     # Truck just finished charging - skip gating check and become ready immediately
                     # The truck should leave the charger, not wait for other trucks
                     # Continue to make this truck active (skip the gating check below)
+                    skip_gating_check = True
+                elif reason == "rest_complete":
+                    # A rest holds no port; resting at a station is not a request
+                    # to charge, so the truck must not be queued on waking.
+                    rest_start = float(event.data["start"])
+                    self.hos.record_rest(
+                        truck, event.data["kind"], rest_start, self.global_clock, roadside=False
+                    )
+                    rested = self.global_clock - rest_start
+                    truck.rest_time += rested
+                    truck.total_time_elapsed += rested
+                    truck.rest_start_time = None
                     skip_gating_check = True
                 else:
                     skip_gating_check = False
@@ -1244,6 +1918,11 @@ class EventDrivenTruckEnv(gym.Env):
                         
                         # Update truck's waiting time stat and record event
                         truck.add_waiting_time(waiting_duration, timestamp=self.global_clock)
+                        if self.hos is not None:
+                            self.hos.record(
+                                truck, HosActivity.QUEUE,
+                                self.global_clock - waiting_duration, self.global_clock,
+                            )
                         
                         if self.verbose:
                             print(f"  Truck {truck.truck_id} finished waiting at {self.global_clock:.2f}h")
@@ -1259,6 +1938,11 @@ class EventDrivenTruckEnv(gym.Env):
                     unloading_duration = event.data.get("unloading_duration", 0.0)
                     if truck.unloading_start_time is not None:
                         truck.finish_unloading(unloading_duration=unloading_duration, timestamp=self.global_clock)
+                    if self.hos is not None:
+                        self.hos.record(
+                            truck, HosActivity.SERVICE,
+                            self.global_clock - unloading_duration, self.global_clock,
+                        )
                     self._complete_joint_customer_service(truck, event.data)
 
                 # Even without an available customer, a ready truck can
@@ -1287,6 +1971,8 @@ class EventDrivenTruckEnv(gym.Env):
                     # validator. Enumerating all customer/charger alternatives
                     # at every replay step would make certification quadratic.
                     return
+                if reason == "port_reserved":
+                    self._release_if_nothing_to_charge(truck)
                 decisions = joint_action_feasibility(self)
                 self.last_action_feasibility = decisions
                 if not any(item.feasible for item in decisions):
@@ -1310,6 +1996,17 @@ class EventDrivenTruckEnv(gym.Env):
                         print(f"  Skipping TRUCK_ROUTING for truck {truck.truck_id} (status: {status})")
                     continue
 
+                if self.public_stations is not None:
+                    truck.stations_since_stop = (
+                        truck.stations_since_stop + 1 if destination in self.charging_nodes else 0
+                    )
+                if self.hos is not None and "hos_segments" in event.data:
+                    segments = event.data["hos_segments"]
+                    self.hos.commit_leg(truck, event.data["departure_time"], segments)
+                    truck.pending_hos_segments = None
+                    rested = HosTracker.rest_hours_in(segments)
+                    truck.rest_time += rested
+                    truck.total_time_elapsed += rested
                 # First, update the truck's physical state (position, battery, etc.)
                 self.event_handler.handle_truck_routing(
                     event,
@@ -1324,7 +2021,12 @@ class EventDrivenTruckEnv(gym.Env):
                 )
                 # Check the truck's state after arrival - it may have become complete or failed
                 # Only schedule TRUCK_READY if truck is not complete or failed
-                if not (truck.is_complete or truck.failed):
+                if not (truck.is_complete or truck.failed) and (
+                    self.request_engine is not None
+                    and destination not in self.charging_nodes
+                ):
+                    self._request_arrival(truck, event.data)
+                elif not (truck.is_complete or truck.failed):
                     # If truck arrived at a charger, check if port is available
                     if (
                         destination in self.charging_nodes
@@ -1413,7 +2115,14 @@ class EventDrivenTruckEnv(gym.Env):
         # No more events - episode is over. Successful completion and an
         # unserved-customer deadlock are distinct terminal outcomes.
         self.active_truck_id = None
-        if self.joint_routing and self.task_registry is not None:
+        if self.request_engine is not None:
+            for truck in self.trucks:
+                if not truck.is_complete and not truck.failed:
+                    truck.mark_failed(reason="no_events_with_live_truck", timestamp=self.global_clock)
+                    self.truck_states[truck.truck_id] = "failed"
+            if self.termination_reason is None:
+                self.termination_reason = self._request_outcome()
+        elif self.joint_routing and self.task_registry is not None:
             if self.task_registry.all_served() and all(
                 truck.is_complete for truck in self.trucks
             ):
@@ -1560,7 +2269,9 @@ class EventDrivenTruckEnv(gym.Env):
                 else:
                     # Go to delivery
                     delivery_idx = action - self.num_charging_nodes
-                    if delivery_idx < self.fixed_num_stops:
+                    if self.dynamic_requests and delivery_idx <= self.fixed_num_stops:
+                        target_node = None
+                    elif delivery_idx < self.fixed_num_stops:
                         target_node = (
                             self.joint_instance.tasks[delivery_idx].node_id
                             if delivery_idx < len(self.joint_instance.tasks)
@@ -1570,12 +2281,22 @@ class EventDrivenTruckEnv(gym.Env):
                         target_node = self.joint_instance.depot_node
                     else:
                         raise ValueError(f"Invalid delivery action index: {delivery_idx}")
-                if target_node is None:
+                if self.dynamic_requests and action >= self.num_charging_nodes:
+                    slot = action - self.num_charging_nodes
+                    reward += (
+                        self._execute_request_slot(truck, slot)
+                        if slot < self.fixed_num_stops
+                        else self._execute_request_depot(truck)
+                    )
+                elif target_node is None:
                     reward += self._reject_joint_action(
                         truck, FeasibilityReason.EMPTY_ACTION_SLOT
                     )
                 else:
                     reward += self._execute_navigation_action(truck, target_node)
+            elif action >= self.extra_action_offset:
+                kind = self.extra_action_kinds[action - self.extra_action_offset]
+                reward += self._execute_extra_action(truck, kind)
             else:
                 # Charging action
                 charge_idx = action - self.num_navigation_actions
@@ -1673,6 +2394,7 @@ class EventDrivenTruckEnv(gym.Env):
                 if not available
             },
         )
+        feasibility = extension_route_check(self, truck, feasibility)
         if not feasibility.feasible:
             return self._reject_joint_action(truck, feasibility.reason)
 
@@ -1762,6 +2484,11 @@ class EventDrivenTruckEnv(gym.Env):
             truck.truck_id, self.global_clock
         )
         completion_time = departure_time + actual_travel_time
+        hos_segments = None
+        if self.hos is not None:
+            hos_segments = self.hos.plan_leg(truck, actual_travel_time)
+            completion_time += HosTracker.rest_hours_in(hos_segments)
+            truck.pending_hos_segments = hos_segments
 
         actual_unloading_time = 0.0
         depot_node = int(truck.delivery_sequence[0])
@@ -1820,6 +2547,7 @@ class EventDrivenTruckEnv(gym.Env):
                     "task_id": (
                         joint_task.task_id if joint_task is not None else None
                     ),
+                    **({} if hos_segments is None else {"hos_segments": hos_segments}),
                 },
             ),
         )
@@ -1875,7 +2603,7 @@ class EventDrivenTruckEnv(gym.Env):
         """Fail one truck without leaving queue entries or port reservations."""
         truck.mark_failed(reason=reason, timestamp=self.global_clock)
         self.truck_states[truck.truck_id] = "failed"
-        for node in self.charging_nodes:
+        for node in self.charging_station.charging_nodes:
             self.charging_station.remove_from_waitlist(truck.truck_id, node)
             self.charging_station.wake_waiting_trucks(
                 node, self.global_clock, self.event_queue, EventType, Event,
@@ -1892,30 +2620,30 @@ class EventDrivenTruckEnv(gym.Env):
         else:
             charger_node = int(charger_node)
 
+        charging_nodes = self.charging_nodes
+        station_available = self.charging_station.station_available.get(charger_node, False)
+        if at_depot_charger(self, truck) and charger_node == int(truck.current_node):
+            charging_nodes = [*self.charging_nodes, charger_node]
+            station_available = True
         if self.charging_action_mode == "target_soc":
             feasibility = evaluate_target_soc_charge(
                 truck=truck,
                 truck_state=self.truck_states[truck.truck_id],
                 charger_node=charger_node,
-                charging_nodes=self.charging_nodes,
+                charging_nodes=charging_nodes,
                 target_soc=float(charge_value),
-                station_available=self.charging_station.station_available.get(
-                    charger_node,
-                    False,
-                ),
+                station_available=station_available,
             )
         else:
             feasibility = evaluate_duration_charge(
                 truck=truck,
                 truck_state=self.truck_states[truck.truck_id],
                 charger_node=charger_node,
-                charging_nodes=self.charging_nodes,
+                charging_nodes=charging_nodes,
                 charge_hours=float(charge_value),
-                station_available=self.charging_station.station_available.get(
-                    charger_node,
-                    False,
-                ),
+                station_available=station_available,
             )
+        feasibility = extension_charge_check(self, truck, feasibility)
         if not feasibility.feasible:
             return self._reject_joint_action(truck, feasibility.reason)
         
@@ -2118,6 +2846,8 @@ class EventDrivenTruckEnv(gym.Env):
             state in {"complete", "failed"} for state in self.truck_states.values()
         )
         ended = all_done or self.active_truck_id is None
+        if ended and self.termination_reason is None and self.request_engine is not None:
+            self.termination_reason = self._request_outcome()
         if ended and self.termination_reason is None:
             if self.task_registry.all_served() and all(
                 truck.is_complete for truck in self.trucks
@@ -2249,7 +2979,27 @@ class EventDrivenTruckEnv(gym.Env):
                 int(node): len(self.charging_station.charger_occupancy[node])
                 for node in self.charging_nodes
             },
+            **self._component_info(),
         }
+
+    def _component_info(self) -> dict:
+        """Diagnostics of enabled components only; legacy info is unchanged."""
+        info = {}
+        if self.request_engine is not None:
+            info["request_metrics"] = self.request_engine.metrics(self.global_clock)
+        if self.hos is not None:
+            info["hours_of_service"] = {
+                "regime": self.hos.regime.name,
+                "hos_unplanned_breaks": self.hos.unplanned_breaks,
+                "hos_unplanned_violations": self.hos.unplanned_violations,
+                "rest_hours": dict(self.hos.rest_hours_total),
+            }
+        if self.public_stations is not None:
+            public = {"queue_model": self.extensions.public_charging.queue_model}
+            if hasattr(self.public_stations, "released_without_charge"):
+                public["released_without_charge"] = len(self.public_stations.released_without_charge)
+            info["public_charging"] = public
+        return info
 
     def mask_fn(self) -> np.ndarray:
         """

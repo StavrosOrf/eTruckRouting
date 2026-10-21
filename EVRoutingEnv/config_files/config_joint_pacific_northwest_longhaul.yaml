@@ -1,0 +1,93 @@
+# Long-haul joint fleet routing on the Pacific Northwest case study: 10 trucks, 30 customers, free assignment.
+# Differs from config_joint_pacific_northwest.yaml only in the environment block below.
+# Every customer lies at least 225 nominal kWh from the depot in both directions,
+# so a round trip needs at least 2 x 225 x 0.90 = 405 kWh even at the minimum
+# energy multiplier: every truck that serves a customer must charge (400 kWh battery).
+# The horizon is 48 h. Measured on 15 seeds with the day-ahead ALNS plan, charging
+# took 22-24% of operating time (about 10-11 sessions per instance).
+
+problem:
+  mode: joint_fleet
+  payload_capacity: 20.0
+  min_customer_demand: 1.0
+  max_customer_demand: 4.0
+  base_service_time: 0.2
+  # The base campaign has no windows. Enable only in the controlled variant.
+  time_windows:
+    enabled: false
+
+environment:
+  num_trucks: 10
+  num_stops: 30
+  allow_variable_num_stops: false
+  observation_mode: canonical_flat
+  min_hop_energy_kwh: 0.0
+  max_hop_energy_kwh: null  # No upper bound; use kWh, not km.
+  min_depot_energy_kwh: 225.0  # Depot ring floor, nominal kWh, both directions.
+  max_depot_energy_kwh: null   # No ring ceiling.
+  max_time: 48.0
+  # Omitted: use the fleet/customer-scaled action budget. Set an explicit
+  # max_episode_steps only for controlled action-budget experiments.
+  verbose: false
+
+truck:
+  battery_capacity: 400.0
+  base_speed: 40.0
+  initial_battery: full
+
+charging:
+  action_mode: target_soc
+  target_soc_levels: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+  # All stations use 150 kW unless a station-specific override is set.
+  station_power_classes_kw: [150.0]
+  station_power_overrides_kw: {}
+
+  use_realistic_curve: true
+  level2:
+    charge_rate: 150.0
+    efficiency: 0.90
+  dcfast:
+    charge_rate: 150.0
+    efficiency: 0.90
+    taper_start_soc: 0.8
+    taper_power_min: 150.0
+
+  # Retained only for the legacy duration-action sensitivity campaign.
+  charge_durations: [0.25, 0.5, 1.0]
+
+delivery:
+  enable_stochastic_unloading: true
+  base_unloading_time: 0.2
+  std_dev_factor: 0.20
+  max_std_dev_hours: 0.25
+  business_hours_multiplier: 1.5
+  min_unloading_multiplier: 0.75
+  max_unloading_multiplier: 1.5
+
+rewards:
+  # Training shaping only; evaluation uses operational_metrics in episode info.
+  time_multiplier: 1.0
+  delivery_bonus: 500.0
+  failure_penalty: -1000.0
+  # Charged per refused action when environment.invalid_action_mode is
+  # "penalize"; unused under the default "terminate" semantics.
+  invalid_action_penalty: 100.0
+  enable_leftover_battery_penalty: false
+  leftover_battery_penalty_coef: 1.0
+
+network:
+  data_path: EVRoutingEnv/data/case_studies/pacific_northwest/
+  shortest_path_energy_file: shortest_path_energy_dict.json
+  shortest_path_time_file: shortest_path_time_dict.json
+  station_info_file: station_info_dict.json
+
+traffic:
+  enable_traffic: true
+  std_dev_factor: 0.15
+  max_std_dev_hours: 1.0
+  rush_hour_multiplier: 2.0
+  enable_energy_uncertainty: true
+  energy_uncertainty_factor: 0.05
+  min_energy_multiplier: 0.90
+  max_energy_multiplier: 1.20

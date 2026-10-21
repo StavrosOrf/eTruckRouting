@@ -109,6 +109,13 @@ class Truck:
         self.current_state: str = "initial"  # Track current state for event logging
         self.unloading_start_time: float | None = None  # Track when unloading started
         self.completed_service_count = 0  # Delivery services finished, excluding depot return
+        self.rest_time = 0.0  # Hours-of-service rests, roadside or at a stop
+        self.request_wait_time = 0.0  # WAIT actions (dynamic requests)
+        self.stations_since_stop = 0  # Consecutive public-station visits since a stop
+        self.pending_hos_segments = None  # Driving/rest split of the leg in progress
+        self.rest_start_time: float | None = None
+        self.request_wait_start_time: float | None = None
+        self.loading_start_time: float | None = None
         self.waiting_start_time: float | None = None  # Track when waiting started
         self.routing_start_time: float | None = None  # Track when routing started
     
@@ -563,6 +570,33 @@ class Truck:
         )
         self.current_state = "unloading"
     
+    def start_loading(self, timestamp: float, node: int, request_id: int) -> None:
+        """Begin loading a request at its pickup stop (dynamic request modes)."""
+        if self.loading_start_time is not None:
+            raise RuntimeError("truck is already loading")
+        self.loading_start_time = float(timestamp)
+        self._record_event(
+            event_type="LOADING_START",
+            timestamp=float(timestamp),
+            location=int(node),
+            details={"request_id": int(request_id)},
+        )
+        self.current_state = "loading"
+
+    def finish_loading(self, duration: float, timestamp: float, request_id: int) -> None:
+        """Loading is service time, but not a completed delivery."""
+        if self.loading_start_time is None:
+            raise RuntimeError("truck is not loading")
+        duration = float(duration)
+        self.total_unloading_time += duration
+        self.total_time_elapsed += duration
+        self._record_event(
+            event_type="LOADING_END",
+            timestamp=float(timestamp),
+            details={"request_id": int(request_id), "loading_duration_hours": duration},
+        )
+        self.loading_start_time = None
+
     def finish_unloading(self, unloading_duration: float, timestamp: float | None = None):
         """
         Update truck state after unloading at a delivery.

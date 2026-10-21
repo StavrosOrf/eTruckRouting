@@ -43,6 +43,30 @@ from EVRoutingEnv.models.core.customer import TaskStatus
 _TIME_SCALE = 1000.0
 
 
+def refuse_unrevealed_requests(env, planner: str) -> None:
+    """Day-ahead planning needs every request up front (plan section 7.5)."""
+    if getattr(env, "request_engine", None) is not None:
+        mode = env.request_mode
+        block = "problem.loading=at_depot" if mode == "at_depot" else f"requests.mode={mode}"
+        raise NotImplementedError(
+            f"{planner} plans the whole day up front; it does not apply to {block}, "
+            "where requests are revealed over time or loaded through depot manifests"
+        )
+
+
+def expected_station_wait(env) -> float:
+    """Mean long-run Erlang C wait over the public stations (0 without traffic).
+
+    At plan time nothing has been observed, so Kullman's memory-based estimate
+    equals this long-run value; it is also what the shipped lookup tabulates.
+    """
+    stations = getattr(env, "public_stations", None)
+    if stations is None:
+        return 0.0
+    waits = [stations.long_run_wait(node) for node in env.charging_nodes]
+    return sum(waits) / len(waits) if waits else 0.0
+
+
 @dataclass(frozen=True)
 class ExactPlannerParameters:
     """Solver budget and nominal-model settings."""
@@ -59,6 +83,8 @@ class ExactPlannerParameters:
     # its objective is the one this baseline must be given, or the comparison
     # measures the objective mismatch rather than the method.
     objective: str = "makespan"
+    # Price each charging stop at the stations' expected wait (Section 5.5).
+    queue_aware: bool = False
 
     def __post_init__(self) -> None:
         if self.objective not in ("makespan", "total_time"):
@@ -115,7 +141,13 @@ def solve_nominal_plan(
     from ortools.sat.python import cp_model
 
     parameters = parameters or ExactPlannerParameters()
+    refuse_unrevealed_requests(env, "day-ahead CP-SAT")
     depot = int(env.joint_instance.depot_node)
+    wait_per_kwh = (
+        expected_station_wait(env) / float(env.config["truck"]["battery_capacity"])
+        if parameters.queue_aware
+        else 0.0
+    )
     tasks = [
         task
         for task in env.task_registry.tasks()
@@ -139,7 +171,7 @@ def solve_nominal_plan(
         if not math.isfinite(travel) or not math.isfinite(energy):
             return -1
         recharge = energy / max(parameters.average_charging_power_kw, 1.0)
-        return round((travel + recharge) * _TIME_SCALE)
+        return round((travel + recharge + energy * wait_per_kwh) * _TIME_SCALE)
 
     model = cp_model.CpModel()
     visit = {}

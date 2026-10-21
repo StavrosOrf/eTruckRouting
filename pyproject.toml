@@ -56,6 +56,7 @@ packages = ["EVRoutingEnv"]
 testpaths = ["tests"]
 markers = [
     "integration: exercises the environment with repository data",
+    "statistical: long Monte-Carlo oracle checks; run nightly and before each review gate",
 ]
 
 [tool.ruff]

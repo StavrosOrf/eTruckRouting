@@ -107,8 +107,11 @@ class RouteWalkTopology:
         charge_transition,
         min_hop_energy_kwh,
         max_hop_energy_kwh,
+        min_depot_energy_kwh=0.0,
+        max_depot_energy_kwh=math.inf,
     ):
         depot = int(self.customers[int(rng.integers(len(self.customers)))])
+        ring = min_depot_energy_kwh > 0.0 or math.isfinite(max_depot_energy_kwh)
         if num_customers == 2 * num_trucks:
             bound = self._two_delivery_customer_bound(depot)
             if num_customers > bound:
@@ -126,6 +129,19 @@ class RouteWalkTopology:
         home = self._return_paths(depot, floors)
         # A swap-delete pool makes unique customer removal O(1).
         pool = self.customers[self.customers != depot].copy()
+        if ring:
+            # Nominal kWh in the worse direction, comparable with hop bounds.
+            distance = np.minimum(
+                self.energy[depot, pool], self.energy[pool, depot]
+            ) / self.multiplier
+            pool = pool[
+                (distance >= min_depot_energy_kwh - 1e-9)
+                & (distance <= max_depot_energy_kwh + 1e-9)
+            ]
+            if len(pool) < num_customers:
+                raise NoFeasibleCertificate(
+                    f"depot has {len(pool)} customers inside the depot-energy ring"
+                )
         size = len(pool)
         minimum = min_hop_energy_kwh * self.multiplier
         maximum = max_hop_energy_kwh * self.multiplier
@@ -161,15 +177,15 @@ class RouteWalkTopology:
             )
 
         for tid in range(num_trucks):
-            quota = num_customers // num_trucks + (tid < num_customers % num_trucks)
+            share = num_customers // num_trucks + (tid < num_customers % num_trucks)
             node, previous = depot, depot
             battery = float(initial_batteries[tid])
             actions = []
 
             position = 0
-            while position < quota:
+            while position < share:
                 reserve = home.escape
-                if position + 1 < quota:
+                if position + 1 < share:
                     # Bound the common lookahead to a random set of possible
                     # continuations, rather than allocate a full pool-square
                     # matrix on every delivery in a large fleet.

@@ -355,3 +355,64 @@ def solve_perfect_information_plan(
         stop_reason=stop_reason,
         information_mode=parameters.information_mode,
     )
+
+
+@dataclass(frozen=True)
+class RequestHindsightSolution:
+    served_on_time: int
+    actions: tuple[tuple[int, int], ...]
+    nodes_expanded: int
+    proven_optimal: bool
+
+
+def solve_request_hindsight(env, *, max_nodes: int = 200_000, routing_actions: bool = True):
+    """Clairvoyant search over a request-mode episode (plan section 7.4).
+
+    Every branch steps a copy of the environment, so the future requests,
+    travel and service realizations of this scenario are known exactly (common
+    random numbers): this is the perfect-information bound of the hindsight
+    problem, not a policy. The objective is Voccia's: requests served on time.
+    ``routing_actions=False`` drops charger and charge actions, which is exact
+    when the battery cannot run out (energy disabled in the oracle tests).
+    """
+    from EVRoutingEnv.models.core.requests import RequestStatus
+    from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
+
+    if getattr(env, "request_engine", None) is None:
+        raise ValueError("solve_request_hindsight requires a request-engine mode")
+    _require_initial_state(env)
+
+    def served(state):
+        return sum(r.status is RequestStatus.SERVED for r in state.request_engine.registry.requests())
+
+    def optimistic(state):
+        return served(state) + sum(
+            not r.is_terminal for r in state.request_engine.registry.requests()
+        )
+
+    skipped = {ActionKind.CHARGER, ActionKind.CHARGE} if not routing_actions else set()
+    best, best_actions, expanded = -1, (), 0
+    stack = [(_clone(env), ())]
+    exhausted = True
+    while stack:
+        state, trace = stack.pop()
+        if state._episode_ended or state.active_truck_id is None:
+            value = served(state)
+            if value > best:
+                best, best_actions = value, trace
+            continue
+        if optimistic(state) <= best:
+            continue
+        if expanded >= max_nodes:
+            exhausted = False
+            break
+        decisions = joint_action_feasibility(state)
+        for index, decision in enumerate(decisions):
+            if not decision.feasible or decision.action_kind in skipped:
+                continue
+            child = _clone(state)
+            truck = int(child.active_truck_id)
+            child.step(index)
+            expanded += 1
+            stack.append((child, (*trace, (truck, index))))
+    return RequestHindsightSolution(max(best, 0), best_actions, expanded, exhausted)

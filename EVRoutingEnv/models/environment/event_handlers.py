@@ -14,21 +14,52 @@ class EventType(Enum):
 
     TRUCK_READY = "truck_ready"  # Truck is ready to take an action (initial, after route, after charge, after wait)
     TRUCK_ROUTING = "truck_routing"  # Truck completed routing to a node (arrival event)
+    # Appended: exogenous information that belongs to no truck.
+    SYSTEM = "system"
+
+
+SYSTEM_TRUCK_ID = -1
+SYSTEM_EVENT_KINDS = frozenset(
+    {
+        "request_release",
+        "request_expire",
+        "port_state_change",
+        "epoch_boundary",
+        # Debug reference only: every outside vehicle arrival/departure on the
+        # global heap (public_charging.debug_eager_public_queues).
+        "station_event",
+    }
+)
 
 
 @dataclass(order=True)
 class Event:
-    """Represents a simulation event."""
+    """Represents a simulation event.
+
+    Same-time order: SYSTEM (-1), arrivals (0), completions (1), other ready
+    events (2); then truck id; then ``sequence``, which is zero for every legacy
+    event and makes same-time system events replay in push order.
+    """
 
     time: float  # When the event occurs
     priority: int = field(init=False, repr=False)
     truck_id: int  # Tie-breaker: lower truck_id gets priority when times are equal
     event_type: EventType = field(compare=False)
     data: dict = field(default_factory=dict, compare=False)
+    sequence: int = 0
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.time) or self.time < 0.0:
             raise ValueError("event time must be finite and non-negative")
+        if self.event_type is EventType.SYSTEM:
+            if self.truck_id != SYSTEM_TRUCK_ID:
+                raise ValueError("system events must use truck_id -1")
+            if self.data.get("kind") not in SYSTEM_EVENT_KINDS:
+                raise ValueError(
+                    f"system event kind must be one of {sorted(SYSTEM_EVENT_KINDS)}"
+                )
+            self.priority = -1
+            return
         if self.truck_id < 0:
             raise ValueError("event truck_id must be non-negative")
         if self.event_type is EventType.TRUCK_ROUTING:

@@ -33,6 +33,8 @@ from EVRoutingEnv.baselines.heuristics.canonical_baselines import (
     decode_feasible_actions,
 )
 from EVRoutingEnv.baselines.optimization.exact_optimization import (
+    expected_station_wait,
+    refuse_unrevealed_requests,
     PlanSolution,
     planned_route_can_return,
 )
@@ -60,6 +62,8 @@ class ALNSParameters:
     seed: int = 0
     replan_on_completion: bool = True
     respect_planned_routes: bool = False
+    # Price each charging stop at the stations' expected wait (Section 5.5).
+    queue_aware: bool = False
 
     def __post_init__(self) -> None:
         if self.objective not in ("makespan", "total_time"):
@@ -112,6 +116,13 @@ class _NominalProblem:
         }
         self._arc_cache: dict[tuple[int, int], float] = {}
         self._env = env
+        # Queue-aware day-ahead planning: each charging stop costs the expected
+        # wait, one stop per battery's worth of energy (Keskin et al. 2019).
+        self._wait_per_kwh = (
+            expected_station_wait(env) / float(env.config["truck"]["battery_capacity"])
+            if parameters.queue_aware
+            else 0.0
+        )
 
     def arc(self, source: int, target: int) -> float:
         """Nominal travel hours plus the recharge time that leg's energy implies.
@@ -130,7 +141,7 @@ class _NominalProblem:
         else:
             cost = travel + energy / max(
                 self.parameters.average_charging_power_kw, 1.0
-            )
+            ) + energy * self._wait_per_kwh
         self._arc_cache[key] = cost
         return cost
 
@@ -399,6 +410,7 @@ def _roulette(weights: list[float], rng: random.Random) -> int:
 def solve_alns_plan(env, parameters: ALNSParameters | None = None) -> PlanSolution:
     """Search the nominal plan with ALNS and report it like any other planner."""
     parameters = parameters or ALNSParameters()
+    refuse_unrevealed_requests(env, "day-ahead ALNS")
     started = time.perf_counter()
     problem = _NominalProblem(env, parameters)
     if not problem.customers or not problem.trucks:

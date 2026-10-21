@@ -67,6 +67,8 @@ def generate_joint_routing_instance(
     charge_transition=None,
     min_hop_energy_kwh=0.0,
     max_hop_energy_kwh=math.inf,
+    min_depot_energy_kwh=0.0,
+    max_depot_energy_kwh=math.inf,
     generation_attempts=64,
     certify=None,
 ) -> JointRoutingInstance:
@@ -103,6 +105,13 @@ def generate_joint_routing_instance(
         or max_hop_energy_kwh < min_hop_energy_kwh
     ):
         raise ValueError("hop energy bounds must satisfy 0 <= min <= max")
+    if (
+        not math.isfinite(min_depot_energy_kwh)
+        or min_depot_energy_kwh < 0
+        or math.isnan(max_depot_energy_kwh)
+        or max_depot_energy_kwh < min_depot_energy_kwh
+    ):
+        raise ValueError("depot energy bounds must satisfy 0 <= min <= max")
     initial_batteries = (
         [battery_capacity] * num_trucks
         if initial_batteries is None
@@ -133,6 +142,8 @@ def generate_joint_routing_instance(
                 charge_transition=charge_transition,
                 min_hop_energy_kwh=min_hop_energy_kwh,
                 max_hop_energy_kwh=max_hop_energy_kwh,
+                min_depot_energy_kwh=min_depot_energy_kwh,
+                max_depot_energy_kwh=max_depot_energy_kwh,
             )
             # Flexible-mode IDs must not reveal the hidden visit order.
             # Sequential mode exposes its prescribed order by definition and
@@ -180,7 +191,8 @@ def generate_joint_routing_instance(
     raise ValueError(
         f"could not certify a solvable instance after {generation_attempts} attempts: "
         f"{last_error}. Check battery/initial SoC, payload, hop-energy bounds, "
-        "the one-charger-per-segment limit, time windows, max_time and "
+        "depot-energy ring, the one-charger-per-segment limit, time windows, hours of "
+        "service, public-queue waits, max_time and "
         "max_episode_steps; no constraints were relaxed."
     )
 

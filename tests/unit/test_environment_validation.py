@@ -86,3 +86,24 @@ def test_nonfinite_duration_action_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="charge_durations"):
         EventDrivenTruckEnv(config, verbose=False, enable_plotting=False)
+
+
+def test_depot_energy_bounds_must_be_valid_and_ordered() -> None:
+    config = _config()
+    config["environment"]["min_depot_energy_kwh"] = -1.0
+    with pytest.raises(ValueError, match="min_depot_energy_kwh"):
+        EventDrivenTruckEnv(config, enable_plotting=False)
+
+    config = _config()
+    config["environment"]["min_depot_energy_kwh"] = 10.0
+    config["environment"]["max_depot_energy_kwh"] = 9.0
+    with pytest.raises(ValueError, match="max_depot_energy_kwh"):
+        EventDrivenTruckEnv(config, enable_plotting=False)
+
+
+@pytest.mark.parametrize("value", [3, None])
+def test_delivery_quota_key_is_rejected(value) -> None:
+    config = _config()
+    config["problem"]["deliveries_per_truck"] = value
+    with pytest.raises(ValueError, match="deliveries_per_truck was removed"):
+        EventDrivenTruckEnv(config, enable_plotting=False)

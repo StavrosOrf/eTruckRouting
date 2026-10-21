@@ -65,6 +65,37 @@ def decode_feasible_actions(env) -> list[CandidateAction]:
     return candidates
 
 
+_NAVIGATION_KINDS = (ActionKind.CUSTOMER, ActionKind.CHARGER, ActionKind.DEPOT)
+
+
+def component_action(env, truck, by_kind) -> int | None:
+    """Fixed rules for the opt-in components, shared by every navigator user.
+
+    Public stations: at a busy station, always queue (plan section 5.5).
+    Hours of service: when the mask allows no driving, charge if possible (a
+    charge counts as break time) and otherwise take the rest the clock
+    requires (plan section 6.7). Returns None in legacy configurations.
+    """
+    queue = by_kind.get(ActionKind.QUEUE)
+    if queue:
+        return queue[0].index
+    rests = by_kind.get(ActionKind.REST_BREAK, []) + by_kind.get(ActionKind.REST_DAILY, [])
+    if not rests or any(by_kind.get(kind) for kind in _NAVIGATION_KINDS):
+        return None
+    charges = by_kind.get(ActionKind.CHARGE, [])
+    if charges:
+        return max(charges, key=lambda action: action.charge_value).index
+    from EVRoutingEnv.models.core.hours_of_service import required_rest
+
+    try:
+        kind, _ = required_rest(env.hos.regime, env.hos.clock(truck.truck_id))
+    except ValueError:
+        kind = None
+    wanted = ActionKind.REST_DAILY if kind == "daily" else ActionKind.REST_BREAK
+    preferred = by_kind.get(wanted) or rests
+    return preferred[0].index
+
+
 @dataclass(frozen=True)
 class HeuristicParameters:
     """Tunable knobs of the greedy heuristic.
@@ -152,6 +183,9 @@ class GreedyHeuristicPolicy:
             by_kind = {}
             for candidate in candidates:
                 by_kind.setdefault(candidate.kind, []).append(candidate)
+        component = component_action(env, truck, by_kind)
+        if component is not None:
+            return component
         battery = float(truck.current_battery)
         capacity = float(truck.battery_capacity)
         origin = int(truck.current_node)
@@ -449,6 +483,11 @@ class RollingHorizonMPCPolicy:
         )
 
     def __call__(self, env, observation=None, info=None) -> int:
+        from EVRoutingEnv.baselines.optimization.exact_optimization import (
+            refuse_unrevealed_requests,
+        )
+
+        refuse_unrevealed_requests(env, "the rolling-horizon MPC over static tasks")
         candidates = decode_feasible_actions(env)
         truck = env.trucks[env.active_truck_id]
         by_kind: dict[ActionKind, list[CandidateAction]] = {}

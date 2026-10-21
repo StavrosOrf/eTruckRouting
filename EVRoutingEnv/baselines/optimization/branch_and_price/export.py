@@ -95,6 +95,9 @@ def export_nominal_instance(env, *, objective: str = "travel", warm_start=None, 
     routes (environment node ids, e.g. an ALNS plan) that the solver completes
     with its own optimal charging stops.
     """
+    from EVRoutingEnv.baselines.optimization.exact_optimization import refuse_unrevealed_requests
+
+    refuse_unrevealed_requests(env, "the nominal instance export (branch-and-price, RoutingBlocks)")
     if objective not in ("travel", "operating"):
         raise ValueError(f"objective must be 'travel' or 'operating', got {objective!r}")
     if env.joint_instance is None or env.task_registry is None:

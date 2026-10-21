@@ -214,7 +214,8 @@ def test_california_is_the_default_scenario_and_old_data_is_gone():
     assert not (data / "vis_data").exists()
     for config in (ROOT / "EVRoutingEnv" / "config_files").glob("*.yaml"):
         path = load_config(str(config))["network"]["data_path"].rstrip("/")
-        case = config.stem.replace("config_joint_", "")
+        # A variant suffix (e.g. _longhaul) reuses its base case study.
+        case = config.stem.replace("config_joint_", "").removesuffix("_longhaul")
         expected = case if (data / "case_studies" / case / "metadata.json").exists() and config.stem != "config_joint" else "california"
         assert path.endswith(f"case_studies/{expected}"), (config.name, path)
 

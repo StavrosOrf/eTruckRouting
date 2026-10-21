@@ -29,6 +29,9 @@ class OperationalMetrics:
     vehicles_used: int
     charging_sessions: int
     invalid_actions: int
+    # Appended for the opt-in components; zero in legacy episodes.
+    total_rest_time: float = 0.0
+    total_request_wait_time: float = 0.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -71,13 +74,28 @@ def extract_operational_metrics(env) -> OperationalMetrics:
         "queue": 0.0,
         "window": 0.0,
         "service": 0.0,
+        "rest": 0.0,
+        "request_wait": 0.0,
     }
     for truck in trucks:
         state = env.truck_states[truck.truck_id]
         start = None
         kind = None
-        if state == "routing":
+        if state == "routing" and getattr(truck, "pending_hos_segments", None):
+            # A leg with inserted rests: split the elapsed part of the leg.
+            driving, resting = _split_leg(
+                truck.pending_hos_segments, float(env.global_clock) - truck.routing_start_time
+            )
+            partial["travel"] += driving
+            partial["rest"] += resting
+        elif state == "routing":
             start, kind = truck.routing_start_time, "travel"
+        elif state == "resting":
+            start, kind = getattr(truck, "rest_start_time", None), "rest"
+        elif state == "waiting_for_requests":
+            start, kind = getattr(truck, "request_wait_start_time", None), "request_wait"
+        elif state == "loading":
+            start, kind = truck.unloading_start_time, "service"
         elif state == "charging":
             start, kind = truck.charge_start_time, "charging"
         elif state == "unloading":
@@ -140,4 +158,24 @@ def extract_operational_metrics(env) -> OperationalMetrics:
         vehicles_used=vehicles_used,
         charging_sessions=sum(truck.num_charging_sessions for truck in trucks),
         invalid_actions=int(env.invalid_action_count),
+        total_rest_time=sum(getattr(truck, "rest_time", 0.0) for truck in trucks)
+        + partial["rest"],
+        total_request_wait_time=sum(getattr(truck, "request_wait_time", 0.0) for truck in trucks)
+        + partial["request_wait"],
     )
+
+
+def _split_leg(segments, elapsed: float) -> tuple[float, float]:
+    """(driving, resting) hours within the first ``elapsed`` hours of a leg."""
+    driving = resting = 0.0
+    remaining = max(0.0, float(elapsed))
+    for activity, hours in segments:
+        used = min(float(hours), remaining)
+        if activity == "drive":
+            driving += used
+        else:
+            resting += used
+        remaining -= used
+        if remaining <= 0.0:
+            break
+    return driving, resting

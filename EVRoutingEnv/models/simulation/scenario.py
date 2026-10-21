@@ -104,6 +104,24 @@ class ScenarioRandomStreams:
             self._normal_cache[cache_key] = float(rng.standard_normal())
         return self._normal_cache[cache_key]
 
+    def keyed_generator(self, stream: str, key: Any) -> np.random.Generator:
+        """Fresh generator for one event identity (common random numbers).
+
+        The draws depend only on the scenario, the stream name and the key, so
+        no fleet action can shift them.
+        """
+        return np.random.default_rng(self._seed_for(stream, key=_normalise_key(key)))
+
+    def uniforms(self, stream: str, key: Any, size: int = 1) -> np.ndarray:
+        """``size`` deterministic U[0, 1) values for one event identity."""
+        return self.keyed_generator(stream, key).random(size)
+
+    def exponential(self, stream: str, key: Any, mean: float) -> float:
+        """One deterministic Exp(mean) value for one event identity."""
+        if not np.isfinite(mean) or mean <= 0.0:
+            raise ValueError("exponential mean must be finite and positive")
+        return float(-mean * np.log1p(-self.uniforms(stream, key, 1)[0]))
+
     def clear_cache(self) -> None:
         """Clear derived values without changing scenario identity."""
         self._normal_cache.clear()

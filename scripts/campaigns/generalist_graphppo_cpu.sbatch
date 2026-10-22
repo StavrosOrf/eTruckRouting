@@ -1,6 +1,8 @@
 #!/bin/bash
 # CPU stages of the generalist GraphPPO campaign: one array element works
 # through a group of reference shards, one after another, on all its cores.
+# On Snellius the allocation is one gpu_a100 share (18 cores plus a GPU the
+# stage leaves idle, since GPU partitions refuse jobs without one).
 #   submitted by: scripts/campaigns/generalist_graphppo.py submit --stage references [--pack J]
 # Arguments: CAMPAIGN_DIR STAGE (references) GROUP [GROUP ...]. Each GROUP is a
 # comma-separated list of shard indices; the array index picks one GROUP.

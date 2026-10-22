@@ -14,19 +14,99 @@ import pytest
 from scripts.campaigns import generalist_graphppo as campaign
 
 
-def test_prepare_freezes_problems_arms_probes_and_source(tmp_path) -> None:
+def _bks(tmp_path) -> Path:
+    """A best-known-solutions directory with the files prepare requires."""
+    root = tmp_path / "bks"
+    for name in campaign.PROBLEMS:
+        (root / name).mkdir(parents=True)
+        (root / name / "validation.json").write_text(json.dumps({"1000000000": {"best": {"hours": 1.0}}}))
+        (root / name / "train_demonstrations.json").write_text("[]")
+        (root / name / "summary.json").write_text("{}")
+    return root
+
+
+def test_prepare_freezes_problems_arms_bks_and_source(tmp_path) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 3)
+    bks = _bks(tmp_path)
+    campaign.prepare(destination, "screen", "full", 3, bks_from=bks)
     manifest = campaign.read_manifest(destination)
     problems = json.loads((destination / "problems.json").read_text())
     assert [row["name"] for row in problems] == list(campaign.PROBLEMS)
     assert all((destination / "configs" / f"{row['name']}.yaml").exists() for row in problems)
-    assert len(json.loads((destination / "probes.json").read_text())) == len(campaign.PROBES)
+    # The size probes are out of scope unless asked for.
+    assert json.loads((destination / "probes.json").read_text()) == []
+    assert not list((destination / "configs").glob("*_t5*")) and manifest["probes_enabled"] is False
     assert (destination / "source/algo/generalist_policy.py").exists()
-    assert [run["name"] for run in manifest["runs"]][:4] == ["base_s0", "fleet_s0", "paired_s0", "full_s0"]
-    assert len(manifest["runs"]) == 12
+    names = [run["name"] for run in manifest["runs"]]
+    assert names[:7] == ["base_s0", "fleet_s0", "paired_s0", "full_s0", "full_bks_s0", "full_bks_retained_s0",
+                         "full_dagger_s0"]
+    assert len(manifest["runs"]) == 21
+    # The BKS copy is frozen inside the campaign and every {bks} points at it.
+    for name in campaign.PROBLEMS:
+        assert (destination / "bks" / name / "validation.json").exists()
+        assert (destination / "bks" / name / "summary.json").exists()
+    assert manifest["bks"] == str(destination / "bks") and manifest["bks_from"] == str(bks)
+    assert not any("{bks}" in flag for run in manifest["runs"] for flag in run["flags"])
+    assert str(destination / "bks") in manifest["runs"][4]["flags"]
+    assert "--demonstrations" not in manifest["runs"][3]["flags"]
     with pytest.raises(FileExistsError):
-        campaign.prepare(destination, "screen", "full", 3)
+        campaign.prepare(destination, "screen", "full", 3, bks_from=bks)
+
+
+def test_probes_are_written_only_on_request(tmp_path) -> None:
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path), probes=True)
+    probes = json.loads((destination / "probes.json").read_text())
+    assert [row["name"] for row in probes] == list(campaign.PROBES)
+    assert all((destination / "configs" / f"{row['name']}.yaml").exists() for row in probes)
+    assert campaign.read_manifest(destination)["probes_enabled"] is True
+
+
+def test_imitation_arms_need_best_known_solutions(tmp_path) -> None:
+    with pytest.raises(SystemExit, match="needs best-known solutions"):
+        campaign.prepare(tmp_path / "suite", "screen", "full", 1)
+    assert not (tmp_path / "suite").exists()
+    incomplete = tmp_path / "partial"
+    (incomplete / "ca_sameday").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="lacks best-known solutions"):
+        campaign.prepare(tmp_path / "suite", "screen", "full", 1, bks_from=incomplete)
+    # The original arms need no BKS; a named set runs the listed recipes in order.
+    campaign.prepare(tmp_path / "plain", "named", "full", 2, arms=["base", "full"])
+    manifest = campaign.read_manifest(tmp_path / "plain")
+    assert [run["name"] for run in manifest["runs"]] == ["base_s0", "full_s0", "base_s1", "full_s1"]
+    assert manifest["arms"] == ["base", "full"] and manifest["bks"] is None
+    with pytest.raises(SystemExit, match="needs --arms"):
+        campaign.arms_for("named", "full", 1)
+    with pytest.raises(SystemExit, match="unknown recipes"):
+        campaign.arms_for("named", "full", 1, arms=["nope"])
+
+
+def test_imitation_arms_override_the_common_flags(tmp_path) -> None:
+    from scripts.training.train_generalist_ppo import build_argument_parser
+
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
+    manifest = campaign.read_manifest(destination)
+    parser = build_argument_parser()
+    parsed = {}
+    for run in manifest["runs"]:
+        # The trainer argv as train() composes it: common flags first, the arm's flags last.
+        argv = ["--problems", manifest["problems"], "--references", str(destination / "references"),
+                *manifest["common_flags"], "--total-timesteps", "5120", "--seed", str(run["seed"]), *run["flags"]]
+        parsed[run["arm"]] = parser.parse_args(argv)
+    assert parsed["full"].bc_episodes == 64 and parsed["full"].demonstrations is None
+    for arm in ("full_bks", "full_bks_retained", "full_dagger"):
+        arguments = parsed[arm]
+        assert arguments.bc_episodes == 256 and arguments.demonstrations == str(destination / "bks")
+        assert arguments.reward_references == str(destination / "bks") and arguments.reward_reference == "scenario"
+        assert arguments.fleet_assignment
+    assert parsed["full_bks"].bc_coefficient == 0.0 and parsed["full_bks"].dagger_expert == []
+    assert parsed["full_bks_retained"].bc_coefficient == 0.1
+    assert parsed["full_bks_retained"].bc_anneal_timesteps == 2_000_000 and parsed["full_bks_retained"].dagger_expert == []
+    dagger = parsed["full_dagger"]
+    assert dagger.bc_coefficient == 0.1 and len(dagger.dagger_expert) == 5 and dagger.dagger_pretrain_rounds == 2
+    assert dagger.dagger_every == 10 and dagger.dagger_beta == 0.5 and dagger.dagger_beta_anneal_timesteps == 2_000_000
+    assert all("=algo.generalist_experts:" in spec for spec in dagger.dagger_expert)
 
 
 def test_leave_one_problem_out_and_specialist_arms() -> None:
@@ -43,7 +123,7 @@ def test_leave_one_problem_out_and_specialist_arms() -> None:
 
 def test_reference_shards_cover_train_and_validation_only(tmp_path) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     tasks = campaign.reference_tasks(campaign.read_manifest(destination))
     per_problem = -(-campaign.SEEDS["train"] // campaign.SHARD) + -(-campaign.SEEDS["validation"] // campaign.SHARD)
     assert len(tasks) == per_problem * len(campaign.PROBLEMS)
@@ -52,7 +132,7 @@ def test_reference_shards_cover_train_and_validation_only(tmp_path) -> None:
 
 def test_submit_composes_the_array_from_the_manifest(tmp_path, capsys) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     with pytest.raises(SystemExit, match="merge the references"):
         campaign.submit(destination, "train", 2_000_000, dry_run=True)
     (destination / "references" / "summary.json").write_text("{}")
@@ -60,26 +140,27 @@ def test_submit_composes_the_array_from_the_manifest(tmp_path, capsys) -> None:
     command = capsys.readouterr().out.strip().splitlines()[-1]
     slurm = campaign.SLURM
     for part in (f"--partition={slurm['gpu_partition']}", f"--account={slurm['account']}", "--gpus-per-task=1",
-                 f"--cpus-per-task={slurm['cpus_per_gpu']}", f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", "--array=0-3%6", "generalist_graphppo_gpu.sbatch"):
+                 f"--cpus-per-task={slurm['cpus_per_gpu']}", f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", "--array=0-6%20",
+                 "--time=12:00:00", "generalist_graphppo_gpu.sbatch"):
         assert part in command
     # Unpacked: one run per array element; the arguments are budget, runs per GPU, then the groups.
-    assert command.endswith(f"{destination} 2000000 1 0 1 2 3")
+    assert command.endswith(f"{destination} 2000000 1 0 1 2 3 4 5 6")
 
 
 def test_submit_train_selects_the_runs_of_the_given_arms(tmp_path, capsys) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 2)
+    campaign.prepare(destination, "screen", "full", 2, bks_from=_bks(tmp_path))
     (destination / "references" / "summary.json").write_text("{}")
     campaign.submit(destination, "train", 8_000_000, dry_run=True, arms=["fleet", "full"])
     command = capsys.readouterr().out.strip().splitlines()[-1]
-    assert "--array=0-3%6" in command and command.endswith(" 8000000 1 1 3 5 7")
+    assert "--array=0-3%20" in command and "--time=36:00:00" in command and command.endswith(" 8000000 1 1 3 8 10")
     with pytest.raises(SystemExit, match="unknown arms"):
         campaign.submit(destination, "train", 8_000_000, dry_run=True, arms=["nope"])
 
 
 def test_submit_evaluate_composes_one_gpu_allocation(tmp_path, capsys) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     with pytest.raises(SystemExit, match="--tag"):
         campaign.submit(destination, "evaluate", None, dry_run=True)
     with pytest.raises(SystemExit, match="unknown runs"):
@@ -97,12 +178,13 @@ def test_submit_evaluate_composes_one_gpu_allocation(tmp_path, capsys) -> None:
 def test_prepare_copies_merged_references_from_another_campaign(tmp_path) -> None:
     source = tmp_path / "references"
     source.mkdir()
+    bks = _bks(tmp_path)
     with pytest.raises(SystemExit, match="lacks merged references"):
-        campaign.prepare(tmp_path / "early", "screen", "full", 1, references_from=source)
+        campaign.prepare(tmp_path / "early", "screen", "full", 1, references_from=source, bks_from=bks)
     for name in ("summary", *campaign.PROBLEMS):
         (source / f"{name}.json").write_text(json.dumps({"name": name}))
     destination = tmp_path / "pilot"
-    campaign.prepare(destination, "screen", "full", 1, references_from=source)
+    campaign.prepare(destination, "screen", "full", 1, references_from=source, bks_from=bks)
     for name in ("summary", *campaign.PROBLEMS):
         assert json.loads((destination / "references" / f"{name}.json").read_text()) == {"name": name}
     assert campaign.read_manifest(destination)["references_from"] == str(source)
@@ -118,7 +200,7 @@ def _row(problem: str, seed: int, served: int, hours: float) -> dict:
 
 def test_evaluation_rows_and_reports_are_kept_per_tag(tmp_path) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     folder = destination / "evaluation" / "validation"
     (folder / "baselines").mkdir(parents=True)
     (folder / "2M").mkdir()
@@ -135,6 +217,36 @@ def test_evaluation_rows_and_reports_are_kept_per_tag(tmp_path) -> None:
     assert not (folder / "report.md").exists()
 
 
+def test_report_promotes_the_eligible_arms(tmp_path) -> None:
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 2, bks_from=_bks(tmp_path))
+    folder = destination / "evaluation" / "validation"
+    (folder / "baselines").mkdir(parents=True)
+    (folder / "2M").mkdir()
+    for name in campaign.PROBLEMS:
+        campaign.write_json(folder / "baselines" / f"{name}__teacher.json", [_row(name, s, 30, 350.0) for s in (1, 2)])
+
+    def rows(served_by_problem: dict, score: float) -> list[dict]:
+        return [{**_row(name, s, served_by_problem.get(name, 30), 340.0), "score": score}
+                for name in campaign.PROBLEMS for s in (1, 2)]
+
+    for seed in (0, 1):
+        campaign.write_json(folder / "2M" / f"full_s{seed}.json", rows({}, 3.0))
+        campaign.write_json(folder / "2M" / f"fleet_s{seed}.json", rows({}, 2.0 + seed))
+        campaign.write_json(folder / "2M" / f"base_s{seed}.json", rows({"tx_longhaul": 28}, 4.0))
+        campaign.write_json(folder / "2M" / f"paired_s{seed}.json",
+                            [row for row in rows({}, 5.0) if row["problem"] != "pnw_longhaul_hos"])
+    campaign.report(destination, "validation", "2M", promote_count=2)
+    result = json.loads((folder / "2M" / "promotion.json").read_text())
+    assert result["promoted"] == ["full", "fleet"]
+    assert result["arms"]["base"]["eligible"] is False and "tx_longhaul: served" in result["arms"]["base"]["reasons"][0]
+    assert result["arms"]["paired"]["eligible"] is False and "rows missing" in result["arms"]["paired"]["reasons"][0]
+    assert result["arms"]["fleet"]["mean_score"] == pytest.approx(2.5) and result["arms"]["fleet"]["seeds"] == 2
+    assert "full_bks" not in result["arms"] and result["teacher"]["tx_longhaul"]["served_fraction"] == 1.0
+    text = (folder / "2M" / "report.md").read_text()
+    assert "## Promotion" in text and "| full | 2 | 3.000 | yes |" in text
+
+
 # ---------------------------------------------------------------------------
 # Job packing
 # ---------------------------------------------------------------------------
@@ -142,7 +254,7 @@ def test_evaluation_rows_and_reports_are_kept_per_tag(tmp_path) -> None:
 
 def _prepared(tmp_path, seeds: int = 3):
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", seeds)
+    campaign.prepare(destination, "screen", "full", seeds, bks_from=_bks(tmp_path))
     (destination / "references" / "summary.json").write_text("{}")
     return destination
 
@@ -154,26 +266,28 @@ def _commands(capsys) -> list[str]:
 def test_packed_training_asks_for_one_node_with_k_gpus_and_k_cpu_shares(tmp_path, capsys) -> None:
     destination = _prepared(tmp_path)
     slurm = campaign.SLURM
-    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=2)
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=3)
     (command,) = _commands(capsys)
-    for part in ("--nodes=1", "--ntasks=1", "--gpus-per-task=2", f"--cpus-per-task={2 * slurm['cpus_per_gpu']}",
-                 f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", "--array=0-5%6", "--signal=B:USR1@300"):
+    for part in ("--nodes=1", "--ntasks=1", "--gpus-per-task=3", f"--cpus-per-task={3 * slurm['cpus_per_gpu']}",
+                 f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", "--array=0-6%20", "--signal=B:USR1@300"):
         assert part in command.split()
-    assert command.endswith(f"{destination} 2000000 1 0,1 2,3 4,5 6,7 8,9 10,11")
+    assert command.endswith(f"{destination} 2000000 1 0,1,2 3,4,5 6,7,8 9,10,11 12,13,14 15,16,17 18,19,20")
     # Two runs per GPU halve the GPUs, not the CPUs.
-    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=4, runs_per_gpu=2)
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=7, runs_per_gpu=2)
     (command,) = _commands(capsys)
-    assert "--gpus-per-task=2" in command and f"--cpus-per-task={4 * slurm['cpus_per_gpu']}" in command
-    assert "--array=0-2%6" in command and command.endswith(" 2000000 2 0,1,2,3 4,5,6,7 8,9,10,11")
+    assert "--gpus-per-task=4" in command and f"--cpus-per-task={7 * slurm['cpus_per_gpu']}" in command
+    assert "--array=0-2%20" in command
+    assert command.endswith(" 2000000 2 0,1,2,3,4,5,6 7,8,9,10,11,12,13 14,15,16,17,18,19,20")
 
 
 def test_a_short_last_group_gets_its_own_smaller_array(tmp_path, capsys) -> None:
     destination = _prepared(tmp_path)
     campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=5)
     full, short = _commands(capsys)
-    assert "--gpus-per-task=5" in full and "--array=0-1%6" in full and full.endswith(" 0,1,2,3,4 5,6,7,8,9")
-    assert "--gpus-per-task=2" in short and "--array=0-0%6" in short and short.endswith(" 10,11")
-    assert "--cpus-per-task=32" in short
+    assert "--gpus-per-task=5" in full and "--array=0-3%20" in full
+    assert full.endswith(" 0,1,2,3,4 5,6,7,8,9 10,11,12,13,14 15,16,17,18,19")
+    assert "--gpus-per-task=1" in short and "--array=0-0%20" in short and short.endswith(" 20")
+    assert "--cpus-per-task=18" in short
 
 
 def test_packing_groups_only_unfinished_runs(tmp_path, capsys, monkeypatch) -> None:
@@ -182,9 +296,9 @@ def test_packing_groups_only_unfinished_runs(tmp_path, capsys, monkeypatch) -> N
     monkeypatch.setattr(campaign, "completed_run", lambda directory, run, budget: run["name"] in finished)
     campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=3, arms=["base", "paired", "full"])
     (command,) = _commands(capsys)
-    names = [run["name"] for run in campaign.read_manifest(destination)["runs"]]
-    pending = [index for index, name in enumerate(names) if name.split("_")[0] in {"base", "paired", "full"}
-               and name not in finished]
+    runs = campaign.read_manifest(destination)["runs"]
+    pending = [index for index, run in enumerate(runs) if run["arm"] in {"base", "paired", "full"}
+               and run["name"] not in finished]
     assert command.endswith(" 2000000 1 " + " ".join(
         ",".join(map(str, pending[start:start + 3])) for start in range(0, len(pending), 3)))
 
@@ -276,16 +390,18 @@ def test_supervise_pins_children_and_forwards_the_checkpoint_signal_to_all(tmp_p
     assert signal.getsignal(signal.SIGTERM) is before
 
 
-def test_packed_references_split_pending_shards_over_whole_nodes(tmp_path, capsys) -> None:
+def test_packed_references_split_pending_shards_over_gpu_shares(tmp_path, capsys) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     manifest = campaign.read_manifest(destination)
     tasks = campaign.reference_tasks(manifest)
     campaign.submit(destination, "references", None, dry_run=True, pack=3)
     (command,) = _commands(capsys)
     slurm = campaign.SLURM
+    # A CPU stage on a GPU partition still holds one GPU.
     for part in (f"--partition={slurm['cpu_partition']}", f"--cpus-per-task={slurm['cpu_node_cores']}",
-                 f"--mem-per-cpu={slurm['cpu_mem_per_cpu']}", "--nodes=1", "--array=0-2%6"):
+                 f"--mem-per-cpu={slurm['cpu_mem_per_cpu']}", "--nodes=1", "--array=0-2%20",
+                 f"--gpus-per-task={slurm['cpu_gpus']}"):
         assert part in command.split()
     assert "generalist_graphppo_cpu.sbatch" in command
     groups = [list(map(int, group.split(","))) for group in command.split(" references ")[1].split()]
@@ -347,20 +463,58 @@ def test_the_cpu_wrapper_runs_the_shards_of_its_array_index_on_all_cores(tmp_pat
     ]
 
 
-def test_no_composed_command_uses_options_the_site_rejects(tmp_path, capsys) -> None:
+def test_every_composed_command_fits_snellius(tmp_path, capsys) -> None:
     destination = _prepared(tmp_path)
     campaign.submit(destination, "references", None, dry_run=True, pack=2)
-    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=2)
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=3)
     campaign.submit(destination, "evaluate", None, dry_run=True, tag="2M")
-    for command in _commands(capsys):
-        options = [part.split("=")[0] for part in command.split() if part.startswith("--")]
+    commands = _commands(capsys)
+    assert len(commands) == 3
+    for command in commands:
+        options = {part.split("=")[0]: part.partition("=")[2] for part in command.split() if part.startswith("--")}
+        assert options["--account"] == "tdsei17344" and options["--partition"] == "gpu_a100"
+        # Every job on a GPU partition holds a GPU, the CPU stage included; the
+        # site takes --mem-per-cpu and --gpus-per-task.
+        assert int(options["--gpus-per-task"]) >= 1 and "--mem-per-cpu" in options
         assert "--mem" not in options and "--gpus" not in options and "--gres" not in options
-        assert "--mem-per-cpu" in options
+        if "--array" in options:
+            assert options["--array"].endswith("%20")
+
+
+def test_an_overflow_partition_changes_the_cores_per_gpu(tmp_path, capsys) -> None:
+    destination = _prepared(tmp_path, seeds=1)
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, pack=2, partition="gpu_h100")
+    full, short = _commands(capsys)
+    assert "--partition=gpu_h100" in full and "--cpus-per-task=32" in full and "--gpus-per-task=2" in full
+    assert "--cpus-per-task=16" in short and "--gpus-per-task=1" in short
+    campaign.submit(destination, "evaluate", None, dry_run=True, tag="2M", partition="gpu_mig")
+    (command,) = _commands(capsys)
+    assert "--partition=gpu_mig" in command and "--cpus-per-task=9" in command
+    campaign.submit(destination, "evaluate", None, dry_run=True, tag="2M", partition="gpu_a100", cpus_per_gpu=12)
+    (command,) = _commands(capsys)
+    assert "--partition=gpu_a100" in command and "--cpus-per-task=12" in command
+    with pytest.raises(SystemExit, match="neither"):
+        campaign.submit(destination, "train", 2_000_000, dry_run=True, partition="rome")
+
+
+def test_test_only_checks_each_command_without_submitting(tmp_path, monkeypatch, capsys) -> None:
+    destination = _prepared(tmp_path, seeds=1)
+    calls = []
+
+    class Result:
+        returncode, stdout, stderr = 0, "", "sbatch: Job 1 to start at 2026-10-22T18:00:00 using 18 processors\n"
+
+    monkeypatch.setattr(campaign.subprocess, "run", lambda command, **kwargs: calls.append(command) or Result())
+    monkeypatch.setattr(campaign.subprocess, "check_output", lambda *a, **k: pytest.fail("must not submit"))
+    campaign.submit(destination, "train", 2_000_000, dry_run=False, test_only=True)
+    assert len(calls) == 1 and calls[0][:3] == ["sbatch", "--parsable", "--test-only"]
+    assert not (destination / "logs" / "submissions.jsonl").exists()
+    assert "Job 1 to start" in capsys.readouterr().out
 
 
 def test_reference_jobs_claim_shards_and_take_over_what_is_left(tmp_path, monkeypatch) -> None:
     destination = tmp_path / "suite"
-    campaign.prepare(destination, "screen", "full", 1)
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
     tasks = campaign.reference_tasks(campaign.read_manifest(destination))
     shards = destination / "references" / "shards"
     shards.mkdir(parents=True)

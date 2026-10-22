@@ -87,7 +87,7 @@ class LonghaulSettings:
     verify_rounds: int = 3
     replan: str = "none"  # "none" | "deviation" | "events"
     replan_iterations: int = 400
-    replan_descent_rounds: int = 3
+    replan_descent_rounds: int = 3  # kept for manifest compatibility; solve() runs its descent to a fixpoint
     # Congested problems: quantile of the station waits used as the planned
     # per-stop wait (the executor prefers stations below it).
     wait_quantile: float = 0.25
@@ -503,7 +503,8 @@ class LonghaulPlanPolicy:
 
             planner._repair(cleaned, missing, _random.Random(self.stats["replans"]), regret_k=2)
         before = planner.total(cleaned)
-        routes, cost, _ = planner.solve(initial=cleaned, descent_rounds=s.replan_descent_rounds)
+        # solve() ends with the planner's own descent until no move improves.
+        routes, cost, _ = planner.solve(initial=cleaned)
         chosen = routes if cost < before - 1e-6 else cleaned
         if cost < before - 1e-6:
             self.stats["replans_improved"] += 1

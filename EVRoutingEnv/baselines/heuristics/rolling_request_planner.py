@@ -705,6 +705,19 @@ class DrayageModel(_BaseModel):
         clock = self._activity(clock, t + wait, hours, HosActivity.CHARGE)
         return t + wait + hours, max(battery, target * self.capacity), clock
 
+    def rest_blocked(self, t: float, jobs, pending) -> bool:
+        """A daily rest starting at ``t`` is not taken while a known job is due before it would end.
+
+        ``pending`` are the jobs still to serve (route members, or every job of
+        the snapshot when idle); a request released before ``t + daily rest``
+        would wait out the rest. Known means revealed, or hidden too when the
+        snapshot is clairvoyant.
+        """
+        if self.ops is None or not self.ops.daily_rest:
+            return False
+        end = t + self.ops.daily_rest
+        return any(jobs[r].release < end - 1e-9 for r in pending if r != REST)
+
     def evaluate(self, ts: TruckStart, route, jobs, trace: bool = False) -> RouteResult:
         t, node, battery, var, clock = ts.t, ts.node, ts.battery, ts.var, ts.clock
         value, probs, steps = 0.0, {}, []
@@ -728,7 +741,7 @@ class DrayageModel(_BaseModel):
             if r == REST:
                 if self.ops is not None and self.ops.daily_rest:
                     clock_now = self.ops.advance(clock, t)
-                    if self.ops.started(clock_now):
+                    if self.ops.started(clock_now) and not self.rest_blocked(t, jobs, route[i + 1:]):
                         if trace:
                             steps.append(("rest", "daily", t))
                         clock = self.ops.rest_daily(clock_now, t)
@@ -770,7 +783,8 @@ class DrayageModel(_BaseModel):
                     hours = self.net.h(node, job.pickup)
                     wait = job.release - (t + hours)
                     rest = self.ops.daily_rest
-                    if self.ops.started(clock_now) and wait >= rest - 0.75:
+                    if (self.ops.started(clock_now) and wait >= rest - 0.75
+                            and not self.rest_blocked(t, jobs, route[i:])):
                         if trace:
                             steps.append(("rest", "daily", t))
                         clock = self.ops.rest_daily(clock_now, t)
@@ -1583,11 +1597,14 @@ class RollingHorizonRequestPolicy:
                     return action
                 if kind == "deliver":
                     return self._feasible(decisions, self._slot_action(env, step[1]))
-        # Idle: rest if the shift window is nearly used, else charge or wait.
+        # Idle: rest if the shift window is nearly used and no known request is
+        # due before the rest would end, else charge or wait.
         if model.regime is not None and rest_daily is not None and decisions[rest_daily].feasible:
             clock = env.hos.clock(truck.truck_id)
             clock = advance_to(model.regime, clock, max(clock.time, snapshot.now), HosActivity.IDLE)
-            if window_left(model.regime, clock) < self.parameters.idle_rest_window_hours and snapshot.future_information:
+            if (window_left(model.regime, clock) < self.parameters.idle_rest_window_hours
+                    and snapshot.future_information
+                    and not model.rest_blocked(snapshot.now, jobs, list(jobs))):
                 return rest_daily
         return self._idle(env, model, snapshot, truck, decisions)
 

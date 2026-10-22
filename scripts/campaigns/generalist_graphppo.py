@@ -2,19 +2,24 @@
 
 Plan: ``docs/campaigns/generalist_graphppo_suite_campaign.md``. Stages, in order:
 
-    PYTHONPATH=. python scripts/campaigns/generalist_graphppo.py prepare --directory D [--arm-set screen]
-    ... submit --directory D --stage references --pack 3   # 3 whole CPU nodes share the reference shards
+    PYTHONPATH=. python scripts/campaigns/generalist_graphppo.py prepare --directory D --bks-from B [--arm-set screen]
+    ... submit --directory D --stage references --pack 3   # 3 GPU shares work through the reference shards
     ... merge-references --directory D
-    ... submit --directory D --stage train --budget 2000000 --pack 2 [--runs-per-gpu 1] [--arms A B]
+    ... submit --directory D --stage train --budget 2000000 [--pack K] [--runs-per-gpu 1] [--arms A B]
     ... submit --directory D --stage evaluate --split validation --tag 2M   # promote on validation only
-    ... report --directory D --split validation --tag 2M
+    ... report --directory D --split validation --tag 2M --promote 3
+    ... generalist_near_optimal_gate.py --campaign D --split validation --tag 2M --bks-dir B
 
 ``train``, ``train-pack`` and ``references`` also run inside an allocation (the
 sbatch wrappers call them). With ``--pack K`` one job trains K runs at once,
 each pinned to its own GPU (or sharing one, ``--runs-per-gpu``) and its own
 disjoint CPU slice, with logs kept per run. ``prepare`` freezes the problems, arms, seed counts and a source
 snapshot; ``prepare --references-from`` reuses another campaign's merged
-references. Evaluation rows are kept per tag (``evaluation/<split>/<tag>/``), so
+references, and ``prepare --bks-from`` freezes a copy of the best-known
+solutions (BKS) the imitation arms clone and pair their reward against. The
+zero-shot size probes are written and evaluated only with ``prepare --probes``.
+``submit --test-only`` asks the scheduler to check every composed command
+without submitting it. Evaluation rows are kept per tag (``evaluation/<split>/<tag>/``), so
 a later checkpoint is never confused with an earlier one; baselines are shared in
 ``evaluation/<split>/baselines/``. The test bank is opened once, with
 ``evaluate --split test``.
@@ -40,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = ROOT / "results/generalist_graphppo/suite_v1"
 SUITE = ROOT / "EVRoutingEnv/config_files/generalist_suite"
 PROBLEMS = ("ca_sameday", "ca_drayage_combined", "tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos")
+DYNAMIC = ("ca_sameday", "ca_drayage_combined")
 # Reference policy per problem; "auto" is greedy dispatch for requests and the
 # greedy navigator otherwise.
 EXTRA_BASELINES = {
@@ -47,7 +53,8 @@ EXTRA_BASELINES = {
     "ca_drayage_combined": ["wait_at_depot", "kullman_myopic"],
     "tx_longhaul_congested": ["kullman_myopic"],
 }
-# Zero-shot size probes: evaluation only, never trained on.
+# Zero-shot size probes: evaluation only, never trained on; written and
+# evaluated only with ``prepare --probes``.
 PROBES = {
     "tx_longhaul_t5c15": ("tx_longhaul", 5, 15),
     "tx_longhaul_t20c60": ("tx_longhaul", 20, 60),
@@ -66,26 +73,56 @@ COMMON = [
     "--train-scenarios", str(SEEDS["train"]), "--validation-scenarios", "16",
     "--validate-every", "25", "--checkpoint-every", "10",
 ]
+# Imitation arms: demonstrations and paired rewards from the best-known
+# solutions frozen into <campaign>/bks by ``prepare --bks-from`` (``{bks}`` is
+# substituted there). The DAgger experts are the BKS planners at a reduced
+# budget, one per problem (algo/generalist_experts.py).
+BKS_DIR = "{bks}"
+EXPERTS = [
+    f"{name}=algo.generalist_experts:{'rolling_request' if name in DYNAMIC else 'longhaul_plan'}"
+    for name in PROBLEMS
+]
+FULL = ["--fleet-assignment", "--reward-reference", "scenario"]
+IMITATION = [
+    "--demonstrations", BKS_DIR, "--bc-episodes", "256", "--pretrain-epochs", "20",
+    "--reward-references", BKS_DIR,
+]
+RETAINED = ["--bc-coefficient", "0.1", "--bc-coefficient-final", "0.0", "--bc-anneal-timesteps", "2000000"]
+DAGGER = [
+    "--dagger-expert", *EXPERTS, "--dagger-every", "10", "--dagger-episodes", "8",
+    "--dagger-beta", "0.5", "--dagger-beta-final", "0.0", "--dagger-beta-anneal-timesteps", "2000000",
+    "--dagger-pretrain-rounds", "2",
+]
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
     "paired": ["--reward-reference", "scenario"],
-    "full": ["--fleet-assignment", "--reward-reference", "scenario"],
+    "full": FULL,
+    "full_bks": [*FULL, *IMITATION],
+    "full_bks_retained": [*FULL, *IMITATION, *RETAINED],
+    # DAgger labels reach the PPO loss only through the retained term, so this
+    # arm keeps it: full_bks -> +retained -> +DAgger, one change per rung.
+    "full_dagger": [*FULL, *IMITATION, *RETAINED, *DAGGER],
 }
 SLURM = {
-    # DelftBlue: four A100s, 64 cores and 500 GB per gpu-a100 node, so 16 cores
-    # per GPU run; compute-p1 nodes have 48 cores and 192 GB. The site's submit
-    # filter requires --mem-per-cpu and --gpus-per-task (it rejects --mem and --gpus).
-    "account": "research-eemcs-ese",
-    "gpu_partition": "gpu-a100",
-    "cpu_partition": "compute-p1",
-    "cpus_per_gpu": 16,  # CPUs per training run, also with --runs-per-gpu > 1
-    "gpu_mem_per_cpu": "7500M",  # 120 GB per 16-core run
-    "cpu_cores": 24,
-    "cpu_node_cores": 48,  # a packed references job takes a whole node
-    "cpu_mem_per_cpu": "3900M",
-    "max_concurrent": 6,  # this campaign's share of the user's 10 job slots
+    # Snellius gpu_a100: four A100s, 72 cores and 480 GB per node, so one GPU
+    # share is 18 cores and about 120 GB. Every job on a GPU partition must hold
+    # a GPU, so the CPU stage (references) takes one as well; cbuild is the
+    # fallback (--partition=cbuild --gpus-per-task=0 --cpus-per-task=16 by hand).
+    "account": "tdsei17344",
+    "gpu_partition": "gpu_a100",
+    "cpu_partition": "gpu_a100",
+    "cpus_per_gpu": 18,  # CPUs per training run, also with --runs-per-gpu > 1
+    "gpu_mem_per_cpu": "6500M",  # 117 GB per 18-core share
+    "cpu_cores": 18,
+    "cpu_node_cores": 18,  # a packed references job is one GPU share
+    "cpu_mem_per_cpu": "6500M",
+    "cpu_gpus": 1,  # GPUs held by a CPU-stage job (0 on a CPU partition)
+    "overflow": {"gpu_h100": 16, "gpu_mig": 9},  # partition -> cores per GPU or MIG slice
+    "max_concurrent": 20,  # this campaign's share of the 30-allocation cap
 }
+BKS_FILES = ("validation.json", "train_demonstrations.json")
+BKS_OPTIONAL = ("summary.json", "train_demonstrations_summary.json")
 
 
 def write_json(path: Path, value) -> None:
@@ -96,27 +133,49 @@ def read_manifest(destination: Path) -> dict:
     return json.loads((destination / "manifest.json").read_text())
 
 
-def arms_for(arm_set: str, recipe: str, seeds: int) -> list[dict]:
+def arms_for(
+    arm_set: str, recipe: str, seeds: int, bks: str | None = None, arms: list[str] | None = None,
+) -> list[dict]:
+    """The runs of an arm set; ``{bks}`` in a recipe becomes the frozen BKS copy."""
     if arm_set == "screen":
-        arms = [(name, flags) for name, flags in RECIPES.items()]
+        chosen = [(name, flags) for name, flags in RECIPES.items()]
+    elif arm_set == "named":
+        if not arms:
+            raise SystemExit("--arm-set named needs --arms")
+        unknown = sorted(set(arms) - set(RECIPES))
+        if unknown:
+            raise SystemExit(f"unknown recipes {unknown}; known: {sorted(RECIPES)}")
+        chosen = [(name, RECIPES[name]) for name in arms]
     elif arm_set == "lopo":
         # Leave one problem out: trained on four, the fifth is zero-shot.
-        arms = [
+        chosen = [
             (f"{recipe}_minus_{held}", [*RECIPES[recipe], "--train-problems", *[p for p in PROBLEMS if p != held]])
             for held in PROBLEMS
         ]
     elif arm_set == "specialists":
-        arms = [(f"{recipe}_only_{name}", [*RECIPES[recipe], "--train-problems", name]) for name in PROBLEMS]
+        chosen = [(f"{recipe}_only_{name}", [*RECIPES[recipe], "--train-problems", name]) for name in PROBLEMS]
     else:
         raise ValueError(f"unknown arm set {arm_set!r}")
-    return [
-        {"name": f"{name}_s{seed}", "arm": name, "seed": seed, "flags": flags}
-        for seed in range(seeds)
-        for name, flags in arms
-    ]
+    runs = []
+    for seed in range(seeds):
+        for name, flags in chosen:
+            flags = [flag.replace(BKS_DIR, bks) if bks else flag for flag in flags]
+            if any(BKS_DIR in flag for flag in flags):
+                raise SystemExit(f"arm {name!r} needs best-known solutions: prepare --bks-from DIR")
+            runs.append({"name": f"{name}_s{seed}", "arm": name, "seed": seed, "flags": flags})
+    return runs
 
 
-def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references_from: Path | None = None) -> None:
+def prepare(
+    destination: Path,
+    arm_set: str,
+    recipe: str,
+    seeds: int,
+    references_from: Path | None = None,
+    bks_from: Path | None = None,
+    probes: bool = False,
+    arms: list[str] | None = None,
+) -> None:
     if (destination / "manifest.json").exists():
         raise FileExistsError(f"immutable campaign already exists: {destination}")
     if references_from is not None:
@@ -125,6 +184,12 @@ def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references
         missing = [name for name in wanted if not (references_from / name).is_file()]
         if missing:
             raise SystemExit(f"{references_from} lacks merged references {missing}")
+    if bks_from is not None:
+        lacking = [f"{name}/{file}" for name in PROBLEMS for file in BKS_FILES if not (bks_from / name / file).is_file()]
+        if lacking:
+            raise SystemExit(f"{bks_from} lacks best-known solutions {lacking}")
+    bks = str(destination / "bks") if bks_from is not None else None
+    runs = arms_for(arm_set, recipe, seeds, bks=bks, arms=arms)  # refused arms leave nothing behind
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("logs", "training", "evaluation", "configs", "references"):
         (destination / name).mkdir(exist_ok=True)
@@ -133,20 +198,28 @@ def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references
         target = destination / "configs" / f"{name}.yaml"
         shutil.copy2(SUITE / f"{name}.yaml", target)
         problems.append({"name": name, "config": str(target), "teacher": "auto"})
-    probes = []
-    for name, (source, trucks, stops) in PROBES.items():
+    probe_rows = []
+    for name, (source, trucks, stops) in (PROBES.items() if probes else ()):
         config = yaml.safe_load((SUITE / f"{source}.yaml").read_text())
         config["environment"]["num_trucks"] = trucks
         if stops is not None:
             config["environment"]["num_stops"] = stops
         target = destination / "configs" / f"{name}.yaml"
         target.write_text(yaml.safe_dump(config, sort_keys=False))
-        probes.append({"name": name, "config": str(target), "teacher": "auto"})
+        probe_rows.append({"name": name, "config": str(target), "teacher": "auto"})
     write_json(destination / "problems.json", problems)
-    write_json(destination / "probes.json", probes)
+    write_json(destination / "probes.json", probe_rows)
     if references_from is not None:
         for name in wanted:
             shutil.copy2(references_from / name, destination / "references" / name)
+    if bks_from is not None:
+        # The imitation arms clone and pair against this frozen copy; the global
+        # BKS directory may grow later (test seeds at P5) without touching it.
+        for name in PROBLEMS:
+            (destination / "bks" / name).mkdir(parents=True)
+            for file in (*BKS_FILES, *BKS_OPTIONAL):
+                if (bks_from / name / file).is_file():
+                    shutil.copy2(bks_from / name / file, destination / "bks" / name / file)
 
     source = destination / "source"
     source.mkdir()
@@ -154,7 +227,7 @@ def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references
         shutil.copytree(
             ROOT / directory,
             source / directory,
-            ignore=shutil.ignore_patterns("__pycache__", "data", "baselines", "*.out"),
+            ignore=shutil.ignore_patterns("__pycache__", "data", "baselines", "results", "*.out"),
         )
     shutil.copytree(ROOT / "EVRoutingEnv/baselines/heuristics", source / "EVRoutingEnv/baselines/heuristics")
     shutil.copytree(
@@ -171,9 +244,10 @@ def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references
     (destination / "source.untracked").write_text(untracked)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     write_json(destination / "manifest.json", {
-        "version": 1,
+        "version": 2,
         "arm_set": arm_set,
         "recipe": recipe,
+        "arms": list(arms) if arms else None,
         "commit": commit,
         "source": str(source),
         "python": str(ROOT / ".venv/bin/python"),
@@ -183,10 +257,13 @@ def prepare(destination: Path, arm_set: str, recipe: str, seeds: int, references
         "reference_shard": SHARD,
         "schedule_timesteps": SCHEDULE,
         "common_flags": COMMON,
-        "runs": arms_for(arm_set, recipe, seeds),
+        "runs": runs,
         "extra_baselines": EXTRA_BASELINES,
         "slurm": SLURM,
         "references_from": str(references_from) if references_from is not None else None,
+        "bks_from": str(bks_from) if bks_from is not None else None,
+        "bks": bks,
+        "probes_enabled": bool(probes),
     })
     print(destination, flush=True)
 
@@ -543,9 +620,10 @@ def strided_groups(items: list[int], count: int) -> list[list[int]]:
 
 
 def train_hours(budget: int) -> int:
-    # About 300 decisions/s at 14 rollout workers, plus BC and validation.
-    # A short limit for a pilot helps the scheduler backfill it.
-    return 2 if budget <= 250_000 else 6 if budget <= 2_000_000 else 16 if budget <= 6_000_000 else 24
+    # About 250 decisions/s per A100 share at 16 rollout workers, plus behaviour
+    # cloning on up to 256 episodes per problem, DAgger rounds and validation.
+    # A run that overruns checkpoints on USR1 and resumes at the next submission.
+    return 3 if budget <= 250_000 else 12 if budget <= 2_000_000 else 24 if budget <= 6_000_000 else 36
 
 
 def submit(
@@ -560,18 +638,35 @@ def submit(
     pack: int | None = None,
     runs_per_gpu: int = 1,
     cpus: int | None = None,
+    partition: str | None = None,
+    cpus_per_gpu: int | None = None,
+    test_only: bool = False,
 ) -> None:
     """Compose (and unless ``dry_run``, submit) the sbatch call(s) of a stage.
 
     ``--pack`` puts several units of work in one allocation: K training runs on
-    one node (ceil(K/R) GPUs, K CPU slices), or J whole-node reference jobs that
-    share the pending shards. Each array element receives its group as an
-    argument, ``0,1`` for runs 0 and 1.
+    one node (ceil(K/R) GPUs, K CPU slices), or J reference jobs that share the
+    pending shards. Each array element receives its group as an argument,
+    ``0,1`` for runs 0 and 1. ``partition`` moves a GPU stage to an overflow
+    partition (with its own cores per GPU); ``test_only`` runs every command
+    through ``sbatch --test-only``, which checks it without submitting.
     """
     manifest = read_manifest(destination)
     slurm = {**SLURM, **manifest["slurm"]}
+    gpu_partition, per_gpu = slurm["gpu_partition"], slurm["cpus_per_gpu"]
+    if partition is not None and partition != gpu_partition:
+        overflow = slurm.get("overflow", {})
+        if partition not in overflow:
+            raise SystemExit(f"partition {partition!r} is neither {gpu_partition!r} nor one of {sorted(overflow)}")
+        gpu_partition, per_gpu = partition, overflow[partition]
+    if cpus_per_gpu is not None:
+        per_gpu = cpus_per_gpu
     throttle = slurm["max_concurrent"]
-    common = ["sbatch", "--parsable", f"--account={slurm['account']}", f"--output={destination}/logs/slurm-%A_%a.out"]
+    common = [
+        "sbatch", "--parsable", *(["--test-only"] if test_only else []),
+        f"--account={slurm['account']}", f"--output={destination}/logs/slurm-%A_%a.out",
+    ]
+    cpu_gpus = [f"--gpus-per-task={slurm['cpu_gpus']}"] if slurm.get("cpu_gpus", 0) > 0 else []
     commands = []
     if stage == "references":
         pending = pending_reference_tasks(destination, manifest)
@@ -587,7 +682,7 @@ def submit(
         commands.append((groups, [
             *common, f"--job-name={destination.name}_ref", f"--partition={slurm['cpu_partition']}",
             "--nodes=1", "--ntasks=1", f"--cpus-per-task={cores}", f"--mem-per-cpu={slurm['cpu_mem_per_cpu']}",
-            f"--time={hours:02d}:00:00",
+            *cpu_gpus, f"--time={hours:02d}:00:00",
             f"--array=0-{len(groups) - 1}%{throttle}",
             str(ROOT / "scripts/campaigns/generalist_graphppo_cpu.sbatch"), str(destination), "references",
             *(",".join(map(str, group)) for group in groups),
@@ -614,8 +709,8 @@ def submit(
             by_size.setdefault(len(group), []).append(group)
         for size, groups in sorted(by_size.items(), reverse=True):
             commands.append((groups, [
-                *common, f"--job-name={destination.name}_train", f"--partition={slurm['gpu_partition']}",
-                "--nodes=1", "--ntasks=1", f"--cpus-per-task={size * slurm['cpus_per_gpu']}",
+                *common, f"--job-name={destination.name}_train", f"--partition={gpu_partition}",
+                "--nodes=1", "--ntasks=1", f"--cpus-per-task={size * per_gpu}",
                 f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", f"--gpus-per-task={-(-size // runs_per_gpu)}",
                 f"--time={train_hours(budget):02d}:00:00", "--signal=B:USR1@300",
                 f"--array=0-{len(groups) - 1}%{throttle}",
@@ -630,10 +725,10 @@ def submit(
             if unknown:
                 raise SystemExit(f"unknown runs {unknown}")
         # One allocation: the baselines, then every run's best.pt on the GPU.
-        hours = 8 if split == "validation" else 24
+        hours = 12 if split == "validation" else 24
         commands.append((None, [
-            *common, f"--job-name={destination.name}_eval_{tag}", f"--partition={slurm['gpu_partition']}",
-            "--nodes=1", "--ntasks=1", f"--cpus-per-task={cpus or slurm['cpus_per_gpu']}",
+            *common, f"--job-name={destination.name}_eval_{tag}", f"--partition={gpu_partition}",
+            "--nodes=1", "--ntasks=1", f"--cpus-per-task={cpus or per_gpu}",
             f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", "--gpus-per-task=1", f"--time={hours:02d}:00:00",
             str(ROOT / "scripts/campaigns/generalist_graphppo_eval.sbatch"), str(destination), split, tag, *(runs or []),
         ]))
@@ -642,6 +737,14 @@ def submit(
     for groups, command in commands:
         print(" ".join(command), flush=True)
         if dry_run:
+            continue
+        if test_only:
+            # The scheduler validates the request and reports when it could
+            # start; nothing is submitted or recorded.
+            result = subprocess.run(command, text=True, capture_output=True)
+            print((result.stdout + result.stderr).strip(), flush=True)
+            if result.returncode:
+                raise SystemExit(result.returncode)
             continue
         job = subprocess.check_output(command, text=True).strip()
         with (destination / "logs" / "submissions.jsonl").open("a") as handle:
@@ -698,7 +801,9 @@ def evaluate(
             rows = run_reference_episodes(problem, seeds, policy, workers=workers)
             for row in rows:
                 row.pop("actions", None)
-            write_json(target, rows)
+            partial = target.with_suffix(".partial")  # a concurrent evaluation never reads a half-written file
+            write_json(partial, rows)
+            partial.replace(target)
             print(f"baseline {problem.name} {policy}: {len(rows)}", flush=True)
     references = ReferenceTable({
         problem.name: {
@@ -741,7 +846,107 @@ def evaluate(
             value.close()
 
 
-def report(destination: Path, split: str, tag: str) -> None:
+PROMOTION_KEYS = ("score", "served_fraction", "failure_rate", "success_rate", "hours")
+
+
+def problem_stats(rows: list[dict], name: str) -> dict | None:
+    """Mean served fraction, failure, success, hours and score of ``name``'s rows (score may be absent)."""
+    group = [row for row in rows if row.get("problem") == name]
+    if not group:
+        return None
+
+    def mean(values) -> float:
+        values = list(values)
+        return float(sum(values) / len(values))
+
+    scores = [float(row["score"]) for row in group if "score" in row]
+    return {
+        "score": mean(scores) if len(scores) == len(group) else float("nan"),
+        "served_fraction": mean(row["served"] / max(1, row["tasks"]) for row in group),
+        "failure_rate": mean(float(bool(row["failed"])) for row in group),
+        "success_rate": mean(float(bool(row["success"])) for row in group),
+        "hours": mean(float(row["hours"]) for row in group),
+    }
+
+
+def promote(destination: Path, split: str, tag: str, count: int) -> dict:
+    """Arm means over seeds on the tag's rows, eligibility against the teacher, the top ``count``.
+
+    Eligible: on every problem, the arm's served fraction is at least the
+    teacher's and its failure rate at most the teacher's. Promoted: the
+    ``count`` eligible arms with the highest mean selection score. Written to
+    ``evaluation/<split>/<tag>/promotion.json``.
+    """
+    manifest = read_manifest(destination)
+    folder = destination / "evaluation" / split
+    names = [row["name"] for row in json.loads(Path(manifest["problems"]).read_text())]
+    teacher = {}
+    for name in names:
+        path = folder / "baselines" / f"{name}__teacher.json"
+        if not path.exists():
+            raise SystemExit(f"no teacher baseline for {name} in {folder / 'baselines'}")
+        summary = problem_stats(json.loads(path.read_text()), name)
+        if summary is None:
+            raise SystemExit(f"the teacher baseline for {name} has no rows")
+        teacher[name] = {"served_fraction": summary["served_fraction"], "failure_rate": summary["failure_rate"]}
+    by_arm: dict[str, dict[str, dict]] = {}
+    for run in manifest["runs"]:
+        path = folder / tag / f"{run['name']}.json"
+        if not path.exists():
+            continue
+        rows = json.loads(path.read_text())
+        per_problem = {}
+        for name in names:
+            summary = problem_stats(rows, name)
+            if summary is not None:
+                per_problem[name] = summary
+        by_arm.setdefault(run["arm"], {})[run["name"]] = per_problem
+    result = {"split": split, "tag": tag, "count": count, "teacher": teacher, "arms": {}, "promoted": []}
+    for arm, runs in by_arm.items():
+        problems = {}
+        for name in names:
+            values = [per[name] for per in runs.values() if name in per]
+            if values:
+                problems[name] = {key: sum(v[key] for v in values) / len(values) for key in PROMOTION_KEYS}
+        reasons = []
+        incomplete = sorted(run for run, per in runs.items() if set(per) != set(names))
+        if incomplete:
+            reasons.append(f"rows missing for some problem in {incomplete}")
+        for name, value in problems.items():
+            if value["served_fraction"] < teacher[name]["served_fraction"] - 1e-9:
+                reasons.append(f"{name}: served {value['served_fraction']:.3f} < teacher {teacher[name]['served_fraction']:.3f}")
+            if value["failure_rate"] > teacher[name]["failure_rate"] + 1e-9:
+                reasons.append(f"{name}: failure {value['failure_rate']:.3f} > teacher {teacher[name]['failure_rate']:.3f}")
+        mean_score = sum(p["score"] for p in problems.values()) / len(problems) if problems else float("-inf")
+        result["arms"][arm] = {
+            "runs": sorted(runs), "seeds": len(runs), "problems": problems, "mean_score": mean_score,
+            "eligible": not reasons, "reasons": reasons,
+        }
+    eligible = sorted((arm for arm, entry in result["arms"].items() if entry["eligible"]),
+                      key=lambda arm: -result["arms"][arm]["mean_score"])
+    result["promoted"] = eligible[:count]
+    write_json(folder / tag / "promotion.json", result)
+    return result
+
+
+def promotion_lines(result: dict) -> list[str]:
+    lines = [
+        "## Promotion", "",
+        "Arm means over seeds. Eligible: on every problem, served fraction >= the teacher's and failure rate "
+        f"<= the teacher's. Promoted (top {result['count']} eligible by mean score): "
+        f"{', '.join(result['promoted']) or 'none'}.", "",
+        "| Arm | Seeds | Mean score | Eligible | Reasons |", "| --- | --- | --- | --- | --- |",
+    ]
+    order = sorted(result["arms"], key=lambda arm: -result["arms"][arm]["mean_score"])
+    for arm in order:
+        entry = result["arms"][arm]
+        lines.append(f"| {arm} | {entry['seeds']} | {entry['mean_score']:.3f} | {'yes' if entry['eligible'] else 'no'} | "
+                     f"{'; '.join(entry['reasons'])} |")
+    lines.append("")
+    return lines
+
+
+def report(destination: Path, split: str, tag: str, promote_count: int | None = None) -> None:
     from algo.generalist_ppo import ReferenceTable, SuiteReward, summarize_suite
     from EVRoutingEnv.evaluation.statistics import paired_bootstrap_difference
 
@@ -788,6 +993,8 @@ def report(destination: Path, split: str, tag: str) -> None:
                 f"{summary['success_rate']:.3f} | {summary['failure_rate']:.3f} | {summary['hours']:.1f} | {delta} |"
             )
         lines.append("")
+    if promote_count:
+        lines += promotion_lines(promote(destination, split, tag, promote_count))
     (folder / tag).mkdir(parents=True, exist_ok=True)
     (folder / tag / "report.md").write_text("\n".join(lines))
     print("\n".join(lines), flush=True)
@@ -802,10 +1009,15 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("prepare")
     command.add_argument("--directory", type=Path, default=DEFAULT)
-    command.add_argument("--arm-set", default="screen", choices=["screen", "lopo", "specialists"])
+    command.add_argument("--arm-set", default="screen", choices=["screen", "named", "lopo", "specialists"])
+    command.add_argument("--arms", nargs="*", default=None, help="named: the recipes to run, in this order.")
     command.add_argument("--recipe", default="full", choices=sorted(RECIPES))
     command.add_argument("--seeds", type=int, default=3)
     command.add_argument("--references-from", type=Path, default=None, help="Merged references directory to copy.")
+    command.add_argument("--bks-from", type=Path, default=None,
+                         help="Best-known solutions (<problem>/{validation,train_demonstrations}.json) to freeze.")
+    command.add_argument("--probes", action=argparse.BooleanOptionalAction, default=False,
+                         help="Also write and evaluate the zero-shot size probes.")
     command = commands.add_parser("references")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     group = command.add_mutually_exclusive_group(required=True)
@@ -837,7 +1049,10 @@ def main() -> None:
                          help="train: K runs per job (one node). references: J whole-node jobs sharing the shards.")
     command.add_argument("--runs-per-gpu", type=int, default=1, help="train with --pack: runs sharing one GPU.")
     command.add_argument("--cpus", type=int, default=None, help="references/evaluate: CPUs per job instead of the manifest's.")
-    command.add_argument("--dry-run", action="store_true")
+    command.add_argument("--partition", default=None, help="train/evaluate: an overflow GPU partition from the manifest.")
+    command.add_argument("--cpus-per-gpu", type=int, default=None, help="train/evaluate: CPUs per GPU instead of the partition's.")
+    command.add_argument("--dry-run", action="store_true", help="Print the commands only.")
+    command.add_argument("--test-only", action="store_true", help="Run each command through sbatch --test-only.")
     command = commands.add_parser("evaluate")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--split", default="validation", choices=["validation", "test"])
@@ -851,11 +1066,17 @@ def main() -> None:
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--split", default="validation", choices=["validation", "test"])
     command.add_argument("--tag", required=True)
+    command.add_argument("--promote", type=int, default=None,
+                         help="Append the promotion table: the N eligible arms with the best mean score.")
     arguments = parser.parse_args()
     destination = arguments.directory.resolve()
     if arguments.command == "prepare":
         references_from = arguments.references_from.resolve() if arguments.references_from else None
-        prepare(destination, arguments.arm_set, arguments.recipe, arguments.seeds, references_from)
+        bks_from = arguments.bks_from.resolve() if arguments.bks_from else None
+        prepare(
+            destination, arguments.arm_set, arguments.recipe, arguments.seeds, references_from,
+            bks_from=bks_from, probes=arguments.probes, arms=arguments.arms,
+        )
     elif arguments.command == "references":
         if arguments.tasks is not None:
             reference_pack(destination, arguments.tasks, arguments.workers)
@@ -872,6 +1093,7 @@ def main() -> None:
             destination, arguments.stage, arguments.budget, arguments.dry_run,
             arms=arguments.arms, split=arguments.split, tag=arguments.tag, runs=arguments.runs,
             pack=arguments.pack, runs_per_gpu=arguments.runs_per_gpu, cpus=arguments.cpus,
+            partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
         )
     elif arguments.command == "evaluate":
         evaluate(
@@ -879,7 +1101,7 @@ def main() -> None:
             arguments.runs, arguments.envs_per_problem,
         )
     else:
-        report(destination, arguments.split, arguments.tag)
+        report(destination, arguments.split, arguments.tag, promote_count=arguments.promote)
 
 
 if __name__ == "__main__":

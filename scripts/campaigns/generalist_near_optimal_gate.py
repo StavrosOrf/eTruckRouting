@@ -27,7 +27,9 @@ Usage::
 Rows are read from ``DIR/evaluation/<split>/<tag>/<run>.json`` (lists of
 ``episode_summary`` rows with ``problem`` and ``seed``); BKS files from
 ``--bks-dir/<problem>/<split>.json``. The table is printed and written to
-``DIR/evaluation/<split>/<tag>/near_optimal_gate.{json,md}``.
+``DIR/evaluation/<split>/<tag>/near_optimal_gate.{json,md}``. The test split is
+locked: ``--split test`` needs ``--allow-test``, which the coordinator passes
+once, when a run has passed this gate on validation and P5 is opened.
 """
 
 from __future__ import annotations
@@ -59,10 +61,13 @@ def load_bks(directory: Path, problem: str, split: str) -> dict[int, dict] | Non
     return {int(seed): value for seed, value in json.loads(path.read_text()).items()}
 
 
-def load_rows(path: Path) -> list[dict]:
+def load_rows(path: Path) -> list[dict] | None:
+    """The episode rows of a run file, or None for any other JSON in the tag folder."""
     rows = json.loads(path.read_text())
     if isinstance(rows, dict):
-        rows = rows.get("rows", [])
+        rows = rows.get("rows")
+    if not isinstance(rows, list) or (rows and not isinstance(rows[0], dict)) or (rows and "seed" not in rows[0]):
+        return None
     return rows
 
 
@@ -210,13 +215,17 @@ def main(argv=None) -> int:
     parser.add_argument("--problems", nargs="*", default=list(PROBLEMS))
     parser.add_argument("--resamples", type=int, default=10_000)
     parser.add_argument("--no-write", action="store_true")
+    parser.add_argument("--allow-test", action="store_true",
+                        help="Read the test-split BKS and rows; only when the coordinator opens P5.")
     args = parser.parse_args(argv)
-    if args.split == "test":
-        raise SystemExit("the test bank is locked; the gate reads validation only unless the coordinator opens P5")
+    if args.split == "test" and not args.allow_test:
+        raise SystemExit("the test bank is locked; the gate reads validation only unless the coordinator "
+                         "opens P5 (--allow-test)")
     folder = args.campaign / "evaluation" / args.split / args.tag
     if not folder.exists():
         raise SystemExit(f"no evaluation rows at {folder}")
-    paths = sorted(path for path in folder.glob("*.json") if not path.name.startswith("near_optimal_gate"))
+    skipped = ("near_optimal_gate", "promotion", "report")
+    paths = sorted(path for path in folder.glob("*.json") if not path.name.startswith(skipped))
     if args.runs:
         wanted = set(args.runs)
         paths = [path for path in paths if path.stem in wanted]
@@ -228,14 +237,14 @@ def main(argv=None) -> int:
               "bks_dir": str(args.bks_dir), "runs": {}}
     for path in paths:
         rows = load_rows(path)
-        if not isinstance(rows, list) or (rows and "seed" not in rows[0]):
+        if rows is None:
             continue
         report["runs"][path.stem] = gate_run(rows, bks, args.problems, resamples=args.resamples)
     passing = [run for run, gate in report["runs"].items() if gate["overall"] == "PASS"]
     report["passing_runs"] = passing
     table = format_table(report)
     header = (f"# Near-optimal gate: {args.campaign.name}, {args.split}, {args.tag}\n\n"
-              f"BKS: `{args.bks_dir}`. Static: failure <= max(1%, BKS), success >= BKS - 2 pts, "
+              f"BKS: `{args.bks_dir}` ({args.split} split). Static: failure <= max(1%, BKS), success >= BKS - 2 pts, "
               "mean paired hours excess on jointly successful seeds <= 5%. Dynamic: failure <= max(1%, BKS), "
               "on-time services >= 95% of BKS (paired). Passing runs: "
               f"{', '.join(passing) if passing else 'none'}.\n\n")

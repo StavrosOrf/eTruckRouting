@@ -1,0 +1,1428 @@
+<title>/*__TITLE__*/</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=JetBrains+Mono:wght@400;500&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: dispatch console. A sticky selector bar (scenario, algorithm,
+   seed), then the run: timeline (left) beside the map and event feed (right);
+   every algorithm on the scenario last. Activity colours are the validated
+   categorical slots 1-7. */
+:root {
+  --bg: #f3f4f1; --surface: #ffffff; --surface-2: #eceee9; --ink: #17201b; --ink-2: #4a554e;
+  --muted: #737d77; --line: #d9ddd7; --grid: #e6e9e4;
+  --accent: #1f5a4a; --accent-soft: #e0ebe5; --on-accent: #ffffff;
+  --c-drive: #2a78d6; --c-queue: #eb6834; --c-charge: #1baf7a; --c-rest: #eda100;
+  --c-service: #e87ba4; --c-window: #008300; --c-wait: #6250d6; --outside: #c3c8c2;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --good-ink: #006300; --warn-ink: #7f5300; --crit-ink: #ad2727;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --road-opacity: 0.55;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1210; --surface: #161b18; --surface-2: #1d2320; --ink: #e8ece9; --ink-2: #b7c0ba;
+    --muted: #8a948e; --line: #2b322e; --grid: #222925;
+    --accent: #7fd3a8; --accent-soft: #1c3128; --on-accent: #0e1210;
+    --c-drive: #3987e5; --c-queue: #d95926; --c-charge: #199e70; --c-rest: #c98500;
+    --c-service: #d55181; --c-window: #008300; --c-wait: #9085e9; --outside: #4a534e;
+    --good-ink: #3fcf6a; --warn-ink: #f2c14e; --crit-ink: #ff8585;
+    --road-opacity: 0.42;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1210; --surface: #161b18; --surface-2: #1d2320; --ink: #e8ece9; --ink-2: #b7c0ba;
+  --muted: #8a948e; --line: #2b322e; --grid: #222925;
+  --accent: #7fd3a8; --accent-soft: #1c3128; --on-accent: #0e1210;
+  --c-drive: #3987e5; --c-queue: #d95926; --c-charge: #199e70; --c-rest: #c98500;
+  --c-service: #d55181; --c-window: #008300; --c-wait: #9085e9; --outside: #4a534e;
+  --good-ink: #3fcf6a; --warn-ink: #f2c14e; --crit-ink: #ff8585;
+  --road-opacity: 0.42;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+.wrap { max-width: 1320px; margin-inline: auto; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; letter-spacing: 0.01em; text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: clamp(2.1rem, 4.2vw, 3.1rem); }
+h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); }
+h3 { font-size: 1.15rem; letter-spacing: 0.02em; }
+p { margin: 0; }
+code, .mono { font-family: var(--f-mono); font-size: 0.84em; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.muted { color: var(--muted); }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* masthead */
+.masthead { padding-block: 32px 20px; display: grid; gap: 10px; }
+.masthead .lede { max-width: 68ch; color: var(--ink-2); font-size: 1.02rem; }
+
+/* verdict */
+.verdict { display: grid; gap: 16px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.verdict-head { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.verdict-head h2 { flex: 1 1 420px; min-width: 0; }
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.check { display: grid; gap: 6px; align-content: start; padding: 14px 14px 12px; border-radius: 8px; background: var(--surface-2); min-width: 0; }
+.check .big { font-family: var(--f-display); font-size: 1.9rem; font-weight: 600; line-height: 1; }
+.check p { font-size: 0.88rem; color: var(--ink-2); }
+.check details { font-size: 0.82rem; color: var(--ink-2); }
+.check summary { cursor: pointer; color: var(--ink); }
+.check ul { margin: 6px 0 0; padding-left: 18px; }
+.check li { overflow-wrap: anywhere; }
+.check.caveat { background: color-mix(in srgb, var(--warning) 14%, var(--surface)); }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.pill .ic { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; color: #fff; line-height: 1; }
+.pill.good .ic { background: var(--good); }
+.pill.critical .ic { background: var(--critical); }
+.pill.warning .ic { background: var(--warning); color: #241a00; }
+.pill.serious .ic { background: var(--serious); color: #2a1206; }
+.pill.neutral .ic { background: var(--muted); }
+
+/* picker */
+.picker { display: grid; gap: 14px; padding-block: 28px 14px; }
+.picker-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px 18px; }
+.pgroup { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.pgroup h3 { font-size: 0.98rem; color: var(--ink-2); }
+.pgroup .src { font-size: 0.76rem; color: var(--muted); margin-top: -4px; }
+.sc-btn { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 0.88rem; line-height: 1.25; }
+.sc-btn:hover { border-color: var(--ink-2); }
+.sc-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.sc-btn .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); }
+.sc-btn[aria-pressed="true"] .dot { box-shadow: 0 0 0 2px var(--accent); }
+.sc-btn.off { cursor: default; color: var(--muted); border-style: dashed; background: transparent; }
+.dot.good { background: var(--good); } .dot.critical { background: var(--critical); } .dot.warning { background: var(--warning); }
+.dot.serious { background: var(--serious); } .dot.neutral { background: var(--muted); }
+
+/* scenario */
+.scenario { display: grid; gap: 16px; padding: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.sc-head { display: grid; gap: 10px; }
+.sc-title { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.sc-desc { max-width: 92ch; color: var(--ink-2); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-family: var(--f-mono); font-size: 0.74rem; padding: 2px 8px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); overflow-wrap: anywhere; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 2.2fr); gap: 10px; }
+.kpi { padding: 10px 12px; border-radius: 8px; background: var(--surface-2); display: grid; gap: 2px; align-content: start; min-width: 0; }
+.kpi .lab { font-size: 0.76rem; color: var(--muted); }
+.kpi .val { font-family: var(--f-display); font-size: 1.55rem; font-weight: 600; line-height: 1.1; }
+.kpi .sub { font-size: 0.76rem; color: var(--ink-2); }
+.hoursbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; gap: 2px; margin-top: 6px; background: var(--surface); }
+.hoursbar span { display: block; height: 100%; min-width: 0; }
+.hourslegend { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 0.74rem; color: var(--ink-2); margin-top: 6px; }
+.hourslegend b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
+.timeline-col, .side-col { display: grid; gap: 12px; min-width: 0; }
+
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.transport .play { width: 38px; height: 34px; border-radius: 7px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer; display: grid; place-items: center; }
+.transport .clock { font-family: var(--f-mono); font-size: 0.95rem; font-variant-numeric: tabular-nums; min-width: 9.5ch; }
+.transport input[type="range"] { flex: 1 1 200px; min-width: 120px; accent-color: var(--accent); }
+.transport select { padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); font-size: 0.85rem; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.78rem; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.sw.idle { height: 6px; }
+
+.panel { position: relative; min-width: 0; }
+.panel-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+.panel-title h3 { font-size: 1.02rem; }
+.panel-title .note { font-size: 0.76rem; color: var(--muted); }
+svg text { font-family: var(--f-body); }
+.axis text, .lanelab { font-family: var(--f-mono); font-size: 10px; fill: var(--muted); }
+.lanelab.id { fill: var(--ink); font-weight: 500; font-size: 11px; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.dayline { stroke: var(--line); stroke-width: 1; }
+.lane { fill: var(--surface-2); }
+.cursor-line { stroke: var(--ink); stroke-width: 1.5; }
+.end-line { stroke: var(--ink-2); stroke-width: 2; }
+.horizon-line { stroke: var(--critical); stroke-width: 1.5; }
+.cursor-head { fill: var(--ink); }
+.soc-line { fill: none; stroke: var(--ink-2); stroke-width: 1.25; }
+.soc-area { fill: var(--ink-2); opacity: 0.1; }
+.a-drive { fill: var(--c-drive); } .a-queue { fill: var(--c-queue); } .a-charge { fill: var(--c-charge); }
+.a-rest { fill: var(--c-rest); } .a-service, .a-load { fill: var(--c-service); } .a-window { fill: var(--c-window); }
+.a-wait { fill: var(--c-wait); } .a-none { fill: var(--surface); }
+.bg-drive { background: var(--c-drive); } .bg-queue { background: var(--c-queue); } .bg-charge { background: var(--c-charge); }
+.bg-rest { background: var(--c-rest); } .bg-service { background: var(--c-service); } .bg-window { background: var(--c-window); }
+.bg-wait { background: var(--c-wait); } .bg-outside { background: var(--outside); }
+.mk-fail { stroke: var(--critical); stroke-width: 2.2; stroke-linecap: round; }
+.mk-retire { stroke: var(--ink); stroke-width: 1.5; }
+.mk-cut { fill: var(--muted); }
+.hit { fill: transparent; cursor: crosshair; }
+.bar { cursor: crosshair; }
+.lane-row.dim { opacity: 0.35; }
+
+.strip-out { fill: var(--outside); }
+.strip-fleet { fill: var(--c-charge); }
+.strip-queue { fill: var(--c-queue); opacity: 0.55; }
+.strip-cap { fill: none; stroke: var(--ink); stroke-width: 1.25; }
+.req-life { stroke: var(--muted); stroke-width: 1; }
+.req-win { fill: var(--surface-2); }
+.req-reveal { fill: var(--ink-2); }
+.o-good { fill: var(--good); } .o-late { fill: var(--warning); } .o-lost { fill: var(--critical); }
+.o-open { fill: var(--surface); stroke: var(--muted); stroke-width: 1; }
+
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 0.78rem; line-height: 1.35; padding: 6px 9px; border-radius: 6px; max-width: 300px; box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
+.tip b { font-weight: 600; }
+
+/* map */
+.mapbox { position: relative; border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.mapbox svg { display: block; width: 100%; height: auto; }
+.map-road { opacity: var(--road-opacity); }
+.m-leg { stroke: var(--muted); fill: none; opacity: 0.45; }
+.m-leg.done { stroke: var(--ink-2); opacity: 0.7; }
+.m-leg.hl { stroke: var(--ink); opacity: 1; }
+.m-cust { fill: var(--surface); stroke: var(--ink-2); }
+.m-cust.req { fill: var(--surface); stroke: var(--c-service); }
+.m-stn { fill: var(--surface); stroke: var(--muted); }
+.m-stn.used { fill: var(--c-charge); stroke: var(--surface); }
+.m-depot { fill: var(--ink); stroke: var(--surface); }
+.m-term { fill: var(--ink); stroke: var(--surface); }
+.m-lab { fill: var(--ink); font-weight: 600; paint-order: stroke; stroke: var(--surface-2); stroke-linejoin: round; }
+.m-truck circle { stroke: var(--surface); }
+.m-truck text { font-family: var(--f-mono); font-weight: 600; text-anchor: middle; dominant-baseline: central; }
+.m-truck.failed circle { stroke: var(--critical); }
+.m-truck.retired { opacity: 0.5; }
+.maplegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.74rem; color: var(--ink-2); padding: 6px 2px 0; }
+.maplegend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px; }
+
+/* feed */
+.feed { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.feed h3 { font-size: 1.02rem; padding-block: 10px 6px; }
+.feed ol { list-style: none; margin: 0; padding: 0; display: grid; }
+.feed li { display: grid; grid-template-columns: 6.2ch 2.6ch minmax(0, 1fr); gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--grid); font-size: 0.83rem; line-height: 1.35; }
+.feed li:first-child { background: var(--accent-soft); margin-inline: -6px; padding-inline: 6px; border-radius: 5px; }
+.feed .t { font-family: var(--f-mono); font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.feed .who { font-family: var(--f-mono); font-size: 0.74rem; font-weight: 500; color: var(--ink-2); padding-top: 1px; }
+.feed .txt { min-width: 0; overflow-wrap: anywhere; }
+.feed .k { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+
+.notes { display: grid; gap: 8px; padding: 14px 16px; background: var(--surface-2); border-radius: 8px; }
+.notes h3 { font-size: 1.02rem; }
+.notes ul { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 6px; }
+.notes li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; font-size: 0.9rem; color: var(--ink-2); }
+.notes li .ic { width: 14px; height: 14px; border-radius: 50%; margin-top: 3px; display: grid; place-items: center; font-size: 9px; color: #fff; }
+.notes .robust { font-size: 0.86rem; color: var(--ink-2); border-top: 1px solid var(--line); padding-top: 8px; }
+
+/* comparison */
+.compare { display: grid; gap: 14px; padding-block: 34px 0; }
+.compare .intro { max-width: 80ch; color: var(--ink-2); }
+.cmp-chart { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; position: relative; overflow-x: auto; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.84rem; }
+th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { font-weight: 600; color: var(--ink-2); font-size: 0.78rem; background: var(--surface-2); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .pill { font-size: 0.74rem; }
+tr.grp td { background: var(--surface-2); font-family: var(--f-display); font-weight: 600; font-size: 0.95rem; color: var(--ink); }
+.foot { padding-block: 26px 0; font-size: 0.82rem; color: var(--muted); display: grid; gap: 6px; max-width: 100ch; }
+
+@media (max-width: 980px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis .kpi.wide { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .verdict, .scenario { padding: 14px; }
+  .feed li { grid-template-columns: 5.6ch 2.4ch minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* selector bar */
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 8; background: var(--bg); padding-block: 10px; border-bottom: 1px solid var(--line); }
+.controls .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+.controls label { display: grid; gap: 3px; font-size: 0.74rem; color: var(--muted); }
+.controls select { font: inherit; font-size: 0.92rem; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-width: 0; max-width: 100%; }
+.controls .seedbox { display: flex; gap: 6px; align-items: center; }
+.controls .seedbox button { font: inherit; width: 34px; height: 34px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.controls .seedbox button:hover { border-color: var(--ink-2); }
+.controls .meta { margin-left: auto; font-size: 0.78rem; color: var(--muted); }
+#run { scroll-margin-top: 90px; }
+#run-missing { padding: 18px; background: var(--surface-2); border-radius: 8px; display: grid; gap: 6px; }
+#run-missing h3 { font-size: 1.1rem; }
+.cell { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 0.8rem; font-variant-numeric: tabular-nums; cursor: pointer; }
+span.cell { cursor: default; padding: 3px 4px; }
+.cell .ic { width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10px; color: #fff; }
+.cell.good .ic { background: var(--good); } .cell.critical .ic { background: var(--critical); }
+.cell.warning .ic { background: var(--warning); color: #241a00; } .cell.serious .ic { background: var(--serious); color: #2a1206; }
+.cell.neutral .ic { background: var(--muted); }
+.cell:hover { border-color: var(--ink-2); }
+.cell.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.sum-tables { display: grid; gap: 22px; }
+.sum-tables h3 { font-size: 1.12rem; margin-bottom: 4px; }
+.sum-tables .sub { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 8px; max-width: 110ch; }
+.sum-tables td.best { background: var(--accent-soft); font-weight: 600; }
+.sum-tables td .sd { color: var(--muted); font-weight: 400; }
+.sum-tables button.go { font: inherit; font-weight: 600; color: var(--ink); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; text-align: left; }
+.sum-tables button.go:hover { text-decoration-color: var(--ink-2); }
+td .why { display: block; font-size: 0.74rem; color: var(--muted); max-width: 46ch; margin-top: 2px; }
+td.muted { color: var(--muted); }
+</style>
+
+<header class="masthead wrap">
+  <p class="eyebrow">eTruckRouting · trace report</p>
+  <h1>/*__TITLE__*/</h1>
+  <p class="lede">Each run is one episode of the event-driven simulator, recorded event by event. Choose a scenario, an algorithm and a seed, then drag across the timeline or press play to watch the trucks drive, queue, charge, rest and serve requests. The table at the bottom compares every algorithm on every seed of the chosen scenario.</p>
+</header>
+
+<nav class="controls" aria-label="Choose a run">
+  <div class="row wrap">
+    <label for="pick-scenario">Scenario<select id="pick-scenario"></select></label>
+    <label for="pick-policy">Algorithm<select id="pick-policy"></select></label>
+    <label for="pick-seed">Seed
+      <span class="seedbox"><button type="button" id="seed-prev" aria-label="Previous seed">‹</button><select id="pick-seed"></select><button type="button" id="seed-next" aria-label="Next seed">›</button></span>
+    </label>
+    <span class="meta" id="meta"></span>
+  </div>
+</nav>
+
+<main class="scenario wrap" id="run">
+  <div id="run-missing" hidden></div>
+  <div id="run-body" style="display:grid;gap:16px">
+    <div class="sc-head">
+      <div class="sc-title"><h2 id="sc-title"></h2><span id="sc-pill"></span></div>
+      <p class="sc-desc" id="sc-desc"></p>
+      <div class="chips" id="sc-chips"></div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="stage">
+      <div class="timeline-col">
+        <div class="transport">
+          <button class="play" id="play" type="button" aria-label="Play">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path id="play-icon" d="M3 1.5v11l9-5.5z" fill="currentColor"></path></svg>
+          </button>
+          <span class="clock" id="clock">t = 0.0 h</span>
+          <input type="range" id="scrub" min="0" max="1000" value="0" step="1" aria-label="Simulation time">
+          <label class="muted" for="speed" style="font-size:0.8rem">Speed</label>
+          <select id="speed">
+            <option value="20">20 s run</option>
+            <option value="40" selected>40 s run</option>
+            <option value="90">90 s run</option>
+          </select>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="panel" id="gantt-panel">
+          <div class="panel-title"><h3>Truck timelines</h3><span class="note">bars: activity · thin line under each bar: state of charge 0–100% · same time axis for every run of the scenario; grey line: this run ends; red line: horizon</span></div>
+          <div id="gantt"></div>
+        </div>
+        <div id="lower-panel" style="display:grid;gap:14px"></div>
+      </div>
+      <div class="side-col">
+        <div class="panel">
+          <div class="panel-title"><h3>Where the trucks are</h3><span class="note" id="map-note"></span></div>
+          <div class="mapbox" id="map"></div>
+          <div class="maplegend">
+            <span><i style="background:var(--ink)"></i>Depot</span>
+            <span><i style="background:var(--surface);border:1.5px solid var(--ink-2);border-radius:50%"></i>Customer</span>
+            <span><i style="background:var(--surface);border:1.5px solid var(--muted)"></i>Charger</span>
+            <span><i style="background:var(--c-charge)"></i>Charger used</span>
+            <span><i style="background:var(--ink-2);height:2px;width:14px;vertical-align:2px"></i>Legs driven (straight line)</span>
+          </div>
+        </div>
+        <div class="feed">
+          <h3>Events up to the cursor</h3>
+          <ol id="feed"></ol>
+        </div>
+      </div>
+    </div>
+    <div class="notes" id="notes"></div>
+  </div>
+</main>
+
+<section class="compare wrap" aria-labelledby="cmp-h">
+  <h2 id="cmp-h"></h2>
+  <p class="intro" id="cmp-intro"></p>
+  <div class="tablewrap"><table id="cmp-table"></table></div>
+  <div class="legend" id="cmp-legend"></div>
+  <div class="cmp-chart" id="cmp-chart"></div>
+</section>
+
+<section class="compare wrap" aria-labelledby="sum-h">
+  <h2 id="sum-h">Average results over seeds</h2>
+  <p class="intro">One table per scenario: the mean over the seeds each algorithm ran, with the standard deviation after ± for the headline columns. "Finished" counts seeds where every customer was served and every truck returned; "Served %" is customers served in static scenarios and requests delivered on time in request scenarios; "Stranded runs" counts seeds where a truck was left with no feasible action. The best value in each column is highlighted: highest for Finished and Served %, lowest for the others. Columns that are zero for every algorithm are left out. Select an algorithm's name to open its first run.</p>
+  <div id="sum-tables" class="sum-tables"></div>
+</section>
+
+<footer class="foot wrap">
+  <p>Regenerate or extend with <code>python -m scripts.analysis.trace_report run --scenario NAME=CONFIG --seeds … --policy … --out traces.json</code>, then <code>render traces.json [more.json …] --html report.html</code>. Map legs are straight lines between stops; the simulator drives the minimum-energy road path.</p>
+</footer>
+
+<script>window.SIM=/*__DATA__*/;</script>
+<script>
+(function () {
+"use strict";
+const S = (typeof window !== "undefined" ? window : globalThis).SIM;
+let NODES = {};
+const TERM = {
+  success: ["good", "✓", "All served"],
+  no_feasible_action: ["critical", "✕", "Truck stranded"],
+  time_limit_exhausted: ["neutral", "◷", "Stopped at horizon"],
+  step_limit_exhausted: ["neutral", "◷", "Stopped at step limit"],
+  requests_late: ["warning", "!", "Requests late"],
+  requests_lost: ["serious", "!", "Requests lost"],
+  all_trucks_failed: ["critical", "✕", "All trucks failed"],
+  fleet_stopped_with_unserved_customers: ["warning", "!", "Fleet stopped, customers left"],
+  fleet_stopped_with_unserved_requests: ["warning", "!", "Fleet stopped, requests left"],
+  not_applicable: ["neutral", "–", "Not applicable"],
+  error: ["critical", "✕", "Error"],
+};
+const ACT = {
+  drive: { label: "Driving", idle: false, ink: "#ffffff" },
+  queue: { label: "Queueing at a station", idle: true, ink: "#1a0d05" },
+  charge: { label: "Charging", idle: false, ink: "#04140d" },
+  rest: { label: "HOS rest", idle: true, ink: "#1d1400" },
+  service: { label: "Loading or unloading", idle: false, ink: "#2a0716" },
+  load: { label: "Loading", idle: false, ink: "#2a0716", alias: "service" },
+  window: { label: "Early, waiting for its window", idle: true, ink: "#ffffff" },
+  wait: { label: "Waiting for requests", idle: true, ink: "#ffffff" },
+};
+const LEGEND_ORDER = ["drive", "queue", "charge", "rest", "service", "window", "wait"];
+const HOUR_KEYS = [
+  ["drive", "total_travel_time"], ["queue", "total_queue_time"], ["charge", "total_charging_time"],
+  ["rest", "total_rest_time"], ["service", "total_service_time"], ["window", "total_time_window_waiting"],
+  ["wait", "total_request_wait_time"],
+];
+
+
+// ------------------------------------------------------------------ helpers
+
+const fmt1 = (x) => (x == null ? "–" : (Math.round(x * 10) / 10).toFixed(1));
+const fmtT = (t) => `${fmt1(t)} h`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const titleCase = (s) => s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+function place(sc, n, short) {
+  if (n == null) return "?";
+  const row = NODES[n];
+  if (!row) return `node ${n}`;
+  if (n === sc.depot) return short ? "depot" : `the depot (${row[3] || "node " + n})`;
+  const term = (sc.terminals || []).indexOf(n);
+  if (term >= 0) {
+    const names = ((((S.scenarios[sc.scenario] || {}).settings || {}).drayage || {}).terminals || []).map((t) => t.name);
+    return names[term] || "terminal";
+  }
+  if (row[2] === "charger") {
+    const name = row[3] && row[3] !== "Charging station" ? titleCase(row[3]) : `station ${n}`;
+    return short ? name : `charger “${name}” (${row[5]} port${row[5] === 1 ? "" : "s"})`;
+  }
+  return row[3] || `node ${n}`;
+}
+
+function socAt(truck, t) {
+  const s = truck.soc;
+  if (!s.length) return null;
+  if (t <= s[0][0]) return s[0][1];
+  for (let i = 1; i < s.length; i++) {
+    if (s[i][0] >= t) {
+      const [t0, v0] = s[i - 1], [t1, v1] = s[i];
+      return t1 === t0 ? v1 : v0 + ((v1 - v0) * (t - t0)) / (t1 - t0);
+    }
+  }
+  return s[s.length - 1][1];
+}
+
+function mergeWaits(segs) {
+  const out = [];
+  for (const g of segs) {
+    const last = out[out.length - 1];
+    if (last && g[2] === "wait" && last[2] === "wait" && Math.abs(last[1] - g[0]) < 1e-6) {
+      out[out.length - 1] = [last[0], g[1], "wait", last[3], last[4], null, null, {}];
+    } else out.push(g);
+  }
+  return out;
+}
+
+// Where a truck is at time t: [x, y] in projected units plus its activity.
+function stateAt(sc, truck, t) {
+  const K = S.k;
+  const xy = (n) => [NODES[n][1] * K, -NODES[n][0]];
+  let act = "none";
+  for (const g of truck.gsegs) {
+    if (g[0] <= t && t < g[1]) { act = g[2]; break; }
+    if (g[0] > t) break;
+  }
+  for (const leg of truck.legs) {
+    if (leg[0] <= t && t < leg[1]) {
+      let driven = 0, total = 0;
+      for (const [a, b] of leg[4]) {
+        total += b - a;
+        driven += Math.max(0, Math.min(b, t) - a);
+      }
+      const f = total > 0 ? driven / total : 0;
+      const p = xy(leg[2]), q = xy(leg[3]);
+      return { x: p[0] + (q[0] - p[0]) * f, y: p[1] + (q[1] - p[1]) * f, act, node: null };
+    }
+  }
+  let node = truck.start;
+  for (const leg of truck.legs) {
+    if (leg[1] <= t && !leg[5]) node = leg[3];
+    else if (leg[0] > t) break;
+  }
+  const p = xy(node);
+  return { x: p[0], y: p[1], act, node };
+}
+
+function truckStatusAt(truck, t) {
+  for (const m of truck.marks) {
+    if (m[1] === "failed" && m[0] <= t) return "failed";
+    if (m[1] === "retired" && m[0] <= t) return "retired";
+  }
+  return "active";
+}
+
+// ------------------------------------------------------------------ preparation
+
+function prepare(sc) {
+  if (sc._ready) return sc;
+  for (const st of sc.stations) {
+    if (st.steps || !st.dt) continue;
+    // Packed occupancy: centi-hour time deltas and four counts per step.
+    let tick = 0;
+    st.steps = st.dt.map((d, i) => { tick += d; return [tick / 100, st.v[4 * i], st.v[4 * i + 1], st.v[4 * i + 2], st.v[4 * i + 3]]; });
+  }
+  const T = Math.max(sc.end, 1e-6);
+  sc.T = T;
+  for (const tr of sc.trucks) {
+    tr.gsegs = mergeWaits(tr.segs);
+    tr.queueHours = tr.segs.filter((g) => g[2] === "queue").reduce((a, g) => a + g[1] - g[0], 0);
+  }
+  const events = [];
+  // Same-time order: arrivals, then what happens there, then the next decision.
+  const push = (t, truck, text, kind, rank = 1) => events.push([t, truck, text, kind || null, rank]);
+  const isRequests = sc.requests.length > 0;
+  const reqById = new Map(sc.requests.map((r) => [r.id, r]));
+
+  // Decisions (the policy's choice at each epoch)
+  const lastKind = {};
+  const queueDecisionAt = new Set();
+  for (const d of sc.decisions) {
+    const [t, k, kind, target, options, queueOffered, value] = d;
+    const tr = sc.trucks[k];
+    const prev = lastKind[k];
+    lastKind[k] = kind;
+    if (kind === "wait" && prev === "wait") continue;
+    if (kind === "rest_break" || kind === "rest_daily") continue; // shown from the rest itself
+    let text;
+    const forced = options === 1 ? " (its only feasible action)" : "";
+    const balk = queueOffered && !["queue", "charge", "rest_break", "rest_daily"].includes(kind);
+    if (kind === "queue") {
+      const st = stateAt(sc, tr, t + 1e-6);
+      queueDecisionAt.add(`${k}@${t}`);
+      text = `finds every port busy at ${place(sc, st.node, true)} and joins the queue`;
+      push(t, k, text, "queue", 2);
+      continue;
+    }
+    if (kind === "charge") text = `starts charging to ${Math.round(value * 100)} %`;
+    else if (kind === "charger") text = `heads for ${place(sc, target)}`;
+    else if (kind === "depot") text = "heads back to the depot";
+    else if (kind === "wait") text = "waits at the depot for new requests";
+    else if (kind === "end_shift") text = "ends its shift at the depot";
+    else if (kind === "customer") {
+      if (isRequests && stateAt(sc, tr, t).node === target) continue; // shown by the loading itself
+      text = `heads for ${isRequests ? "" : "customer at "}${place(sc, target)}`;
+    } else text = kind;
+    if (balk) text = "finds every port busy and leaves; " + text;
+    push(t, k, text + forced, kind === "charge" ? "charge" : kind === "wait" ? "wait" : "drive", 2);
+  }
+
+  for (const tr of sc.trucks) {
+    const k = tr.id;
+    for (const leg of tr.legs) {
+      if (leg[5]) continue;
+      push(leg[1], k, `arrives at ${place(sc, leg[3])} with ${Math.round(socAt(tr, leg[1]))} % charge`, "arrive", 0);
+    }
+    for (const g of tr.segs) {
+      const [s, e, kind, node] = g;
+      const dur = e - s;
+      if (kind === "queue") {
+        if (!queueDecisionAt.has(`${k}@${s}`)) push(s, k, `waits for a free port at ${place(sc, node, true)}`, "queue");
+        if (!(g[7] || {}).cut) push(e, k, `gets a port after queueing ${fmt1(dur)} h`, "queue");
+      } else if (kind === "charge" && !(g[7] || {}).cut) {
+        push(e, k, `finishes charging: ${Math.round(g[5])} % → ${Math.round(g[6])} % (+${Math.round(g[7].kwh)} kWh)`, "charge");
+      } else if (kind === "rest") {
+        const info = g[7] || {};
+        const what = info.rest === "daily" ? `daily rest of ${fmt1(dur)} h` : `${Math.round(dur * 60)}-min break`;
+        push(s, k, info.roadside ? `pulls over mid-leg for a ${what}` : `takes a ${what} at ${place(sc, node, true)}`, "rest");
+      } else if (kind === "window") {
+        push(s, k, `is early at ${place(sc, node, true)} and waits ${fmt1(dur)} h for the window to open`, "window");
+      } else if (kind === "load") {
+        const r = reqById.get((g[7] || {}).request);
+        const what = r && r.kind.startsWith("drayage") ? "container" : "request";
+        push(s, k, `loads ${what} #${(g[7] || {}).request}`, "service");
+      }
+    }
+    for (const m of tr.marks) {
+      const [t, kind, node, extra] = m;
+      if (kind === "failed") push(t, k, `is stranded at ${place(sc, node)} with ${Math.round(socAt(tr, t))} % charge: no charger or depot is reachable, so no action is feasible`, "fail");
+      else if (kind === "retired") push(t, k, "retires at the depot", "retire");
+      else if (kind === "served" && !isRequests) push(t, k, `delivers to ${place(sc, node)}`, "service");
+      else if (kind === "cut") push(t, k, `is still ${ACT[extra] ? ACT[extra].label.toLowerCase() : extra} when the horizon ends`, "cut");
+      else if (kind === "released") push(t, k, "releases its reserved port without charging", "queue");
+      else if (kind === "lost") push(t, k, `finds request #${extra} already lost on arrival`, "fail");
+    }
+  }
+
+  for (const r of sc.requests) {
+    const drayage = r.kind.startsWith("drayage");
+    const dest = place(sc, r.delivery[0], true);
+    const what = drayage
+      ? `Container #${r.id} (${r.kind === "drayage_import" ? "import" : "export"}): ${place(sc, r.pickup[0], true)} → ${dest}`
+      : `Request #${r.id}: deliver to ${dest}`;
+    const by = r.delivery[2] != null ? `, due by ${fmtT(r.delivery[2])}` : "";
+    if (!(r.reveal === 0 && r.status === "open")) push(r.reveal, null, `${what} revealed${by}`, "reveal");
+    if (r.served != null) {
+      const late = r.status === "served_late";
+      push(r.served, r.owner, `delivers #${r.id}${late ? `, ${fmt1(r.delay)} h late` : " on time"}`, late ? "late" : "ontime");
+    }
+    if (r.lost != null) push(r.lost, null, `Request #${r.id} is lost: its latest pickup has passed`, "fail");
+  }
+
+  for (const st of sc.stations) {
+    let prevUp = null;
+    for (const row of st.steps) {
+      if (prevUp != null && row[4] !== prevUp) {
+        push(row[0], null, `A port at ${place(sc, st.node, true)} goes ${row[4] < prevUp ? "down" : "back up"} (${row[4]} of ${st.ports} up)`, row[4] < prevUp ? "fail" : "reveal");
+      }
+      prevUp = row[4];
+    }
+    // Fleet trucks queued at this station over time (the station log holds only outside vehicles).
+    const changes = [];
+    for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "queue" && g[3] === st.node) changes.push([g[0], 1], [g[1], -1]);
+    changes.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    st.fleetQueue = changes;
+  }
+
+  events.sort((a, b) => a[0] - b[0] || a[4] - b[4]);
+  sc.events = events;
+  sc.highlights = highlights(sc);
+  sc.focus = focusTime(sc);
+  sc._ready = true;
+  return sc;
+}
+
+function focusTime(sc) {
+  for (const tr of sc.trucks) for (const m of tr.marks) if (m[1] === "failed") return Math.max(0, m[0] - 0.6);
+  let best = null;
+  for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "queue" && (!best || g[1] - g[0] > best[1] - best[0])) best = g;
+  if (best && best[1] - best[0] > 0.5) return best[0] + Math.min(0.5, (best[1] - best[0]) / 3);
+  for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "rest" && g[7] && g[7].rest === "daily") return g[0] + 1;
+  if (sc.requests.length) return Math.min(sc.T * 0.45, 16);
+  return sc.T * 0.3;
+}
+
+function highlights(sc) {
+  const out = [];
+  const add = (sev, text) => out.push([sev, text]);
+  for (const tr of sc.trucks) {
+    const m = tr.marks.find((x) => x[1] === "failed");
+    if (m) {
+      const before = sc.decisions.filter((d) => d[1] === tr.id && d[0] <= m[0]).slice(-1)[0];
+      const forced = before && before[4] === 1 ? ` Its last decision, at ${fmtT(before[0])}, had a single feasible option.` : "";
+      add("critical", `Truck ${tr.id} is stranded at ${place(sc, m[2])} at ${fmtT(m[0])} with ${Math.round(socAt(tr, m[0]))} % charge. No charger or depot is within reach, so its feasible set is empty and the environment fails it.${forced}`);
+    }
+  }
+  const queues = [];
+  for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "queue") queues.push([g[1] - g[0], tr.id, g[3], g[0]]);
+  if (queues.length) {
+    queues.sort((a, b) => b[0] - a[0]);
+    const [h, k, node, t0] = queues[0];
+    const total = queues.reduce((a, q) => a + q[0], 0);
+    const st = sc.stations.find((s) => s.node === node);
+    const where = st ? `${place(sc, node, true)} (${st.ports} port${st.ports === 1 ? "" : "s"}, u = ${st.u.toFixed(2)})` : place(sc, node, true);
+    add("warning", `${queues.length} queue wait${queues.length === 1 ? "" : "s"}, ${fmt1(total)} truck-hours in total. The longest: truck ${k} waits ${fmt1(h)} h at ${where} from ${fmtT(t0)}.`);
+  } else if ((((S.scenarios[sc.scenario] || {}).settings || {}).public_charging || {}).enabled) {
+    add("neutral", "No fleet truck had to queue in this run.");
+  }
+  const balks = sc.decisions.filter((d) => d[5] && !["queue", "charge", "rest_break", "rest_daily"].includes(d[2])).length;
+  if (balks) add("neutral", `${balks} time${balks === 1 ? "" : "s"} a truck found every port busy and left instead of queueing (Kullman's queue-or-leave decision).`);
+  let downs = 0;
+  for (const st of sc.stations) for (let i = 1; i < st.steps.length; i++) if (st.steps[i][4] < st.steps[i - 1][4]) downs++;
+  if (downs) add("neutral", `${downs} port failure${downs === 1 ? "" : "s"} at the stations this fleet used; see the capacity line in the strips below the timeline.`);
+  const rests = [];
+  for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "rest") rests.push(g);
+  if (rests.length) {
+    const daily = rests.filter((g) => g[7].rest === "daily").length;
+    const road = rests.filter((g) => g[7].roadside).length;
+    const hours = rests.reduce((a, g) => a + g[1] - g[0], 0);
+    const atStart = rests.filter((g) => g[0] < 1e-6 && g[7].rest === "daily").length;
+    if (atStart) add("warning", `${atStart} driver${atStart === 1 ? "" : "s"} start the day with a 10 h daily rest at t = 0. A fresh driver is on duty from t = 0, so the 14 h window is already running and a daily rest is feasible; the greedy baseline rests whenever no driving action is feasible, and at t = 0 nothing has been released yet.`);
+    add("neutral", `${rests.length} rests (${daily} daily, ${rests.length - daily} breaks), ${fmt1(hours)} h in total; ${road} taken at the roadside inside a leg, ${rests.length - road} at a stop.${sc.hos_violations === 0 ? " The independent HOS audit finds no violation." : ""}`);
+  }
+  if (sc.requests.length) {
+    const c = { served: 0, served_late: 0, lost: 0 };
+    for (const r of sc.requests) c[r.status] = (c[r.status] || 0) + 1;
+    const open = sc.requests.length - c.served - c.served_late - c.lost;
+    const rm = sc.request_metrics || {};
+    const drops = (rm.dropped_by_euro_filter || 0) + (rm.dropped_by_witness || 0) + (rm.dropped_by_hours_of_service || 0);
+    add(c.lost || open ? "warning" : "neutral", `${sc.requests.length} requests revealed: ${c.served} delivered on time, ${c.served_late} late, ${c.lost} lost, ${open} still open or on board when the run ends. The generator dropped ${drops} candidates that no fresh truck could serve in time${rm.dropped_by_hours_of_service ? ` (${rm.dropped_by_hours_of_service} only because of hours of service)` : ""}.`);
+  }
+  if (sc.termination === "time_limit_exhausted") {
+    const active = sc.trucks.filter((t) => t.status === "active").length;
+    add("neutral", `The run stops at the ${fmt1(sc.horizon)} h horizon with ${active} truck${active === 1 ? "" : "s"} still working.`);
+  }
+  return out;
+}
+
+if (typeof document === "undefined") {
+  globalThis.__prep = { prepare, stateAt, socAt, place };
+  return;
+}
+
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+const POLICY_ORDER = Object.keys(S.policies);
+const SCENARIOS = Object.keys(S.scenarios);
+const RUNS = new Map(S.runs.map((r) => [`${r.scenario}|${r.policy}|${r.seed}`, r]));
+const SEEDS = [...new Set(S.runs.map((r) => r.seed))].sort((a, b) => a - b);
+let current = null;
+let cursor = 0;
+let playing = false;
+let lastFrame = 0;
+let hoverTruck = null;
+const sel = { scenario: SCENARIOS[0], policy: null, seed: SEEDS[0] };
+
+function termPill(term) {
+  const [cls, ic, label] = TERM[term] || ["neutral", "·", term];
+  return `<span class="pill ${cls}"><span class="ic">${ic}</span>${esc(label)}</span>`;
+}
+function outcomeOf(run) { return run.status === "ok" ? run.termination : run.status; }
+function policyLabel(p) { return (S.policies[p] || {}).label || p; }
+const NETWORK_NAMES = { california: "California", texas: "Texas", pacific_northwest: "Pacific Northwest", seattle: "Puget Sound", chicago: "Chicagoland" };
+function networkName(net) { return NETWORK_NAMES[net] || titleCase(String(net).replace(/_/g, " ")); }
+
+function scenarioSentence(name) {
+  const sc = S.scenarios[name], s = sc.settings || {}, env = s.environment || {};
+  const parts = [`${networkName(sc.network)} network, ${env.num_trucks} trucks, ${env.max_time} h horizon`];
+  const r = s.requests;
+  if (r && r.mode && r.mode !== "static") {
+    parts.push(r.mode === "drayage" ? "container moves between port terminals and customers, revealed during the day"
+      : `same-day requests revealed during the day (${r.arrival_process === "poisson" ? "Poisson arrivals" : "hourly EURO epochs"}), ${r.deadline_type || "hard"} deadlines`);
+  } else {
+    parts.push(`${env.num_stops} customers known at the start`);
+  }
+  const p = s.public_charging;
+  if (p && p.enabled) {
+    const x = p.exogenous_traffic || {};
+    parts.push(`public stations shared with outside trucks at u = ${x.utilization}${p.outages && p.outages.enabled ? " with port outages" : ""}`);
+  }
+  const h = s.hours_of_service;
+  if (h && h.enabled) parts.push(`${h.regime === "us_fmcsa_property" ? "US" : h.regime === "eu_561_2006" ? "EU" : h.regime} driver hours, rests ${h.rest_locations === "stops_only" ? "only at stops" : "anywhere"}`);
+  return parts.join("; ") + ".";
+}
+
+function renderControls() {
+  const fill = (id, items, value) => {
+    const box = $(id);
+    box.innerHTML = items.map(([v, label, disabled]) =>
+      `<option value="${esc(v)}"${String(v) === String(value) ? " selected" : ""}${disabled ? " disabled" : ""}>${esc(label)}</option>`).join("");
+  };
+  fill("pick-scenario", SCENARIOS.map((s) => [s, `${networkName(S.scenarios[s].network)} · ${s.replace(/_/g, " ")}`]), sel.scenario);
+  fill("pick-policy", POLICY_ORDER.map((p) => {
+    const ok = SEEDS.some((seed) => (RUNS.get(`${sel.scenario}|${p}|${seed}`) || {}).status === "ok");
+    return [p, ok ? policyLabel(p) : `${policyLabel(p)} (not applicable)`, !ok];
+  }), sel.policy);
+  fill("pick-seed", SEEDS.map((s) => [s, `Seed ${s}`]), sel.seed);
+}
+
+function firstApplicable(scenario) {
+  return POLICY_ORDER.find((p) => SEEDS.some((s) => (RUNS.get(`${scenario}|${p}|${s}`) || {}).status === "ok")) || POLICY_ORDER[0];
+}
+
+function renderHead(sc) {
+  $("sc-title").textContent = `${policyLabel(sc.policy)} · seed ${sc.seed}`;
+  $("sc-pill").innerHTML = termPill(sc.termination);
+  $("sc-desc").textContent = `${scenarioSentence(sc.scenario)} ${(S.policies[sc.policy] || {}).description || ""}`;
+  const chips = [`scenario: ${sc.scenario}`, `policy: ${sc.policy}`, `seed ${sc.seed}`, `${sc.steps} decisions`, `run took ${fmt1(sc.seconds)} s`];
+  if (sc.hos_violations != null) chips.push(`HOS audit: ${sc.hos_violations} violations`);
+  $("sc-chips").innerHTML = chips.map((t) => `<span class="chip">${esc(t)}</span>`).join("");
+  const m = sc.metrics, rm = sc.request_metrics;
+  const served = rm ? `${rm.requests_served_on_time} / ${rm.requests_released}` : `${m.customers_served} / ${m.customers_total}`;
+  const servedSub = rm ? `on time · ${rm.requests_served_late} late · ${rm.requests_lost} lost` : "customers served";
+  const failed = sc.trucks.filter((t) => t.status === "failed").length;
+  const hours = HOUR_KEYS.map(([k, key]) => [k, m[key] || 0]).filter(([, v]) => v > 0.05);
+  const total = hours.reduce((a, [, v]) => a + v, 0);
+  $("kpis").innerHTML = `
+    <div class="kpi"><span class="lab">Served</span><span class="val">${served}</span><span class="sub">${servedSub}</span></div>
+    <div class="kpi"><span class="lab">Run ends at</span><span class="val">${fmtT(sc.end)}</span><span class="sub">${sc.termination === "time_limit_exhausted" ? "horizon reached" : "last truck done"}</span></div>
+    <div class="kpi"><span class="lab">Trucks stranded</span><span class="val">${failed}</span><span class="sub">of ${sc.trucks.length}</span></div>
+    <div class="kpi"><span class="lab">Distance</span><span class="val">${Math.round(m.total_distance).toLocaleString()} km</span><span class="sub">${Math.round(m.total_energy_consumed).toLocaleString()} kWh used</span></div>
+    <div class="kpi wide"><span class="lab">Fleet hours by activity, ${fmt1(total)} h in total</span>
+      <div class="hoursbar" role="img" aria-label="Fleet hours by activity">${hours.map(([k, v]) => `<span class="bg-${k}" style="flex:${v} 1 0" title="${ACT[k].label}: ${fmt1(v)} h"></span>`).join("")}</div>
+      <div class="hourslegend">${hours.map(([k, v]) => `<span><span class="sw bg-${k}"></span> ${ACT[k].label} <b>${fmt1(v)}</b></span>`).join("")}</div></div>`;
+}
+function renderLegend(sc) {
+  const used = new Set();
+  for (const tr of sc.trucks) for (const g of tr.segs) used.add(ACT[g[2]].alias || g[2]);
+  $("legend").innerHTML = LEGEND_ORDER.filter((k) => used.has(k)).map((k) =>
+    `<span><span class="sw ${ACT[k].idle ? "idle" : ""} bg-${k}"></span>${ACT[k].label}${ACT[k].idle ? " (short bar: stationary)" : ""}</span>`).join("")
+    + `<span><svg width="12" height="12" aria-hidden="true"><path d="M2 2L10 10M10 2L2 10" class="mk-fail"></path></svg>Stranded</span>`
+    + `<span><svg width="10" height="12" aria-hidden="true"><path d="M2 1V11" class="mk-retire"></path><path d="M2 1h6l-2 2.5 2 2.5h-6z" fill="var(--ink)"></path></svg>Retired at depot</span>`;
+}
+
+// ------------------------------------------------------------------ timeline
+
+const G = { label: 46, right: 14, top: 22, row: 32, bar: 14 };
+
+function niceStep(T, width) {
+  const target = Math.max(4, Math.min(12, Math.floor(width / 70)));
+  for (const s of [0.5, 1, 2, 3, 4, 6, 8, 12, 24, 48]) if (T / s <= target) return s;
+  return 48;
+}
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+let tipEl = null;
+function showTip(panel, evt, html) {
+  if (!tipEl) { tipEl = document.createElement("div"); tipEl.className = "tip"; }
+  if (tipEl.parentNode !== panel) panel.appendChild(tipEl);
+  tipEl.innerHTML = html;
+  tipEl.hidden = false;
+  const box = panel.getBoundingClientRect();
+  let x = evt.clientX - box.left + 14, y = evt.clientY - box.top + 14;
+  const w = tipEl.offsetWidth;
+  if (x + w > box.width) x = Math.max(0, evt.clientX - box.left - w - 10);
+  tipEl.style.left = x + "px";
+  tipEl.style.top = y + "px";
+}
+function hideTip() { if (tipEl) tipEl.hidden = true; }
+
+function xScale(sc, width) {
+  const w = width - G.label - G.right;
+  return (t) => G.label + (t / sc.T) * w;
+}
+
+function drawAxis(svg, sc, width, height, x, top) {
+  const step = niceStep(sc.T, width - G.label);
+  const g = el("g", { class: "axis" }, svg);
+  for (let t = 0; t <= sc.T + 1e-9; t += step) {
+    el("line", { x1: x(t), x2: x(t), y1: top - 4, y2: height, class: t > 0 && t % 24 === 0 ? "dayline" : "gridline" }, g);
+    const lab = el("text", { x: x(t), y: top - 8, "text-anchor": t === 0 ? "start" : "middle" }, g);
+    lab.textContent = `${t}${t === 0 ? " h" : ""}`;
+  }
+  // Every run of a scenario shares this axis; mark where this run ends and the horizon.
+  if (sc.horizon < sc.T - 1e-6) el("line", { x1: x(sc.horizon), x2: x(sc.horizon), y1: top - 2, y2: height, class: "horizon-line" }, g);
+  if (sc.end < sc.T - 1e-6) el("line", { x1: x(sc.end), x2: x(sc.end), y1: top - 2, y2: height, class: "end-line" }, g);
+}
+
+// One time axis per scenario: 0 to the longest run of any algorithm and seed.
+function scenarioDomain(scenario) {
+  const longest = Math.max(1, ...S.runs.filter((r) => r.scenario === scenario && r.status === "ok").map((r) => r.end));
+  const step = longest <= 48 ? 6 : longest <= 120 ? 12 : 24;
+  return Math.ceil(longest / step - 1e-9) * step;
+}
+
+function tipFor(sc, tr, gIdx) {
+  const g = tr.gsegs[gIdx];
+  const [s, e, kind, from, to, soc0, soc1, info] = g;
+  const lab = ACT[kind].label;
+  let body = `${fmtT(s)} → ${fmtT(e)} · ${fmt1(e - s)} h`;
+  if (kind === "drive") body += `<br>${esc(place(sc, from, true))} → ${esc(place(sc, to, true))}${info.km != null ? ` · ${info.km} km, ${info.kwh} kWh` : ""}`;
+  else if (kind === "charge") body += `<br>${esc(place(sc, from, true))} · ${Math.round(soc0)} % → ${Math.round(soc1)} %${info.kwh != null ? ` (+${info.kwh} kWh)` : ""}`;
+  else if (kind === "rest") body += `<br>${info.rest === "daily" ? "Daily rest" : "Break"}${info.roadside ? ", roadside inside the leg" : ` at ${esc(place(sc, from, true))}`}`;
+  else body += `<br>at ${esc(place(sc, from, true))}${info.request != null ? ` · request #${info.request}` : ""}`;
+  if (info.cut) body += "<br><i>still running at the horizon</i>";
+  return `<b>Truck ${tr.id} · ${lab}</b><br>${body}`;
+}
+
+function renderGantt(sc) {
+  const host = $("gantt");
+  const width = Math.max(320, host.clientWidth || 700);
+  const n = sc.trucks.length;
+  const height = G.top + n * G.row + 4;
+  host.innerHTML = "";
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `Activity timeline of ${n} trucks over ${fmt1(sc.T)} hours` }, host);
+  const x = xScale(sc, width);
+  drawAxis(svg, sc, width, height, x, G.top);
+  sc.trucks.forEach((tr, i) => {
+    const y0 = G.top + i * G.row;
+    const row = el("g", { class: "lane-row", "data-truck": tr.id }, svg);
+    el("rect", { x: G.label, y: y0 + 2, width: width - G.label - G.right, height: G.bar + 2, class: "lane", rx: 2 }, row);
+    const lab = el("text", { x: 4, y: y0 + 13, class: "lanelab id" }, row);
+    lab.textContent = `T${tr.id}`;
+    const st = el("text", { x: 24, y: y0 + 13, class: "lanelab" }, row);
+    st.textContent = tr.status === "failed" ? "✕" : tr.status === "retired" ? "✓" : "→";
+    const cy = y0 + 3 + G.bar / 2;
+    tr.gsegs.forEach((g, k) => {
+      const [s, e, kind] = g;
+      const x0 = x(s), w = Math.max(1.2, x(e) - x0);
+      const h = ACT[kind].idle ? 8 : G.bar;
+      el("rect", { x: x0, y: cy - h / 2, width: w, height: h, rx: Math.min(2, w / 2), class: `bar a-${kind}`, "data-t": tr.id, "data-k": k }, row);
+    });
+    // state of charge, 0-100 % in a 9 px band under the bar
+    const sy0 = y0 + G.bar + 6, sh = 9;
+    const pts = tr.soc.map(([t, v]) => `${x(t).toFixed(1)},${(sy0 + sh - (v / 100) * sh).toFixed(1)}`);
+    if (pts.length) {
+      const endX = x(sc.end);
+      const last = tr.soc[tr.soc.length - 1];
+      const tail = `${endX.toFixed(1)},${(sy0 + sh - (last[1] / 100) * sh).toFixed(1)}`;
+      el("path", { d: `M${x(0)},${sy0 + sh} L${pts.join(" L")} L${tail} L${endX},${sy0 + sh} Z`, class: "soc-area" }, row);
+      el("path", { d: `M${pts.join(" L")} L${tail}`, class: "soc-line" }, row);
+    }
+    for (const m of tr.marks) {
+      const mx = x(m[0]);
+      if (m[1] === "failed") el("path", { d: `M${mx - 5},${cy - 5}L${mx + 5},${cy + 5}M${mx + 5},${cy - 5}L${mx - 5},${cy + 5}`, class: "mk-fail" }, row);
+      else if (m[1] === "retired") {
+        el("path", { d: `M${mx},${y0 + 1}V${y0 + G.bar + 5}`, class: "mk-retire" }, row);
+        el("path", { d: `M${mx},${y0 + 1}h6l-2 2.5 2 2.5h-6z`, fill: "var(--ink)" }, row);
+      }
+    }
+    row.addEventListener("pointerenter", () => setHover(tr.id));
+    row.addEventListener("pointerleave", () => setHover(null));
+  });
+  const cur = el("g", { id: "g-cursor" }, svg);
+  el("line", { x1: 0, x2: 0, y1: G.top - 2, y2: height, class: "cursor-line" }, cur);
+  el("path", { d: "M-5,4 L5,4 L0,10 Z", class: "cursor-head" }, cur);
+  const panel = $("gantt-panel");
+  svg.addEventListener("pointermove", (evt) => {
+    const t = evt.target;
+    if (t.classList && t.classList.contains("bar")) {
+      const tr = sc.trucks[+t.dataset.t];
+      showTip(panel, evt, tipFor(sc, tr, +t.dataset.k));
+    } else hideTip();
+    if (evt.buttons & 1) scrubFromEvent(svg, evt, sc, width);
+  });
+  svg.addEventListener("pointerleave", hideTip);
+  svg.addEventListener("pointerdown", (evt) => { scrubFromEvent(svg, evt, sc, width); });
+  svg.style.touchAction = "pan-y";
+}
+
+function scrubFromEvent(svg, evt, sc, width) {
+  const box = svg.getBoundingClientRect();
+  const px = ((evt.clientX - box.left) / box.width) * width;
+  const t = ((px - G.label) / (width - G.label - G.right)) * sc.T;
+  setTime(Math.max(0, Math.min(sc.T, t)));
+}
+
+function renderLower(sc) {
+  const host = $("lower-panel");
+  host.innerHTML = "";
+  host.hidden = !(sc.stations.length || sc.requests.length);
+  for (const [show, draw] of [[sc.stations.length, renderStations], [sc.requests.length, renderRequests]]) {
+    if (!show) continue;
+    const div = document.createElement("div");
+    div.className = "panel";
+    host.appendChild(div);
+    draw(sc, div);
+  }
+}
+
+function stepPath(x, pts, y) {
+  // pts: [[t, value]] step function -> closed area from baseline
+  let d = "";
+  for (let i = 0; i < pts.length; i++) {
+    const [t, v] = pts[i];
+    const t1 = i + 1 < pts.length ? pts[i + 1][0] : null;
+    d += `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+    if (t1 != null) d += `L${x(t1).toFixed(1)},${y(v).toFixed(1)}`;
+  }
+  return d;
+}
+
+function renderStations(sc, host) {
+  const width = Math.max(320, $("gantt").clientWidth || 700);
+  const x = xScale(sc, width);
+  const H = 46, gap = 18;
+  host.innerHTML = `<div class="panel-title"><h3>Stations this fleet used</h3><span class="note">vehicles in the station over time</span></div>
+    <div class="legend"><span><span class="sw bg-outside"></span>Outside vehicles charging</span><span><span class="sw bg-charge"></span>Fleet truck on a port</span><span><span class="sw bg-queue" style="opacity:.55"></span>Vehicles queued</span><span><svg width="16" height="10" aria-hidden="true"><path d="M0 5H16" class="strip-cap"></path></svg>Ports up</span></div>`;
+  const height = G.top + sc.stations.length * (H + gap);
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Occupancy of the stations the fleet used" }, host);
+  drawAxis(svg, sc, width, height, x, G.top);
+  sc.stations.forEach((st, i) => {
+    const y0 = G.top + i * (H + gap) + 14;
+    const lab = el("text", { x: G.label, y: y0 - 4, class: "lanelab" }, svg);
+    lab.textContent = `${place(sc, st.node, true)} · ${st.ports} port${st.ports === 1 ? "" : "s"} · u = ${st.u.toFixed(2)}`;
+    lab.setAttribute("fill", "var(--ink-2)");
+    // merge outside timeline with fleet queue counts
+    const times = new Set(st.steps.map((r) => r[0]));
+    for (const [t] of st.fleetQueue) times.add(t);
+    const ts = [...times].filter((t) => t <= sc.end).sort((a, b) => a - b);
+    let si = 0, fq = 0, fi = 0, row = st.steps[0];
+    const rows = [];
+    for (const t of ts) {
+      while (si + 1 < st.steps.length && st.steps[si + 1][0] <= t) row = st.steps[++si];
+      while (fi < st.fleetQueue.length && st.fleetQueue[fi][0] <= t) fq += st.fleetQueue[fi++][1];
+      rows.push([t, row[1], row[2], row[3] + Math.max(0, fq), row[4]]);
+    }
+    const maxV = Math.max(st.ports, ...rows.map((r) => r[1] + r[2] + r[3]), 1);
+    const y = (v) => y0 + H - (v / maxV) * H;
+    const base = (arr) => `${stepPath(x, arr, y)}L${x(sc.end)},${y(arr[arr.length - 1][1])}`;
+    const close = (top, bottom) => {
+      const up = stepPath(x, top, y) + `L${x(sc.end)},${y(top[top.length - 1][1])}`;
+      const rev = [...bottom].reverse();
+      let d = `L${x(sc.end)},${y(rev[0][1])}`;
+      for (let k = 0; k < rev.length; k++) {
+        const [t, v] = rev[k];
+        d += `L${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+        if (k + 1 < rev.length) d += `L${x(t).toFixed(1)},${y(rev[k + 1][1]).toFixed(1)}`;
+      }
+      return up + d + "Z";
+    };
+    const zero = rows.map((r) => [r[0], 0]);
+    const out = rows.map((r) => [r[0], r[1]]);
+    const fleet = rows.map((r) => [r[0], r[1] + r[2]]);
+    const queued = rows.map((r) => [r[0], r[1] + r[2] + r[3]]);
+    el("rect", { x: G.label, y: y0, width: width - G.label - G.right, height: H, class: "lane" }, svg);
+    el("path", { d: close(queued, fleet), class: "strip-queue" }, svg);
+    el("path", { d: close(fleet, out), class: "strip-fleet" }, svg);
+    el("path", { d: close(out, zero), class: "strip-out" }, svg);
+    el("path", { d: base(rows.map((r) => [r[0], r[4]])), class: "strip-cap" }, svg);
+    const top = el("text", { x: G.label - 6, y: y0 + 8, class: "lanelab", "text-anchor": "end" }, svg);
+    top.textContent = maxV;
+    const bot = el("text", { x: G.label - 6, y: y0 + H, class: "lanelab", "text-anchor": "end" }, svg);
+    bot.textContent = "0";
+  });
+  const cur = el("g", { class: "l-cursor" }, svg);
+  el("line", { x1: 0, x2: 0, y1: G.top - 2, y2: height, class: "cursor-line" }, cur);
+  svg.addEventListener("pointerdown", (evt) => scrubFromEvent(svg, evt, sc, width));
+  svg.addEventListener("pointermove", (evt) => { if (evt.buttons & 1) scrubFromEvent(svg, evt, sc, width); });
+}
+
+function renderRequests(sc, host) {
+  const width = Math.max(320, $("gantt").clientWidth || 700);
+  const x = xScale(sc, width);
+  const pitch = 6;
+  const reqs = sc.requests;
+  host.innerHTML = `<div class="panel-title"><h3>Requests, in reveal order</h3><span class="note">${reqs.length} revealed</span></div>
+    <div class="legend"><span><span class="sw" style="background:var(--surface-2);outline:1px solid var(--line)"></span>Service window</span><span><svg width="16" height="8" aria-hidden="true"><path d="M0 4H16" class="req-life"></path></svg>Known to the fleet</span><span><span class="pill good" style="padding:0 6px 0 3px;font-weight:500"><span class="ic" style="width:10px;height:10px;font-size:7px">✓</span>On time</span></span><span><span class="pill warning" style="padding:0 6px 0 3px;font-weight:500"><span class="ic" style="width:10px;height:10px;font-size:7px">!</span>Late</span></span><span><span class="pill critical" style="padding:0 6px 0 3px;font-weight:500"><span class="ic" style="width:10px;height:10px;font-size:7px">✕</span>Lost</span></span><span><svg width="10" height="10" aria-hidden="true"><circle cx="5" cy="5" r="3" class="o-open"></circle></svg>Open or on board at the end</span></div>`;
+  const height = G.top + reqs.length * pitch + 6;
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Request timeline" }, host);
+  drawAxis(svg, sc, width, height, x, G.top);
+  const clip = (t) => Math.max(0, Math.min(sc.T, t == null ? sc.T : t));
+  reqs.forEach((r, i) => {
+    const y = G.top + i * pitch + 3;
+    const start = r.pickup && r.kind.startsWith("drayage") ? r.pickup[1] : r.delivery[1];
+    const a = clip(start), b = clip(r.delivery[2]);
+    if (b > a) el("rect", { x: x(a), y: y - 2.5, width: x(b) - x(a), height: 5, class: "req-win" }, svg);
+    const endT = clip(r.served != null ? r.served : r.lost != null ? r.lost : sc.end);
+    el("line", { x1: x(r.reveal), x2: x(endT), y1: y, y2: y, class: "req-life" }, svg);
+    el("rect", { x: x(r.reveal) - 0.75, y: y - 2.5, width: 1.5, height: 5, class: "req-reveal" }, svg);
+    const cls = r.status === "served" ? "o-good" : r.status === "served_late" ? "o-late" : r.status === "lost" ? "o-lost" : "o-open";
+    el("circle", { cx: x(endT), cy: y, r: 2.6, class: cls }, svg);
+    const hit = el("rect", { x: G.label, y: y - pitch / 2, width: width - G.label - G.right, height: pitch, class: "hit", "data-r": i }, svg);
+    hit.addEventListener("pointermove", (evt) => {
+      const st = { served: "delivered on time", served_late: `delivered ${fmt1(r.delay)} h late`, lost: "lost" }[r.status] || `${r.status.replace("_", " ")} at the end`;
+      const route = r.pickup ? `${esc(place(sc, r.pickup[0], true))} → ${esc(place(sc, r.delivery[0], true))}` : `→ ${esc(place(sc, r.delivery[0], true))}`;
+      showTip(host, evt, `<b>#${r.id} · ${esc(r.kind.replace("_", " "))}</b><br>${route}<br>revealed ${fmtT(r.reveal)}, released ${fmtT(r.release)}<br>window ${fmtT(start)} – ${r.delivery[2] != null ? fmtT(r.delivery[2]) : "open"}<br>${st}${r.owner != null ? ` · truck ${r.owner}` : ""}`);
+    });
+    hit.addEventListener("pointerleave", hideTip);
+  });
+  const cur = el("g", { class: "l-cursor" }, svg);
+  el("line", { x1: 0, x2: 0, y1: G.top - 2, y2: height, class: "cursor-line" }, cur);
+  svg.addEventListener("pointerdown", (evt) => scrubFromEvent(svg, evt, sc, width));
+}
+
+// ------------------------------------------------------------------ map
+
+let mapState = null;
+
+function renderMap(sc) {
+  const host = $("map");
+  host.innerHTML = "";
+  const bg = S.views[sc.scenario];
+  const [la0, la1, lo0, lo1] = bg.box;
+  const K = S.k;
+  const vb = [lo0 * K, -la1, (lo1 - lo0) * K, la1 - la0];
+  const svg = el("svg", { viewBox: vb.join(" "), role: "img", "aria-label": "Map of truck positions", preserveAspectRatio: "xMidYMid meet" }, host);
+  const pxW = host.clientWidth || 400;
+  const u = vb[2] / pxW; // projected units per CSS pixel
+  if (bg.png) el("image", { href: bg.png, x: vb[0], y: vb[1], width: vb[2], height: vb[3], preserveAspectRatio: "none", class: "map-road" }, svg);
+  const xy = (n) => [NODES[n][1] * K, -NODES[n][0]];
+  const inBox = (n) => NODES[n][0] >= la0 && NODES[n][0] <= la1 && NODES[n][1] >= lo0 && NODES[n][1] <= lo1;
+  // legs
+  const legs = el("g", {}, svg);
+  const legEls = [];
+  for (const tr of sc.trucks) {
+    for (const leg of tr.legs) {
+      const [p, q] = [xy(leg[2]), xy(leg[3])];
+      const line = el("line", { x1: p[0], y1: p[1], x2: q[0], y2: q[1], class: "m-leg", "stroke-width": 1.1 * u }, legs);
+      legEls.push([tr.id, leg, line]);
+    }
+  }
+  // nodes
+  const used = new Set();
+  for (const tr of sc.trucks) for (const g of tr.segs) if (g[2] === "charge" || g[2] === "queue") used.add(g[3]);
+  const nodesG = el("g", {}, svg);
+  for (const [key, row] of Object.entries(NODES)) {
+    const n = +key;
+    if (row[2] !== "charger" || !inBox(n)) continue;
+    const [cx, cy] = xy(n), s = (used.has(n) ? 7 : 5) * u;
+    el("rect", { x: cx - s / 2, y: cy - s / 2, width: s, height: s, class: "m-stn" + (used.has(n) ? " used" : ""), "stroke-width": 1.2 * u }, nodesG);
+  }
+  const customers = new Set(sc.customers.map((c) => c[0]));
+  for (const r of sc.requests) { customers.add(r.delivery[0]); if (r.pickup) customers.add(r.pickup[0]); }
+  customers.delete(sc.depot);
+  for (const t of sc.terminals || []) customers.delete(t);
+  for (const n of customers) {
+    const [cx, cy] = xy(n);
+    el("circle", { cx, cy, r: 3 * u, class: "m-cust", "stroke-width": 1.3 * u }, nodesG);
+  }
+  const [dx, dy] = xy(sc.depot);
+  el("rect", { x: dx - 5.5 * u, y: dy - 5.5 * u, width: 11 * u, height: 11 * u, class: "m-depot", "stroke-width": 1.5 * u }, nodesG);
+  const depotLab = el("text", { x: dx + 8 * u, y: dy - 7 * u, class: "m-lab", "font-size": 11 * u, "stroke-width": 3 * u }, nodesG);
+  depotLab.textContent = "Depot";
+  (sc.terminals || []).forEach((n, i) => {
+    const [tx, ty] = xy(n), s = 6 * u;
+    el("path", { d: `M${tx},${ty - s}L${tx + s},${ty}L${tx},${ty + s}L${tx - s},${ty}Z`, class: "m-term", "stroke-width": 1.2 * u }, nodesG);
+    const lab = el("text", { x: tx + 8 * u, y: ty + (i ? 12 : -6) * u, class: "m-lab", "font-size": 10 * u, "stroke-width": 3 * u }, nodesG);
+    lab.textContent = place(sc, n, true).replace(/^Port of /, "");
+  });
+  // trucks
+  const trucksG = el("g", {}, svg);
+  const marks = sc.trucks.map((tr) => {
+    const g = el("g", { class: "m-truck" }, trucksG);
+    const c = el("circle", { r: 8 * u, "stroke-width": 1.6 * u }, g);
+    const t = el("text", { "font-size": 9 * u }, g);
+    t.textContent = tr.id;
+    return { g, c, t, tr };
+  });
+  mapState = { sc, u, legEls, marks };
+  $("map-note").textContent = `${(lo1 - lo0).toFixed(1)}° × ${(la1 - la0).toFixed(1)}° view`;
+}
+
+function updateMap(t) {
+  if (!mapState) return;
+  const { sc, u, legEls, marks } = mapState;
+  for (const [id, leg, line] of legEls) {
+    let cls = "m-leg";
+    if (leg[0] <= t) cls += " done";
+    if (hoverTruck === id) cls += " hl";
+    line.setAttribute("class", cls);
+    line.setAttribute("stroke-width", (hoverTruck === id ? 2.4 : leg[0] <= t ? 1.3 : 0.9) * u);
+  }
+  const groups = new Map();
+  const states = marks.map((m) => {
+    const st = stateAt(sc, m.tr, t);
+    const key = `${st.x.toFixed(4)},${st.y.toFixed(4)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m.tr.id);
+    return st;
+  });
+  marks.forEach((m, i) => {
+    const st = states[i];
+    const key = `${st.x.toFixed(4)},${st.y.toFixed(4)}`;
+    const same = groups.get(key);
+    let ox = 0, oy = 0;
+    if (same.length > 1) {
+      const j = same.indexOf(m.tr.id), a = (2 * Math.PI * j) / same.length - Math.PI / 2;
+      const rad = (same.length > 6 ? 15 : 11) * u;
+      ox = Math.cos(a) * rad; oy = Math.sin(a) * rad;
+    }
+    const status = truckStatusAt(m.tr, t);
+    const act = status === "active" ? st.act : "none";
+    m.g.setAttribute("transform", `translate(${st.x + ox},${st.y + oy})`);
+    m.g.setAttribute("class", `m-truck ${status}`);
+    m.c.setAttribute("class", `a-${act}`);
+    m.t.setAttribute("fill", act === "none" ? "var(--ink)" : ACT[act].ink);
+    m.g.setAttribute("opacity", hoverTruck != null && hoverTruck !== m.tr.id ? 0.35 : 1);
+    if (hoverTruck === m.tr.id) m.g.parentNode.appendChild(m.g);
+  });
+}
+
+// ------------------------------------------------------------------ feed + cursor
+
+const FEED_COLOR = { drive: "drive", arrive: "drive", queue: "queue", charge: "charge", rest: "rest", service: "service", window: "window", wait: "wait" };
+const FEED_STATUS = { fail: "var(--critical)", ontime: "var(--good)", late: "var(--warning)", reveal: "var(--muted)", retire: "var(--ink)", cut: "var(--muted)" };
+
+function updateFeed(t) {
+  const ev = current.events;
+  let hi = -1;
+  for (let lo = 0, up = ev.length - 1; lo <= up;) {
+    const mid = (lo + up) >> 1;
+    if (ev[mid][0] <= t + 1e-9) { hi = mid; lo = mid + 1; } else up = mid - 1;
+  }
+  const rows = [];
+  for (let i = hi; i >= 0 && rows.length < 9; i--) {
+    const [et, truck, text, kind] = ev[i];
+    const col = FEED_COLOR[kind] ? `class="k bg-${FEED_COLOR[kind]}"` : `class="k" style="background:${FEED_STATUS[kind] || "var(--muted)"}"`;
+    rows.push(`<li><span class="t">${fmt1(et)}</span><span class="who">${truck == null ? "" : "T" + truck}</span><span class="txt"><span ${col}></span>${esc(text)}</span></li>`);
+  }
+  $("feed").innerHTML = rows.join("") || `<li><span class="t">0.0</span><span class="who"></span><span class="txt">The fleet is at the depot.</span></li>`;
+}
+
+function setTime(t) {
+  cursor = t;
+  const sc = current;
+  const gw = $("gantt").querySelector("svg");
+  if (gw) {
+    const width = +gw.getAttribute("width");
+    const x = xScale(sc, width)(t);
+    const c1 = $("g-cursor");
+    if (c1) c1.setAttribute("transform", `translate(${x},0)`);
+    document.querySelectorAll(".l-cursor").forEach((c) => c.setAttribute("transform", `translate(${x},0)`));
+  }
+  $("clock").textContent = `t = ${fmt1(t)} h`;
+  $("scrub").value = Math.round((t / sc.T) * 1000);
+  updateMap(t);
+  updateFeed(t);
+}
+
+function setHover(id) {
+  hoverTruck = id;
+  document.querySelectorAll(".lane-row").forEach((r) => r.classList.toggle("dim", id != null && +r.dataset.truck !== id));
+  updateMap(cursor);
+}
+
+function renderNotes(sc) {
+  const ic = { critical: ["var(--critical)", "✕"], warning: ["var(--warning)", "!"], good: ["var(--good)", "✓"], neutral: ["var(--muted)", "·"] };
+  const runs = SEEDS.map((s) => RUNS.get(`${sc.scenario}|${sc.policy}|${s}`)).filter((r) => r && r.status === "ok");
+  const counts = {};
+  for (const r of runs) counts[r.termination] = (counts[r.termination] || 0) + 1;
+  const parts = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${(TERM[k] || [, , k])[2].toLowerCase()}`);
+  const stranded = runs.filter((r) => r.trucks.some((t) => t.status === "failed")).length;
+  const share = (r) => r.request_metrics ? r.request_metrics.requests_served_on_time / Math.max(1, r.request_metrics.requests_released)
+    : r.metrics.customers_served / Math.max(1, r.metrics.customers_total);
+  const mean = runs.length ? runs.reduce((a, r) => a + share(r), 0) / runs.length : 0;
+  const summary = runs.length ? `<p class="robust"><b>${esc(policyLabel(sc.policy))} across ${runs.length} seeds:</b> ${parts.join(", ")}. ${stranded} run${stranded === 1 ? "" : "s"} with a stranded truck · mean run length ${fmt1(runs.reduce((a, r) => a + r.end, 0) / runs.length)} h · ${Math.round(mean * 100)}% ${runs[0].request_metrics ? "of requests on time" : "of customers served"}.</p>` : "";
+  $("notes").innerHTML = `<h3>What happens in this run</h3><ul>${sc.highlights.map(([sev, text]) =>
+    `<li><span class="ic" style="background:${ic[sev][0]};${sev === "warning" ? "color:#241a00" : ""}">${ic[sev][1]}</span><span>${esc(text)}</span></li>`).join("")}</ul>${summary}`;
+}
+
+function showRun() {
+  const run = RUNS.get(`${sel.scenario}|${sel.policy}|${sel.seed}`);
+  stop();
+  renderControls();
+  renderCompare();
+  const ok = run && run.status === "ok";
+  $("run-body").hidden = !ok;
+  $("run-missing").hidden = ok;
+  if (!ok) {
+    const why = run ? run.reason || run.status : "This combination was not run.";
+    $("run-missing").innerHTML = `<h3>${esc(policyLabel(sel.policy))} · seed ${sel.seed}</h3><p>${esc(why)}</p>`;
+    current = null;
+    return;
+  }
+  NODES = S.networks[S.scenarios[run.scenario].network].nodes;
+  prepare(run);
+  run.T = scenarioDomain(run.scenario);
+  current = run;
+  renderHead(run);
+  renderLegend(run);
+  renderGantt(run);
+  renderLower(run);
+  renderMap(run);
+  renderNotes(run);
+  setTime(run.focus);
+}
+
+function select(scenario, policy, seed, user) {
+  sel.scenario = scenario;
+  sel.policy = policy && SEEDS.some((s) => (RUNS.get(`${scenario}|${policy}|${s}`) || {}).status === "ok") ? policy : firstApplicable(scenario);
+  sel.seed = SEEDS.includes(Number(seed)) ? Number(seed) : SEEDS[0];
+  showRun();
+  if (user) {
+    try { history.replaceState(null, "", `#${sel.scenario}.${sel.policy}.${sel.seed}`); } catch (e) { /* sandboxed */ }
+  }
+}
+// ------------------------------------------------------------------ playback
+
+function frame(now) {
+  if (!playing) return;
+  const dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  const run = +$("speed").value;
+  let t = cursor + dt * (current.end / run);
+  if (t >= current.end) { t = current.end; stop(); }
+  setTime(t);
+  if (playing) requestAnimationFrame(frame);
+}
+function play() {
+  if (cursor >= current.end - 1e-6) setTime(0);
+  playing = true;
+  lastFrame = performance.now();
+  $("play-icon").setAttribute("d", "M3 2h3v10H3zM8 2h3v10H8z");
+  $("play").setAttribute("aria-label", "Pause");
+  requestAnimationFrame(frame);
+}
+function stop() {
+  playing = false;
+  $("play-icon").setAttribute("d", "M3 1.5v11l9-5.5z");
+  $("play").setAttribute("aria-label", "Play");
+}
+$("play").addEventListener("click", () => (playing ? stop() : play()));
+$("scrub").addEventListener("input", (e) => { stop(); setTime((+e.target.value / 1000) * current.T); });
+
+function renderCompare() {
+  const scenario = sel.scenario;
+  $("cmp-h").textContent = `Every algorithm on ${scenario.replace(/_/g, " ")}`;
+  $("cmp-intro").textContent = `${scenarioSentence(scenario)} Each cell is one seed: the outcome and the share served (requests on time in request scenarios). Select a cell to open that run above. The bars show mean fleet hours by activity over the seeds that ran.`;
+  const rows = POLICY_ORDER.map((p) => [p, SEEDS.map((s) => RUNS.get(`${scenario}|${p}|${s}`))]);
+  const share = (r) => r.request_metrics ? r.request_metrics.requests_served_on_time / Math.max(1, r.request_metrics.requests_released)
+    : r.metrics.customers_served / Math.max(1, r.metrics.customers_total);
+  let html = `<thead><tr><th>Algorithm</th>${SEEDS.map((s) => `<th class="num">Seed ${s}</th>`).join("")}<th class="num">Mean served</th><th class="num">Mean end</th></tr></thead><tbody>`;
+  for (const [p, runs] of rows) {
+    const ok = runs.filter((r) => r && r.status === "ok");
+    const reason = runs.find((r) => r && r.status !== "ok");
+    html += `<tr><td><b>${esc(policyLabel(p))}</b>${!ok.length && reason ? `<span class="why">${esc(reason.reason || reason.status)}</span>` : ""}</td>`;
+    for (const r of runs) {
+      if (!r) { html += `<td class="num muted">–</td>`; continue; }
+      const out = outcomeOf(r);
+      const [cls, icon] = TERM[out] || ["neutral", "·"];
+      const active = p === sel.policy && r.seed === sel.seed ? " active" : "";
+      if (r.status !== "ok") { html += `<td class="num"><span class="cell ${cls}" title="${esc(r.reason || r.status)}"><span class="ic">${icon}</span></span></td>`; continue; }
+      html += `<td class="num"><button type="button" class="cell ${cls}${active}" data-p="${esc(p)}" data-s="${r.seed}" title="${esc((TERM[out] || [, , out])[2])} at ${fmtT(r.end)}"><span class="ic">${icon}</span>${Math.round(share(r) * 100)}%</button></td>`;
+    }
+    const meanShare = ok.length ? `${Math.round(ok.reduce((a, r) => a + share(r), 0) / ok.length * 100)}%` : "–";
+    const meanEnd = ok.length ? fmtT(ok.reduce((a, r) => a + r.end, 0) / ok.length) : "–";
+    html += `<td class="num">${meanShare}</td><td class="num">${meanEnd}</td></tr>`;
+  }
+  const tbl = $("cmp-table");
+  tbl.innerHTML = html + "</tbody>";
+  tbl.querySelectorAll("button.cell").forEach((b) => b.addEventListener("click", () => {
+    select(sel.scenario, b.dataset.p, Number(b.dataset.s), true);
+    $("run").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }));
+
+  $("cmp-legend").innerHTML = HOUR_KEYS.map(([k]) => `<span><span class="sw bg-${k}"></span>${ACT[k].label}</span>`).join("");
+  const host = $("cmp-chart");
+  const bars = rows.map(([p, runs]) => {
+    const ok = runs.filter((r) => r && r.status === "ok");
+    if (!ok.length) return null;
+    return [p, HOUR_KEYS.map(([k, key]) => [k, ok.reduce((a, r) => a + (r.metrics[key] || 0), 0) / ok.length])];
+  }).filter(Boolean);
+  host.innerHTML = "";
+  if (!bars.length) return;
+  const width = Math.max(560, host.clientWidth - 32);
+  const labW = Math.min(220, width * 0.3), right = 56, rowH = 26, top = 22;
+  const max = Math.max(...bars.map(([, parts]) => parts.reduce((a, [, v]) => a + v, 0)), 1);
+  const height = top + bars.length * rowH + 6;
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Mean fleet hours by activity per algorithm" }, host);
+  const x = (v) => labW + (v / max) * (width - labW - right);
+  const raw = max / 6, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  const ax = el("g", { class: "axis" }, svg);
+  for (let v = 0; v <= max + 1e-9; v += step) {
+    el("line", { x1: x(v), x2: x(v), y1: top - 4, y2: height, class: "gridline" }, ax);
+    const t = el("text", { x: x(v), y: top - 8, "text-anchor": "middle" }, ax);
+    t.textContent = v === 0 ? "0 h" : Math.round(v);
+  }
+  bars.forEach(([p, parts], i) => {
+    const y = top + i * rowH + 6, h = 14;
+    const lab = el("text", { x: labW - 8, y: y + 11, "text-anchor": "end", "font-size": 12, fill: "var(--ink)" }, svg);
+    lab.textContent = policyLabel(p);
+    let acc = 0;
+    const shown = parts.filter(([, v]) => v > 0);
+    shown.forEach(([k, v], j) => {
+      const x0 = x(acc) + (j ? 1 : 0), w = Math.max(0.5, x(acc + v) - x(acc) - (j ? 1 : 0));
+      const rect = el("rect", { x: x0, y, width: w, height: h, class: `a-${k}`, rx: j === shown.length - 1 ? 3 : 0 }, svg);
+      rect.addEventListener("pointermove", (evt) => showTip(host, evt, `<b>${esc(policyLabel(p))}</b><br>${ACT[k].label}: ${fmt1(v)} h (mean)`));
+      rect.addEventListener("pointerleave", hideTip);
+      acc += v;
+    });
+    const tot = el("text", { x: x(acc) + 6, y: y + 11, "font-size": 11, fill: "var(--ink-2)", "font-family": "var(--f-mono)" }, svg);
+    tot.textContent = Math.round(acc);
+  });
+}
+
+// ------------------------------------------------------------------ summaries
+
+const SUMMARY = [
+  ["runs", "Seeds", null], ["finished", "Finished", "max"], ["served", "Served %", "max"],
+  ["late", "Late", "min"], ["lost", "Lost", "min"], ["stranded", "Stranded runs", "min"],
+  ["end", "Run end h", "min"], ["operating", "Fleet h", "min"], ["travel", "Driving h", "min"],
+  ["charging", "Charging h", "min"], ["queue", "Queue h", "min"], ["rest", "Rest h", "min"],
+  ["waiting", "Waiting h", "min"], ["distance", "km", "min"], ["energy", "kWh", "min"],
+  ["sessions", "Charges", null], ["seconds", "Run time s", null],
+];
+const WITH_SD = new Set(["served", "end", "operating"]);
+
+function runMetrics(r) {
+  const m = r.metrics, rm = r.request_metrics;
+  const served = rm ? rm.requests_served_on_time / Math.max(1, rm.requests_released) : m.customers_served / Math.max(1, m.customers_total);
+  return {
+    finished: r.termination === "success" ? 1 : 0, served: 100 * served,
+    late: rm ? rm.requests_served_late : 0, lost: rm ? rm.requests_lost : 0,
+    stranded: r.trucks.some((t) => t.status === "failed") ? 1 : 0, end: r.end,
+    operating: m.total_operating_time, travel: m.total_travel_time, charging: m.total_charging_time,
+    queue: m.total_queue_time, rest: m.total_rest_time || 0,
+    waiting: (m.total_request_wait_time || 0) + (m.total_time_window_waiting || 0),
+    distance: m.total_distance, energy: m.total_energy_consumed, sessions: m.charging_sessions || 0, seconds: r.seconds,
+  };
+}
+
+function renderSummaries() {
+  let html = "";
+  for (const scenario of SCENARIOS) {
+    const rows = POLICY_ORDER.map((p) => {
+      const ms = SEEDS.map((s) => RUNS.get(`${scenario}|${p}|${s}`)).filter((r) => r && r.status === "ok").map(runMetrics);
+      if (!ms.length) return null;
+      const row = { policy: p, runs: ms.length };
+      for (const k of Object.keys(ms[0])) {
+        const vals = ms.map((x) => x[k]);
+        const sum = vals.reduce((a, v) => a + v, 0);
+        if (k === "finished" || k === "stranded") { row[k] = sum; continue; }
+        const mean = sum / vals.length;
+        row[k] = mean;
+        row[`${k}_sd`] = vals.length > 1 ? Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / (vals.length - 1)) : 0;
+      }
+      return row;
+    }).filter(Boolean);
+    if (!rows.length) continue;
+    const cols = SUMMARY.filter(([k]) => ["runs", "served", "end"].includes(k) || rows.some((r) => r[k]));
+    const best = {};
+    for (const [k, , dir] of cols) {
+      if (!dir) continue;
+      const vals = rows.map((r) => r[k]);
+      if (Math.max(...vals) - Math.min(...vals) < 1e-9) continue;
+      best[k] = dir === "max" ? Math.max(...vals) : Math.min(...vals);
+    }
+    const fmt = (k, r) => {
+      const v = r[k];
+      if (k === "runs") return String(v);
+      if (k === "finished" || k === "stranded") return `${v}/${r.runs}`;
+      const main = Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : fmt1(v);
+      return WITH_SD.has(k) && r.runs > 1 ? `${main} <span class="sd">± ${fmt1(r[`${k}_sd`])}</span>` : main;
+    };
+    html += `<div><h3>${esc(networkName(S.scenarios[scenario].network))} · ${esc(scenario.replace(/_/g, " "))}</h3><p class="sub">${esc(scenarioSentence(scenario))}</p>
+      <div class="tablewrap"><table><thead><tr><th>Algorithm</th>${cols.map(([, label]) => `<th class="num">${esc(label)}</th>`).join("")}</tr></thead><tbody>
+      ${rows.map((r) => `<tr><td><button type="button" class="go" data-s="${esc(scenario)}" data-p="${esc(r.policy)}">${esc(policyLabel(r.policy))}</button></td>${cols.map(([k]) =>
+        `<td class="num${k in best && Math.abs(r[k] - best[k]) < 1e-9 ? " best" : ""}">${fmt(k, r)}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div></div>`;
+  }
+  const host = $("sum-tables");
+  host.innerHTML = html;
+  host.querySelectorAll("button.go").forEach((b) => b.addEventListener("click", () => {
+    select(b.dataset.s, b.dataset.p, SEEDS[0], true);
+    $("run").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }));
+}
+
+// ------------------------------------------------------------------ boot
+
+$("pick-scenario").addEventListener("change", (e) => select(e.target.value, sel.policy, sel.seed, true));
+$("pick-policy").addEventListener("change", (e) => select(sel.scenario, e.target.value, sel.seed, true));
+$("pick-seed").addEventListener("change", (e) => select(sel.scenario, sel.policy, Number(e.target.value), true));
+$("seed-prev").addEventListener("click", () => select(sel.scenario, sel.policy, SEEDS[(SEEDS.indexOf(sel.seed) - 1 + SEEDS.length) % SEEDS.length], true));
+$("seed-next").addEventListener("click", () => select(sel.scenario, sel.policy, SEEDS[(SEEDS.indexOf(sel.seed) + 1) % SEEDS.length], true));
+$("meta").textContent = `${S.runs.filter((r) => r.status === "ok").length} runs · ${SCENARIOS.length} scenarios · ${POLICY_ORDER.length} algorithms · ${SEEDS.length} seeds · generated ${S.generated}`;
+const [hs, hp, hseed] = (location.hash || "").slice(1).split(".");
+select(S.scenarios[hs] ? hs : SCENARIOS[0], hp, hseed, false);
+renderSummaries();
+let resizeTimer = null;
+let lastWidth = window.innerWidth;
+window.addEventListener("resize", () => {
+  if (Math.abs(window.innerWidth - lastWidth) < 4) return;
+  lastWidth = window.innerWidth;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (current) { renderGantt(current); renderLower(current); renderMap(current); setTime(cursor); }
+    renderCompare();
+  }, 150);
+});
+})();
+
+</script>

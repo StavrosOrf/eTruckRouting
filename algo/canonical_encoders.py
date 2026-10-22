@@ -27,46 +27,16 @@ _CLIP = 10.0
 _EPSILON = 1e-6
 
 
-class CanonicalNormalizer(nn.Module):
-    """Shared running standardization applied identically to every encoder.
+class RunningStandardizer(nn.Module):
+    """Running mean/variance per named feature block, updated from valid rows only."""
 
-    Statistics are accumulated only over unmasked entries so that padding never
-    shifts the mean.  Because the module is shared by all encoders, feature
-    scaling can never become a confound in the architecture comparison.
-    """
-
-    def __init__(self) -> None:
+    def __init__(self, widths: dict[str, int]) -> None:
         super().__init__()
-        widths = {
-            **{
-                f"node_{node_type}": NODE_FEATURE_DIMS[node_type]
-                for node_type in NODE_TYPES
-            },
-            "action": ACTION_FEATURE_DIM,
-            "pairwise": EDGE_FEATURE_DIM,
-            "global": GLOBAL_FEATURE_DIM,
-        }
         for name, width in widths.items():
             self.register_buffer(f"{name}_mean", torch.zeros(width))
             self.register_buffer(f"{name}_var", torch.ones(width))
             self.register_buffer(f"{name}_count", torch.zeros(()))
-        self._widths = widths
-
-    @torch.no_grad()
-    def observe(self, tensors: CanonicalTensors) -> None:
-        """Update running statistics from one batch of canonical tensors."""
-        for node_type in NODE_TYPES:
-            self._update(
-                f"node_{node_type}",
-                tensors.nodes[node_type][tensors.node_masks[node_type]],
-            )
-        self._update("action", tensors.action[tensors.action_padding_mask])
-        pairwise_rows = [
-            tensors.pairwise[relation][tensors.pairwise_mask[relation]]
-            for relation in RELATION_TYPES
-        ]
-        self._update("pairwise", torch.cat(pairwise_rows, dim=0))
-        self._update("global", tensors.global_features)
+        self._widths = dict(widths)
 
     @torch.no_grad()
     def _update(self, name: str, values: torch.Tensor) -> None:
@@ -101,6 +71,44 @@ class CanonicalNormalizer(nn.Module):
         mean = getattr(self, f"{name}_mean")
         var = getattr(self, f"{name}_var")
         return torch.clamp((values - mean) / torch.sqrt(var + _EPSILON), -_CLIP, _CLIP)
+
+
+class CanonicalNormalizer(RunningStandardizer):
+    """Shared running standardization applied identically to every encoder.
+
+    Statistics are accumulated only over unmasked entries so that padding never
+    shifts the mean.  Because the module is shared by all encoders, feature
+    scaling can never become a confound in the architecture comparison.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                **{
+                    f"node_{node_type}": NODE_FEATURE_DIMS[node_type]
+                    for node_type in NODE_TYPES
+                },
+                "action": ACTION_FEATURE_DIM,
+                "pairwise": EDGE_FEATURE_DIM,
+                "global": GLOBAL_FEATURE_DIM,
+            }
+        )
+
+    @torch.no_grad()
+    def observe(self, tensors: CanonicalTensors) -> None:
+        """Update running statistics from one batch of canonical tensors."""
+        for node_type in NODE_TYPES:
+            self._update(
+                f"node_{node_type}",
+                tensors.nodes[node_type][tensors.node_masks[node_type]],
+            )
+        self._update("action", tensors.action[tensors.action_padding_mask])
+        pairwise_rows = [
+            tensors.pairwise[relation][tensors.pairwise_mask[relation]]
+            for relation in RELATION_TYPES
+        ]
+        self._update("pairwise", torch.cat(pairwise_rows, dim=0))
+        self._update("global", tensors.global_features)
 
     def forward(self, tensors: CanonicalTensors) -> CanonicalTensors:
         """Return standardized tensors with masks and semantics untouched."""
@@ -351,25 +359,33 @@ class _TypedMessagePassingLayer(nn.Module):
     features and its transport costs to a particular target.
     """
 
-    def __init__(self, hidden_dim: int, *, nonlinear_edge_messages: bool = False):
+    def __init__(
+        self,
+        hidden_dim: int,
+        *,
+        nonlinear_edge_messages: bool = False,
+        edge_dim: int = EDGE_FEATURE_DIM,
+        node_types: tuple[str, ...] = NODE_TYPES,
+    ):
         super().__init__()
         self.nonlinear_edge_messages = nonlinear_edge_messages
+        self.relations = tuple(
+            (source, target) for source in node_types for target in node_types
+        )
         self.messages = nn.ModuleDict(
             {
-                _relation_key(relation): nn.Linear(
-                    hidden_dim + EDGE_FEATURE_DIM, hidden_dim
-                )
-                for relation in RELATION_TYPES
+                _relation_key(relation): nn.Linear(hidden_dim + edge_dim, hidden_dim)
+                for relation in self.relations
             }
         )
         self.updates = nn.ModuleDict(
             {
                 node_type: nn.Linear(2 * hidden_dim, hidden_dim)
-                for node_type in NODE_TYPES
+                for node_type in node_types
             }
         )
         self.norms = nn.ModuleDict(
-            {node_type: nn.LayerNorm(hidden_dim) for node_type in NODE_TYPES}
+            {node_type: nn.LayerNorm(hidden_dim) for node_type in node_types}
         )
 
     def forward(
@@ -393,7 +409,7 @@ class _TypedMessagePassingLayer(nn.Module):
             )
             for node_type, values in node_embeddings.items()
         }
-        for relation in RELATION_TYPES:
+        for relation in self.relations:
             source, target = relation
             source_embed = node_embeddings[source]
             mask = pairwise_mask[relation]

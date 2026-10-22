@@ -238,3 +238,6 @@ latex/*.blg
 
 # solver interpreter of the RoutingBlocks baseline
 .venv-rb/
+
+# Gurobi licence (private credentials)
+gurobi.lic

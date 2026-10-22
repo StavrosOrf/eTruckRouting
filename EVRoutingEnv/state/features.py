@@ -21,6 +21,22 @@ from EVRoutingEnv.state.feasibility import (
 SCHEMA_VERSION = "joint-fleet-v7"
 
 NODE_TYPES = ("truck", "customer", "charger")
+# ``state_code`` is the index into this tuple; append new states last.
+TRUCK_STATES = (
+    "ready",
+    "routing",
+    "waiting_to_charge",
+    "waiting_for_service",
+    "charging",
+    "unloading",
+    "waiting_for_task",
+    "complete",
+    "failed",
+    # Appended in v7.
+    "resting",
+    "waiting_for_requests",
+    "loading",
+)
 EDGE_FEATURES = ("nominal_energy_kwh", "nominal_travel_hours", "reachable")
 RELATION_TYPES = tuple(
     (source, target) for source in NODE_TYPES for target in NODE_TYPES
@@ -270,26 +286,7 @@ def extract_canonical_features(env) -> CanonicalFleetFeatures:
     if not env.joint_routing or env.task_registry is None:
         raise ValueError("canonical features require an initialized fleet task registry")
 
-    state_codes = {
-        state: index
-        for index, state in enumerate(
-            (
-                "ready",
-                "routing",
-                "waiting_to_charge",
-                "waiting_for_service",
-                "charging",
-                "unloading",
-                "waiting_for_task",
-                "complete",
-                "failed",
-                # Appended in v7.
-                "resting",
-                "waiting_for_requests",
-                "loading",
-            )
-        )
-    }
+    state_codes = {state: index for index, state in enumerate(TRUCK_STATES)}
     depot_node = int(env.joint_instance.depot_node)
     truck_rows = []
     for truck in sorted(env.trucks, key=lambda item: item.truck_id):

@@ -24,6 +24,7 @@ The agent appends one line per turn to `results/generalist_graphppo/agent/status
 
 | File | Role |
 |---|---|
+| `SWARM.md` (repo root) | The swarm's goal (active and unmet until the locked-test gate passes), roles, shared state, stage board and stop rules |
 | `docs/campaigns/generalist_graphppo_suite_campaign.md` | Design: arms, gates, compute, risks |
 | `algo/generalist_observation.py`, `generalist_policy.py`, `generalist_ppo.py`, `generalist_imitation.py` | Size-agnostic observation, network, PPO with BC warm start, retained imitation and DAgger |
 | `algo/generalist_experts.py` | DAgger expert factories (`longhaul_plan`, `rolling_request`); `ROLLING` is also the dynamic BKS planner |

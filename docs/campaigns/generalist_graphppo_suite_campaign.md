@@ -49,6 +49,18 @@ The bar is a portfolio of independent, non-learning controllers executed closed 
 
 Files per problem: `results/generalist_graphppo/bks/<p>/validation.json` (128 seeds), `train_demonstrations.json` (256 train seeds, replay-verified) and `summary.json`; `test.json` is built only when P5 opens. `prepare --bks-from` freezes a copy into the campaign for the imitation arms.
 
+P0a result (2026-10-23, 128 validation seeds per problem; 256 replay-verified demonstrations each, no mismatches, no crashed episodes):
+
+| Problem | Teacher | BKS | Best methods | Bound |
+| --- | --- | --- | --- | --- |
+| `tx_longhaul` | success 1.00, 345 h | success 1.00, 117 h | `lh_plan` 111, `lh_plan_safe` 16, `alns_respect` 1 | nominal, mean gap 30 % |
+| `tx_longhaul_congested` | success 0.81, 392 h on successes | success 1.00, 124 h | `lh_plan` 69, `lh_plan_safe` 58, `alns_respect` 1 | nominal, mean gap 38 % |
+| `pnw_longhaul_hos` | success 0.84, 435 h on successes | success 1.00, 157 h | `lh_plan` 55, `lh_plan_safe` 52, `alns_respect` 21 | nominal, mean gap 88 % |
+| `ca_sameday` | 18.1 served, 31 % failed | 23.4 served, 0 failed | `rolling_request` 118, `greedy_dispatch` 10 | clairvoyant, BKS at 98.5 % of it; clairvoyant alone below the BKS on 13 seeds |
+| `ca_drayage_combined` | 14.7 served (Kullman 25.1) | 30.1 served | `rolling_request` 102, `kullman_myopic` 26 | clairvoyant, BKS at 95.9 % of it; clairvoyant alone below the BKS on 55 seeds |
+
+`lh_rolling` reproduced `lh_plan` on every seed: event-triggered re-planning never improved the time-0 plan. Per-episode costs on 18 cores: `lh_plan` 35 s (Texas) to 77 s (Pacific Northwest), `alns_respect` 12 s, the rolling planner 2 s (same-day) and 24 s (drayage), the greedy teacher 1–6 s.
+
 ---
 
 ## 2. Method

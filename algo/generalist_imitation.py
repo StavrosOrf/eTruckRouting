@@ -384,7 +384,10 @@ class DaggerSlots:
     def __init__(self, problems: Sequence, slots: Sequence[DaggerSlot], spec: ObservationSpec):
         self.problems = list(problems)
         self.slots = list(slots)
-        self.envs = [GeneralistEnv(self.problems[slot.problem].config, spec) for slot in self.slots]
+        self.envs = [
+            GeneralistEnv(self.problems[slot.problem].config, spec, problem=self.problems[slot.problem].name)
+            for slot in self.slots
+        ]
         self.experts: list = [None] * len(self.slots)
         self.position = [0] * len(self.slots)
         self.remaining = [0] * len(self.slots)
@@ -577,7 +580,7 @@ class ImitationData:
 
 def _replay_labelled_job(arguments):
     problem, spec, items = arguments
-    env = GeneralistEnv(problem.config, spec)
+    env = GeneralistEnv(problem.config, spec, problem=problem.name)
     results = []
     try:
         for position, seed, actions, labels in items:

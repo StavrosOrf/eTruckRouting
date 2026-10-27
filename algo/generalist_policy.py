@@ -36,12 +36,12 @@ from algo.canonical_encoders import (
 from algo.canonical_policy import PolicyOutput
 from algo.canonical_state import scatter_logits
 from algo.generalist_observation import (
-    FEATURE_DIMS,
     GENERALIST_SCHEMA_VERSION,
     NODE_TYPES,
     RELATION_TYPES,
     GraphBatch,
     ObservationSpec,
+    feature_dims,
 )
 
 
@@ -55,6 +55,7 @@ class GeneralistPolicyConfig:
     nonlinear_edge_messages: bool = True
     charger_budget: int = 32
     fleet_assignment: bool = False
+    plan_conditioned: bool = False
     feature_schema_version: str = GENERALIST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -62,7 +63,7 @@ class GeneralistPolicyConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        ObservationSpec(self.charger_budget, self.fleet_assignment)
+        ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned)
         if self.feature_schema_version != GENERALIST_SCHEMA_VERSION:
             raise ValueError(
                 f"checkpoint feature schema {self.feature_schema_version!r} is incompatible "
@@ -71,7 +72,7 @@ class GeneralistPolicyConfig:
 
     @property
     def observation_spec(self) -> ObservationSpec:
-        return ObservationSpec(self.charger_budget, self.fleet_assignment)
+        return ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned)
 
     def save(self, path: str | Path) -> None:
         from algo.checkpoint_io import write_text_atomic
@@ -86,12 +87,13 @@ class GeneralistPolicyConfig:
 class GeneralistGraphEncoder(nn.Module):
     """Context-conditioned typed message passing with a size-free readout."""
 
-    def __init__(self, hidden_dim: int, num_layers: int, nonlinear_edge_messages: bool):
+    def __init__(self, hidden_dim: int, num_layers: int, nonlinear_edge_messages: bool, dims: dict[str, int] | None = None):
         super().__init__()
-        self.normalizer = RunningStandardizer(dict(FEATURE_DIMS))
-        self.context_encoder = _mlp(FEATURE_DIMS["context"], hidden_dim, hidden_dim)
+        dims = dict(dims or feature_dims())
+        self.normalizer = RunningStandardizer(dims)
+        self.context_encoder = _mlp(dims["context"], hidden_dim, hidden_dim)
         self.input_projections = nn.ModuleDict(
-            {node_type: nn.Linear(FEATURE_DIMS[node_type], hidden_dim) for node_type in NODE_TYPES}
+            {node_type: nn.Linear(dims[node_type], hidden_dim) for node_type in NODE_TYPES}
         )
         self.context_projections = nn.ModuleDict(
             {node_type: nn.Linear(hidden_dim, hidden_dim, bias=False) for node_type in NODE_TYPES}
@@ -100,7 +102,7 @@ class GeneralistGraphEncoder(nn.Module):
             _TypedMessagePassingLayer(
                 hidden_dim,
                 nonlinear_edge_messages=nonlinear_edge_messages,
-                edge_dim=FEATURE_DIMS["edge"],
+                edge_dim=dims["edge"],
                 node_types=NODE_TYPES,
             )
             for _ in range(num_layers)
@@ -169,13 +171,14 @@ class GeneralistActorCritic(nn.Module):
         super().__init__()
         self.config = config
         hidden = config.hidden_dim
+        dims = feature_dims(config.observation_spec)
         self.encoder = GeneralistGraphEncoder(
-            hidden, config.encoder_layers, config.nonlinear_edge_messages
+            hidden, config.encoder_layers, config.nonlinear_edge_messages, dims
         )
         self.action_head = CompleteGraphGCNActionHead(
             hidden,
             hidden,
-            FEATURE_DIMS["action"] + 2 * hidden,
+            dims["action"] + 2 * hidden,
             num_layers=config.action_head_layers,
         )
         self.value_head = nn.Sequential(

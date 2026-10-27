@@ -88,3 +88,29 @@ def test_rest_blocked_reads_the_releases_of_the_pending_jobs() -> None:
     assert not model.rest_blocked(earliest - rest - 1.0, jobs, list(jobs))  # due after the rest would end
     assert not model.rest_blocked(0.0, jobs, [REST])
     assert not model.rest_blocked(0.0, jobs, [])
+
+
+def test_a_plan_is_read_even_when_no_truck_can_work_any_more() -> None:
+    """The plan input asks for a plan at every observation, also once every truck has ended its shift."""
+    from EVRoutingEnv.baselines.heuristics.rolling_request_planner import RollingHorizonRequestPolicy
+    from generalist_harness import small_config
+
+    config = small_config("same_day", trucks=2, stops=4)
+    env = EventDrivenTruckEnv(copy.deepcopy(config), verbose=False, enable_plotting=False)
+    env.reset(seed=4)
+    planner = RollingHorizonRequestPolicy(PlannerParameters())
+    end_shift = None
+    for _ in range(200):
+        decisions = joint_action_feasibility(env)
+        kinds = [d.action_kind for d in decisions]
+        if ActionKind.END_SHIFT in kinds and decisions[kinds.index(ActionKind.END_SHIFT)].feasible:
+            end_shift = kinds.index(ActionKind.END_SHIFT)
+            action = end_shift
+        else:
+            action = next(i for i, d in enumerate(decisions) if d.feasible)
+        _, _, terminated, truncated, _ = env.step(action)
+        if terminated or truncated:
+            break
+    assert end_shift is not None and all(t.is_complete or t.failed for t in env.trucks)
+    routes = planner.planned_routes(env)
+    assert not any(routes.values())  # nothing planned, and no error

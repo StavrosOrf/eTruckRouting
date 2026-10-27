@@ -1124,7 +1124,9 @@ class FleetPlanner:
         current_value = self._total(routes)
         best, best_value = current, current_value
         free = [r for r in jobs if r not in locked]
-        if not free:
+        # Nothing to search: no free request, or no truck that can still work
+        # (all complete or failed, as at the end of an episode the plan input reads).
+        if not free or not trucks:
             return best[0], self._probs(best[0])
         temperature = self.parameters.temperature
         for iteration in range(iterations):
@@ -1386,6 +1388,34 @@ class RollingHorizonRequestPolicy:
         if action is None or not decisions[action].feasible:
             action = self._fallback(env, model, truck, decisions)
         return int(action)
+
+    def planned_routes(self, env) -> dict[int, list[int]]:
+        """Every truck's planned remaining request ids at this state, in order (trips flattened, rests dropped).
+
+        The plan input of the plan-conditioned generalist policy: the planning
+        step of :meth:`__call__` (non-anticipative snapshot, warm-started ALNS
+        over every revealed request), without Kullman's forced station epochs
+        and without mapping the plan to an action.
+        """
+        if getattr(env, "request_engine", None) is None or not getattr(env, "dynamic_requests", False):
+            raise ValueError("the rolling-horizon request policy needs a dynamic request mode")
+        if env.episode_steps == 0:
+            self._episode_key = None
+        self._begin(env)
+        snapshot = build_snapshot(env, self._model, self.parameters.clairvoyant)
+        rng = random.Random(hash((self.parameters.seed, int(env.scenario_seed), self.decisions)) & 0xFFFFFFFF)
+        planner = FleetPlanner(self._model, self.parameters)
+        free = len(snapshot.jobs)
+        iterations = max(self.parameters.min_iterations, min(self.parameters.iterations, 4 * free))
+        routes, _ = planner.plan(snapshot, self._plan, rng, iterations)
+        self._plan = routes
+        self.decisions += 1
+        out = {}
+        for tid, route in routes.items():
+            # Same-day routes are tuples of trips, drayage routes flat with rest tokens.
+            flat = [r for item in route for r in (item if isinstance(item, tuple) else (item,))]
+            out[int(tid)] = [int(r) for r in flat if r != REST]
+        return out
 
     # -- action mapping --------------------------------------------------------------
 

@@ -129,9 +129,63 @@ Then `report --promote N` writes `promotion.json` (arm means over seeds, eligibi
 
 ---
 
+### P2 result (2M, 128 validation seeds, 2026-10-24)
+
+No arm met the teacher-relative eligibility rule (the greedy teacher never strands on the static problems; every arm does), so the user amended promotion to the three arms closest to the gate by mean shortfall (`generalist_near_optimal_gate.py --promote 3`). Arm means over seeds; static columns are failure / success / paired hours excess vs the BKS, dynamic columns failure / on-time services as a fraction of the BKS's:
+
+| Arm | Distance | `tx_longhaul` | `tx_longhaul_congested` | `pnw_longhaul_hos` | `ca_sameday` | `ca_drayage_combined` |
+| --- | --- | --- | --- | --- | --- | --- |
+| full_dagger (all 3 seeds: 0.63; first 2 seeds below) | 0.51 | 10 % / 77 % / +42 % | 17 % / 73 % / +42 % | 7 % / 78 % / +50 % | 7 % / 0.63 | 0 % / 1.08 |
+| full_bks | 0.51 | 9 % / 87 % / +51 % | 14 % / 78 % / +51 % | 6 % / 78 % / +58 % | 3 % / 0.61 | 0 % / 1.04 |
+| full_bks_retained | 0.65 | 11 % / 68 % / +42 % | 15 % / 68 % / +56 % | 14 % / 62 % / +62 % | 9 % / 0.56 | 0 % / 1.10 |
+| fleet | 0.89 | 13 % / 86 % / +109 % | 14 % / 79 % / +131 % | 7 % / 76 % / +114 % | 2 % / 0.74 | 0 % / 1.06 |
+| full | 0.98 | 14 % / 85 % / +132 % | 24 % / 66 % / +111 % | 8 % / 68 % / +117 % | 7 % / 0.74 | 0 % / 1.04 |
+| base | 1.14 | 19 % / 78 % / +149 % | 18 % / 72 % / +153 % | 7 % / 80 % / +147 % | 9 % / 0.74 | 0 % / 1.07 |
+| paired | 1.26 | 27 % / 69 % / +128 % | 21 % / 47 % / +178 % | 13 % / 53 % / +129 % | 2 % / 0.70 | 0 % / 1.00 |
+| Gate | 0 | ≤ 1 % / ≥ 98 % / ≤ +5 % | same | same | ≤ 1 % / ≥ 0.95 | same |
+
+Reading: the BKS demonstrations halve the static hours gap (+42–62 % against +109–178 % with teacher demonstrations) but cost same-day services (0.56–0.63 against 0.70–0.74 of the BKS); every arm strands 3–27 % of static episodes, which alone fails the gate; drayage passes for every arm except one `paired` seed (the policies out-serve the rolling planner). The hours gap did not narrow between 0.5M and 2M in any arm's in-training validations. With the third `full_dagger` seed the order is `full_bks` 0.51, `full_dagger` 0.63, `full_bks_retained` 0.65. Promoted to 8M: `full_bks`, `full_dagger`, `full_bks_retained` (P3 array 28551546, submitted 2026-10-24).
+
+### Gap diagnosis at 2M (Section 9.1 diagnostics, 2026-10-24)
+
+**Static problems.** On jointly successful episodes the promoted arms drive 41–57 % more than the BKS while charging about as often (−2.5 to +14 sessions per episode against 18–26); the other hours (charging, waiting, rests, service) grow in proportion to the driving. Replayed on 12 validation seeds per problem, `full_bks_s0` deploys 4.8–5.8 trucks against the BKS's 4.1–4.5 and serves 5.2–6.3 customers per truck against 6.7–7.3. Each extra truck pays a deadhead round trip to the 225 kWh ring, which explains only part of the excess; the rest is tour quality inside each truck's route. Unsuccessful episodes split into strandings (`no_feasible_action`), early retirement with customers left (`fleet_stopped_with_unserved_customers`), both counted as failures, and running out of the 72 h horizon (`time_limit_exhausted`, unsuccessful but not failed); the DAgger and retained arms run out of horizon most often (71–131 of 384).
+
+**Same-day.** The rolling planner serves 23.4 of 24.1 released requests on time and loses 0.3. The BKS-imitation arms serve 13–14 on time, deliver about 3 late and lose 4.4–5.0 to expired deadlines while working fewer hours than the BKS (250–275 against 266); the teacher-imitation arm `fleet` serves 17.4, loses 1.3 and works 328 hours. The gate needs 22.2.
+
+**What it implies.** The remaining static gap is combinatorial (assignment and sequencing over whole tours), which a one-step reactive policy imitating a whole-tour planner reproduces only approximately, and the in-training validation shows no narrowing between 0.5M and 2M. If 8M does not pass, the levers in Section 9 that act on tours rather than on single decisions are plan-conditioned input (9.5) and planner repair or warm start (9.6); for same-day, the privileged clairvoyant DAgger expert and the asymmetric critic (9.3, 9.4). Each of these is a code change, not a one-flag change, so it exceeds the decided `suite_v2` rule and needs the user.
+
+### P3 result (8M, 128 validation seeds, 2026-10-25)
+
+All three promoted arms improved between 2M and 4M (stop rule passed) and trained to 8M; their best checkpoints fall at 5.4–8.0M. **No run passes the gate.** Per-run ranges over three seeds:
+
+| Arm | Distance (2M → 8M) | Static failure | Static success | Static hours vs BKS (95 % CI within ±3 points) | Same-day services vs BKS | Drayage |
+| --- | --- | --- | --- | --- | --- | --- |
+| full_dagger | 0.63 → 0.24 | 0.0–3.9 % | 95–100 % | +32 to +40 % | 0.78–0.84 | 1.16–1.19 |
+| full_bks_retained | 0.65 → 0.27 | 0.0–7.0 % | 89–100 % | +32 to +43 % | 0.72–0.85 | 1.16–1.18 |
+| full_bks | 0.51 → 0.33 | 1.6–8.6 % | 83–97 % | +35 to +46 % | 0.67–0.82 | 1.09–1.19 |
+| Gate | 0 | ≤ 1 % | ≥ 98 % | ≤ +5 % | ≥ 0.95 | ≥ 0.95 |
+
+Between 2M and 8M strandings fell from 3–17 % to 0–9 %, the hours excess from +42–62 % to +32–46 %, and same-day services rose from 0.56–0.63 to 0.67–0.85 of the BKS; drayage stays above the BKS. The blockers are the static hours excess (about 7× the 5 % margin at best) and same-day services. Per the plan, the next step is the single `suite_v2` iteration.
+
+### suite_v2: plan-conditioned GraphPPO (user decisions 2026-10-25)
+
+No run passed at 8M, so the single diagnostic iteration runs. The user chose the structural lever of design 4.4 / 9.5 over one-flag changes, with these settings:
+
+| Choice | Decision |
+| --- | --- |
+| Plan content | Route-level plan: per truck its planned remaining tasks in order. Charging stays the policy's own decision |
+| Static plans | The BKS long-haul planner (8,000 iterations, 40 s, 3 restarts); time-0 plans precomputed for all 2,048 train and 128 validation seeds per static problem (`generalist_bks_static.py plans`), re-planned on deviations and service events during the episode as `lh_rolling` does |
+| Dynamic plans | The rolling request planner of the BKS, re-optimized at every decision over revealed requests only |
+| Arms | The three promoted arms with the plan input: `full_bks_plan`, `full_bks_retained_plan`, `full_dagger_plan`, 3 seeds each, BC + training to 8M from scratch (the observation is wider, so no warm start) |
+| Dropout and evaluation | The plan is withheld in 30 % of train-seed episodes (validation and test seeds always keep it); the gate is evaluated with the plan, and the plan-free mode (`--plan-mode off`, tag `<tag>_noplan`) is reported alongside |
+
+**Implementation** (`algo/generalist_plans.py`). `ObservationSpec.plan_conditioned` appends columns, all zero when the plan is withheld: tasks `planned`, `plan_priority` (1 for the next planned task, falling along the route), `planned_for_active`; candidate actions `on_plan` (the active truck's next planned task, or the depot when its plan is empty), `target_plan_priority`, `target_planned_for_other`; edges `planned_owner` (truck ↔ task), `planned_next`, `planned_successor` (task → next task on the same route); context `plan_available`. Widths depend on the spec, so the `suite_v1` checkpoints still load. A per-episode `PlanProvider` reads the plan at every decision: `LonghaulPlanPolicy.planned_routes` (reconcile and re-plan, no continuation search) or `RollingHorizonRequestPolicy.planned_routes` (its planning step without the action mapping). Settings travel through `EVRP_PLAN_CACHE`, `EVRP_PLAN_DROPOUT` and `EVRP_PLAN_MODE`, so forked workers inherit them; the trainer sets them from `--plan-conditioned`, `--plan-cache`, `--plan-dropout`, and `evaluate` sets them per split and mode. Tests: `tests/unit/test_generalist_plans.py`.
+
+**What the result will and will not show.** With the plan available the policy can approach the planner by following it, so a pass shows that one learned policy can use a planner's route plan to act near-optimally across all five problems; the plan-free mode and the `on_plan` agreement rate show how much of the result is the plan. Planner time counts toward decision latency.
+
 ## 4. Compute envelope (Snellius)
 
-Measured rates: on a login node with 8 rollout workers and CPU inference, rollouts ran at about 90 decisions/s; steps cost about 45–65 ms on Texas, 27–46 ms on the Pacific Northwest and 7–11 ms on California. On one gpu_a100 share (18 cores, so 16 rollout workers) about 250 decisions/s is expected. **P1 measures this, and the DAgger round time, before P2.**
+Measured rates: on a login node with 8 rollout workers and CPU inference, rollouts ran at about 90 decisions/s; steps cost about 45–65 ms on Texas, 27–46 ms on the Pacific Northwest and 7–11 ms on California. **P1 (2026-10-23, one gpu_a100 share, 16 rollout workers):** `full_s0` ran at 175 decisions/s (median over 40 updates, 140–228) with a 7.8 GB peak and finished 200k decisions in 34 min; `full_dagger_s0` ran at 171 decisions/s (121–215) with a 10.9 GB peak, behaviour cloning on 201k BKS decisions took about 35 min, each DAgger round of 40 episodes 194–218 s (about 38 % of wall time, kept as decided), and 200k decisions took 96 min in all. BC coverage misses: 0.04 % on the teacher demonstrations, 0.77 % on the BKS demonstrations, all of them charger choices outside the 32-charger subgraph (Texas 0.78 % at 48, 0.32 % at 64; California none). The screen therefore runs with `--charger-budget 64`, at which the first screen runs measured 168–207 decisions/s and 12.3–12.8 GB peak.
 
 BKS method costs per episode, measured in the mini check on 2026-10-22 (two validation seeds per problem, login node, one episode per core):
 

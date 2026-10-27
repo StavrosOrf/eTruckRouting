@@ -154,6 +154,14 @@ FEATURE_DIMS = {
     "context": len(CONTEXT_FEATURE_NAMES),
     "edge": len(EDGE_FEATURE_NAMES),
 }
+# Plan-conditioned view (design 4.4 / 9.5): columns appended when
+# ``ObservationSpec.plan_conditioned``; all zero when the plan is withheld.
+PLAN_FEATURE_NAMES = {
+    "task": ("planned", "plan_priority", "planned_for_active"),
+    "action": ("on_plan", "target_plan_priority", "target_planned_for_other"),
+    "context": ("plan_available",),
+    "edge": ("planned_owner", "planned_next", "planned_successor"),
+}
 
 _T = {name: index for index, name in enumerate(TRUCK_FEATURES)}
 _C = {name: index for index, name in enumerate(CUSTOMER_FEATURES)}
@@ -171,14 +179,24 @@ _ROUTING_HOURS = (
 
 @dataclass(frozen=True)
 class ObservationSpec:
-    """The two knobs of the view; everything else is fixed by the schema."""
+    """The knobs of the view; everything else is fixed by the schema."""
 
     charger_budget: int = 32
     fleet_assignment: bool = False
+    plan_conditioned: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.charger_budget, bool) or not isinstance(self.charger_budget, int) or self.charger_budget < 1:
             raise ValueError("charger_budget must be a positive integer")
+
+
+def feature_dims(spec: ObservationSpec | None = None) -> dict[str, int]:
+    """Row widths of the view: the base schema, plus the plan columns when plan-conditioned."""
+    dims = dict(FEATURE_DIMS)
+    if spec is not None and spec.plan_conditioned:
+        for key, names in PLAN_FEATURE_NAMES.items():
+            dims[key] += len(names)
+    return dims
 
 
 @dataclass
@@ -219,19 +237,46 @@ class GeneralistEnv(EventDrivenTruckEnv):
     feature extraction per step and is skipped.
     """
 
-    def __init__(self, config, spec: ObservationSpec | None = None, **kwargs):
+    def __init__(self, config, spec: ObservationSpec | None = None, problem: str | None = None, **kwargs):
+        from algo.generalist_plans import problem_name
+
         self.observation_spec = spec or ObservationSpec()
+        # The suite problem names the plan cache (static problems); the config
+        # file of a campaign problem is ``<problem>.yaml``.
+        self.problem_name = problem or problem_name(config)
+        self._episodes = 0
+        self._plan_provider = None
+        self._plan_withheld = None
         kwargs.setdefault("verbose", False)
         kwargs.setdefault("enable_plotting", False)
         super().__init__(config, **kwargs)
 
+    def reset(self, seed: int | None = None, options: dict | None = None):
+        self._episodes += 1
+        self._plan_provider = None
+        self._plan_withheld = None
+        return super().reset(seed=seed, options=options)
+
     def _get_observation(self) -> GraphObservation:
         return build_observation(self, self.observation_spec)
+
+    def plan_routes(self) -> dict[int, list[int]] | None:
+        """Each truck's planned task slots, next first; None when this episode plays without its plan."""
+        from algo.generalist_plans import PlanProvider, plan_withheld
+
+        if self._plan_withheld is None:
+            self._plan_withheld = plan_withheld(int(self.scenario_seed), self._episodes)
+        if self._plan_withheld:
+            return None
+        if self._plan_provider is None:
+            self._plan_provider = PlanProvider(self.problem_name, self)
+        return self._plan_provider.routes(self)
 
 
 def build_observation(env, spec: ObservationSpec, features=None) -> GraphObservation:
     """Build the generalist view of the environment's current state."""
     features = extract_canonical_features(env) if features is None else features
+    dims = feature_dims(spec)
     now = float(env.global_clock)
     horizon = max(float(env.max_time), 1e-6)
     index, energy, hours = _cost_matrices(env.transport_graph)
@@ -299,9 +344,9 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         _truck_row(row, now, horizon, payload, len(customer_rows))
         for row in truck_rows
     ]).astype(np.float32)
-    task_features = np.zeros((len(tasks), FEATURE_DIMS["task"]), dtype=np.float32)
+    task_features = np.zeros((len(tasks), dims["task"]), dtype=np.float32)
     for position, row in enumerate(tasks):
-        task_features[position] = _task_row(
+        task_features[position, :FEATURE_DIMS["task"]] = _task_row(
             row, now, horizon, battery, payload, active_id, depot, assignment["task"][position],
         )
     charger_features = np.zeros((len(selected), FEATURE_DIMS["charger"]), dtype=np.float32)
@@ -312,7 +357,7 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         )
 
     # Selectable actions: the hard mask, minus charger destinations outside the subgraph.
-    positions, task_links, charger_links, action_features = [], [], [], []
+    positions, task_links, charger_links, action_features, candidate_kinds = [], [], [], [], []
     row_of_slot = {slot: position for position, slot in enumerate(slot_of_row)}
     for action, row in enumerate(action_rows):
         if not feasible[action]:
@@ -331,6 +376,7 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         positions.append(action)
         task_links.append(task_link)
         charger_links.append(charger_link)
+        candidate_kinds.append(kind)
         action_features.append(_action_row(
             row, kind, horizon, battery, payload, target == depot,
             assignment["task"][task_link] if task_link >= 0 else None, assignment["depot"],
@@ -346,13 +392,24 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         [_optional_node(trucks_by_id[truck_id].route_destination) for truck_id in truck_ids],
         truck_ids, task_nodes, task_owners, charger_nodes[selected],
     )
+    actions = np.asarray(action_features, dtype=np.float32).reshape(-1, FEATURE_DIMS["action"])
+    if spec.plan_conditioned:
+        plan = env.plan_routes() if hasattr(env, "plan_routes") else None
+        blocks = _plan_blocks(
+            plan, truck_ids, active_id, slot_of_row, positions, candidate_kinds,
+            env.num_charging_nodes, edges.shape[0],
+        )
+        task_features[:, FEATURE_DIMS["task"]:] = blocks["task"]
+        actions = np.concatenate([actions, blocks["action"]], axis=1)
+        context = np.concatenate([np.asarray(context, dtype=np.float32), blocks["context"]])
+        edges = np.concatenate([edges, blocks["edge"].astype(np.float16)], axis=2)
     return GraphObservation(
         trucks=truck_features,
         tasks=task_features,
         chargers=charger_features,
         context=context,
         edges=edges,
-        actions=np.asarray(action_features, dtype=np.float32).reshape(-1, FEATURE_DIMS["action"]),
+        actions=actions,
         action_index=np.asarray(positions, dtype=np.int64),
         action_task=np.asarray(task_links, dtype=np.int64),
         action_charger=np.asarray(charger_links, dtype=np.int64),
@@ -689,6 +746,56 @@ def _context_row(
     ], dtype=np.float32)
 
 
+def _plan_blocks(plan, truck_ids, active_id, slot_of_row, positions, kinds, num_charging_nodes, size) -> dict:
+    """The plan columns; all zero (and ``plan_available`` 0) when ``plan`` is None."""
+    trucks, tasks = len(truck_ids), len(slot_of_row)
+    out = {
+        "task": np.zeros((tasks, len(PLAN_FEATURE_NAMES["task"])), dtype=np.float32),
+        "action": np.zeros((len(positions), len(PLAN_FEATURE_NAMES["action"])), dtype=np.float32),
+        "context": np.zeros(len(PLAN_FEATURE_NAMES["context"]), dtype=np.float32),
+        "edge": np.zeros((size, size, len(PLAN_FEATURE_NAMES["edge"])), dtype=np.float32),
+    }
+    if plan is None:
+        return out
+    out["context"][0] = 1.0
+    row_of_slot = {int(slot): row for row, slot in enumerate(slot_of_row)}
+    truck_row = {int(truck_id): row for row, truck_id in enumerate(truck_ids)}
+    owner, priority = {}, {}
+    for truck_id, route in plan.items():
+        route = [int(slot) for slot in route if int(slot) in row_of_slot]
+        t = truck_row.get(int(truck_id))
+        if t is None:
+            continue
+        for position, slot in enumerate(route):
+            r = row_of_slot[slot]
+            owner[slot] = int(truck_id)
+            priority[slot] = 1.0 - position / len(route)
+            out["task"][r, 0] = 1.0
+            out["task"][r, 1] = priority[slot]
+            out["edge"][t, trucks + r, 0] = out["edge"][trucks + r, t, 0] = 1.0
+            if position == 0:
+                out["edge"][t, trucks + r, 1] = out["edge"][trucks + r, t, 1] = 1.0
+            if position + 1 < len(route):
+                out["edge"][trucks + r, trucks + row_of_slot[route[position + 1]], 2] = 1.0
+    active = None if active_id is None else int(active_id)
+    mine = [int(slot) for slot in plan.get(active, []) if int(slot) in row_of_slot] if active is not None else []
+    for slot, truck_id in owner.items():
+        if truck_id == active:
+            out["task"][row_of_slot[slot], 2] = 1.0
+    for position, (action, kind) in enumerate(zip(positions, kinds, strict=True)):
+        if kind is ActionKind.CUSTOMER:
+            slot = int(action) - int(num_charging_nodes)
+            if mine and slot == mine[0]:
+                out["action"][position, 0] = 1.0
+            if owner.get(slot) == active:
+                out["action"][position, 1] = priority[slot]
+            elif slot in owner:
+                out["action"][position, 2] = 1.0
+        elif kind is ActionKind.DEPOT and not mine:
+            out["action"][position, 0] = 1.0
+    return out
+
+
 def _edges(
     index, energy, hours, battery, horizon, truck_nodes, truck_destinations, truck_ids,
     task_nodes, task_owners, charger_nodes,
@@ -766,9 +873,14 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
         "charger": [len(item.chargers) for item in observations],
     }
     widths = {key: max(max(values), 1) for key, values in counts.items()}
+    first = observations[0]
+    dims = {
+        "truck": first.trucks.shape[1], "task": first.tasks.shape[1], "charger": first.chargers.shape[1],
+        "action": first.actions.shape[1], "edge": first.edges.shape[2],
+    }
     nodes, masks = {}, {}
     for key, attribute in (("truck", "trucks"), ("task", "tasks"), ("charger", "chargers")):
-        values = np.zeros((batch, widths[key], FEATURE_DIMS[key]), dtype=np.float32)
+        values = np.zeros((batch, widths[key], dims[key]), dtype=np.float32)
         mask = np.zeros((batch, widths[key]), dtype=bool)
         for position, item in enumerate(observations):
             rows = getattr(item, attribute)
@@ -777,7 +889,7 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
         nodes[key], masks[key] = values, mask
 
     pairwise = {
-        relation: np.zeros((batch, widths[relation[0]], widths[relation[1]], FEATURE_DIMS["edge"]), dtype=np.float16)
+        relation: np.zeros((batch, widths[relation[0]], widths[relation[1]], dims["edge"]), dtype=np.float16)
         for relation in RELATION_TYPES
     }
     for position, item in enumerate(observations):
@@ -788,7 +900,7 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
             pairwise[(source, target)][position, : b - a, : d - c] = item.edges[a:b, c:d]
 
     action_width = max(max(item.num_actions for item in observations), 1)
-    actions = np.zeros((batch, action_width, FEATURE_DIMS["action"]), dtype=np.float32)
+    actions = np.zeros((batch, action_width, dims["action"]), dtype=np.float32)
     action_mask = np.zeros((batch, action_width), dtype=bool)
     action_task = np.full((batch, action_width), -1, dtype=np.int64)
     action_charger = np.full((batch, action_width), -1, dtype=np.int64)

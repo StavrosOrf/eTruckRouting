@@ -234,6 +234,23 @@ class LonghaulPlanPolicy:
         """The time-0 plan, as stored in a plan cache."""
         return {"tag": self.settings.plan_tag(), **(self.stats.get("plan") or {})}
 
+    def planned_routes(self, env) -> dict[int, list[int]]:
+        """Each truck's remaining planned customer nodes at this state, next first.
+
+        The plan input of the plan-conditioned generalist policy: the time-0 plan
+        (from ``plan_cache`` when the seed is there), reconciled with the state
+        and re-planned on deviations and service events exactly as ``__call__``
+        does with ``replan`` set, but without the per-decision continuation
+        search, which only decides how to reach the next stop.
+        """
+        key = (id(env), int(env.scenario_seed))
+        if key != self._key:
+            self._key = key
+            self._setup(env)
+        if self.settings.replan != "none" and env.active_truck_id is not None:
+            self._reconcile(env, env.trucks[env.active_truck_id])
+        return {int(truck.truck_id): self.remaining(env, truck) for truck in env.trucks}
+
     def _exact_durations(self, env, routes, problem) -> list[float]:
         out = []
         hos = getattr(env, "hos", None)

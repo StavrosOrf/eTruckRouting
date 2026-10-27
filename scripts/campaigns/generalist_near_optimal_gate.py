@@ -19,6 +19,15 @@ A problem without a BKS file is MISSING, one without rows for the run is
 NO_ROWS; both fail the run overall. The goal holds when one run passes all
 three criteria on every problem.
 
+Promotion by distance to the gate (user decision 2026-10-24, after no arm met
+the teacher-relative eligibility rule): for every run and problem the
+*shortfall* is the sum of how far each criterion misses its limit, as a
+fraction (static: hours excess above 5 %, success below 98 %, failure above
+max(1 %, BKS); dynamic: services ratio below 95 %, failure above the limit).
+A run's distance is the mean shortfall over problems, an arm's the mean over
+its seeds; ``--promote N`` ranks the arms by it and names the N closest in
+``near_optimal_gate.json`` (``arm_distance``, ``promoted``).
+
 Usage::
 
     python scripts/campaigns/generalist_near_optimal_gate.py \
@@ -162,6 +171,42 @@ def gate_problem(problem: str, rows: list[dict], bks: dict[int, dict] | None, *,
     return result
 
 
+def shortfall(item: dict) -> float | None:
+    """How far one run misses the gate on one problem; 0.0 when it passes, None without rows."""
+    if item.get("status") in ("MISSING", "NO_ROWS"):
+        return None
+    c = item["criteria"]
+    total = max(0.0, c["failure"]["run"] - c["failure"]["limit"])
+    if not item["dynamic"]:
+        total += max(0.0, c["success"]["limit"] - c["success"]["run"])
+        hours = c["hours"]
+        total += max(0.0, hours["mean_excess"] - hours["limit"]) if "mean_excess" in hours else 1.0
+    else:
+        total += max(0.0, c["services"]["limit"] - c["services"]["ratio"])
+    return float(total)
+
+
+def arm_distances(runs: dict[str, dict], problems=PROBLEMS) -> dict[str, dict]:
+    """Mean shortfall per arm (runs ``<arm>_s<seed>``), with the per-problem means and the seeds counted."""
+    by_arm: dict[str, list[dict]] = {}
+    for run, report in runs.items():
+        by_arm.setdefault(run.rsplit("_s", 1)[0], []).append(report)
+    out = {}
+    for arm, reports in by_arm.items():
+        per_problem = {}
+        for problem in problems:
+            values = [shortfall(r["problems"][problem]) for r in reports if problem in r["problems"]]
+            values = [v for v in values if v is not None]
+            per_problem[problem] = sum(values) / len(values) if values else None
+        complete = [v for v in per_problem.values() if v is not None]
+        out[arm] = {
+            "seeds": len(reports), "problems": per_problem,
+            "distance": sum(complete) / len(complete) if len(complete) == len(problems) else None,
+            "runs_passing": sum(r["overall"] == "PASS" for r in reports),
+        }
+    return out
+
+
 def gate_run(rows: list[dict], bks: dict[str, dict | None], problems=PROBLEMS, *, resamples: int = 10_000) -> dict:
     results = {problem: gate_problem(problem, rows, bks.get(problem), resamples=resamples) for problem in problems}
     overall = "PASS" if all(item["status"] == "PASS" for item in results.values()) else "FAIL"
@@ -217,6 +262,8 @@ def main(argv=None) -> int:
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--allow-test", action="store_true",
                         help="Read the test-split BKS and rows; only when the coordinator opens P5.")
+    parser.add_argument("--promote", type=int, default=None,
+                        help="Rank the arms by their mean distance to the gate and name the N closest.")
     args = parser.parse_args(argv)
     if args.split == "test" and not args.allow_test:
         raise SystemExit("the test bank is locked; the gate reads validation only unless the coordinator "
@@ -243,6 +290,23 @@ def main(argv=None) -> int:
     passing = [run for run, gate in report["runs"].items() if gate["overall"] == "PASS"]
     report["passing_runs"] = passing
     table = format_table(report)
+    report["arm_distance"] = arm_distances(report["runs"], args.problems)
+    ranked = sorted((arm for arm, d in report["arm_distance"].items() if d["distance"] is not None),
+                    key=lambda arm: report["arm_distance"][arm]["distance"])
+    lines = ["", "## Arms by distance to the gate", "",
+             "Mean shortfall over problems and seeds (0 = passes); static: hours excess above 5 %, success below 98 %, "
+             "failure above the limit; dynamic: services ratio below 95 %, failure above the limit.", "",
+             "| Arm | Seeds | Distance | " + " | ".join(p for p in args.problems) + " | Runs passing |",
+             "| --- | --- | --- | " + " | ".join("---" for _ in args.problems) + " | --- |"]
+    for arm in ranked + [a for a in report["arm_distance"] if a not in ranked]:
+        d = report["arm_distance"][arm]
+        cells = " | ".join("n/a" if d["problems"][p] is None else f"{d['problems'][p]:.3f}" for p in args.problems)
+        lines.append(f"| {arm} | {d['seeds']} | {'n/a' if d['distance'] is None else f'{d['distance']:.3f}'} | {cells} | {d['runs_passing']} |")
+    if args.promote:
+        report["promoted"] = ranked[:args.promote]
+        lines += ["", f"Promoted (the {args.promote} closest arms with complete evaluations): "
+                  f"{', '.join(report['promoted']) or 'none'}."]
+    table += "\n".join(lines) + "\n"
     header = (f"# Near-optimal gate: {args.campaign.name}, {args.split}, {args.tag}\n\n"
               f"BKS: `{args.bks_dir}` ({args.split} split). Static: failure <= max(1%, BKS), success >= BKS - 2 pts, "
               "mean paired hours excess on jointly successful seeds <= 5%. Dynamic: failure <= max(1%, BKS), "

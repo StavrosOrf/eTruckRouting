@@ -67,7 +67,10 @@ SCHEDULE = 8_000_000
 COMMON = [
     "--num-envs", "40", "--rollout-steps", "128", "--epochs", "4", "--minibatch-size", "256",
     "--learning-rate", "0.0003", "--entropy-coefficient", "0.01", "--gamma", "1.0",
-    "--gae-lambda", "0.95", "--target-kl", "0.05", "--charger-budget", "32",
+    # 64 chargers: at 32 the BKS demonstrations lost 0.77 % of their decisions
+    # (1.9 % on the long-haul problems) to charger choices outside the subgraph;
+    # at 64 Texas keeps all but 0.32 % (pilot, 2026-10-23).
+    "--gae-lambda", "0.95", "--target-kl", "0.05", "--charger-budget", "64",
     "--hidden-dim", "128", "--encoder-layers", "3", "--action-head-layers", "2",
     "--bc-episodes", "64", "--pretrain-epochs", "20", "--pretrain-learning-rate", "0.0003",
     "--train-scenarios", str(SEEDS["train"]), "--validation-scenarios", "16",
@@ -93,6 +96,10 @@ DAGGER = [
     "--dagger-beta", "0.5", "--dagger-beta-final", "0.0", "--dagger-beta-anneal-timesteps", "2000000",
     "--dagger-pretrain-rounds", "2",
 ]
+# suite_v2 (user decision 2026-10-25, design 4.4 / 9.5): the planner's route
+# plan in the observation, withheld in 30 % of train-seed episodes; static plans
+# come from the time-0 plan cache frozen into <campaign>/bks.
+PLAN = ["--plan-conditioned", "--plan-cache", BKS_DIR, "--plan-dropout", "0.3"]
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
@@ -103,7 +110,12 @@ RECIPES = {
     # DAgger labels reach the PPO loss only through the retained term, so this
     # arm keeps it: full_bks -> +retained -> +DAgger, one change per rung.
     "full_dagger": [*FULL, *IMITATION, *RETAINED, *DAGGER],
+    "full_bks_plan": [*FULL, *IMITATION, *PLAN],
+    "full_bks_retained_plan": [*FULL, *IMITATION, *RETAINED, *PLAN],
+    "full_dagger_plan": [*FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN],
 }
+SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
+STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
 SLURM = {
     # Snellius gpu_a100: four A100s, 72 cores and 480 GB per node, so one GPU
     # share is 18 cores and about 120 GB. Every job on a GPU partition must hold
@@ -122,7 +134,8 @@ SLURM = {
     "max_concurrent": 20,  # this campaign's share of the 30-allocation cap
 }
 BKS_FILES = ("validation.json", "train_demonstrations.json")
-BKS_OPTIONAL = ("summary.json", "train_demonstrations_summary.json")
+BKS_OPTIONAL = ("summary.json", "train_demonstrations_summary.json", "plans_train.json", "plans_validation.json")
+PLAN_FILES = ("plans_train.json", "plans_validation.json")
 
 
 def write_json(path: Path, value) -> None:
@@ -138,7 +151,7 @@ def arms_for(
 ) -> list[dict]:
     """The runs of an arm set; ``{bks}`` in a recipe becomes the frozen BKS copy."""
     if arm_set == "screen":
-        chosen = [(name, flags) for name, flags in RECIPES.items()]
+        chosen = [(name, RECIPES[name]) for name in SCREEN]
     elif arm_set == "named":
         if not arms:
             raise SystemExit("--arm-set named needs --arms")
@@ -190,6 +203,10 @@ def prepare(
             raise SystemExit(f"{bks_from} lacks best-known solutions {lacking}")
     bks = str(destination / "bks") if bks_from is not None else None
     runs = arms_for(arm_set, recipe, seeds, bks=bks, arms=arms)  # refused arms leave nothing behind
+    if any("--plan-conditioned" in run["flags"] for run in runs):
+        lacking = [f"{name}/{file}" for name in STATIC for file in PLAN_FILES if not (bks_from / name / file).is_file()]
+        if lacking:
+            raise SystemExit(f"plan-conditioned arms need the time-0 plan cache: {bks_from} lacks {lacking}")
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("logs", "training", "evaluation", "configs", "references"):
         (destination / name).mkdir(exist_ok=True)
@@ -769,6 +786,7 @@ def evaluate(
     device: str,
     runs: list[str] | None,
     envs_per_problem: int = 16,
+    plan_mode: str | None = None,
 ) -> None:
     import torch
 
@@ -784,6 +802,15 @@ def evaluate(
     from scripts.evaluation.canonical_harness import split_seeds
 
     manifest = read_manifest(destination)
+    # Plan-conditioned runs: plans on (no dropout) unless the plan-free mode is
+    # asked for, explicitly or by a tag ending in "_noplan"; static plans from the
+    # frozen cache (validation) or the global BKS directory (test, built at P5).
+    plan_mode = plan_mode or ("off" if tag.endswith("_noplan") else "on")
+    cache = manifest.get("bks_from") if split == "test" else manifest.get("bks")
+    if cache:
+        os.environ["EVRP_PLAN_CACHE"] = str(cache)
+    os.environ["EVRP_PLAN_MODE"] = plan_mode
+    os.environ["EVRP_PLAN_DROPOUT"] = "0"
     problems = [SuiteProblem(**row) for row in json.loads(Path(manifest["problems"]).read_text())]
     problems += [SuiteProblem(**row) for row in json.loads(Path(manifest["probes"]).read_text())]
     count = count or manifest["seeds"][split]
@@ -1062,6 +1089,8 @@ def main() -> None:
     command.add_argument("--workers", type=int, default=max(1, len(os.sched_getaffinity(0)) - 1))
     command.add_argument("--envs-per-problem", type=int, default=16)
     command.add_argument("--device", default="cpu")
+    command.add_argument("--plan-mode", default=None, choices=["on", "off"],
+                         help="Plan-conditioned runs: evaluate with or without the plan (default: off for tags ending in _noplan).")
     command = commands.add_parser("report")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--split", default="validation", choices=["validation", "test"])
@@ -1098,7 +1127,7 @@ def main() -> None:
     elif arguments.command == "evaluate":
         evaluate(
             destination, arguments.split, arguments.tag, arguments.count, arguments.workers, arguments.device,
-            arguments.runs, arguments.envs_per_problem,
+            arguments.runs, arguments.envs_per_problem, plan_mode=arguments.plan_mode,
         )
     else:
         report(destination, arguments.split, arguments.tag, promote_count=arguments.promote)

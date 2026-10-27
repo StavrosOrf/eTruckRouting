@@ -14,7 +14,8 @@ Written 2026-10-22 for the campaign agent that runs this campaign end to end. De
 | Arms (P2) | 7 × 3 seeds = 21 runs at BC + 2M: `base`, `fleet`, `paired`, `full`, `full_bks`, `full_bks_retained`, `full_dagger`. |
 | Imitation arms | BKS-paired reward (`--reward-references <campaign>/bks`), `--bc-episodes 256`; retained BC 0.1 → 0 over 2M; DAgger every 10 updates, 8 episodes/problem, β 0.5 → 0 over 2M, 2 pretrain rounds. `full_dagger` keeps the retained term (DAgger labels enter the PPO loss only through it). |
 | DAgger experts | Static: `LonghaulPlanPolicy(replan="events")` at 8 s / 1500 iterations / 1 restart (`algo/generalist_experts.py`); dynamic: the rolling planner (same parameters as the BKS method). |
-| Promotion | P2 → the **3** best eligible arms (served ≥ teacher and failure ≤ teacher on every problem; highest mean score) → 8M. No PASS at 8M → one diagnostic iteration `suite_v2` (one flag change per arm), then stop and write up. |
+| DAgger cost (2026-10-23) | Measured in the pilot: a round (40 episodes) takes 194–218 s against 334 s of PPO per 10 updates, about 38 % of wall time. **Kept as decided**: a 2M run of `full_dagger` takes about 7 h (12 h limit), an 8M run about 25 h (36 h limit, resumable). |
+| Promotion | P2 → the **3** best eligible arms (served ≥ teacher and failure ≤ teacher on every problem; highest mean score) → 8M. No PASS at 8M → one diagnostic iteration `suite_v2` (one flag change per arm), then stop and write up. **Amended 2026-10-24** after the 2M evaluation left no arm eligible (the teacher never strands, every arm strands on the static problems): promote the **3 arms closest to the gate** by mean shortfall over problems and seeds (`generalist_near_optimal_gate.py --promote 3`, section `Arms by distance to the gate`); eligibility stays reported. |
 | Scope | Near-optimal on the five problems only. P4 (LOPO, specialists) and the size probes are **out**; `prepare --probes` can still write them for a later campaign. |
 | Authority | Submit every P0–P3 stage without asking. Change code without a review gate. **Open P5 automatically** when a run passes the gate on validation. **Never commit unless the user asks.** |
 
@@ -108,16 +109,20 @@ submit --directory ${D}_pilot --stage train --budget 200000 --pack 2 --arms full
 
 **Gates** (from `logs/<run>_200000.log` and `training/<run>/*_history.json`): `full_s0` runs on CUDA at ≥ 150 decisions/s (about 250 expected) and `gpu_peak_gb` fits; `full_dagger_s0` clones from the BKS demonstrations with `misses` ≤ 0.5 % (`pretrain_history.json`), logs two DAgger pretrain rounds, about zero `dagger/expert_errors`, an agreement per problem, and checkpoints and resumes. **Measure the DAgger round time** (`dagger/seconds` per round): if rounds take more than about 30 % of wall time, stop and report to the user (changing `--dagger-every` or `--dagger-episodes` changes the decided arm). If GPU memory fails, set `--minibatch-size 128` in `COMMON`, delete the untrained `suite_v1`, and re-prepare with `--references-from` and `--bks-from`. Rewrite `train_hours` from the measured rate if it is far from 250 decisions/s.
 
+**P1 outcome (2026-10-23):** every gate passed except BC coverage on the BKS demonstrations: 0.77 % misses at `--charger-budget 32`, all of them charger destinations outside the subgraph (teacher demonstrations: 0.04 %). The remedy is the observation-only change the design doc names (Section 5 and 9.2): the common charger budget is raised to the smallest of 48 or 64 that brings the misses under 0.5 % (measured by replaying the demonstrations through the observation at each budget); if neither does, 64 is used and the residual miss rate is recorded. Memory headroom is ample (10.9 GB peak of 40 GB at budget 32). The DAgger cost (38 % of wall time) was kept as decided by the user.
+
+**Decision (2026-10-23 19:40): `--charger-budget 64` in `COMMON` for `suite_v1`.** Measured by replaying the BKS demonstrations through the observation: California problems miss nothing at any budget; `tx_longhaul` misses 0.78 % of its decisions at 48 and 0.32 % at 64; `tx_longhaul_congested` 1.5 % at 48 (64 not finished before the measurement's time limit; Pacific Northwest not reached). A budget of 48 would pass the 0.5 % gate only because the California demonstrations dilute the average, while the misses sit exactly where charging binds, so 64 was taken. The pilot ran at 32; P2 throughput and memory at 64 are read from the first screen runs (`gpu_<job>.csv`, `training_history.json`).
+
 ## P2. Screen (21 runs, BC + 2M)
 
 ```
 submit --directory $D --stage train --budget 2000000                       # 21 single-GPU jobs, throttle 20
 submit --directory $D --stage evaluate --split validation --tag 2M --runs <7 runs>   # three groups of seven
 report --directory $D --split validation --tag 2M --promote 3
-PYTHONPATH=. $P scripts/campaigns/generalist_near_optimal_gate.py --campaign $D --split validation --tag 2M --bks-dir $B
+PYTHONPATH=. $P scripts/campaigns/generalist_near_optimal_gate.py --campaign $D --split validation --tag 2M --bks-dir $B --promote 3
 ```
 
-`--pack 4` packs four runs on one node when whole nodes are idle; `--partition gpu_h100` or `gpu_mig` moves a stage to an overflow partition. **Promotion:** `promotion.json` names the three eligible arms (served fraction ≥ teacher's and failure rate ≤ teacher's on every problem, arm means over three seeds on 128 validation seeds) with the highest mean score. The 2M gate table is recorded for information.
+`--pack 4` packs four runs on one node when whole nodes are idle; `--partition gpu_h100` or `gpu_mig` moves a stage to an overflow partition. **Promotion (amended 2026-10-24):** the gate's `--promote 3` names the three arms with the smallest mean shortfall to the gate (static: hours excess above 5 %, success below 98 %, failure above the limit; dynamic: services below 95 % of the BKS, failure above the limit; means over problems and seeds). `report --promote 3` still reports the teacher-relative eligibility, which no arm met at 2M.
 
 ## P3. Promotion (three arms × three seeds, 2M → 8M)
 
@@ -151,12 +156,24 @@ prepare --directory results/generalist_graphppo/suite_v2 --arm-set named --arms 
 
 and P2 → P3 for those arms only. Afterwards stop and write up whatever the outcome.
 
+## suite_v2 (plan-conditioned; user decisions 2026-10-25)
+
+1. Time-0 plans for the static problems (one gpu_a100 share per problem, about 2–3 h): plan files `bks/plans/<p>_plans.txt` with `plans --problem <p> --split validation --count 128 --workers {W}` and `plans --problem <p> --split train --count 2048 --workers {W}`, run through `generalist_bks.sbatch` from the source snapshot `bks/_source/v2`. Gate: `bks/<p>/plans_{train,validation}.json` hold 2,048 and 128 plans.
+2. `prepare --directory results/generalist_graphppo/suite_v2 --arm-set named --arms full_bks_plan full_bks_retained_plan full_dagger_plan --seeds 3 --references-from results/generalist_graphppo/suite_v1_refs/references --bks-from results/generalist_graphppo/bks` (refuses without the plan files).
+3. `submit --stage train --budget 8000000` (9 runs, 36 h limit, resumable). Stop rule at 4M as in P3. Expect lower throughput than `suite_v1` (planner reads every decision); measure it on the first updates.
+4. `evaluate --split validation --tag 8M` (plan on) and `--tag 8M_noplan` (plan withheld), `report --promote 3`, and the gate on `8M`. A PASS opens P5 as before; at P5 the static test plans are built first with `plans ... --split test --count 500 --allow-test` into the global BKS directory, which test evaluation reads.
+5. If no run passes: stop and write `docs/campaigns/generalist_graphppo_suite_results.md`.
+
+Fixed on the way (2026-10-26): the plan input reads a plan at every observation, including states where every truck has ended its shift; the rolling planner's ALNS then drew from an empty truck set (`IndexError` in BC replay). `FleetPlanner.plan` now returns the empty plan when no truck can work (`tests/unit/test_rolling_request_planner.py`); all 128 sampled dynamic BKS demonstrations replay through the plan view.
+
 ## Monitoring and failure handling
 
 - `sinfo -p gpu_a100,gpu_h100,gpu_mig,cbuild` before submitting; `squeue -u $USER` and `sacct -j <job>` every 30–60 minutes during training; never busy-wait on the login node.
 - Every composed command goes through `--test-only` (or `sbatch --test-only`) once before its first real submission.
 - Logs: `$D/logs/<run>_<budget>.log`, `$D/logs/slurm-%A_%a.out`, `$D/logs/gpu_<job>.csv`; progress in `training/<run>/validation_history.json`; submissions in `logs/submissions.jsonl`; BKS logs in `$B/logs/`.
 - Re-submitting a stage skips completed runs and resumes partial ones from `training.pt`; in-flight episodes restart from their own seed, so a resume is not bit-identical to an uninterrupted run.
+- A finished run whose allocation lingers (2026-10-24, `full_s2`: the trainer printed `done in`, a forked worker stayed in uninterruptible disk sleep on GPFS and the job idled): once `completed_run` is true and the run log has `done in`, cancel the array element; the coordinator's watcher does this automatically for `suite_v1_train` jobs.
+- Snellius refuses `scontrol update` on jobs (time limit, array throttle); resubmit instead. A stale `JobArrayTaskLimit` can hold the last element of an array after earlier elements finish: cancel it and resubmit the run as a single-element array through the GPU wrapper (`--array=0-0 ... <budget> 1 <run index>`), recording it in `logs/submissions.jsonl`.
 - `submit --stage train` refuses to run before `merge-references`; `prepare` refuses the imitation arms without `--bks-from`.
 - Partition fallbacks: `submit --partition gpu_h100` (16 cores per GPU) or `gpu_mig` (9); for a CPU stage on `cbuild` compose the command with `--dry-run` and submit by hand with `--partition=cbuild --gpus-per-task=0 --cpus-per-task=16`.
 

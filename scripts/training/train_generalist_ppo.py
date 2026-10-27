@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import time
 from dataclasses import asdict
@@ -85,6 +86,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--failure-penalty", type=float, default=2.0)
     parser.add_argument("--incompletion-penalty", type=float, default=2.0)
     parser.add_argument("--fleet-assignment", action="store_true", help="Plan 4.2 fleet-assignment features.")
+    parser.add_argument("--plan-conditioned", action="store_true",
+                        help="Design 4.4/9.5: the planner's route plan in the observation (algo/generalist_plans.py).")
+    parser.add_argument("--plan-cache", default=None,
+                        help="Directory of <problem>/plans_<split>.json time-0 plans for the static problems.")
+    parser.add_argument("--plan-dropout", type=float, default=0.0,
+                        help="Probability that an episode on a train seed is played without its plan.")
     parser.add_argument("--charger-budget", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=3)
@@ -191,10 +198,30 @@ def print_dagger(record: dict) -> None:
     )
 
 
+def configure_plans(arguments, problems) -> None:
+    """Plan settings for every environment of this process and its forked workers (algo/generalist_plans.py)."""
+    if not arguments.plan_conditioned:
+        if arguments.plan_cache or arguments.plan_dropout:
+            raise SystemExit("--plan-cache and --plan-dropout need --plan-conditioned")
+        return
+    if not 0.0 <= arguments.plan_dropout <= 1.0:
+        raise SystemExit("--plan-dropout must lie in [0, 1]")
+    if arguments.plan_cache:
+        os.environ["EVRP_PLAN_CACHE"] = str(Path(arguments.plan_cache).resolve())
+    os.environ["EVRP_PLAN_DROPOUT"] = str(arguments.plan_dropout)
+    os.environ["EVRP_PLAN_MODE"] = "on"
+    from algo.generalist_plans import plan_cache
+
+    counts = {problem.name: len(plan_cache(problem.name)) for problem in problems}
+    print(f"plan-conditioned: cache {os.environ.get('EVRP_PLAN_CACHE')}, dropout {arguments.plan_dropout}, "
+          f"cached time-0 plans per problem {counts} (dynamic problems plan online)", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     arguments = build_argument_parser().parse_args(argv)
     torch.set_num_threads(arguments.torch_threads)
     problems = load_problems(arguments.problems)
+    configure_plans(arguments, problems)
     names = [problem.name for problem in problems]
     trained = names if arguments.train_problems is None else list(arguments.train_problems)
     if not trained or not set(trained) <= set(names) or len(set(names)) != len(names):
@@ -231,6 +258,7 @@ def main(argv: list[str] | None = None) -> None:
         nonlinear_edge_messages=arguments.nonlinear_edge_messages,
         charger_budget=arguments.charger_budget,
         fleet_assignment=arguments.fleet_assignment,
+        plan_conditioned=arguments.plan_conditioned,
     )
     ppo_config = PPOConfig(
         total_timesteps=arguments.total_timesteps,

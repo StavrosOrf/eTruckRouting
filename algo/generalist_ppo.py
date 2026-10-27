@@ -288,7 +288,10 @@ class _SuiteSlots:
         self.dagger = DaggerSlots(self.problems, dagger, spec)
         self.problem_of = [problem for problem, _ in slots]
         self.seeds = [list(seeds) for _, seeds in slots]
-        self.envs = [GeneralistEnv(self.problems[problem].config, spec) for problem in self.problem_of]
+        self.envs = [
+            GeneralistEnv(self.problems[problem].config, spec, problem=self.problems[problem].name)
+            for problem in self.problem_of
+        ]
         self.position = [0] * len(self.envs)
         self.reward = reward
         self.references = references
@@ -1044,7 +1047,7 @@ def run_reference_episodes(problem: SuiteProblem, seeds: Sequence[int], policy: 
 
 def _replay_job(arguments):
     problem, spec, episodes = arguments
-    env = GeneralistEnv(problem.config, spec)
+    env = GeneralistEnv(problem.config, spec, problem=problem.name)
     observations, labels, misses, steps = [], [], {}, 0
     try:
         for seed, actions in episodes:

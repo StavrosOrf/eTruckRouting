@@ -27,6 +27,7 @@ machinery, the output format and the test-split guard live in
     ... merge --problem tx_longhaul
     ... run --problem tx_longhaul --methods greedy_teacher lh_plan --split train --count 256 --workers 18
     ... demos --problem tx_longhaul --count 256 --workers 18
+    ... plans --problem tx_longhaul --split train --count 2048 --workers 18   # time-0 plans for suite_v2
     ... snapshot --name v1
 
 Rows are appended to ``<problem>/runs/<method>__<split>.jsonl`` as episodes
@@ -148,6 +149,60 @@ def cmd_bound(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Time-0 plans for the plan-conditioned policy (suite_v2)
+# ---------------------------------------------------------------------------
+
+
+def _plan_job(arguments):
+    import time as _time
+
+    problem, seed = arguments
+    from algo.generalist_plans import static_settings
+    from EVRoutingEnv.baselines.optimization.longhaul.policy import LonghaulPlanPolicy
+
+    env = common._WORKER_ENV.get(problem)
+    if env is None:
+        env = common._WORKER_ENV[problem] = make_env(problem)
+    env.reset(seed=int(seed))
+    policy = LonghaulPlanPolicy(static_settings())
+    started = _time.perf_counter()
+    policy.planned_routes(env)
+    return {"seed": int(seed), "seconds": _time.perf_counter() - started, "record": policy.plan_record()}
+
+
+def cmd_plans(args) -> None:
+    """The BKS planner's time-0 plan per seed, as the plan cache of ``algo/generalist_plans.py`` reads it."""
+    problem = args.problem
+    log = OUT / problem / "runs" / f"plans__{args.split}.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    done = {row["seed"] for row in read_jsonl(log)}
+    seeds = seeds_for(args.split, args.count, args.offset, args.allow_test)
+    jobs = [(problem, seed) for seed in seeds if seed not in done]
+    print(f"{problem}: {len(jobs)} time-0 plans to compute on {args.workers} workers", flush=True)
+    if jobs:
+        common._WORKER_ENV[problem] = make_env(problem)
+        warm_network(common._WORKER_ENV[problem], seeds, ["lh_plan"])
+        with open(log, "a") as handle:
+            if args.workers <= 1:
+                iterator, pool = map(_plan_job, jobs), None
+            else:
+                pool = mp.get_context("fork").Pool(args.workers)
+                iterator = pool.imap_unordered(_plan_job, jobs, chunksize=1)
+            for count, row in enumerate(iterator, start=1):
+                handle.write(json.dumps(row) + "\n")
+                handle.flush()
+                if count % 25 == 0 or count == len(jobs):
+                    print(f"  {count}/{len(jobs)} plans; last seed {row['seed']} in {row['seconds']:.0f}s", flush=True)
+            if pool is not None:
+                pool.close()
+                pool.join()
+    records = {str(row["seed"]): row["record"] for row in read_jsonl(log)}
+    target = OUT / problem / f"plans_{args.split}.json"
+    target.write_text(json.dumps(records))
+    print(f"{problem}: wrote {len(records)} plans to {target}", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
@@ -202,11 +257,15 @@ def main(argv=None) -> None:
     bound.add_argument("--workers", type=int, default=1)
     bound.add_argument("--time-limit", type=float, default=120.0)
     bound.add_argument("--allow-test", action="store_true", help="Open the test split (P5 only).")
+    plans = sub.add_parser("plans", help="Time-0 plans of the BKS long-haul planner, for the plan-conditioned policy.")
+    plans.add_argument("--problem", required=True, choices=STATIC_PROBLEMS)
+    common.add_split_arguments(plans, default_count=128)
+    plans.add_argument("--workers", type=int, default=1)
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--name", required=True)
     args = parser.parse_args(argv)
     {"run": cmd_run, "merge": cmd_merge, "demos": cmd_demos, "bound": cmd_bound,
-     "snapshot": cmd_snapshot}[args.command](args)
+     "plans": cmd_plans, "snapshot": cmd_snapshot}[args.command](args)
 
 
 if __name__ == "__main__":

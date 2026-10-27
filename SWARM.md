@@ -16,9 +16,10 @@ The goal is **met** when `results/generalist_graphppo/<campaign>/evaluation/test
 ## 2. Binding decisions (user, 2026-10-22; details in the runbook)
 
 - Cluster Snellius, account `tdsei17344`, `gpu_a100` (overflow `gpu_h100`, `gpu_mig`), at most 20 concurrent allocations; CPU stages hold one GPU each.
-- Arms: `base`, `fleet`, `paired`, `full`, `full_bks`, `full_bks_retained`, `full_dagger` × 3 seeds at BC + 2M; promote the 3 best eligible arms to 8M; if no run passes at 8M, one `suite_v2` iteration with one change per arm, then stop and write up.
+- Arms: `base`, `fleet`, `paired`, `full`, `full_bks`, `full_bks_retained`, `full_dagger` × 3 seeds at BC + 2M; promote the 3 arms closest to the gate (mean shortfall; amended 2026-10-24 when no arm met the teacher-relative eligibility) to 8M; if no run passes at 8M, one `suite_v2` iteration with one change per arm, then stop and write up.
 - Scope: the five problems only; leave-one-problem-out, specialists and size probes are out.
 - BKS: static portfolio with nominal bounds; dynamic portfolio with the rolling request planner, bound = max(clairvoyant planner at the raised budget, BKS); the planner never rests on top of a known request.
+- DAgger overhead (pilot, 2026-10-23): rounds take about 38 % of `full_dagger`'s wall time; the user kept the arm as decided (2M in about 7 h, 8M in about 25 h with resumes).
 - Authority: agents submit P0–P3 without asking and open P5 automatically on a validation PASS; agents **never commit**; changes to arms, thresholds, scope or authority need the user.
 
 ## 3. Swarm roles
@@ -47,11 +48,11 @@ Any agent session may take a role; it announces the claim and every step with on
 | Pre-flight code and tests | done 2026-10-22 | 776 unit tests, 2 integration tests, mini check end to end |
 | P0a best-known solutions (10 jobs) | **done** 2026-10-23 (jobs 28476569–28476581, 2–63 min each); gates passed: 128 seeds and 256 demonstrations per problem, BKS beats the teacher everywhere | `bks/<p>/summary.json`, design doc Section 1 |
 | P0b references (3 jobs) | **done** 2026-10-23 (array 28476582); 45 shards merged, ≥ 1,348 non-failed train episodes per problem | `suite_v1_refs/references/summary.json` |
-| P1 GPU pilot (`full_s0`, `full_dagger_s0`, 200k) | submitted 2026-10-23 in `suite_v1_pilot` | throughput, memory, BC coverage, DAgger round time in `suite_v1_pilot/logs/` |
-| P2 screen (21 runs, 2M) | after P1 gates | `evaluation/validation/2M/{report.md,promotion.json,near_optimal_gate.md}` |
-| P3 promotion (3 arms, 8M) | after P2 | `evaluation/validation/8M/near_optimal_gate.json` |
+| P1 GPU pilot (`full_s0`, `full_dagger_s0`, 200k) | **done** 2026-10-23: 175 / 171 decisions/s, 7.8 / 10.9 GB, DAgger rounds 38 % of wall (kept), BC misses 0.77 % on BKS demos at budget 32 → common charger budget raised to 64 (Texas 0.32 % at 64), resume verified (job 28509592) | `suite_v1_pilot/logs/`, design doc Section 4 |
+| P2 screen (21 runs, 2M) | training since 2026-10-23 19:40 in `suite_v1` (charger budget 64; references and BKS frozen in); **done** 2026-10-24: all 21 runs evaluated on 128 seeds; no run passes; by distance to the gate full_bks 0.51, full_dagger 0.63, full_bks_retained 0.65 (original arms 0.89–1.26). Design doc Section 3 "P2 result" | `suite_v1/logs/`, then `evaluation/validation/2M/{report.md,promotion.json,near_optimal_gate.md}` |
+| P3 promotion (3 arms, 8M) | **done** 2026-10-25: no run passes; best arm full_dagger at distance 0.24 (static failure 0–4 %, success 95–100 %, hours +32–40 % vs BKS; same-day 0.78–0.84; drayage passes). Design doc Section 3 "P3 result" | `evaluation/validation/8M/near_optimal_gate.json` |
 | P5 locked test | locked; opens on a validation PASS | `agent/TEST_OPENED`, `evaluation/test/final/` |
-| `suite_v2` | only if no PASS at 8M | |
+| `suite_v2` plan-conditioned (user decision 2026-10-25) | plan cache done 2026-10-26 (identical to the BKS time-0 plans); 9 runs to 8M: array 28586156 in `results/generalist_graphppo/suite_v2` (first submission 28583920 aborted in BC replay by a rolling-planner crash when no truck can work, fixed 2026-10-26); stop rule at 4M stopped `full_bks_retained_plan` (2.215 -> 2.193) and `full_dagger_plan` (2.223 -> 2.214); `full_bks_plan` (1.92 -> 2.16) continues to 8M; validation evaluation of the six stopped runs (best.pt): 28627901 (`8M`), 28627905 (`8M_noplan`): all six FAIL (distance full_dagger_plan 0.178, full_bks_retained_plan 0.318 plan-on; plan-off 0.64 / 1.01) | `suite_v2/logs/`, then `evaluation/validation/{8M,8M_noplan}/` |
 
 ## 6. Stop rules
 

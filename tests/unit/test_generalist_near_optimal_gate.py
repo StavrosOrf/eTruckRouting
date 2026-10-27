@@ -81,3 +81,26 @@ def test_validation_needs_no_flag(tmp_path) -> None:
     assert gate.main(["--campaign", str(campaign), "--split", "validation", "--tag", "final", "--bks-dir", str(bks),
                       "--problems", "tx_longhaul", "--resamples", "100"]) == 0
     assert (folder / "near_optimal_gate.md").exists()
+
+
+def test_arms_are_ranked_by_their_mean_shortfall_to_the_gate() -> None:
+    passing = gate.gate_problem("tx_longhaul", _static_rows(306.0), _static_bks(), resamples=100)
+    slow = gate.gate_problem("tx_longhaul", _static_rows(330.0), _static_bks(), resamples=100)
+    stranded = gate.gate_problem("tx_longhaul", _static_rows(300.0, success=False, failed=True), _static_bks(), resamples=100)
+    assert gate.shortfall(passing) == 0.0
+    assert gate.shortfall(slow) == pytest.approx(0.05)  # 10 % excess against the 5 % limit
+    assert gate.shortfall(stranded) == pytest.approx((1.0 - 0.01) + (0.98 - 0.0) + 1.0)  # failure, success, no joint successes
+    assert gate.shortfall({"status": "MISSING"}) is None
+    dynamic = gate.gate_problem("ca_sameday", _dynamic_rows(36), _dynamic_bks(), resamples=100)
+    assert gate.shortfall(dynamic) == pytest.approx(0.95 - 0.9)
+    runs = {
+        "a_s0": {"overall": "FAIL", "problems": {"tx_longhaul": slow, "ca_sameday": dynamic}},
+        "a_s1": {"overall": "PASS", "problems": {"tx_longhaul": passing, "ca_sameday": gate.gate_problem("ca_sameday", _dynamic_rows(40), _dynamic_bks(), resamples=100)}},
+        "b_s0": {"overall": "FAIL", "problems": {"tx_longhaul": stranded, "ca_sameday": dynamic}},
+        "c_s0": {"overall": "FAIL", "problems": {"tx_longhaul": slow, "ca_sameday": {"status": "NO_ROWS"}}},
+    }
+    distances = gate.arm_distances(runs, ("tx_longhaul", "ca_sameday"))
+    assert distances["a"]["seeds"] == 2 and distances["a"]["runs_passing"] == 1
+    assert distances["a"]["distance"] == pytest.approx((0.025 + 0.025) / 2)
+    assert distances["b"]["distance"] > distances["a"]["distance"]
+    assert distances["c"]["distance"] is None  # a problem without rows leaves the arm unranked

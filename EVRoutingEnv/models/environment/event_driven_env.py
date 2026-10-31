@@ -1094,11 +1094,11 @@ class EventDrivenTruckEnv(gym.Env):
                 "deliveries": sequence.copy(),
             }
 
-    def _certificate_charge_transition(self, node, battery):
-        """Use exactly the station curve and highest configured charge action."""
+    def _certificate_charge_transition(self, node, battery, value=None):
+        """Use exactly the station curve and a charge action (default: the highest configured one)."""
         capacity = float(self.config["truck"]["battery_capacity"])
         soc = min(1.0, max(0.0, battery / capacity))
-        value = max(self.charge_action_values)
+        value = max(self.charge_action_values) if value is None else float(value)
         if soc >= (value if self.charging_action_mode == "target_soc" else 1.0) - 1e-9:
             return battery, 0.0, value
         kind = self.charging_station.charger_type[node]

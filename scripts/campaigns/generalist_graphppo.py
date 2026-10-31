@@ -100,6 +100,21 @@ DAGGER = [
 # plan in the observation, withheld in 30 % of train-seed episodes; static plans
 # come from the time-0 plan cache frozen into <campaign>/bks.
 PLAN = ["--plan-conditioned", "--plan-cache", BKS_DIR, "--plan-dropout", "0.3"]
+# suite_v3 (user decision 2026-10-27, option B): the imitation term stays at 0.1
+# and the DAgger expert's share falls only to 0.2 over the 4M run, instead of
+# both fading to zero; a 4-layer encoder; checkpoints chosen on 64 validation
+# seeds per problem instead of 16.
+HELD = ["--bc-coefficient", "0.1", "--bc-coefficient-final", "0.1"]
+DAGGER_HELD = [
+    "--dagger-expert", *EXPERTS, "--dagger-every", "10", "--dagger-episodes", "8",
+    "--dagger-beta", "0.5", "--dagger-beta-final", "0.2", "--dagger-beta-anneal-timesteps", "4000000",
+    "--dagger-pretrain-rounds", "2",
+]
+DEEP = ["--encoder-layers", "4", "--validation-scenarios", "64"]
+# suite_v4 (user decision 2026-10-28): the planner's charging moves to the
+# active truck's next stop join the plan input (static problems); otherwise
+# full_dagger_plan unchanged, so it compares with suite_v2's run at <= 4M.
+CHARGE_PLAN = ["--charge-plan"]
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
@@ -113,6 +128,8 @@ RECIPES = {
     "full_bks_plan": [*FULL, *IMITATION, *PLAN],
     "full_bks_retained_plan": [*FULL, *IMITATION, *RETAINED, *PLAN],
     "full_dagger_plan": [*FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN],
+    "full_dagger_plan_deep": [*FULL, *IMITATION, *HELD, *DAGGER_HELD, *PLAN, *DEEP],
+    "full_dagger_plan_charge": [*FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN, *CHARGE_PLAN],
 }
 SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
@@ -179,6 +196,31 @@ def arms_for(
     return runs
 
 
+def snapshot_source(source: Path) -> str:
+    """Copy the code a job runs into ``source`` (with the uncommitted diff beside it); returns the commit."""
+    source.mkdir()
+    for directory in ("algo", "EVRoutingEnv", "scripts"):
+        shutil.copytree(
+            ROOT / directory,
+            source / directory,
+            ignore=shutil.ignore_patterns("__pycache__", "data", "baselines", "results", "*.out"),
+        )
+    shutil.copytree(ROOT / "EVRoutingEnv/baselines/heuristics", source / "EVRoutingEnv/baselines/heuristics")
+    shutil.copytree(
+        ROOT / "EVRoutingEnv/baselines/optimization",
+        source / "EVRoutingEnv/baselines/optimization",
+        ignore=shutil.ignore_patterns("__pycache__", "julia", "branch_and_price"),
+    )
+    shutil.copy2(ROOT / "EVRoutingEnv/baselines/__init__.py", source / "EVRoutingEnv/baselines/__init__.py")
+    (source / "EVRoutingEnv/data").symlink_to(ROOT / "EVRoutingEnv/data", target_is_directory=True)
+    source.with_name(f"{source.name}.diff").write_text(subprocess.check_output(["git", "diff"], cwd=ROOT, text=True))
+    untracked = subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "algo", "scripts", "EVRoutingEnv"], cwd=ROOT, text=True,
+    )
+    source.with_name(f"{source.name}.untracked").write_text(untracked)
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+
+
 def prepare(
     destination: Path,
     arm_set: str,
@@ -188,6 +230,7 @@ def prepare(
     bks_from: Path | None = None,
     probes: bool = False,
     arms: list[str] | None = None,
+    schedule: int = SCHEDULE,
 ) -> None:
     if (destination / "manifest.json").exists():
         raise FileExistsError(f"immutable campaign already exists: {destination}")
@@ -239,27 +282,7 @@ def prepare(
                     shutil.copy2(bks_from / name / file, destination / "bks" / name / file)
 
     source = destination / "source"
-    source.mkdir()
-    for directory in ("algo", "EVRoutingEnv", "scripts"):
-        shutil.copytree(
-            ROOT / directory,
-            source / directory,
-            ignore=shutil.ignore_patterns("__pycache__", "data", "baselines", "results", "*.out"),
-        )
-    shutil.copytree(ROOT / "EVRoutingEnv/baselines/heuristics", source / "EVRoutingEnv/baselines/heuristics")
-    shutil.copytree(
-        ROOT / "EVRoutingEnv/baselines/optimization",
-        source / "EVRoutingEnv/baselines/optimization",
-        ignore=shutil.ignore_patterns("__pycache__", "julia", "branch_and_price"),
-    )
-    shutil.copy2(ROOT / "EVRoutingEnv/baselines/__init__.py", source / "EVRoutingEnv/baselines/__init__.py")
-    (source / "EVRoutingEnv/data").symlink_to(ROOT / "EVRoutingEnv/data", target_is_directory=True)
-    (destination / "source.diff").write_text(subprocess.check_output(["git", "diff"], cwd=ROOT, text=True))
-    untracked = subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard", "algo", "scripts", "EVRoutingEnv"], cwd=ROOT, text=True,
-    )
-    (destination / "source.untracked").write_text(untracked)
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    commit = snapshot_source(source)
     write_json(destination / "manifest.json", {
         "version": 2,
         "arm_set": arm_set,
@@ -272,7 +295,7 @@ def prepare(
         "probes": str(destination / "probes.json"),
         "seeds": SEEDS,
         "reference_shard": SHARD,
-        "schedule_timesteps": SCHEDULE,
+        "schedule_timesteps": schedule,
         "common_flags": COMMON,
         "runs": runs,
         "extra_baselines": EXTRA_BASELINES,
@@ -658,6 +681,8 @@ def submit(
     partition: str | None = None,
     cpus_per_gpu: int | None = None,
     test_only: bool = False,
+    time_limit: int | None = None,
+    decision: dict | None = None,
 ) -> None:
     """Compose (and unless ``dry_run``, submit) the sbatch call(s) of a stage.
 
@@ -729,7 +754,7 @@ def submit(
                 *common, f"--job-name={destination.name}_train", f"--partition={gpu_partition}",
                 "--nodes=1", "--ntasks=1", f"--cpus-per-task={size * per_gpu}",
                 f"--mem-per-cpu={slurm['gpu_mem_per_cpu']}", f"--gpus-per-task={-(-size // runs_per_gpu)}",
-                f"--time={train_hours(budget):02d}:00:00", "--signal=B:USR1@300",
+                f"--time={time_limit or train_hours(budget):02d}:00:00", "--signal=B:USR1@300",
                 f"--array=0-{len(groups) - 1}%{throttle}",
                 str(ROOT / "scripts/campaigns/generalist_graphppo_gpu.sbatch"), str(destination), str(budget),
                 str(runs_per_gpu), *(",".join(map(str, group)) for group in groups),
@@ -741,8 +766,10 @@ def submit(
             unknown = sorted(set(runs) - {run["name"] for run in manifest["runs"]})
             if unknown:
                 raise SystemExit(f"unknown runs {unknown}")
+        if decision and not (dry_run or test_only):
+            write_decision(destination / "evaluation" / split / tag, decision, snapshot=True)
         # One allocation: the baselines, then every run's best.pt on the GPU.
-        hours = 12 if split == "validation" else 24
+        hours = time_limit or (12 if split == "validation" else 24)
         commands.append((None, [
             *common, f"--job-name={destination.name}_eval_{tag}", f"--partition={gpu_partition}",
             "--nodes=1", "--ntasks=1", f"--cpus-per-task={cpus or per_gpu}",
@@ -777,6 +804,54 @@ def submit(
 # ---------------------------------------------------------------------------
 
 
+DECISION = "decision.json"
+
+
+def write_decision(folder: Path, settings: dict, snapshot: bool = False) -> None:
+    """Freeze a tag's decision-time settings (track A: feasibility mask, search); evaluate applies them.
+
+    With ``snapshot`` the current code is copied into ``<tag>/source`` and the
+    evaluation wrapper runs that copy instead of the campaign's training
+    snapshot, which predates track A.
+    """
+    path = folder / DECISION
+    if snapshot:
+        settings = {**settings, "source": str(folder / "source")}
+    if path.exists() and json.loads(path.read_text()) != settings:
+        raise SystemExit(f"{path} already holds other settings {json.loads(path.read_text())}; use a new tag")
+    folder.mkdir(parents=True, exist_ok=True)
+    if snapshot and not (folder / "source").exists():
+        snapshot_source(folder / "source")
+    write_json(path, settings)
+
+
+def apply_decision(folder: Path) -> dict:
+    """Set the environment of a tag's decision-time settings for this process and its forked workers."""
+    settings = json.loads((folder / DECISION).read_text()) if (folder / DECISION).exists() else {}
+    os.environ["EVRP_SAFETY_MASK"] = "on" if settings.get("safety_mask") else "off"
+    os.environ["EVRP_SAFETY_MARGIN"] = str(float(settings.get("safety_margin", 0.0)))
+    os.environ["EVRP_RETIRE_GUARD"] = "on" if settings.get("retire_guard") else "off"
+    return settings
+
+
+def decision_from(
+    safety_mask: bool, safety_margin: float | None, search: str | None = None, k: int = 4, n: int = 16,
+    retire_guard: bool = False,
+) -> dict | None:
+    if safety_margin is not None and not safety_mask:
+        raise SystemExit("--safety-margin needs --safety-mask")
+    if retire_guard and not safety_mask:
+        raise SystemExit("--retire-guard needs --safety-mask")
+    settings = {}
+    if safety_mask:
+        settings.update(safety_mask=True, safety_margin=float(safety_margin or 0.0))
+    if retire_guard:
+        settings.update(retire_guard=True)
+    if search:
+        settings.update(search=search, k=int(k) if search == "lookahead" else None, n=int(n) if search == "best_of_n" else None)
+    return settings or None
+
+
 def evaluate(
     destination: Path,
     split: str,
@@ -787,6 +862,7 @@ def evaluate(
     runs: list[str] | None,
     envs_per_problem: int = 16,
     plan_mode: str | None = None,
+    decision: dict | None = None,
 ) -> None:
     import torch
 
@@ -817,6 +893,11 @@ def evaluate(
     seeds = split_seeds(split, count)
     folder = destination / "evaluation" / split
     (folder / tag).mkdir(parents=True, exist_ok=True)
+    if decision:
+        write_decision(folder / tag, decision)
+    applied = apply_decision(folder / tag)
+    if applied:
+        print(f"decision-time settings ({tag}): {applied}", flush=True)
     # Baselines on exactly these seeds; the teacher rows are also the
     # per-scenario references of the score.
     for problem in problems:
@@ -845,6 +926,11 @@ def evaluate(
         and (destination / "training" / run["name"] / "best.pt").exists()
         and not (folder / tag / f"{run['name']}.json").exists()
     ]
+    # Track A search plays the static problems episode by episode on the CPU;
+    # the other problems (and every problem without a search) go batched to the GPU.
+    search = applied.get("search")
+    searched = [problem for problem in problems if search and problem.name in STATIC]
+    batched = [problem for problem in problems if problem not in searched]
     # Workers are forked per observation spec before any policy touches CUDA.
     specs = {
         run["name"]: GeneralistPolicyConfig.load(destination / "training" / run["name"] / "best_config.json").observation_spec
@@ -852,20 +938,35 @@ def evaluate(
     }
     envs = {
         spec: evaluation_envs(
-            problems, [seeds] * len(problems), spec, reward, references,
+            batched, [seeds] * len(batched), spec, reward, references,
             workers=workers, envs_per_problem=envs_per_problem,
         )
         for spec in set(specs.values())
-    }
+    } if batched else {}
+    searched_rows = {}
+    if searched and pending:
+        from algo.generalist_search import evaluate_search
+
+        jobs = [
+            (run["name"], str(destination / "training" / run["name"]), problem.name, problem.config, seed,
+             references.scale(problem.name, seed, reward.reference)[0], search, applied.get("k"), applied.get("n"), reward)
+            for run in pending for problem in searched for seed in seeds
+        ]
+        # One episode file per job's runs, so a crashed or timed-out search resumes.
+        partial = folder / tag / f"search_{'_'.join(sorted(run['name'] for run in pending))}.partial.jsonl"
+        searched_rows = evaluate_search(jobs, workers, partial=partial)
     try:
         for run in pending:
-            checkpoint = destination / "training" / run["name"]
-            policy = GeneralistActorCritic.load(checkpoint, prefix="best", map_location=device).to(device)
-            with torch.no_grad():
-                rows = evaluate_policy_suite(
-                    policy, problems, [seeds] * len(problems), references, reward,
-                    device=device, envs=envs[specs[run["name"]]],
-                )
+            rows = []
+            if batched:
+                checkpoint = destination / "training" / run["name"]
+                policy = GeneralistActorCritic.load(checkpoint, prefix="best", map_location=device).to(device)
+                with torch.no_grad():
+                    rows = evaluate_policy_suite(
+                        policy, batched, [seeds] * len(batched), references, reward,
+                        device=device, envs=envs[specs[run["name"]]],
+                    )
+            rows = [*rows, *sorted(searched_rows.get(run["name"], []), key=lambda row: (row["problem"], row["seed"]))]
             write_json(folder / tag / f"{run['name']}.json", rows)
             print(f"{run['name']} ({tag}): {len(rows)} episodes", flush=True)
     finally:
@@ -1045,6 +1146,8 @@ def main() -> None:
                          help="Best-known solutions (<problem>/{validation,train_demonstrations}.json) to freeze.")
     command.add_argument("--probes", action=argparse.BooleanOptionalAction, default=False,
                          help="Also write and evaluate the zero-shot size probes.")
+    command.add_argument("--schedule", type=int, default=SCHEDULE,
+                         help="Timesteps over which the learning rate decays to zero (frozen in the manifest).")
     command = commands.add_parser("references")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     group = command.add_mutually_exclusive_group(required=True)
@@ -1080,6 +1183,18 @@ def main() -> None:
     command.add_argument("--cpus-per-gpu", type=int, default=None, help="train/evaluate: CPUs per GPU instead of the partition's.")
     command.add_argument("--dry-run", action="store_true", help="Print the commands only.")
     command.add_argument("--test-only", action="store_true", help="Run each command through sbatch --test-only.")
+    command.add_argument("--hours", type=int, default=None,
+                         help="train/evaluate: time limit in hours instead of the default for the budget or split.")
+    command.add_argument("--safety-mask", action="store_true",
+                         help="evaluate: decision-time feasibility mask (track A), frozen in <tag>/decision.json.")
+    command.add_argument("--safety-margin", type=float, default=None,
+                         help="evaluate with --safety-mask: hours to be home before the horizon.")
+    command.add_argument("--retire-guard", action="store_true",
+                         help="evaluate with --safety-mask: no retirement of a truck the plan still routes customers to.")
+    command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"],
+                         help="evaluate: decision-time search on the static problems (track A).")
+    command.add_argument("--search-k", type=int, default=4, help="lookahead: candidates per decision.")
+    command.add_argument("--search-n", type=int, default=16, help="best_of_n: sampled rollouts.")
     command = commands.add_parser("evaluate")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--split", default="validation", choices=["validation", "test"])
@@ -1091,6 +1206,12 @@ def main() -> None:
     command.add_argument("--device", default="cpu")
     command.add_argument("--plan-mode", default=None, choices=["on", "off"],
                          help="Plan-conditioned runs: evaluate with or without the plan (default: off for tags ending in _noplan).")
+    command.add_argument("--safety-mask", action="store_true", help="Decision-time feasibility mask (track A).")
+    command.add_argument("--safety-margin", type=float, default=None, help="With --safety-mask: hours to be home before the horizon.")
+    command.add_argument("--retire-guard", action="store_true", help="With --safety-mask: no retirement of a truck the plan still routes customers to.")
+    command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"], help="Decision-time search (track A).")
+    command.add_argument("--search-k", type=int, default=4)
+    command.add_argument("--search-n", type=int, default=16)
     command = commands.add_parser("report")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--split", default="validation", choices=["validation", "test"])
@@ -1104,7 +1225,7 @@ def main() -> None:
         bks_from = arguments.bks_from.resolve() if arguments.bks_from else None
         prepare(
             destination, arguments.arm_set, arguments.recipe, arguments.seeds, references_from,
-            bks_from=bks_from, probes=arguments.probes, arms=arguments.arms,
+            bks_from=bks_from, probes=arguments.probes, arms=arguments.arms, schedule=arguments.schedule,
         )
     elif arguments.command == "references":
         if arguments.tasks is not None:
@@ -1123,11 +1244,19 @@ def main() -> None:
             arms=arguments.arms, split=arguments.split, tag=arguments.tag, runs=arguments.runs,
             pack=arguments.pack, runs_per_gpu=arguments.runs_per_gpu, cpus=arguments.cpus,
             partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
+            time_limit=arguments.hours, decision=decision_from(
+                arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
+                arguments.retire_guard,
+            ),
         )
     elif arguments.command == "evaluate":
         evaluate(
             destination, arguments.split, arguments.tag, arguments.count, arguments.workers, arguments.device,
             arguments.runs, arguments.envs_per_problem, plan_mode=arguments.plan_mode,
+            decision=decision_from(
+                arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
+                arguments.retire_guard,
+            ),
         )
     else:
         report(destination, arguments.split, arguments.tag, promote_count=arguments.promote)

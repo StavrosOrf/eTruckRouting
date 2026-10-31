@@ -15,6 +15,12 @@ fi
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 campaign_python="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["python"])' "$campaign_dir/manifest.json")"
 campaign_source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"])' "$campaign_dir/manifest.json")"
+# A tag with decision-time settings (track A) runs the code snapshot frozen with them.
+decision="$campaign_dir/evaluation/$split/$tag/decision.json"
+if [ -f "$decision" ]; then
+  tag_source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("source", ""))' "$decision")"
+  campaign_source="${tag_source:-$campaign_source}"
+fi
 cd "$campaign_source"
 # Workers fork inside evaluate before any policy moves to the GPU.
 PYTHONPATH="$campaign_source" "$campaign_python" scripts/campaigns/generalist_graphppo.py evaluate \

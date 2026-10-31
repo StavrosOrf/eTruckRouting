@@ -56,6 +56,7 @@ class GeneralistPolicyConfig:
     charger_budget: int = 32
     fleet_assignment: bool = False
     plan_conditioned: bool = False
+    charge_plan: bool = False
     feature_schema_version: str = GENERALIST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -63,7 +64,7 @@ class GeneralistPolicyConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned)
+        ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned, self.charge_plan)
         if self.feature_schema_version != GENERALIST_SCHEMA_VERSION:
             raise ValueError(
                 f"checkpoint feature schema {self.feature_schema_version!r} is incompatible "
@@ -72,7 +73,7 @@ class GeneralistPolicyConfig:
 
     @property
     def observation_spec(self) -> ObservationSpec:
-        return ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned)
+        return ObservationSpec(self.charger_budget, self.fleet_assignment, self.plan_conditioned, self.charge_plan)
 
     def save(self, path: str | Path) -> None:
         from algo.checkpoint_io import write_text_atomic

@@ -166,3 +166,33 @@ def test_the_plan_arms_carry_the_plan_flags_and_need_the_plan_cache(tmp_path) ->
     for run in manifest["runs"]:
         parsed = parser.parse_args(["--references", "r", *manifest["common_flags"], *run["flags"]])
         assert parsed.plan_conditioned and parsed.plan_cache == str(destination / "bks") and parsed.plan_dropout == 0.3
+
+
+def test_the_deep_plan_arm_holds_imitation_on_and_runs_on_its_own_schedule(tmp_path, capsys) -> None:
+    from scripts.campaigns import generalist_graphppo as campaign
+    from scripts.training.train_generalist_ppo import build_argument_parser
+
+    bks = tmp_path / "bks"
+    for name in campaign.PROBLEMS:
+        (bks / name).mkdir(parents=True)
+        (bks / name / "validation.json").write_text("{}")
+        (bks / name / "train_demonstrations.json").write_text("[]")
+    for name in campaign.STATIC:
+        for file in campaign.PLAN_FILES:
+            (bks / name / file).write_text("{}")
+    destination = tmp_path / "v3"
+    campaign.prepare(destination, "named", "full", 1, bks_from=bks, arms=["full_dagger_plan_deep"], schedule=4_000_000)
+    manifest = campaign.read_manifest(destination)
+    assert manifest["schedule_timesteps"] == 4_000_000
+    (run,) = manifest["runs"]
+    parsed = build_argument_parser().parse_args(["--references", "r", *manifest["common_flags"], *run["flags"]])
+    assert parsed.bc_coefficient == parsed.bc_coefficient_final == 0.1
+    assert parsed.dagger_beta == 0.5 and parsed.dagger_beta_final == 0.2 and parsed.dagger_beta_anneal_timesteps == 4_000_000
+    assert len(parsed.dagger_expert) == 5 and parsed.dagger_pretrain_rounds == 2
+    assert parsed.encoder_layers == 4 and parsed.validation_scenarios == 64 and parsed.plan_conditioned
+    (destination / "references").mkdir(exist_ok=True)
+    (destination / "references" / "summary.json").write_text("{}")
+    campaign.submit(destination, "train", 4_000_000, dry_run=True, time_limit=36)
+    assert "--time=36:00:00" in capsys.readouterr().out
+    campaign.submit(destination, "train", 4_000_000, dry_run=True)
+    assert "--time=24:00:00" in capsys.readouterr().out

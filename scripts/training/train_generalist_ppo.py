@@ -88,6 +88,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fleet-assignment", action="store_true", help="Plan 4.2 fleet-assignment features.")
     parser.add_argument("--plan-conditioned", action="store_true",
                         help="Design 4.4/9.5: the planner's route plan in the observation (algo/generalist_plans.py).")
+    parser.add_argument("--charge-plan", action="store_true",
+                        help="suite_v4: the planner's moves to the active truck's next stop (stations, target SoCs, "
+                             "rests) in the observation; needs --plan-conditioned.")
     parser.add_argument("--plan-cache", default=None,
                         help="Directory of <problem>/plans_<split>.json time-0 plans for the static problems.")
     parser.add_argument("--plan-dropout", type=float, default=0.0,
@@ -201,8 +204,8 @@ def print_dagger(record: dict) -> None:
 def configure_plans(arguments, problems) -> None:
     """Plan settings for every environment of this process and its forked workers (algo/generalist_plans.py)."""
     if not arguments.plan_conditioned:
-        if arguments.plan_cache or arguments.plan_dropout:
-            raise SystemExit("--plan-cache and --plan-dropout need --plan-conditioned")
+        if arguments.plan_cache or arguments.plan_dropout or arguments.charge_plan:
+            raise SystemExit("--plan-cache, --plan-dropout and --charge-plan need --plan-conditioned")
         return
     if not 0.0 <= arguments.plan_dropout <= 1.0:
         raise SystemExit("--plan-dropout must lie in [0, 1]")
@@ -259,6 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         charger_budget=arguments.charger_budget,
         fleet_assignment=arguments.fleet_assignment,
         plan_conditioned=arguments.plan_conditioned,
+        charge_plan=arguments.charge_plan,
     )
     ppo_config = PPOConfig(
         total_timesteps=arguments.total_timesteps,

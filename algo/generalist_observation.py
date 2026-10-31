@@ -18,8 +18,10 @@ from the one feasibility engine, and changes five things
   at the row of its target entity instead of carrying a node id.
 * **Bounded charger subgraph.** The ``charger_budget`` chargers with the lowest
   detour from the active truck towards the remaining work, feasible ones first,
-  plus every charger a truck is at or heading to. Charger destinations outside
-  the subgraph are not offered; the pooled context reports what was left out.
+  plus every charger a truck is at or heading to (and, with the charging plan,
+  every station the active truck is planned to use on its way to its next
+  stop). Charger destinations outside the subgraph are not offered; the pooled
+  context reports what was left out.
 * **Physical units.** Durations are divided by the horizon, energy by battery
   capacity and loads by payload capacity; clock times become times relative to
   now.
@@ -40,6 +42,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from algo.generalist_search import retire_guard_enabled, retire_guarded, safe_actions, safety_mask_enabled
 from EVRoutingEnv.models.core.customer import TaskStatus
 from EVRoutingEnv.models.core.requests import RequestKind, RequestStatus
 from EVRoutingEnv.models.environment.event_driven_env import EventDrivenTruckEnv
@@ -162,6 +165,13 @@ PLAN_FEATURE_NAMES = {
     "context": ("plan_available",),
     "edge": ("planned_owner", "planned_next", "planned_successor"),
 }
+# Charging plan (suite_v4): the planner's moves to the active truck's next stop
+# (``PlanProvider.moves``), appended after the plan columns when
+# ``ObservationSpec.charge_plan``; all zero without a plan and on dynamic problems.
+CHARGE_PLAN_FEATURE_NAMES = {
+    "action": ("planned_move", "planned_station", "planned_station_level"),
+    "context": ("charge_plan_available",),
+}
 
 _T = {name: index for index, name in enumerate(TRUCK_FEATURES)}
 _C = {name: index for index, name in enumerate(CUSTOMER_FEATURES)}
@@ -184,17 +194,23 @@ class ObservationSpec:
     charger_budget: int = 32
     fleet_assignment: bool = False
     plan_conditioned: bool = False
+    charge_plan: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.charger_budget, bool) or not isinstance(self.charger_budget, int) or self.charger_budget < 1:
             raise ValueError("charger_budget must be a positive integer")
+        if self.charge_plan and not self.plan_conditioned:
+            raise ValueError("charge_plan needs plan_conditioned")
 
 
 def feature_dims(spec: ObservationSpec | None = None) -> dict[str, int]:
-    """Row widths of the view: the base schema, plus the plan columns when plan-conditioned."""
+    """Row widths of the view: the base schema, plus the plan (and charging plan) columns when on."""
     dims = dict(FEATURE_DIMS)
     if spec is not None and spec.plan_conditioned:
         for key, names in PLAN_FEATURE_NAMES.items():
+            dims[key] += len(names)
+    if spec is not None and spec.charge_plan:
+        for key, names in CHARGE_PLAN_FEATURE_NAMES.items():
             dims[key] += len(names)
     return dims
 
@@ -272,6 +288,12 @@ class GeneralistEnv(EventDrivenTruckEnv):
             self._plan_provider = PlanProvider(self.problem_name, self)
         return self._plan_provider.routes(self)
 
+    def plan_moves(self) -> list[tuple[int, float | None]] | None:
+        """The active truck's planned moves to its next stop (``PlanProvider.moves``); None without a plan."""
+        if self._plan_withheld or self._plan_provider is None:
+            return None
+        return self._plan_provider.moves(self)
+
 
 def build_observation(env, spec: ObservationSpec, features=None) -> GraphObservation:
     """Build the generalist view of the environment's current state."""
@@ -307,12 +329,29 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
     task_owners = tasks[:, _C["claimed_by"]].astype(np.int64) if len(tasks) else np.zeros(0, np.int64)
     slot_of_row = _task_slots(env, tasks, dynamic)
 
+    # The plan (and the active truck's planned moves) before the charger
+    # subgraph, which keeps every planned station.
+    plan = moves = None
+    if spec.plan_conditioned:
+        plan = env.plan_routes() if hasattr(env, "plan_routes") else None
+        if spec.charge_plan and plan is not None and hasattr(env, "plan_moves"):
+            moves = env.plan_moves()
+
     # Charger subgraph.
     action_rows = features.action_features
     charger_rows = features.charger_features
     charger_nodes = charger_rows[:, _K["node_id"]].astype(np.int64)
     kinds = action_rows[:, _A["kind_code"]].astype(int)
     feasible = action_rows[:, _A["feasible"]] > 0.5
+    if safety_mask_enabled():
+        # Evaluation-time feasibility mask (track A): also hide what strands
+        # the truck one leg later or cannot get it home before the horizon.
+        feasible = safe_actions(
+            env, kinds, action_rows[:, _A["target_node"]], action_rows[:, _A["charge_value"]],
+            action_rows[:, _A["required_energy"]], feasible, index, energy, hours,
+        )
+        if retire_guard_enabled() and plan and active_id is not None and not getattr(env, "dynamic_requests", False):
+            feasible = retire_guarded(kinds, feasible, plan.get(int(active_id)))
     charger_kind = _KINDS.index(ActionKind.CHARGER)
     feasible_targets = set(
         action_rows[feasible & (kinds == charger_kind), _A["target_node"]].astype(int).tolist()
@@ -330,6 +369,9 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
     truck_nodes |= {int(truck.route_destination) for truck in env.trucks if truck.route_destination is not None}
     chosen = set(order)
     chosen |= {row for row, node in enumerate(charger_nodes.tolist()) if node in truck_nodes}
+    if moves:
+        planned = {int(env.charging_nodes[action]) for action, _ in moves if action < env.num_charging_nodes}
+        chosen |= {row for row, node in enumerate(charger_nodes.tolist()) if node in planned}
     selected = sorted(chosen, key=lambda row: (detour[row], int(charger_nodes[row])))
     excluded = [row for row in range(len(charger_nodes)) if row not in chosen]
     charger_row_of_node = {int(charger_nodes[row]): position for position, row in enumerate(selected)}
@@ -394,7 +436,6 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
     )
     actions = np.asarray(action_features, dtype=np.float32).reshape(-1, FEATURE_DIMS["action"])
     if spec.plan_conditioned:
-        plan = env.plan_routes() if hasattr(env, "plan_routes") else None
         blocks = _plan_blocks(
             plan, truck_ids, active_id, slot_of_row, positions, candidate_kinds,
             env.num_charging_nodes, edges.shape[0],
@@ -403,6 +444,10 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         actions = np.concatenate([actions, blocks["action"]], axis=1)
         context = np.concatenate([np.asarray(context, dtype=np.float32), blocks["context"]])
         edges = np.concatenate([edges, blocks["edge"].astype(np.float16)], axis=2)
+        if spec.charge_plan:
+            charge = _charge_plan_blocks(moves, positions, candidate_kinds)
+            actions = np.concatenate([actions, charge["action"]], axis=1)
+            context = np.concatenate([context, charge["context"]])
     return GraphObservation(
         trucks=truck_features,
         tasks=task_features,
@@ -793,6 +838,25 @@ def _plan_blocks(plan, truck_ids, active_id, slot_of_row, positions, kinds, num_
                 out["action"][position, 2] = 1.0
         elif kind is ActionKind.DEPOT and not mine:
             out["action"][position, 0] = 1.0
+    return out
+
+
+def _charge_plan_blocks(moves, positions, kinds) -> dict:
+    """The charging plan columns; all zero (and ``charge_plan_available`` 0) when ``moves`` is None."""
+    out = {
+        "action": np.zeros((len(positions), len(CHARGE_PLAN_FEATURE_NAMES["action"])), dtype=np.float32),
+        "context": np.zeros(len(CHARGE_PLAN_FEATURE_NAMES["context"]), dtype=np.float32),
+    }
+    if moves is None:
+        return out
+    out["context"][0] = 1.0
+    stations = {int(action): level for action, level in moves}
+    for position, (action, kind) in enumerate(zip(positions, kinds, strict=True)):
+        if moves and int(action) == int(moves[0][0]):
+            out["action"][position, 0] = 1.0
+        if kind is ActionKind.CHARGER and int(action) in stations:
+            out["action"][position, 1] = 1.0
+            out["action"][position, 2] = stations[int(action)] or 0.0
     return out
 
 

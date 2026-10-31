@@ -2,8 +2,9 @@
 
 A plan is, per truck, the ordered list of task slots it is planned to serve
 next (route-level: assignment and order; charging stays the policy's own
-decision). :class:`PlanProvider` keeps one planner per episode and reads its
-current plan at every decision:
+decision, unless the charging plan of ``suite_v4`` is on: see
+:meth:`PlanProvider.moves`). :class:`PlanProvider` keeps one planner per
+episode and reads its current plan at every decision:
 
 * static long-haul problems: the BKS long-haul planner (``LonghaulPlanPolicy``
   at the BKS budget, 8,000 iterations / 40 s / 3 restarts). Its time-0 plan is
@@ -105,12 +106,99 @@ class PlanProvider:
 
             self.planner = LonghaulPlanPolicy(static_settings(), plan_cache=plan_cache(problem))
             self.slot_of_node = {int(task.node_id): slot for slot, task in enumerate(env.joint_instance.tasks)}
+        # Charging plan (suite_v4): the active truck's moves, solved once per decision.
+        self._solved_at: tuple[int, int] | None = None
+        self._solved: list[int] = []
 
     def routes(self, env) -> dict[int, list[int]]:
         if self.dynamic:
             return {int(tid): [int(r) for r in route] for tid, route in self.planner.planned_routes(env).items()}
         planned = self.planner.planned_routes(env)
         return {int(tid): [self.slot_of_node[int(node)] for node in nodes] for tid, nodes in planned.items()}
+
+    def moves(self, env) -> list[tuple[int, float | None]] | None:
+        """The active truck's planned moves to its next stop, next first: ``(action, level)`` (suite_v4).
+
+        Static problems only (None for the rolling planner). The moves are the
+        long-haul planner's continuation search along the truck's planned
+        customers (waypoint stations, target SoCs, rests: what the route plan
+        leaves open), solved from the truck's state at each of its decisions,
+        as the planner itself does (user decision 2026-10-28: re-solving only
+        when the plan was redone left stale charge levels that strand trucks).
+        The list ends with the move to the next customer or the depot;
+        ``level`` is the planned target SoC after a move to a station, else
+        None. Call after :meth:`routes` at the same decision.
+        """
+        if self.dynamic or env.active_truck_id is None:
+            return None
+        planner = self.planner
+        truck_id = int(env.active_truck_id)
+        if self._solved_at != (truck_id, int(env.episode_steps)):
+            self._solved = self._solve_moves(env, env.trucks[truck_id])
+            self._solved_at = (truck_id, int(env.episode_steps))
+        moves, charge = self._solved, planner.charge_offset
+        leg: list[tuple[int, float | None]] = []
+        for position, action in enumerate(moves):
+            level = None
+            following = moves[position + 1] if position + 1 < len(moves) else -1
+            if action < planner.n_chargers and charge <= following < charge + len(planner.levels):
+                level = planner.levels[following - charge]
+            leg.append((action, level))
+            if planner.n_chargers <= action <= planner.depot_action:
+                break
+        return leg
+
+    def _solve_moves(self, env, truck) -> list[int]:
+        """The planner's continuation search from the truck's state, as environment actions.
+
+        The same searches as ``LonghaulPlanPolicy.__call__``: at a public queue
+        it weighs joining (then charging here) against leaving; at the head of
+        a queue it charges; elsewhere it may charge here only when it can.
+        """
+        from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
+
+        planner = self.planner
+        here = planner.net.position[int(truck.current_node)]
+        nodes = planner.remaining(env, truck)
+        if not nodes and here == planner.depot:
+            return [planner.depot_action]
+        decisions = env.last_action_feasibility
+        if decisions is None or len(decisions) != env.action_space.n:
+            decisions = joint_action_feasibility(env)
+        feasible = [decision.feasible for decision in decisions]
+        charge_ok = any(feasible[planner.charge_offset + i] for i in range(len(planner.levels)))
+        queue = planner.extra_index.get(ActionKind.QUEUE)
+        queue_ok = queue is not None and feasible[queue]
+        navigation_ok = any(feasible[:planner.depot_action + 1])
+        unavailable = frozenset(
+            planner.net.position[int(node)]
+            for node, available in env.charging_station.station_available.items()
+            if not available and int(node) in planner.net.position
+        )
+        hos = getattr(env, "hos", None)
+        clock = hos.clock(int(truck.truck_id)) if hos is not None else None
+        state = (here, float(truck.current_battery), float(env.global_clock), clock, planner._stops(nodes))
+        head: list[int] = []
+        if queue_ok:
+            stay = planner.search.solve(*state, forced_charge=True, start_wait=planner._observed_wait(env, truck),
+                                        unavailable=unavailable)
+            leave = planner.search.solve(*state, can_charge_here=False, unavailable=unavailable)
+            if stay is not None and (leave is None or stay.end_time <= leave.end_time):
+                head, result = [int(queue)], stay
+            else:
+                result = leave
+        elif charge_ok and not navigation_ok:
+            result = planner.search.solve(*state, forced_charge=True, start_wait=0.0, unavailable=unavailable)
+        else:
+            result = planner.search.solve(*state, can_charge_here=charge_ok, start_wait=0.0 if charge_ok else None,
+                                          unavailable=unavailable)
+        moves = head
+        for move in result.actions if result is not None else []:
+            action = planner._action_index(env, move)
+            if action is None:
+                break
+            moves.append(int(action))
+        return moves
 
 
 def problem_name(config) -> str | None:

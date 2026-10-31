@@ -141,7 +141,7 @@ Stop an arm early when its 16-seed in-training validation score has not improved
 
 1. Write `results/generalist_graphppo/agent/TEST_OPENED` (date, the passing runs, the gate file).
 2. `cmp $D/bks/<p>/validation.json $B/<p>/validation.json` for every problem (the frozen copy must equal the global one).
-3. BKS on the test seeds, same portfolio and budgets, no demonstrations: plan files `<p>_test.txt` with `run ... --split test --count 500 --allow-test --workers {W}`, `bound ... --split test --count 500 --allow-test --workers {W}`, `merge --problem <p> --split test --allow-test`; submit through `generalist_bks.sbatch` (static ≈ 4 h per problem).
+3. BKS on the test seeds, same portfolio and budgets, no demonstrations: plan files `<p>_test.txt` with `run ... --split test --count 500 --allow-test --workers {W}`, `bound ... --split test --count 500 --allow-test --workers {W}`, `merge --problem <p> --split test --allow-test`; submit through `generalist_bks.sbatch` (static ≈ 4 h per problem). With `plans__test.jsonl` present (the plans built first), give merge the portfolio explicitly with `--methods`: it reads every `*__test.jsonl`, and plan rows have no hours.
 4. `submit --stage evaluate --split test --tag final --runs <every seed of the passing arms>`.
 5. `report --split test --tag final`; `generalist_near_optimal_gate.py --campaign $D --split test --tag final --bks-dir $B --allow-test`.
 6. Write `docs/campaigns/generalist_graphppo_suite_results.md`: per problem served fraction, success with Wilson interval, failures, hours, Δhours vs teacher and vs BKS with bootstrap intervals, score, the gate table, and decision latency.

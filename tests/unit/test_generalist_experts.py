@@ -1,5 +1,7 @@
 """The planner experts re-plan from any state and fit DAgger's expert interface."""
 
+from dataclasses import replace
+
 import pytest
 from generalist_harness import small_env
 
@@ -62,6 +64,39 @@ def test_the_rolling_expert_drives_a_same_day_episode_and_is_wrapped_as_a_callab
     assert bound.parameters.clairvoyant and not experts.rolling_request(problem, env).parameters.clairvoyant
     assert type(experts.for_problem(problem, env)) is type(bound)
     assert type(experts.for_problem(problem, small_env("static"))).__name__ == "LonghaulPlanPolicy"
+
+
+def test_the_clairvoyant_expert_labels_a_same_day_episode_at_the_standard_budget() -> None:
+    env = small_env("same_day", trucks=2, stops=4)
+    env.reset(seed=1)
+    problem = SuiteProblem("same_day", "unused.yaml")
+    expert = resolve_expert("algo.generalist_experts:rolling_request_clairvoyant", problem, env)
+    assert callable(expert.act)
+    # Only the snapshot is clairvoyant; the ALNS budget stays the DAgger one,
+    # not the raised budget of the best-known-solution bound.
+    assert experts.rolling_request_clairvoyant(problem, env).parameters == replace(experts.ROLLING, clairvoyant=True)
+    steps = 0
+    for _ in range(40):
+        action = expert.act(env)
+        assert _decisions(env)[action].feasible
+        _, _, terminated, truncated, _ = env.step(action)
+        steps += 1
+        if terminated or truncated:
+            break
+    assert steps > 1
+    with pytest.raises(ValueError, match="dynamic request mode"):
+        experts.rolling_request_clairvoyant(problem, small_env("static"))
+
+
+def test_the_clairvoyant_expert_resolves_for_the_dynamic_problems_only() -> None:
+    from scripts.campaigns.generalist_graphppo import DYNAMIC, PROBLEMS
+
+    spec = "algo.generalist_experts:rolling_request_clairvoyant"
+    config = ImitationConfig(dagger_expert=tuple(f"{name}={spec}" for name in DYNAMIC))
+    problems = [SuiteProblem(name, "unused.yaml") for name in PROBLEMS]
+    table = check_experts(config, problems)
+    for name in PROBLEMS:
+        assert table[name] == (spec if name in DYNAMIC else None)
 
 
 def test_the_campaign_experts_resolve_for_every_suite_problem() -> None:

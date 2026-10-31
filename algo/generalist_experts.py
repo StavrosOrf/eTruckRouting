@@ -17,6 +17,12 @@ are handed, as DAgger requires when the learner chose the earlier actions:
   :data:`ROLLING` parameters build the ``rolling_request`` method of the
   dynamic best-known solutions, so the DAgger expert and the BKS method are
   one controller; ``clairvoyant=True`` turns it into the hindsight bound.
+* :func:`rolling_request_clairvoyant` (request problems): the same planner and
+  budget with the hidden request stream in view — hindsight DAgger labels
+  ("learning by cheating", design doc Section 9.3). Only the snapshot differs;
+  the best-known-solution bound additionally raises the ALNS budget
+  (``generalist_bks_dynamic.bound_planner``), which labelling every visited
+  state cannot afford.
 
 Imports stay lazy and nothing here touches torch: the factories run inside the
 forked rollout workers, and ``check_experts`` imports this module in the parent.
@@ -64,6 +70,11 @@ def rolling_request(problem, env, *, clairvoyant: bool = False):
     if not is_dynamic(env):
         raise ValueError(f"{_name(problem)}: rolling_request needs a dynamic request mode")
     return RollingHorizonRequestPolicy(replace(ROLLING, clairvoyant=clairvoyant))
+
+
+def rolling_request_clairvoyant(problem, env):
+    """The rolling planner with the hidden request stream in view (hindsight DAgger labels)."""
+    return rolling_request(problem, env, clairvoyant=True)
 
 
 def for_problem(problem, env):

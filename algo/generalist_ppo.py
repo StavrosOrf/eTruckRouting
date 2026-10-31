@@ -35,6 +35,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
+from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 
 import numpy as np
@@ -155,6 +156,11 @@ def episode_summary(env) -> dict:
             lost=int(requests["requests_lost"]),
             unserved=int(requests["requests_unserved"]),
         )
+    tracker = getattr(env, "_generalist_plan_tracker", None)
+    if tracker is not None:
+        # Plan-conditioning cost of the episode (plan 9.5); any latency claim
+        # made with a plan-conditioned policy must include it.
+        summary.update(plan_calls=int(tracker.plan_calls), plan_seconds=float(tracker.plan_seconds))
     else:
         summary.update(
             tasks=int(metrics["customers_total"]),
@@ -223,6 +229,61 @@ def _reference_tasks(row: dict) -> float:
     the released count includes requests no policy could have served.
     """
     return float(max(1, row["served"] if row["dynamic"] else row["tasks"]))
+
+
+class RegretReferenceTable(ReferenceTable):
+    """Reward units from the seed's BKS–teacher spread (plan 9.4).
+
+    Hours are measured in the seed's ``|teacher − BKS|`` operating-hours
+    spread, floored at ``HOURS_FLOOR`` of the BKS hours so a seed the teacher
+    already solves near the bar never explodes the unit; on request problems
+    services are measured in the ``|BKS − teacher|`` served spread, floored at
+    one request. "Closing the gap" is then the same unit on every problem.
+    Seeds missing from either table use the problem's median spread; a problem
+    with no overlapping seeds keeps the plain BKS units of the base table.
+    """
+
+    HOURS_FLOOR = 0.1
+
+    def __init__(self, teacher: ReferenceTable, bks: ReferenceTable):
+        super().__init__(bks.rows)
+        self.teacher = teacher
+        self.spreads: dict[str, dict[int, ReferenceScale]] = {}
+        self.spread_medians: dict[str, ReferenceScale] = {}
+        for problem, rows in self.rows.items():
+            counterparts = teacher.rows.get(problem, {})
+            paired = {
+                seed: self._spread(counterparts[seed], row)
+                for seed, row in rows.items()
+                if seed in counterparts
+            }
+            self.spreads[problem] = paired
+            if paired:
+                self.spread_medians[problem] = ReferenceScale(
+                    hours=statistics.median(scale.hours for scale in paired.values()),
+                    tasks=statistics.median(scale.tasks for scale in paired.values()),
+                )
+
+    @classmethod
+    def _spread(cls, teacher_row: dict, bks_row: dict) -> ReferenceScale:
+        hours = max(
+            abs(float(teacher_row["hours"]) - float(bks_row["hours"])),
+            cls.HOURS_FLOOR * float(bks_row["hours"]),
+            1e-6,
+        )
+        if bks_row["dynamic"]:
+            tasks = max(abs(_reference_tasks(bks_row) - _reference_tasks(teacher_row)), 1.0)
+        else:
+            tasks = _reference_tasks(bks_row)
+        return ReferenceScale(hours=hours, tasks=tasks)
+
+    def scale(self, problem: str, seed: int, mode: str) -> tuple[ReferenceScale, bool]:
+        if problem not in self.spread_medians:
+            return super().scale(problem, seed, mode)
+        row = self.spreads[problem].get(int(seed))
+        if mode == "problem" or row is None:
+            return self.spread_medians[problem], mode == "scenario"
+        return row, False
 
 
 @dataclass(frozen=True)
@@ -532,6 +593,8 @@ class GeneralistPPO:
         device: str | torch.device = "cpu",
         rollout_workers: int = 1,
         imitation: ImitationConfig | None = None,
+        balanced_advantages: bool = False,
+        plan_dropout: float = 0.0,
     ):
         self.policy_config = policy_config
         self.config = ppo_config
@@ -539,6 +602,8 @@ class GeneralistPPO:
         self.reward = reward
         self.device = torch.device(device)
         self.imitation = imitation
+        self.balanced_advantages = balanced_advantages
+        self.plan_dropout = float(plan_dropout)
         torch.manual_seed(ppo_config.seed)
         np.random.seed(ppo_config.seed)
         random.seed(ppo_config.seed)
@@ -548,10 +613,15 @@ class GeneralistPPO:
             slots_for_dagger = dagger_slots(self.problems, train_seeds, imitation)
         # Every worker, DAgger sub-environments included, is forked here,
         # before the policy touches the device.
+        # Training environments alone see plan dropout (plan 9.5); validation,
+        # evaluation and replay use the config's spec with dropout zero.
+        training_spec = policy_config.observation_spec
+        if self.plan_dropout > 0.0 and training_spec.plan_conditioning:
+            training_spec = dataclasses_replace(training_spec, plan_dropout=self.plan_dropout)
         self.envs = SuiteVecEnv(
             self.problems,
             balanced_slots(len(self.problems), ppo_config.num_envs, train_seeds),
-            policy_config.observation_spec,
+            training_spec,
             reward,
             references,
             workers=rollout_workers,
@@ -659,6 +729,9 @@ class GeneralistPPO:
         with torch.no_grad():
             last_value = self.policy.predict_values(collate(observations, self.device))
         advantages = generalized_advantages(rewards, values, dones, last_value, config.gamma, config.gae_lambda)
+        if self.balanced_advantages:
+            # Sub-environment i runs problem i mod P (balanced_slots).
+            advantages = balance_advantages(advantages, [index % len(self.problems) for index in range(num_envs)])
         return {
             "batch": collate(stored, self.device),
             "actions": actions.reshape(-1),
@@ -977,6 +1050,26 @@ def generalized_advantages(rewards, values, dones, last_value, gamma: float, gae
         running = delta + gamma * gae_lambda * continues * running
         advantages[step] = running
     return advantages
+
+
+def balance_advantages(advantages: torch.Tensor, problem_of_env: Sequence[int], minimum: int = 32) -> torch.Tensor:
+    """Standardize ``[steps, envs]`` advantages per problem (plan 9.4).
+
+    One problem's large advantages then cannot dominate the update. A problem
+    with fewer than ``minimum`` samples in the rollout is standardized with the
+    global statistics instead of its own noisy ones.
+    """
+    environments = torch.as_tensor(list(problem_of_env), device=advantages.device)
+    if environments.numel() != advantages.shape[1]:
+        raise ValueError(f"{environments.numel()} problem ids for {advantages.shape[1]} sub-environments")
+    whole = advantages.mean(), advantages.std(unbiased=False)
+    balanced = torch.empty_like(advantages)
+    for problem in environments.unique():
+        columns = environments == problem
+        group = advantages[:, columns]
+        mean, std = (group.mean(), group.std(unbiased=False)) if group.numel() >= minimum else whole
+        balanced[:, columns] = (group - mean) / (std + 1e-8)
+    return balanced
 
 
 # ---------------------------------------------------------------------------

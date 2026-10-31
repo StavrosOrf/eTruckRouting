@@ -12,9 +12,11 @@ from algo.generalist_policy import GeneralistActorCritic, GeneralistPolicyConfig
 from algo.generalist_ppo import (
     GeneralistPPO,
     ReferenceTable,
+    RegretReferenceTable,
     SuiteProblem,
     SuiteReward,
     SuiteVecEnv,
+    balance_advantages,
     balanced_slots,
     evaluate_policy_suite,
     replay_demonstrations,
@@ -108,6 +110,81 @@ def test_evaluation_runs_every_seed_once(suite) -> None:
     )
 
 
+def test_balanced_advantages_standardize_each_problem() -> None:
+    generator = torch.Generator().manual_seed(0)
+    advantages = torch.randn(32, 4, generator=generator)
+    advantages[:, [0, 2]] = advantages[:, [0, 2]] * 50.0 + 10.0
+    advantages[:, [1, 3]] = advantages[:, [1, 3]] * 0.1 - 3.0
+    balanced = balance_advantages(advantages, [0, 1, 0, 1])
+    for columns in ([0, 2], [1, 3]):
+        group = balanced[:, columns]
+        assert group.mean().item() == pytest.approx(0.0, abs=1e-6)
+        assert group.std(unbiased=False).item() == pytest.approx(1.0, abs=1e-4)
+    with pytest.raises(ValueError, match="problem ids"):
+        balance_advantages(advantages, [0, 1, 0])
+
+
+def test_balanced_advantages_fall_back_to_global_statistics_on_small_groups() -> None:
+    generator = torch.Generator().manual_seed(1)
+    advantages = torch.randn(4, 4, generator=generator)  # 8 samples per problem < 32
+    balanced = balance_advantages(advantages, [0, 1, 0, 1])
+    whole = (advantages - advantages.mean()) / (advantages.std(unbiased=False) + 1e-8)
+    assert torch.allclose(balanced, whole)
+
+
+def test_regret_reference_table_measures_the_bks_teacher_spread() -> None:
+    static = {"tasks": 30, "dynamic": False, "served": 30}
+    dynamic = {"tasks": 40, "dynamic": True}
+    teacher = ReferenceTable({
+        "static_p": {0: {"hours": 300.0, **static}, 1: {"hours": 220.0, **static}},
+        "dyn_p": {0: {"hours": 36.0, "served": 10, **dynamic}},
+    })
+    bks = ReferenceTable({
+        "static_p": {0: {"hours": 100.0, **static}, 1: {"hours": 120.0, **static}, 2: {"hours": 110.0, **static}},
+        "dyn_p": {0: {"hours": 36.0, "served": 25, **dynamic}},
+        "lonely": {0: {"hours": 50.0, **static}},
+    })
+    table = RegretReferenceTable(teacher=teacher, bks=bks)
+    paired, fallback = table.scale("static_p", 0, "scenario")
+    assert paired.hours == pytest.approx(200.0) and paired.tasks == 30.0 and not fallback
+    # Teacher and BKS hours coincide: the floor of 10 % of the BKS hours holds the unit.
+    served, fallback = table.scale("dyn_p", 0, "scenario")
+    assert served.hours == pytest.approx(3.6) and served.tasks == pytest.approx(15.0) and not fallback
+    # A seed missing from the teacher table takes the median spread, flagged in scenario mode.
+    median, fallback = table.scale("static_p", 2, "scenario")
+    assert median == table.spread_medians["static_p"] and fallback
+    assert table.scale("static_p", 0, "problem") == (table.spread_medians["static_p"], False)
+    # A problem with no overlapping seeds keeps the plain BKS units.
+    lonely, fallback = table.scale("lonely", 0, "scenario")
+    assert lonely.hours == pytest.approx(50.0) and lonely.tasks == 30.0 and not fallback
+
+
+def test_the_return_equals_the_score_with_regret_units(suite) -> None:
+    problems, rows = suite
+    better = {
+        name: {seed: {**row, "hours": row["hours"] * 0.6} for seed, row in values.items()}
+        for name, values in rows.items()
+    }
+    references = RegretReferenceTable(teacher=ReferenceTable(rows), bks=ReferenceTable(better))
+    reward = SuiteReward(reference="scenario")
+    envs = SuiteVecEnv(problems, [(index, [1]) for index in range(len(problems))],
+                       ObservationSpec(charger_budget=4), reward, references, cycle=False)
+    generator = np.random.default_rng(0)
+    observations, totals, records = envs.reset(), np.zeros(len(problems)), []
+    while any(observation is not None for observation in observations):
+        actions = [
+            None if observation is None else int(generator.choice(observation.action_index))
+            for observation in observations
+        ]
+        observations, rewards, _, finished = envs.step(actions)
+        totals += rewards
+        records.extend((index, record) for index, record in enumerate(finished) if record is not None)
+    envs.close()
+    assert len(records) == len(problems)
+    for index, record in records:
+        assert totals[index] == pytest.approx(record["score"], abs=1e-4)
+
+
 def test_ppo_updates_checkpoints_and_resumes(suite, tmp_path) -> None:
     problems, rows = suite
     config = PPOConfig(total_timesteps=3 * 2 * 8 * 3, num_envs=6, rollout_steps=8, minibatch_size=16, epochs=2, seed=3)
@@ -157,3 +234,33 @@ def test_the_trainer_records_throughput_in_its_history(suite, tmp_path) -> None:
     assert [record["update"] for record in history] == [1, 2]
     assert all(record["decisions_per_second"] > 0 for record in history)
     assert all("gpu_peak_gb" not in record for record in history)
+
+
+def test_ppo_learns_with_balanced_advantages(suite) -> None:
+    problems, rows = suite
+    config = PPOConfig(total_timesteps=6 * 8, num_envs=6, rollout_steps=8, minibatch_size=16, epochs=1, seed=5)
+    trainer = GeneralistPPO(
+        GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4),
+        config, problems, ReferenceTable(rows), SuiteReward(), [list(range(6))] * 3,
+        balanced_advantages=True,
+    )
+    history = trainer.learn()
+    trainer.close()
+    assert len(history) == 1 and np.isfinite(history[0]["policy_loss"])
+
+
+def test_the_trainer_refuses_regret_normalization_without_reward_references(suite, tmp_path) -> None:
+    import json
+    from dataclasses import asdict
+
+    from scripts.training.train_generalist_ppo import main
+
+    problems, rows = suite
+    (tmp_path / "problems.json").write_text(json.dumps([asdict(problem) for problem in problems]))
+    for name, values in rows.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps({str(seed): row for seed, row in values.items()}))
+    with pytest.raises(SystemExit, match="needs --reward-references"):
+        main([
+            "--problems", str(tmp_path / "problems.json"), "--references", str(tmp_path),
+            "--regret-normalized-reward", "--output", str(tmp_path / "training"), "--run-name", "refused",
+        ])

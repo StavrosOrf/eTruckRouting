@@ -50,6 +50,7 @@ from algo.generalist_policy import GeneralistActorCritic, GeneralistPolicyConfig
 from algo.generalist_ppo import (
     GeneralistPPO,
     ReferenceTable,
+    RegretReferenceTable,
     SuiteProblem,
     SuiteReward,
     evaluate_policy_suite,
@@ -84,7 +85,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--success-bonus", type=float, default=1.0)
     parser.add_argument("--failure-penalty", type=float, default=2.0)
     parser.add_argument("--incompletion-penalty", type=float, default=2.0)
+    parser.add_argument("--regret-normalized-reward", action="store_true",
+                        help="Measure hours (and, on request problems, services) in the seed's "
+                             "BKS-teacher spread, so closing the gap is the unit everywhere "
+                             "(plan 9.4); needs --reward-references.")
     parser.add_argument("--fleet-assignment", action="store_true", help="Plan 4.2 fleet-assignment features.")
+    parser.add_argument("--privileged-critic", action="store_true",
+                        help="Plan 9.4: the value head also reads a hindsight summary of the hidden "
+                             "request stream during training; the actor path stays causal.")
+    parser.add_argument("--plan-conditioning", action="store_true",
+                        help="Plan 9.5: the rolling planner's live plan conditions tasks, trucks and "
+                             "candidates on the dynamic problems; the policy may deviate.")
+    parser.add_argument("--plan-dropout", type=float, default=0.3,
+                        help="Fraction of training episodes whose plan features are zeroed, so the "
+                             "plan-free mode keeps working (only with --plan-conditioning).")
     parser.add_argument("--charger-budget", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=3)
@@ -102,6 +116,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gamma", type=float, default=1.0)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--target-kl", type=float, default=0.05)
+    parser.add_argument("--balanced-advantages", action="store_true",
+                        help="Standardize advantages per problem over each rollout before "
+                             "minibatching, so no problem dominates the update (plan 9.4).")
     parser.add_argument("--train-scenarios", type=int, default=2048, help="Train seeds per problem.")
     parser.add_argument("--validation-scenarios", type=int, default=16, help="Validation seeds per problem.")
     parser.add_argument("--validate-every", type=int, default=25)
@@ -214,6 +231,10 @@ def main(argv: list[str] | None = None) -> None:
         missing = [name for name in names if name not in reward_references.medians]
         if missing:
             raise SystemExit(f"no reward reference outcomes for {missing} in {arguments.reward_references}")
+    if arguments.regret_normalized_reward:
+        if not arguments.reward_references:
+            raise SystemExit("--regret-normalized-reward needs --reward-references (the best-known outcomes)")
+        reward_references = RegretReferenceTable(teacher=references, bks=reward_references)
     imitation = build_imitation_config(arguments)
     reward = SuiteReward(
         reference=arguments.reward_reference,
@@ -231,6 +252,8 @@ def main(argv: list[str] | None = None) -> None:
         nonlinear_edge_messages=arguments.nonlinear_edge_messages,
         charger_budget=arguments.charger_budget,
         fleet_assignment=arguments.fleet_assignment,
+        privileged_critic=arguments.privileged_critic,
+        plan_conditioning=arguments.plan_conditioning,
     )
     ppo_config = PPOConfig(
         total_timesteps=arguments.total_timesteps,
@@ -288,6 +311,8 @@ def main(argv: list[str] | None = None) -> None:
         device=arguments.device,
         rollout_workers=arguments.rollout_workers,
         imitation=imitation,
+        balanced_advantages=arguments.balanced_advantages,
+        plan_dropout=arguments.plan_dropout if arguments.plan_conditioning else 0.0,
     )
     if arguments.init_from and not arguments.resume:
         source = GeneralistActorCritic.load(arguments.init_from, prefix="best")

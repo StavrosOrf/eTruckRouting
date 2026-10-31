@@ -88,10 +88,17 @@ IMITATION = [
     "--reward-references", BKS_DIR,
 ]
 RETAINED = ["--bc-coefficient", "0.1", "--bc-coefficient-final", "0.0", "--bc-anneal-timesteps", "2000000"]
-DAGGER = [
-    "--dagger-expert", *EXPERTS, "--dagger-every", "10", "--dagger-episodes", "8",
+DAGGER_SCHEDULE = [
+    "--dagger-every", "10", "--dagger-episodes", "8",
     "--dagger-beta", "0.5", "--dagger-beta-final", "0.0", "--dagger-beta-anneal-timesteps", "2000000",
     "--dagger-pretrain-rounds", "2",
+]
+DAGGER = ["--dagger-expert", *EXPERTS, *DAGGER_SCHEDULE]
+# Out-of-the-box arms (oob_local campaign, design doc Section 9): the clairvoyant
+# rolling planner labels the dynamic problems ("learning by cheating", 9.3).
+CLAIRVOYANT_EXPERTS = [
+    f"{name}=algo.generalist_experts:{'rolling_request_clairvoyant' if name in DYNAMIC else 'longhaul_plan'}"
+    for name in PROBLEMS
 ]
 RECIPES = {
     "base": [],
@@ -103,7 +110,38 @@ RECIPES = {
     # DAgger labels reach the PPO loss only through the retained term, so this
     # arm keeps it: full_bks -> +retained -> +DAgger, one change per rung.
     "full_dagger": [*FULL, *IMITATION, *RETAINED, *DAGGER],
+    # One Section 9 idea per arm, on top of the strongest imitation rungs; only
+    # reachable through --arm-set named (the screen stays the seven above).
+    "oob_privcritic": [*FULL, *IMITATION, *RETAINED, "--privileged-critic"],
+    "oob_balanced": [*FULL, *IMITATION, *RETAINED, "--balanced-advantages"],
+    "oob_regret": [*FULL, *IMITATION, *RETAINED, "--regret-normalized-reward"],
+    "oob_clairdagger": [*FULL, *IMITATION, *RETAINED, "--dagger-expert", *CLAIRVOYANT_EXPERTS, *DAGGER_SCHEDULE],
+    # W5, plan 9.5: the rolling planner's live plan conditions the dynamic
+    # problems; measured plan cost 0.75 s/episode (sameday), 4 s (drayage).
+    "oob_plancond": [*FULL, *IMITATION, *RETAINED, "--privileged-critic", "--plan-conditioning"],
+    # 9.2 "more BKS demonstrations": sameday BC holdout accuracy was still
+    # rising at 256 episodes; the global BKS now holds 1,024 sameday planner
+    # demos and the loader caps the other problems at their available 256.
+    "oob_privcritic_demos1k": [*FULL, *IMITATION, *RETAINED, "--privileged-critic", "--bc-episodes", "1024"],
+    # Polish continuation (design 9.2 "lower learning rate for promotion"): the
+    # 8M oob_privcritic_s0 weights, fresh schedule, no BC, LR 3e-4 -> 1e-4.
+    "oob_privcritic_polish": [
+        *FULL, "--reward-references", BKS_DIR, "--privileged-critic",
+        "--bc-episodes", "0", "--learning-rate", "0.0001",
+        "--init-from", "/data/scratch/sorfanoudakis/evrp_generalist/oob_v1/training/oob_privcritic_s0",
+    ],
+    # Dynamic-only clairvoyant DAgger: the statics are covered by the repair
+    # wrapper, and their planner labels dominated the round cost (53 % of wall
+    # in oob_v1); labelling only the request problems keeps rounds ~10 %.
+    "oob_clairdagger_dyn": [
+        *FULL, *IMITATION, *RETAINED,
+        "--dagger-expert",
+        *[f"{name}=algo.generalist_experts:rolling_request_clairvoyant" for name in DYNAMIC],
+        *DAGGER_SCHEDULE,
+    ],
 }
+# The P2 screen set is frozen at seven arms; OOB recipes never join it.
+SCREEN_ARMS = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 SLURM = {
     # Snellius gpu_a100: four A100s, 72 cores and 480 GB per node, so one GPU
     # share is 18 cores and about 120 GB. Every job on a GPU partition must hold
@@ -138,7 +176,7 @@ def arms_for(
 ) -> list[dict]:
     """The runs of an arm set; ``{bks}`` in a recipe becomes the frozen BKS copy."""
     if arm_set == "screen":
-        chosen = [(name, flags) for name, flags in RECIPES.items()]
+        chosen = [(name, RECIPES[name]) for name in SCREEN_ARMS]
     elif arm_set == "named":
         if not arms:
             raise SystemExit("--arm-set named needs --arms")

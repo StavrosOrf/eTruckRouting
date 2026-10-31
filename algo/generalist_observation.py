@@ -145,6 +145,34 @@ CONTEXT_FEATURE_NAMES = (
 EDGE_FEATURE_NAMES = (
     "energy_fraction", "hours", "reachable", "same_node", "heading_to", "owns",
 )
+# Hindsight summary of the hidden request stream (plan 9.4, asymmetric critic).
+# Aggregates only, so the width never depends on a problem's size; the critic
+# alone may read it and the actor path never does. Kept out of FEATURE_DIMS so
+# the encoder's state dict is unchanged when the privileged critic is off.
+_PRIVILEGED_BUCKETS = 4
+PRIVILEGED_FEATURE_NAMES = (
+    "hidden_fraction", "hidden_count", "hidden_demand_fraction",
+    "next_reveal_in", "mean_release_lag", "mean_deadline_window", "hard_deadline_fraction",
+    *(
+        f"reveal_bucket{bucket}_{stat}"
+        for bucket in range(_PRIVILEGED_BUCKETS)
+        for stat in ("count", "demand_fraction", "urgency", "service_hours", "off_depot_pickup")
+    ),
+)
+PRIVILEGED_DIM = len(PRIVILEGED_FEATURE_NAMES)
+_REFERENCE_STREAM = 64.0
+
+# Plan-conditioned input (plan 9.5): the rolling planner's live fleet plan as
+# advisory per-row features on the dynamic problems. Kept out of FEATURE_DIMS
+# so the encoder's state dict is unchanged when plan conditioning is off; the
+# policy consumes these rows through gated, bias-free projections, so all-zero
+# rows (static problems, dropped episodes, flag off) inject exactly nothing.
+PLAN_TASK_FEATURE_NAMES = ("plan_next_active", "plan_next_any", "plan_rank_active")
+PLAN_TRUCK_FEATURE_NAMES = ("plan_has_route",)
+PLAN_ACTION_FEATURE_NAMES = ("plan_on_next",)
+PLAN_TASK_DIM = len(PLAN_TASK_FEATURE_NAMES)
+PLAN_TRUCK_DIM = len(PLAN_TRUCK_FEATURE_NAMES)
+PLAN_ACTION_DIM = len(PLAN_ACTION_FEATURE_NAMES)
 
 FEATURE_DIMS = {
     "truck": len(TRUCK_FEATURE_NAMES),
@@ -171,14 +199,23 @@ _ROUTING_HOURS = (
 
 @dataclass(frozen=True)
 class ObservationSpec:
-    """The two knobs of the view; everything else is fixed by the schema."""
+    """The knobs of the view; everything else is fixed by the schema."""
 
     charger_budget: int = 32
     fleet_assignment: bool = False
+    # Attach the hindsight stream summary for an asymmetric critic (plan 9.4).
+    privileged: bool = False
+    # Attach the rolling planner's live plan on dynamic problems (plan 9.5).
+    plan_conditioning: bool = False
+    # Fraction of episodes whose plan features are zeroed during training, so
+    # the plan-free mode keeps working; evaluation uses the default 0.
+    plan_dropout: float = 0.0
 
     def __post_init__(self) -> None:
         if isinstance(self.charger_budget, bool) or not isinstance(self.charger_budget, int) or self.charger_budget < 1:
             raise ValueError("charger_budget must be a positive integer")
+        if not 0.0 <= float(self.plan_dropout) < 1.0:
+            raise ValueError("plan_dropout must be in [0, 1)")
 
 
 @dataclass
@@ -200,6 +237,13 @@ class GraphObservation:
     action_task: np.ndarray
     action_charger: np.ndarray
     active_truck: int
+    # Critic-only hindsight summary (plan 9.4); ``None`` unless the spec asks.
+    privileged: np.ndarray | None = None
+    # Plan-conditioned rows (plan 9.5); ``None`` unless the spec asks. All-zero
+    # rows mean "no plan" (static problem, dropped episode, or empty plan).
+    plan_tasks: np.ndarray | None = None
+    plan_trucks: np.ndarray | None = None
+    plan_actions: np.ndarray | None = None
 
     @property
     def num_actions(self) -> int:
@@ -336,6 +380,37 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
             assignment["task"][task_link] if task_link >= 0 else None, assignment["depot"],
         ))
 
+    # Plan-conditioned rows (plan 9.5): the rolling planner's cached fleet plan
+    # on dynamic problems; all-zero on static problems and dropped episodes.
+    plan_tasks = plan_trucks = plan_actions = None
+    if spec.plan_conditioning:
+        plan_tasks = np.zeros((len(tasks), PLAN_TASK_DIM), dtype=np.float32)
+        plan_trucks = np.zeros((len(truck_ids), PLAN_TRUCK_DIM), dtype=np.float32)
+        plan_actions = np.zeros((len(positions), PLAN_ACTION_DIM), dtype=np.float32)
+        if dynamic and len(tasks):
+            from algo.generalist_plan import tracker_for
+
+            routes = tracker_for(env).routes_for(
+                env, dropout=spec.plan_dropout,
+                open_rids={int(slot) for slot in slot_of_row}, active_id=active_id,
+            )
+            next_active_row = -1
+            for truck_position, truck_id in enumerate(truck_ids):
+                route = [rid for rid in routes.get(truck_id, ()) if rid in row_of_slot]
+                if not route:
+                    continue
+                plan_trucks[truck_position, 0] = 1.0
+                plan_tasks[row_of_slot[route[0]], 1] = 1.0  # plan_next_any
+                if active_id is not None and truck_id == int(active_id):
+                    next_active_row = row_of_slot[route[0]]
+                    plan_tasks[next_active_row, 0] = 1.0  # plan_next_active
+                    for rank, rid in enumerate(route):
+                        plan_tasks[row_of_slot[rid], 2] = 1.0 / (1.0 + rank)  # plan_rank_active
+            if next_active_row >= 0:
+                for candidate, row in enumerate(task_links):
+                    if row == next_active_row:
+                        plan_actions[candidate, 0] = 1.0
+
     context = _context_row(
         env, features.global_features, now, horizon, battery, payload,
         excluded, feasible_targets, charger_nodes, detour, dynamic,
@@ -357,7 +432,68 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         action_task=np.asarray(task_links, dtype=np.int64),
         action_charger=np.asarray(charger_links, dtype=np.int64),
         active_truck=active_row,
+        privileged=privileged_summary(env, now, horizon, payload) if spec.privileged else None,
+        plan_tasks=plan_tasks,
+        plan_trucks=plan_trucks,
+        plan_actions=plan_actions,
     )
+
+
+def privileged_summary(env, now: float, horizon: float, payload: float) -> np.ndarray:
+    """Fixed-width hindsight summary of the hidden request stream (plan 9.4).
+
+    Aggregates only - counts, demand, reveal timing and windows over
+    ``_PRIVILEGED_BUCKETS`` equal spans of the remaining horizon - never an
+    identifier, so permutation and padding invariance are untouched. The vector
+    is for the value head alone: feeding it to the actor would break causality.
+    Static problems have no hidden stream and return zeros.
+    """
+    values = np.zeros(PRIVILEGED_DIM, dtype=np.float32)
+    engine = getattr(env, "request_engine", None)
+    if engine is None or not getattr(env, "dynamic_requests", False):
+        return values
+    requests = engine.registry.requests()
+    hidden = [request for request in requests if request.status is RequestStatus.HIDDEN]
+    if not hidden:
+        return values
+    capacity = max(payload * max(1, len(env.trucks)), 1e-6)
+    depot = int(engine.depot)
+    values[0] = len(hidden) / max(1, len(requests))
+    values[1] = len(hidden) / _REFERENCE_STREAM
+    values[2] = sum(request.demand for request in hidden) / capacity
+    values[3] = max(0.0, min(request.reveal_time for request in hidden) - now) / horizon
+    values[4] = float(np.mean([
+        max(0.0, request.release_time - request.reveal_time) for request in hidden
+    ])) / horizon
+    bounded = [request for request in hidden if math.isfinite(request.delivery.latest)]
+    values[5] = float(np.mean([
+        min(request.delivery.latest - request.delivery.earliest, horizon) for request in bounded
+    ])) / horizon if bounded else -1.0
+    values[6] = len(bounded) / len(hidden)
+    span = max(horizon - now, 1e-6) / _PRIVILEGED_BUCKETS
+    buckets: list[list] = [[] for _ in range(_PRIVILEGED_BUCKETS)]
+    for request in hidden:
+        position = int(max(0.0, request.reveal_time - now) / span)
+        buckets[min(position, _PRIVILEGED_BUCKETS - 1)].append(request)
+    for bucket, members in enumerate(buckets):
+        base = 7 + 5 * bucket
+        if not members:
+            values[base + 2] = values[base + 3] = -1.0
+            continue
+        values[base] = len(members) / (_REFERENCE_STREAM / _PRIVILEGED_BUCKETS)
+        values[base + 1] = sum(request.demand for request in members) / capacity
+        values[base + 2] = float(np.mean([
+            min(request.delivery.latest - now, _UNREACHABLE * horizon) for request in members
+        ])) / horizon
+        values[base + 3] = float(np.mean([
+            (request.pickup.service_hours if request.pickup is not None else 0.0)
+            + request.delivery.service_hours
+            for request in members
+        ])) / horizon
+        values[base + 4] = float(np.mean([
+            request.pickup is not None and int(request.pickup.node) != depot for request in members
+        ]))
+    return values
 
 
 def _cost_matrices(graph):
@@ -734,6 +870,12 @@ class GraphBatch:
     action_task: torch.Tensor
     action_charger: torch.Tensor
     active_truck: torch.Tensor
+    # Critic-only hindsight rows; zeros wherever an observation carried none.
+    privileged: torch.Tensor | None = None
+    # Plan-conditioned rows (plan 9.5); present only when the spec asks.
+    plan_tasks: torch.Tensor | None = None
+    plan_trucks: torch.Tensor | None = None
+    plan_actions: torch.Tensor | None = None
 
     @property
     def batch_size(self) -> int:
@@ -752,6 +894,10 @@ class GraphBatch:
             action_task=self.action_task[rows],
             action_charger=self.action_charger[rows],
             active_truck=self.active_truck[rows],
+            privileged=None if self.privileged is None else self.privileged[rows],
+            plan_tasks=None if self.plan_tasks is None else self.plan_tasks[rows],
+            plan_trucks=None if self.plan_trucks is None else self.plan_trucks[rows],
+            plan_actions=None if self.plan_actions is None else self.plan_actions[rows],
         )
 
 
@@ -787,17 +933,40 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
             (a, b), (c, d) = span[source], span[target]
             pairwise[(source, target)][position, : b - a, : d - c] = item.edges[a:b, c:d]
 
+    privileged = np.zeros((batch, PRIVILEGED_DIM), dtype=np.float32)
+    for position, item in enumerate(observations):
+        if item.privileged is not None:
+            privileged[position] = item.privileged
+
+    # Plan rows (plan 9.5): built only when any observation carries them, so a
+    # plan-free batch is byte-identical to today's.
+    with_plan = any(item.plan_tasks is not None for item in observations)
+    plan_tasks = plan_trucks = None
+    if with_plan:
+        plan_tasks = np.zeros((batch, widths["task"], PLAN_TASK_DIM), dtype=np.float32)
+        plan_trucks = np.zeros((batch, widths["truck"], PLAN_TRUCK_DIM), dtype=np.float32)
+        for position, item in enumerate(observations):
+            if item.plan_tasks is not None and len(item.plan_tasks):
+                plan_tasks[position, : len(item.plan_tasks)] = item.plan_tasks
+            if item.plan_trucks is not None and len(item.plan_trucks):
+                plan_trucks[position, : len(item.plan_trucks)] = item.plan_trucks
+
     action_width = max(max(item.num_actions for item in observations), 1)
     actions = np.zeros((batch, action_width, FEATURE_DIMS["action"]), dtype=np.float32)
     action_mask = np.zeros((batch, action_width), dtype=bool)
     action_task = np.full((batch, action_width), -1, dtype=np.int64)
     action_charger = np.full((batch, action_width), -1, dtype=np.int64)
+    plan_actions_padded = (
+        np.zeros((batch, action_width, PLAN_ACTION_DIM), dtype=np.float32) if with_plan else None
+    )
     for position, item in enumerate(observations):
         width = item.num_actions
         actions[position, :width] = item.actions
         action_mask[position, :width] = True
         action_task[position, :width] = item.action_task
         action_charger[position, :width] = item.action_charger
+        if plan_actions_padded is not None and item.plan_actions is not None and width:
+            plan_actions_padded[position, :width] = item.plan_actions
 
     device = torch.device(device)
     node_masks = {key: torch.as_tensor(value, device=device) for key, value in masks.items()}
@@ -815,4 +984,8 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
         action_task=torch.as_tensor(action_task, device=device),
         action_charger=torch.as_tensor(action_charger, device=device),
         active_truck=torch.as_tensor([item.active_truck for item in observations], dtype=torch.long, device=device),
+        privileged=torch.as_tensor(privileged, device=device),
+        plan_tasks=None if plan_tasks is None else torch.as_tensor(plan_tasks, device=device),
+        plan_trucks=None if plan_trucks is None else torch.as_tensor(plan_trucks, device=device),
+        plan_actions=None if not with_plan else torch.as_tensor(plan_actions_padded, device=device),
     )

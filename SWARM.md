@@ -53,6 +53,10 @@ Any agent session may take a role; it announces the claim and every step with on
 | P5 locked test | locked; opens on a validation PASS | `agent/TEST_OPENED`, `evaluation/test/final/` |
 | `suite_v2` | only if no PASS at 8M | |
 
+## 5b. Local out-of-the-box campaign (`oob_local`, started 2026-10-23)
+
+User direction 2026-10-23: a second, concurrent campaign on the local box (iepg-compute1) explores the Section 9 idea bank with multiple parallel agents — design and stage board in `docs/campaigns/generalist_graphppo_oob_local_campaign.md`. Same goal, gate and invariants; resources capped at cuda:1, CPU cores 32–63, ≤ 500 GB RAM; everything heavy under `/data/scratch/sorfanoudakis/evrp_generalist` (symlinked as `results/generalist_graphppo`, which on this box is the local campaign's root — the Snellius tree lives on Snellius). Its own BKS bar is built locally with the P0a portfolio. Status lines go to the same `agent/status.log`. The Snellius `suite_v1` campaign (Sections 1–5) continues unchanged from Snellius sessions; nothing on this box submits to Snellius.
+
 ## 6. Stop rules
 
 - No run passes at 8M: one `suite_v2` iteration, then stop and write up whatever the outcome.

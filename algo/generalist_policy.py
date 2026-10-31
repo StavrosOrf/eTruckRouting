@@ -39,6 +39,10 @@ from algo.generalist_observation import (
     FEATURE_DIMS,
     GENERALIST_SCHEMA_VERSION,
     NODE_TYPES,
+    PLAN_ACTION_DIM,
+    PLAN_TASK_DIM,
+    PLAN_TRUCK_DIM,
+    PRIVILEGED_DIM,
     RELATION_TYPES,
     GraphBatch,
     ObservationSpec,
@@ -55,6 +59,12 @@ class GeneralistPolicyConfig:
     nonlinear_edge_messages: bool = True
     charger_budget: int = 32
     fleet_assignment: bool = False
+    # Plan 9.4: the value head also reads the hindsight stream summary; the
+    # actor path never does, so the policy stays causal.
+    privileged_critic: bool = False
+    # Plan 9.5: the rolling planner's live plan conditions tasks, trucks and
+    # action candidates on the dynamic problems; the policy may deviate.
+    plan_conditioning: bool = False
     feature_schema_version: str = GENERALIST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -62,7 +72,7 @@ class GeneralistPolicyConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        ObservationSpec(self.charger_budget, self.fleet_assignment)
+        ObservationSpec(self.charger_budget, self.fleet_assignment, self.privileged_critic, self.plan_conditioning)
         if self.feature_schema_version != GENERALIST_SCHEMA_VERSION:
             raise ValueError(
                 f"checkpoint feature schema {self.feature_schema_version!r} is incompatible "
@@ -71,7 +81,9 @@ class GeneralistPolicyConfig:
 
     @property
     def observation_spec(self) -> ObservationSpec:
-        return ObservationSpec(self.charger_budget, self.fleet_assignment)
+        return ObservationSpec(
+            self.charger_budget, self.fleet_assignment, self.privileged_critic, self.plan_conditioning,
+        )
 
     def save(self, path: str | Path) -> None:
         from algo.checkpoint_io import write_text_atomic
@@ -130,16 +142,22 @@ class GeneralistGraphEncoder(nn.Module):
     def standardized_actions(self, batch: GraphBatch) -> torch.Tensor:
         return self.normalizer._standardize("action", batch.actions) * batch.action_mask.unsqueeze(-1)
 
-    def forward(self, batch: GraphBatch) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    def forward(
+        self, batch: GraphBatch, extra: dict[str, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """``extra`` adds gated per-row terms (plan 9.5) before the projection's ReLU."""
         context = self.context_encoder(self.normalizer._standardize("context", batch.context))
         embeddings = {}
         for node_type in NODE_TYPES:
             mask = batch.node_masks[node_type].unsqueeze(-1)
             values = self.normalizer._standardize(node_type, batch.nodes[node_type]) * mask
-            embeddings[node_type] = F.relu(
+            projected = (
                 self.input_projections[node_type](values)
                 + self.context_projections[node_type](context).unsqueeze(1)
-            ) * mask
+            )
+            if extra is not None and node_type in extra:
+                projected = projected + extra[node_type]
+            embeddings[node_type] = F.relu(projected) * mask
         pairwise = {
             relation: self.normalizer._standardize("edge", batch.pairwise[relation].float())
             * batch.pairwise_mask[relation].unsqueeze(-1)
@@ -175,47 +193,83 @@ class GeneralistActorCritic(nn.Module):
         self.action_head = CompleteGraphGCNActionHead(
             hidden,
             hidden,
-            FEATURE_DIMS["action"] + 2 * hidden,
+            FEATURE_DIMS["action"] + 2 * hidden + (PLAN_ACTION_DIM if config.plan_conditioning else 0),
             num_layers=config.action_head_layers,
         )
+        value_input = hidden + (hidden if config.privileged_critic else 0)
         self.value_head = nn.Sequential(
-            nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1)
+            nn.Linear(value_input, hidden), nn.ReLU(), nn.Linear(hidden, 1)
         )
+        if config.privileged_critic:
+            # Plan 9.4, asymmetric critic: these modules exist only with the
+            # flag, so a flag-off checkpoint keeps today's state dict exactly.
+            self.privileged_normalizer = RunningStandardizer({"privileged": PRIVILEGED_DIM})
+            self.privileged_encoder = _mlp(PRIVILEGED_DIM, hidden, hidden)
+        if config.plan_conditioning:
+            # Plan 9.5: bias-free so an all-zero plan row (static problem,
+            # dropped episode, flag-free batch) injects exactly nothing; the
+            # modules exist only with the flag, keeping old state dicts intact.
+            self.plan_task_encoder = nn.Linear(PLAN_TASK_DIM, hidden, bias=False)
+            self.plan_truck_encoder = nn.Linear(PLAN_TRUCK_DIM, hidden, bias=False)
 
     def observe(self, batch: GraphBatch) -> None:
         self.encoder.observe(batch)
+        if self.config.privileged_critic and batch.privileged is not None:
+            self.privileged_normalizer._update("privileged", batch.privileged)
+
+    def _values(self, pooled: torch.Tensor, batch: GraphBatch) -> torch.Tensor:
+        """The value estimate; only here may the privileged rows be read."""
+        if not self.config.privileged_critic:
+            return self.value_head(pooled).squeeze(-1)
+        rows = batch.privileged
+        if rows is None:
+            rows = pooled.new_zeros(pooled.shape[0], PRIVILEGED_DIM)
+        hindsight = self.privileged_encoder(self.privileged_normalizer._standardize("privileged", rows))
+        return self.value_head(torch.cat([pooled, hindsight], dim=-1)).squeeze(-1)
+
+    def _plan_extra(self, batch: GraphBatch) -> dict[str, torch.Tensor] | None:
+        """Gated per-row plan terms for the encoder (plan 9.5); zero rows add nothing."""
+        if not self.config.plan_conditioning or batch.plan_tasks is None:
+            return None
+        return {
+            "task": self.plan_task_encoder(batch.plan_tasks),
+            "truck": self.plan_truck_encoder(batch.plan_trucks),
+        }
 
     def forward(self, batch: GraphBatch) -> PolicyOutput:
         mask = batch.action_mask
         counts = mask.sum(dim=1)
         if int(counts.min().item()) == 0:
             raise RuntimeError("a state has no selectable action; refusing to relax the hard mask")
-        pooled, nodes = self.encoder(batch)
+        pooled, nodes = self.encoder(batch, self._plan_extra(batch))
         targets = _gather_rows(nodes["task"], batch.action_task) + _gather_rows(
             nodes["charger"], batch.action_charger
         )
         active = _gather_rows(nodes["truck"], batch.active_truck.unsqueeze(1))
-        rows = torch.cat(
-            (
-                self.encoder.standardized_actions(batch),
-                targets,
-                active.expand(-1, mask.shape[1], -1),
-            ),
-            dim=-1,
-        )[mask]
+        columns = [
+            self.encoder.standardized_actions(batch),
+            targets,
+            active.expand(-1, mask.shape[1], -1),
+        ]
+        if self.config.plan_conditioning:
+            plan_column = batch.plan_actions
+            if plan_column is None:
+                plan_column = mask.new_zeros((*mask.shape, PLAN_ACTION_DIM), dtype=columns[0].dtype)
+            columns.append(plan_column)
+        rows = torch.cat(columns, dim=-1)[mask]
         ptr = torch.zeros(mask.shape[0] + 1, dtype=torch.long, device=mask.device)
         torch.cumsum(counts, dim=0, out=ptr[1:])
         head = self.action_head(pooled, rows, ptr)
         return PolicyOutput(
             logits=scatter_logits(head.logits, head.ptr, mask),
-            values=self.value_head(pooled).squeeze(-1),
+            values=self._values(pooled, batch),
             feasible_mask=mask,
         )
 
     def predict_values(self, batch: GraphBatch) -> torch.Tensor:
         """Value estimate that never touches the action head (terminal states)."""
-        pooled, _ = self.encoder(batch)
-        return self.value_head(pooled).squeeze(-1)
+        pooled, _ = self.encoder(batch, self._plan_extra(batch))
+        return self._values(pooled, batch)
 
     @torch.no_grad()
     def act(self, batch: GraphBatch, deterministic: bool = False):

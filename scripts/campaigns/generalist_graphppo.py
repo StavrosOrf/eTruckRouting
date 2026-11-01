@@ -115,6 +115,22 @@ DEEP = ["--encoder-layers", "4", "--validation-scenarios", "64"]
 # active truck's next stop join the plan input (static problems); otherwise
 # full_dagger_plan unchanged, so it compares with suite_v2's run at <= 4M.
 CHARGE_PLAN = ["--charge-plan"]
+# suite_v5 (user decision 2026-10-31): PPO practises the problem it is deployed
+# on. suite_v4 trained without the filters, with the plan withheld in 30 % of
+# episodes, at entropies whose samples ran far below the greedy policy, and with
+# advantages scaled across the mixture, and it could read one hidden bit through
+# a waiting truck's wake-up (--public-wake closes that). Warm-started from suite_v4's best.pt of
+# the same seed, at a lower learning rate; checkpoints kept at every validation.
+SUITE_V4_RUN = str(ROOT / "results/generalist_graphppo/suite_v4/training/full_dagger_plan_charge_s{seed}")
+DEPLOYED = [
+    "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--plan-dropout", "0", "--advantage-by-problem",
+    "--learning-rate", "0.0001", "--entropy-coefficient", "0.001", "--validation-scenarios", "64",
+    "--save-validation-checkpoints", "--init-from", SUITE_V4_RUN, "--pretrain-epochs", "0", "--dagger-pretrain-rounds", "0",
+]
+ANCHOR = [
+    "--bc-coefficient", "0.05", "--bc-coefficient-final", "0.05", "--dagger-expert", *EXPERTS, "--dagger-every", "10",
+    "--dagger-episodes", "8", "--dagger-beta", "0.3", "--dagger-beta-final", "0.3",
+]
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
@@ -130,6 +146,9 @@ RECIPES = {
     "full_dagger_plan": [*FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN],
     "full_dagger_plan_deep": [*FULL, *IMITATION, *HELD, *DAGGER_HELD, *PLAN, *DEEP],
     "full_dagger_plan_charge": [*FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN, *CHARGE_PLAN],
+    # Pure PPO from the warm start: any change is PPO's.
+    "ppo_deployed": [*FULL, "--reward-references", BKS_DIR, "--bc-episodes", "0", *PLAN, *CHARGE_PLAN, *DEPLOYED],
+    "ppo_deployed_anchor": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED],
 }
 SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
@@ -190,6 +209,7 @@ def arms_for(
     for seed in range(seeds):
         for name, flags in chosen:
             flags = [flag.replace(BKS_DIR, bks) if bks else flag for flag in flags]
+            flags = [flag.replace("{seed}", str(seed)) for flag in flags]
             if any(BKS_DIR in flag for flag in flags):
                 raise SystemExit(f"arm {name!r} needs best-known solutions: prepare --bks-from DIR")
             runs.append({"name": f"{name}_s{seed}", "arm": name, "seed": seed, "flags": flags})
@@ -831,12 +851,13 @@ def apply_decision(folder: Path) -> dict:
     os.environ["EVRP_SAFETY_MASK"] = "on" if settings.get("safety_mask") else "off"
     os.environ["EVRP_SAFETY_MARGIN"] = str(float(settings.get("safety_margin", 0.0)))
     os.environ["EVRP_RETIRE_GUARD"] = "on" if settings.get("retire_guard") else "off"
+    os.environ["EVRP_PUBLIC_WAKE"] = "on" if settings.get("public_wake") else "off"
     return settings
 
 
 def decision_from(
     safety_mask: bool, safety_margin: float | None, search: str | None = None, k: int = 4, n: int = 16,
-    retire_guard: bool = False,
+    retire_guard: bool = False, checkpoint: str | None = None, batch: int | None = None, public_wake: bool = False,
 ) -> dict | None:
     if safety_margin is not None and not safety_mask:
         raise SystemExit("--safety-margin needs --safety-mask")
@@ -847,6 +868,12 @@ def decision_from(
         settings.update(safety_mask=True, safety_margin=float(safety_margin or 0.0))
     if retire_guard:
         settings.update(retire_guard=True)
+    if checkpoint and checkpoint != "best":
+        settings.update(checkpoint=checkpoint)
+    if batch is not None:
+        settings.update(envs_per_problem=int(batch))
+    if public_wake:
+        settings.update(public_wake=True)
     if search:
         settings.update(search=search, k=int(k) if search == "lookahead" else None, n=int(n) if search == "best_of_n" else None)
     return settings or None
@@ -898,6 +925,7 @@ def evaluate(
     applied = apply_decision(folder / tag)
     if applied:
         print(f"decision-time settings ({tag}): {applied}", flush=True)
+    envs_per_problem = applied.get("envs_per_problem", envs_per_problem)
     # Baselines on exactly these seeds; the teacher rows are also the
     # per-scenario references of the score.
     for problem in problems:
@@ -960,7 +988,7 @@ def evaluate(
             rows = []
             if batched:
                 checkpoint = destination / "training" / run["name"]
-                policy = GeneralistActorCritic.load(checkpoint, prefix="best", map_location=device).to(device)
+                policy = GeneralistActorCritic.load(checkpoint, prefix=applied.get("checkpoint", "best"), map_location=device).to(device)
                 with torch.no_grad():
                     rows = evaluate_policy_suite(
                         policy, batched, [seeds] * len(batched), references, reward,
@@ -1191,6 +1219,12 @@ def main() -> None:
                          help="evaluate with --safety-mask: hours to be home before the horizon.")
     command.add_argument("--retire-guard", action="store_true",
                          help="evaluate with --safety-mask: no retirement of a truck the plan still routes customers to.")
+    command.add_argument("--checkpoint", default=None, choices=["best", "pretrained", "final"],
+                         help="evaluate: the checkpoint of every run (default best), frozen in <tag>/decision.json.")
+    command.add_argument("--eval-batch", type=int, default=None,
+                         help="evaluate: environments per problem, frozen in <tag>/decision.json (robustness to batching).")
+    command.add_argument("--public-wake", action="store_true",
+                         help="evaluate: a waiting truck's wake-up from public information only, frozen in <tag>/decision.json.")
     command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"],
                          help="evaluate: decision-time search on the static problems (track A).")
     command.add_argument("--search-k", type=int, default=4, help="lookahead: candidates per decision.")
@@ -1209,6 +1243,9 @@ def main() -> None:
     command.add_argument("--safety-mask", action="store_true", help="Decision-time feasibility mask (track A).")
     command.add_argument("--safety-margin", type=float, default=None, help="With --safety-mask: hours to be home before the horizon.")
     command.add_argument("--retire-guard", action="store_true", help="With --safety-mask: no retirement of a truck the plan still routes customers to.")
+    command.add_argument("--checkpoint", default=None, choices=["best", "pretrained", "final"], help="The checkpoint of every run (default best).")
+    command.add_argument("--eval-batch", type=int, default=None, help="Environments per problem, frozen with the tag.")
+    command.add_argument("--public-wake", action="store_true", help="A waiting truck's wake-up from public information only.")
     command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"], help="Decision-time search (track A).")
     command.add_argument("--search-k", type=int, default=4)
     command.add_argument("--search-n", type=int, default=16)
@@ -1246,7 +1283,7 @@ def main() -> None:
             partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
             time_limit=arguments.hours, decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
-                arguments.retire_guard,
+                arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
             ),
         )
     elif arguments.command == "evaluate":
@@ -1255,7 +1292,7 @@ def main() -> None:
             arguments.runs, arguments.envs_per_problem, plan_mode=arguments.plan_mode,
             decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
-                arguments.retire_guard,
+                arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
             ),
         )
     else:

@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from EVRoutingEnv.models.core.customer import TaskStatus
+from EVRoutingEnv.models.core.requests import public_wake_enabled
 from EVRoutingEnv.state.feasibility import (
     ActionKind,
     FeasibilityReason,
@@ -462,6 +463,10 @@ def _truck_history(env, truck) -> list[float]:
     ) if not (truck.failed or truck.is_complete) else None
     data = {} if event is None else event.data
     event_time = None if event is None else event.time
+    if data.get("reason") == "wait_complete" and public_wake_enabled():
+        event_time = env.request_engine.public_wake(
+            float(data["start"]), env.extensions.requests.wait_hours, float(env.global_clock), float(event.time),
+        )
     arrival_time = truck.route_arrival_time
     if (
         _in_flight_mode(env) == "nominal_eta"

@@ -85,7 +85,10 @@ class LonghaulSettings:
     # Exact (continuation) route durations must end this far before the horizon.
     execution_margin: float = 3.0
     verify_rounds: int = 3
-    replan: str = "none"  # "none" | "deviation" | "events"
+    # "events" reads the instance's own tasks, whose status never changes, so it
+    # re-plans on deviations only, as "deviation" does; the suite's BKS and plans
+    # were built with it. "served" re-plans after every service, as "events" meant to.
+    replan: str = "none"  # "none" | "deviation" | "events" | "served"
     replan_iterations: int = 400
     replan_descent_rounds: int = 3  # kept for manifest compatibility; solve() runs its descent to a fixpoint
     # Congested problems: quantile of the station waits used as the planned
@@ -93,8 +96,8 @@ class LonghaulSettings:
     wait_quantile: float = 0.25
 
     def __post_init__(self) -> None:
-        if self.replan not in ("none", "deviation", "events"):
-            raise ValueError("replan must be 'none', 'deviation' or 'events'")
+        if self.replan not in ("none", "deviation", "events", "served"):
+            raise ValueError("replan must be 'none', 'deviation', 'events' or 'served'")
 
     def plan_tag(self) -> str:
         """Hash of everything the time-0 plan depends on (for plan caches)."""
@@ -439,6 +442,13 @@ class LonghaulPlanPolicy:
                 if task.status is TaskStatus.SERVED and key not in self.replanned_at:
                     self.replanned_at.add(key)
                     event = bool(open_nodes)
+        elif self.settings.replan == "served":
+            node = int(truck.current_node)
+            served = {int(task.node_id) for task in env.task_registry.tasks() if task.status is TaskStatus.SERVED}
+            key = (int(truck.truck_id), node)
+            if node in served and key not in self.replanned_at:
+                self.replanned_at.add(key)
+                event = bool(open_nodes)
         if deviation:
             self.stats["deviations"] += 1
         if deviation or event:

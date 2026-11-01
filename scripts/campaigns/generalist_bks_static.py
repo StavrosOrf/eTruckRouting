@@ -50,8 +50,12 @@ if str(ROOT) not in sys.path:
 from scripts.campaigns import generalist_bks_common as common  # noqa: E402
 from scripts.campaigns.generalist_bks_common import OUT, make_env, read_jsonl, seeds_for  # noqa: E402
 
-STATIC_PROBLEMS = ("tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos")
-METHODS = ("greedy_teacher", "alns_respect", "lh_plan", "lh_rolling", "lh_plan_safe")
+STATIC_PROBLEMS = (
+    "tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos",
+    # Held-out problems (scripts/campaigns/write_generalist_heldout_configs.py).
+    "de_nl_be_longhaul", "de_nl_be_longhaul_hos", "tx_longhaul_t5c15", "tx_longhaul_t20c60",
+)
+METHODS = ("greedy_teacher", "alns_respect", "lh_plan", "lh_rolling", "lh_plan_safe", "lh_rolling_served")
 BOUND_KIND = "nominal_lower_bound_hours"
 
 
@@ -76,6 +80,8 @@ def build_method(method: str, problem: str):
         return LonghaulPlanPolicy(LonghaulSettings(name=method, planner=planner, restarts=3))
     if method == "lh_rolling":
         return LonghaulPlanPolicy(LonghaulSettings(name=method, planner=planner, restarts=3, replan="events"))
+    if method == "lh_rolling_served":
+        return LonghaulPlanPolicy(LonghaulSettings(name=method, planner=planner, restarts=3, replan="served"))
     if method == "lh_plan_safe":
         from dataclasses import replace
 

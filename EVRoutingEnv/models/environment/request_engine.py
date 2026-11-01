@@ -268,6 +268,23 @@ class RequestEngine:
         upcoming = [t for t in self._information_times if t > now and t < self.max_time]
         return min(upcoming) if upcoming else None
 
+    def public_wake(self, start: float, wait_hours: float, now: float, true_wake: float, tie: float = 1e-6) -> float:
+        """When a WAIT begun at ``start`` ends, as known at ``now``.
+
+        The wait, or the next scheduled boundary or known release after ``now``:
+        one that passed while the truck kept waiting was empty, which is public
+        news. A wake-up or known news due this instant discloses nothing, so it
+        stands. The true wake-up (:meth:`next_information_time`) also reacts to
+        hidden requests. ``tie`` (hours) absorbs the float noise of event times.
+        """
+        if abs(true_wake - now) <= tie:
+            return true_wake
+        revealed = self.registry.revealed()
+        known = [*self._known_schedule, *(request.release_time for request in revealed)]
+        news = [time for request in revealed for time in (request.reveal_time, request.release_time)]
+        due = [now] if any(time > start + tie and abs(time - now) <= tie for time in news) else []
+        return min([start + wait_hours, *due, *(time for time in known if time > now + tie)])
+
     def future_information_possible(self, now: float) -> bool:
         """Whether a later release can still occur, from known information only.
 

@@ -95,6 +95,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="Directory of <problem>/plans_<split>.json time-0 plans for the static problems.")
     parser.add_argument("--plan-dropout", type=float, default=0.0,
                         help="Probability that an episode on a train seed is played without its plan.")
+    parser.add_argument("--safety-mask", action="store_true",
+                        help="Train under the decision-time feasibility mask, as the policy is deployed.")
+    parser.add_argument("--safety-margin", type=float, default=None, help="With --safety-mask: hours home before the horizon.")
+    parser.add_argument("--retire-guard", action="store_true",
+                        help="With --safety-mask: train under the retirement guard, as the policy is deployed.")
+    parser.add_argument("--public-wake", action="store_true",
+                        help="A waiting truck's wake-up from public information only, not the hidden request stream.")
+    parser.add_argument("--advantage-by-problem", action="store_true",
+                        help="Normalize advantages within each problem, not across the mixture.")
+    parser.add_argument("--save-validation-checkpoints", action="store_true",
+                        help="Keep ckpt_<update>.pt at every validation, to select checkpoints afterwards.")
     parser.add_argument("--charger-budget", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=3)
@@ -201,6 +212,18 @@ def print_dagger(record: dict) -> None:
     )
 
 
+def configure_filters(arguments) -> None:
+    """Decision-time filters for every environment of this process and its forked workers (algo/generalist_search.py)."""
+    if (arguments.safety_margin is not None or arguments.retire_guard) and not arguments.safety_mask:
+        raise SystemExit("--safety-margin and --retire-guard need --safety-mask")
+    if arguments.retire_guard and not arguments.plan_conditioned:
+        raise SystemExit("--retire-guard needs --plan-conditioned")
+    os.environ["EVRP_SAFETY_MASK"] = "on" if arguments.safety_mask else "off"
+    os.environ["EVRP_SAFETY_MARGIN"] = str(float(arguments.safety_margin or 0.0))
+    os.environ["EVRP_RETIRE_GUARD"] = "on" if arguments.retire_guard else "off"
+    os.environ["EVRP_PUBLIC_WAKE"] = "on" if arguments.public_wake else "off"
+
+
 def configure_plans(arguments, problems) -> None:
     """Plan settings for every environment of this process and its forked workers (algo/generalist_plans.py)."""
     if not arguments.plan_conditioned:
@@ -225,6 +248,7 @@ def main(argv: list[str] | None = None) -> None:
     torch.set_num_threads(arguments.torch_threads)
     problems = load_problems(arguments.problems)
     configure_plans(arguments, problems)
+    configure_filters(arguments)
     names = [problem.name for problem in problems]
     trained = names if arguments.train_problems is None else list(arguments.train_problems)
     if not trained or not set(trained) <= set(names) or len(set(names)) != len(names):
@@ -265,6 +289,7 @@ def main(argv: list[str] | None = None) -> None:
         charge_plan=arguments.charge_plan,
     )
     ppo_config = PPOConfig(
+        advantage_by_problem=arguments.advantage_by_problem,
         total_timesteps=arguments.total_timesteps,
         num_envs=arguments.num_envs,
         rollout_steps=arguments.rollout_steps,
@@ -383,6 +408,8 @@ def main(argv: list[str] | None = None) -> None:
         if summary["selection_score"] > best_score:
             best_score = summary["selection_score"]
             trainer.save(destination, prefix="best")
+        if arguments.save_validation_checkpoints:
+            trainer.save(destination, prefix=f"ckpt_{update}")
         print(
             f"[validation] update={update} steps={trainer.total_steps} "
             f"selection={summary['selection_score']:.3f} "
@@ -444,6 +471,7 @@ def main(argv: list[str] | None = None) -> None:
                 history = trainer.pretrain(
                     observations, labels, epochs=arguments.pretrain_epochs,
                     learning_rate=arguments.pretrain_learning_rate, progress=print_epoch,
+                    observe=arguments.pretrain_epochs > 0,
                 )
                 pretrain_record = {"coverage": coverage, "epochs": history}
                 if imitation is not None:
@@ -466,6 +494,9 @@ def main(argv: list[str] | None = None) -> None:
             (destination / "pretrain_history.json").write_text(json.dumps(pretrain_record, indent=2, sort_keys=True))
             trainer.save(destination, prefix="pretrained")
             score_validation(0)
+            checkpoint()
+        elif arguments.init_from and not arguments.resume:
+            score_validation(0)  # the warm start, the baseline of the run
             checkpoint()
         window.update(steps=trainer.total_steps, time=time.perf_counter())
         trainer.learn(progress)

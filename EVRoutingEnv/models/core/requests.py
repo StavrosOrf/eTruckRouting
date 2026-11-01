@@ -18,10 +18,19 @@ its trajectories are frozen by the golden traces.
 
 from __future__ import annotations
 
+import os
 import math
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+
+
+def public_wake_enabled() -> bool:
+    """Whether observers read a waiting truck's public wake-up (``EVRP_PUBLIC_WAKE=on``), not the true one."""
+    mode = os.environ.get("EVRP_PUBLIC_WAKE", "off") or "off"
+    if mode not in ("on", "off"):
+        raise ValueError(f"EVRP_PUBLIC_WAKE must be 'on' or 'off', not {mode!r}")
+    return mode == "on"
 
 
 class RequestKind(StrEnum):

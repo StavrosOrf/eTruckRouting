@@ -196,3 +196,24 @@ def test_the_deep_plan_arm_holds_imitation_on_and_runs_on_its_own_schedule(tmp_p
     assert "--time=36:00:00" in capsys.readouterr().out
     campaign.submit(destination, "train", 4_000_000, dry_run=True)
     assert "--time=24:00:00" in capsys.readouterr().out
+
+
+def test_events_replanning_never_fires_and_served_replanning_does() -> None:
+    from dataclasses import replace
+
+    from generalist_harness import small_env
+
+    from algo.generalist_plans import static_settings
+    from EVRoutingEnv.baselines.optimization.longhaul.policy import LonghaulPlanPolicy
+
+    replans = {}
+    for mode in ("events", "served"):
+        env = small_env("static", trucks=2, stops=4)
+        env.reset(seed=1_000_000_003)
+        policy = LonghaulPlanPolicy(replace(static_settings(), replan=mode))
+        done = False
+        while not done and env.active_truck_id is not None:
+            _, _, terminated, truncated, _ = env.step(policy(env))
+            done = terminated or truncated
+        replans[mode] = policy.stats["replans"]
+    assert replans["events"] == 0 and replans["served"] > 0

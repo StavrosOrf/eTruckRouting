@@ -45,6 +45,7 @@ class PPOConfig:
     max_grad_norm: float = 0.5
     target_kl: float | None = 0.05
     normalize_advantage: bool = True
+    advantage_by_problem: bool = False
     normalize_reward: bool = True
     seed: int = 0
     schedule_timesteps: int | None = None

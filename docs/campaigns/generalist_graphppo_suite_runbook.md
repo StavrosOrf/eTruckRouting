@@ -192,6 +192,12 @@ Gate on `interim_mask0` (the same weights as a `4M_mask0` tag): distance 0.015, 
 - **Retirement guard (`--retire-guard`, needs `--safety-mask`; static problems; off by default).** The depot action retires a truck for good. The guard hides it from a truck whose planned route is not empty while anything else is left. It reads the plan at decision time, so **a PASS that depends on it goes to the user before `TEST_OPENED` is written**.
 - Tags on suite_v4: `4M_mask0_fix` (fallback only), `4M_mask0_fix_guard` (fallback + guard). Gate them as any other tag.
 
+## After the locked test (2026-10-31)
+
+- **`--public-wake`** (needs a dynamic problem to matter): observers read a waiting truck's wake-up from public information only, closing the one leak the audit found (at most 1 bit, at most 0.5 h ahead). `public_wake` takes the current time and the true wake-up: a boundary that passed empty is public news. The first version ignored the current time; its outputs are kept as `suite_v5_flawed_wake_20261031`, tag `4M_mask0_fix_guard_publicwake_flawed` and `bks_checks/flawed_wake_20261031`, and must not be used.
+- **`suite_v5`** trains and evaluates with `--public-wake`, so its evaluation tags need the flag too.
+- **Checks of the claims:** `results/generalist_graphppo/suite_v4_heldout/PREREGISTRATION.md`.
+
 ## Monitoring and failure handling
 
 - `sinfo -p gpu_a100,gpu_h100,gpu_mig,cbuild` before submitting; `squeue -u $USER` and `sacct -j <job>` every 30–60 minutes during training; never busy-wait on the login node.

@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 CONFIG_DIR = Path("EVRoutingEnv/config_files/generalist_suite")
+HELDOUT_DIR = Path("EVRoutingEnv/config_files/generalist_heldout")
 OUT = Path(os.environ.get("BKS_OUT", ROOT / "results/generalist_graphppo/bks"))
 STEP_CAP = 4000
 SUMMARY_FIELDS = ("method", "success", "failed", "dynamic", "tasks", "served", "late", "lost", "unserved", "hours")
@@ -40,7 +41,8 @@ SPLIT_SEEDS = {"validation": 128, "test": 500}
 
 
 def config_path(problem: str) -> str:
-    return str(CONFIG_DIR / f"{problem}.yaml")
+    heldout = HELDOUT_DIR / f"{problem}.yaml"
+    return str(heldout if heldout.exists() else CONFIG_DIR / f"{problem}.yaml")
 
 
 def fast_env_class():

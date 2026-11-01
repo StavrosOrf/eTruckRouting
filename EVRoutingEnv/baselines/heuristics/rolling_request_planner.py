@@ -37,6 +37,7 @@ their true release times. That variant is a bound estimate, never a policy.
 
 from __future__ import annotations
 
+import copy
 import math
 import random
 from dataclasses import dataclass, field, replace
@@ -51,7 +52,7 @@ from EVRoutingEnv.models.core.hours_of_service import (
     required_rest,
     window_left,
 )
-from EVRoutingEnv.models.core.requests import RequestStatus
+from EVRoutingEnv.models.core.requests import RequestStatus, public_wake_enabled
 from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
 
 INF = math.inf
@@ -961,7 +962,13 @@ def _job(request, depot: int, drayage: bool, weight: float = 1.0) -> Job:
 
 def _pending_event(env, truck_id: int):
     events = [event for event in env.event_queue if event.truck_id == truck_id]
-    return min(events, key=lambda event: event.time) if events else None
+    event = min(events, key=lambda event: event.time) if events else None
+    if event is not None and event.data.get("reason") == "wait_complete" and public_wake_enabled():
+        event = copy.copy(event)
+        event.time = env.request_engine.public_wake(
+            float(event.data["start"]), env.extensions.requests.wait_hours, float(env.global_clock), float(event.time),
+        )
+    return event
 
 
 def build_snapshot(env, model: _BaseModel, clairvoyant: bool = False) -> Snapshot:

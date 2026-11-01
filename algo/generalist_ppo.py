@@ -572,6 +572,10 @@ class GeneralistPPO:
         )
         self.history: list[dict] = []
         self.episodes = {problem.name: deque(maxlen=50) for problem in self.problems}
+        self.advantage_groups = None
+        if ppo_config.advantage_by_problem:
+            slots = balanced_slots(len(self.problems), ppo_config.num_envs, train_seeds)
+            self.advantage_groups = torch.as_tensor([problem for problem, _ in slots], device=self.device)
         self.total_steps = 0
         self.completed_updates = 0
         self._observations: list[GraphObservation] | None = None
@@ -662,12 +666,15 @@ class GeneralistPPO:
         with torch.no_grad():
             last_value = self.policy.predict_values(collate(observations, self.device))
         advantages = generalized_advantages(rewards, values, dones, last_value, config.gamma, config.gae_lambda)
+        returns = advantages + values
+        if self.advantage_groups is not None:
+            advantages = normalized_by_group(advantages, self.advantage_groups)
         return {
             "batch": collate(stored, self.device),
             "actions": actions.reshape(-1),
             "logprobs": logprobs.reshape(-1),
             "advantages": advantages.reshape(-1),
-            "returns": (advantages + values).reshape(-1),
+            "returns": returns.reshape(-1),
             "values": values.reshape(-1),
         }
 
@@ -692,7 +699,7 @@ class GeneralistPPO:
                 with torch.no_grad():
                     losses["approx_kl"].append(float(((ratio - 1.0) - log_ratio).mean().item()))
                 advantages = rollout["advantages"][batch_index]
-                if config.normalize_advantage:
+                if config.normalize_advantage and self.advantage_groups is None:
                     advantages = (advantages - advantages.mean()) / (advantages.std(unbiased=False) + 1e-8)
                 policy_loss = -torch.min(
                     ratio * advantages,
@@ -967,6 +974,20 @@ class GeneralistPPO:
 
     def close(self) -> None:
         self.envs.close()
+
+
+def normalized_by_group(advantages: torch.Tensor, groups: torch.Tensor) -> torch.Tensor:
+    """Advantages ``(steps, envs)`` normalized within each group of environments.
+
+    Across a mixture of problems, a batch-wide scale is set by the problem with
+    the largest returns and hides the small advantages of the others.
+    """
+    normalized = advantages.clone()
+    for group in groups.unique():
+        rows = groups == group
+        part = advantages[:, rows]
+        normalized[:, rows] = (part - part.mean()) / (part.std(unbiased=False) + 1e-8)
+    return normalized
 
 
 def generalized_advantages(rewards, values, dones, last_value, gamma: float, gae_lambda: float) -> torch.Tensor:

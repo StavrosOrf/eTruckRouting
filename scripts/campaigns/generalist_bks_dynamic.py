@@ -41,6 +41,7 @@ import argparse
 import copy
 import json
 import multiprocessing as mp
+import os
 import sys
 import time
 from pathlib import Path
@@ -52,7 +53,11 @@ if str(ROOT) not in sys.path:
 from scripts.campaigns import generalist_bks_common as common  # noqa: E402
 from scripts.campaigns.generalist_bks_common import OUT, make_env, read_jsonl, seeds_for  # noqa: E402
 
-DYNAMIC_PROBLEMS = ("ca_sameday", "ca_drayage_combined")
+DYNAMIC_PROBLEMS = (
+    "ca_sameday", "ca_drayage_combined",
+    # Held-out problems (scripts/campaigns/write_generalist_heldout_configs.py).
+    "ca_sameday_t5", "ca_sameday_t20", "tx_sameday", "pnw_drayage_combined",
+)
 METHODS = ("greedy_dispatch", "wait_at_depot", "kullman_myopic", "rolling_request")
 PUBLIC_ONLY = frozenset({"kullman_myopic"})
 BOUND_KIND = "clairvoyant_rolling_served"
@@ -78,7 +83,7 @@ def build_method(method: str, problem: str):
 
 
 def check_methods(problem: str, methods) -> None:
-    if problem == "ca_sameday" and PUBLIC_ONLY & set(methods):
+    if "sameday" in problem and PUBLIC_ONLY & set(methods):
         raise SystemExit(f"{sorted(PUBLIC_ONLY & set(methods))} need public stations; {problem} has none")
 
 
@@ -266,6 +271,8 @@ def cmd_check(args) -> int:
 
 def cmd_run(args) -> None:
     check_methods(args.problem, args.methods)
+    if args.public_wake:
+        os.environ["EVRP_PUBLIC_WAKE"] = "on"  # forked workers inherit it
     common.run_portfolio(
         args.problem, args.methods, args.split, args.count, args.offset, args.workers, build_method,
         max_tasks_per_child=args.max_tasks_per_child, allow_test=args.allow_test,
@@ -296,6 +303,7 @@ def main(argv=None) -> int:
     common.add_split_arguments(run, default_count=128)
     run.add_argument("--workers", type=int, default=1)
     run.add_argument("--max-tasks-per-child", type=int, default=None)
+    run.add_argument("--public-wake", action="store_true", help="A waiting truck's wake-up from public information only.")
     merge = sub.add_parser("merge")
     merge.add_argument("--problem", required=True, choices=DYNAMIC_PROBLEMS)
     merge.add_argument("--methods", nargs="*", default=None)

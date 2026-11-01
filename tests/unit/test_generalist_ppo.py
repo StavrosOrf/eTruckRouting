@@ -157,3 +157,69 @@ def test_the_trainer_records_throughput_in_its_history(suite, tmp_path) -> None:
     assert [record["update"] for record in history] == [1, 2]
     assert all(record["decisions_per_second"] > 0 for record in history)
     assert all("gpu_peak_gb" not in record for record in history)
+
+
+def test_advantages_are_normalized_within_each_problem() -> None:
+    from algo.generalist_ppo import normalized_by_group
+
+    advantages = torch.tensor([[100.0, 0.001, 300.0, 0.003], [200.0, 0.002, 400.0, 0.004]])
+    normalized = normalized_by_group(advantages, torch.tensor([0, 1, 0, 1]))
+    for rows in ([0, 2], [1, 3]):
+        part = normalized[:, rows]
+        assert abs(float(part.mean())) < 1e-5
+        assert abs(float(part.std(unbiased=False)) - 1.0) < 1e-3
+
+
+def test_training_filters_need_the_mask_and_the_plan(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from scripts.training import train_generalist_ppo as train
+
+    for name in ("EVRP_SAFETY_MASK", "EVRP_SAFETY_MARGIN", "EVRP_RETIRE_GUARD", "EVRP_PUBLIC_WAKE"):
+        monkeypatch.setenv(name, "0" if name.endswith("MARGIN") else "off")  # restored after the test
+    with pytest.raises(SystemExit, match="need --safety-mask"):
+        train.configure_filters(SimpleNamespace(safety_mask=False, safety_margin=None, retire_guard=True, plan_conditioned=True, public_wake=False))
+    with pytest.raises(SystemExit, match="needs --plan-conditioned"):
+        train.configure_filters(SimpleNamespace(safety_mask=True, safety_margin=None, retire_guard=True, plan_conditioned=False, public_wake=False))
+    train.configure_filters(SimpleNamespace(safety_mask=True, safety_margin=0.0, retire_guard=True, plan_conditioned=True, public_wake=True))
+    import os
+
+    assert os.environ["EVRP_SAFETY_MASK"] == "on" and os.environ["EVRP_RETIRE_GUARD"] == "on"
+    assert os.environ["EVRP_PUBLIC_WAKE"] == "on"
+
+
+def test_a_waiting_truck_shows_only_its_public_wake_up(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from EVRoutingEnv.models.core.requests import public_wake_enabled
+    from EVRoutingEnv.models.environment.request_engine import RequestEngine
+
+    requests = [SimpleNamespace(reveal_time=1.0, release_time=1.2), SimpleNamespace(reveal_time=0.1, release_time=0.1)]
+    engine = SimpleNamespace(_known_schedule=[1.0, 2.0], registry=SimpleNamespace(revealed=lambda: requests))
+    assert RequestEngine.public_wake(engine, 0.3, 0.5, 0.4, 0.8) == 0.8  # the wait
+    assert RequestEngine.public_wake(engine, 0.9, 0.5, 0.95, 1.4) == 1.0  # a scheduled boundary
+    assert RequestEngine.public_wake(engine, 1.05, 0.5, 1.1, 1.5) == 1.2  # a known release
+    # A boundary and a release that passed while the truck kept waiting were empty: public news.
+    assert RequestEngine.public_wake(engine, 0.3, 5.0, 1.5, 2.0) == 2.0
+    assert RequestEngine.public_wake(engine, 0.3, 5.0, 2.5, 5.3) == 5.3
+    assert RequestEngine.public_wake(engine, 0.3, 5.0, 1.2, 2.0) == 1.2  # known news due this instant
+    assert RequestEngine.public_wake(engine, 0.3, 5.0, 1.5, 1.5) == 1.5  # the wake-up itself is due
+    assert public_wake_enabled() is False
+    monkeypatch.setenv("EVRP_PUBLIC_WAKE", "on")
+    assert public_wake_enabled() is True
+
+
+def test_the_deployed_arms_warm_start_from_their_own_seed() -> None:
+    from scripts.campaigns import generalist_graphppo as campaign
+
+    runs = campaign.arms_for("named", "full", 2, bks="/b", arms=["ppo_deployed", "ppo_deployed_anchor"])
+    assert [run["name"] for run in runs] == [
+        "ppo_deployed_s0", "ppo_deployed_anchor_s0", "ppo_deployed_s1", "ppo_deployed_anchor_s1",
+    ]
+    for run in runs:
+        flags = run["flags"]
+        assert flags[flags.index("--init-from") + 1].endswith(f"full_dagger_plan_charge_s{run['seed']}")
+        assert flags[flags.index("--plan-dropout", flags.index("--plan-dropout") + 1) + 1] == "0"
+        assert "--retire-guard" in flags and "--safety-mask" in flags and "--advantage-by-problem" in flags
+        assert "--public-wake" in flags
+    assert "--dagger-expert" not in runs[0]["flags"] and "--dagger-expert" in runs[1]["flags"]

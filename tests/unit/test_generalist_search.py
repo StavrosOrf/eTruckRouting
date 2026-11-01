@@ -16,12 +16,12 @@ from algo.generalist_search import (
     safety_mask_enabled,
 )
 from EVRoutingEnv.baselines.heuristics.canonical_baselines import RandomFeasiblePolicy
-from EVRoutingEnv.state.feasibility import ActionKind
+from EVRoutingEnv.state.feasibility import ActionKind, joint_action_feasibility
 
 
 @pytest.fixture(autouse=True)
 def clean_settings(monkeypatch):
-    for name in ("EVRP_SAFETY_MASK", "EVRP_SAFETY_MARGIN", "EVRP_RETIRE_GUARD", "EVRP_PLAN_MODE", "EVRP_PLAN_CACHE", "EVRP_PLAN_DROPOUT"):
+    for name in ("EVRP_SAFETY_MASK", "EVRP_SAFETY_MARGIN", "EVRP_RETIRE_GUARD", "EVRP_PUBLIC_WAKE", "EVRP_PLAN_MODE", "EVRP_PLAN_CACHE", "EVRP_PLAN_DROPOUT"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -171,6 +171,8 @@ def test_the_campaign_freezes_decision_settings_per_tag(tmp_path, monkeypatch, c
     assert os.environ["EVRP_RETIRE_GUARD"] == "on"
     campaign.apply_decision(folder)
     assert os.environ["EVRP_RETIRE_GUARD"] == "off"
+    assert campaign.decision_from(False, None, checkpoint="best") is None
+    assert campaign.decision_from(False, None, checkpoint="pretrained", batch=8) == {"checkpoint": "pretrained", "envs_per_problem": 8}
 
 
 def test_the_evaluation_wrapper_runs_the_code_frozen_with_a_tag(tmp_path) -> None:
@@ -332,3 +334,32 @@ def test_a_broken_copy_falls_back_to_the_policy_and_is_counted(monkeypatch) -> N
     assert summary["search_fallbacks"] >= 1 and summary["termination_reason"] is not None
     key, routes = search.best_of_n_routes(env, policy, 2, 1)
     assert key is None and routes is None
+
+
+def test_with_the_public_wake_up_a_waiting_truck_reveals_no_hidden_request(monkeypatch) -> None:
+    """Features and the rolling planner read the public wake-up; the simulator keeps the true one."""
+    from EVRoutingEnv.baselines.heuristics.rolling_request_planner import _pending_event
+    from EVRoutingEnv.state.features import TRUCK_HISTORY_FEATURES, _truck_history
+
+    monkeypatch.setenv("EVRP_PUBLIC_WAKE", "on")
+    env = small_env("same_day", trucks=2, stops=20)
+    env.reset(seed=1_000_000_003)
+    policy = RandomFeasiblePolicy(3)
+    at, checked = TRUCK_HISTORY_FEATURES.index("next_event_at"), 0
+    for _ in range(400):
+        waiting = [e for e in env.event_queue if e.data.get("reason") == "wait_complete"]
+        for event in waiting:
+            public = env.request_engine.public_wake(
+                float(event.data["start"]), env.extensions.requests.wait_hours, float(env.global_clock), float(event.time),
+            )
+            assert public >= env.global_clock - 1e-6  # never a boundary that has already passed
+            assert _truck_history(env, env.trucks[event.truck_id])[at] == public
+            assert _pending_event(env, event.truck_id).time == public
+            checked += 1
+        if env.active_truck_id is None:
+            break
+        wait = [i for i, row in enumerate(joint_action_feasibility(env)) if row.feasible and row.action_kind is ActionKind.WAIT]
+        _, _, terminated, truncated, _ = env.step(wait[0] if wait else policy(env))
+        if terminated or truncated:
+            break
+    assert checked > 0

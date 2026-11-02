@@ -910,6 +910,19 @@ class GraphBatch:
     def batch_size(self) -> int:
         return int(self.context.shape[0])
 
+    def to(self, device: str | torch.device) -> GraphBatch:
+        """The same batch with every tensor on ``device``."""
+        move = lambda value: value.to(device)  # noqa: E731
+        return GraphBatch(
+            nodes={key: move(value) for key, value in self.nodes.items()},
+            node_masks={key: move(value) for key, value in self.node_masks.items()},
+            pairwise={key: move(value) for key, value in self.pairwise.items()},
+            pairwise_mask={key: move(value) for key, value in self.pairwise_mask.items()},
+            context=move(self.context), actions=move(self.actions), action_mask=move(self.action_mask),
+            action_task=move(self.action_task), action_charger=move(self.action_charger),
+            active_truck=move(self.active_truck),
+        )
+
     def select(self, rows: torch.Tensor) -> GraphBatch:
         """The sub-batch at ``rows``; padding widths are kept."""
         return GraphBatch(

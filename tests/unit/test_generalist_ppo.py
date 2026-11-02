@@ -89,6 +89,21 @@ def test_slots_balance_problems_on_disjoint_seed_slices() -> None:
         balanced_slots(2, 6, [[1], [2]])
 
 
+def test_group_slots_run_each_seed_slice_on_consecutive_sub_environments() -> None:
+    seeds = [list(range(100, 112)), list(range(200, 212))]
+    slots = balanced_slots(2, 8, seeds, group_size=2)
+    assert [problem for problem, _ in slots] == [0, 0, 1, 1, 0, 0, 1, 1]
+    assert all(slots[index] == slots[index + 1] for index in range(0, 8, 2))
+    for problem in (0, 1):
+        streams = [set(stream) for owner, stream in slots[::2] if owner == problem]
+        assert set().union(*streams) == set(seeds[problem]) and sum(map(len, streams)) == len(seeds[problem])
+    assert balanced_slots(2, 4, seeds, group_size=1) == balanced_slots(2, 4, seeds)
+    with pytest.raises(ValueError, match="times the group size"):
+        balanced_slots(2, 6, seeds, group_size=4)
+    with pytest.raises(ValueError, match="group_size > 1"):
+        PPOConfig(advantage_mode="group")
+
+
 def test_replay_rebuilds_the_teacher_decisions(suite) -> None:
     problems, rows = suite
     spec = ObservationSpec(charger_budget=10_000)
@@ -170,6 +185,62 @@ def test_advantages_are_normalized_within_each_problem() -> None:
         assert abs(float(part.std(unbiased=False)) - 1.0) < 1e-3
 
 
+def test_group_advantages_are_leave_one_out_returns_with_a_gae_fallback() -> None:
+    from algo.generalist_ppo import group_advantages
+
+    gae = torch.arange(12, dtype=torch.float32).reshape(6, 2)
+    rewards = torch.tensor([[1.0, 2.0], [1.0, 2.0], [1.0, 2.0], [5.0, 2.0], [5.0, 9.0], [5.0, 9.0]])
+    # Both sub-environments finish seed 7 (returns 3 and 8); the first then
+    # finishes seed 8, whose partner is still running at the rollout's end.
+    finished = [(2, 0, {"problem": "p", "seed": 7}), (3, 1, {"problem": "p", "seed": 7}), (5, 0, {"problem": "p", "seed": 8})]
+    advantages, counts = group_advantages(gae, rewards, finished, [True, True], 2)
+    assert advantages[:3, 0].tolist() == [-5.0] * 3 and advantages[:4, 1].tolist() == [5.0] * 4
+    assert torch.equal(advantages[3:, 0], gae[3:, 0]) and torch.equal(advantages[4:, 1], gae[4:, 1])
+    assert counts == {"group/episodes": 2, "group/fallback_steps": 5, "group/fallback_fraction": 5 / 12}
+    # The second sub-environment's step-0 state continues an earlier episode: nothing pairs.
+    advantages, counts = group_advantages(gae, rewards, finished, [True, False], 2)
+    assert torch.equal(advantages, gae) and counts["group/fallback_steps"] == 12
+
+
+def test_group_mode_pairs_the_rollouts_by_seed_and_logs_its_fallback(suite) -> None:
+    problems, rows = suite
+    config = PPOConfig(
+        total_timesteps=6 * 32, num_envs=6, rollout_steps=32, minibatch_size=64, epochs=1, seed=3,
+        group_size=2, advantage_mode="group",
+    )
+    policy_config = GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4)
+    trainer = GeneralistPPO(policy_config, config, problems, ReferenceTable(rows), SuiteReward(), [list(range(6))] * 3)
+    assert trainer.advantage_groups.tolist() == [0, 0, 1, 1, 2, 2]
+    history = trainer.learn()
+    trainer.close()
+    record = history[-1]
+    assert record["group/episodes"] >= 2 and 0.0 < record["group/fallback_fraction"] < 1.0
+    assert record["group/fallback_steps"] == round(record["group/fallback_fraction"] * 6 * 32)
+    assert np.isfinite(record["policy_loss"])
+
+
+def test_a_zero_policy_gradient_weight_leaves_the_action_head_to_the_other_terms(suite) -> None:
+    problems, rows = suite
+    policy_config = GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4)
+
+    def after_one_update(weight: float) -> tuple[bool, bool]:
+        config = PPOConfig(
+            total_timesteps=12, num_envs=3, rollout_steps=4, minibatch_size=12, epochs=1, seed=3,
+            policy_gradient_weight=weight, entropy_coefficient=0.0,
+        )
+        trainer = GeneralistPPO(policy_config, config, problems, ReferenceTable(rows), SuiteReward(), [list(range(6))] * 3)
+        before = {name: tensor.clone() for name, tensor in trainer.policy.state_dict().items()}
+        record = trainer.learn()[-1]
+        trainer.close()
+        assert np.isfinite(record["policy_loss"]) and record["policy_loss"] != 0.0
+        after = trainer.policy.state_dict()
+        moved = lambda prefix: any(not torch.equal(before[name], after[name]) for name in before if name.startswith(prefix))
+        return moved("action_head."), moved("value_head.")
+
+    assert after_one_update(0.0) == (False, True)
+    assert after_one_update(1.0) == (True, True)
+
+
 def test_training_filters_need_the_mask_and_the_plan(monkeypatch) -> None:
     from types import SimpleNamespace
 
@@ -223,3 +294,64 @@ def test_the_deployed_arms_warm_start_from_their_own_seed() -> None:
         assert "--retire-guard" in flags and "--safety-mask" in flags and "--advantage-by-problem" in flags
         assert "--public-wake" in flags
     assert "--dagger-expert" not in runs[0]["flags"] and "--dagger-expert" in runs[1]["flags"]
+
+
+def test_the_family_critic_arm_warm_starts_and_a_mismatched_actor_is_refused() -> None:
+    from scripts.campaigns import generalist_graphppo as campaign
+
+    runs = campaign.arms_for("named", "full", 1, bks="/b", arms=["ppo_deployed_anchor_critics"])
+    flags = runs[0]["flags"]
+    assert flags[flags.index("--critic-heads") + 1] == "family" and "--init-from" in flags and "--dagger-expert" in flags
+
+
+def test_the_variance_reduction_arms_override_the_common_flags() -> None:
+    from scripts.campaigns import generalist_graphppo as campaign
+    from scripts.training.train_generalist_ppo import build_argument_parser
+
+    arms = ["ppo_deployed_anchor", "ppo_deployed_anchor_bigbatch", "ppo_deployed_anchor_group", "imitation_only_deployed"]
+    parsed = {}
+    for run in campaign.arms_for("named", "full", 1, bks="/b", arms=arms):
+        assert "--init-from" in run["flags"] and "--dagger-expert" in run["flags"] and "--advantage-by-problem" in run["flags"]
+        # The job runs COMMON first and the arm's flags last, so the arm's value wins.
+        arguments = build_argument_parser().parse_args(["--references", "/r", *campaign.COMMON, *run["flags"]])
+        parsed[run["arm"]] = (
+            arguments.rollout_steps, arguments.minibatch_size, arguments.accumulate_minibatches, arguments.group_size,
+            arguments.advantage_mode, arguments.policy_gradient_weight, arguments.rollout_on_cpu,
+        )
+    assert parsed["ppo_deployed_anchor"] == (128, 256, 1, 1, "gae", 1.0, False)
+    assert parsed["ppo_deployed_anchor_bigbatch"] == (512, 256, 4, 1, "gae", 1.0, True)
+    assert parsed["ppo_deployed_anchor_group"] == (512, 256, 4, 4, "group", 1.0, True)
+    assert parsed["imitation_only_deployed"] == (128, 256, 1, 1, "gae", 0.0, False)
+
+
+def test_accumulated_minibatches_take_the_step_of_one_big_minibatch(suite) -> None:
+    """Four accumulated minibatches of 12 move the weights like one minibatch of 48."""
+    problems, rows = suite
+    reward = SuiteReward(reference="scenario")
+    weights = []
+    for minibatch, accumulate in ((48, 1), (12, 4)):
+        config = PPOConfig(total_timesteps=6 * 8, num_envs=6, rollout_steps=8, minibatch_size=minibatch, epochs=1, seed=3,
+                           accumulate_minibatches=accumulate, advantage_by_problem=True, target_kl=None)
+        policy_config = GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4, fleet_assignment=True)
+        trainer = GeneralistPPO(policy_config, config, problems, ReferenceTable(rows), reward, [list(range(6))] * 3)
+        trainer.learn()
+        weights.append({name: value.detach().clone() for name, value in trainer.policy.named_parameters()})
+        trainer.close()
+    for name in weights[0]:
+        assert torch.allclose(weights[0][name], weights[1][name], atol=1e-5, rtol=1e-4), name
+
+
+def test_a_rollout_kept_on_the_cpu_trains_like_one_on_the_device(suite) -> None:
+    """``rollout_on_cpu`` only changes where the collated rollout lives: the updates are the same."""
+    problems, rows = suite
+    reward = SuiteReward(reference="scenario")
+    histories = []
+    for on_cpu in (False, True):
+        config = PPOConfig(total_timesteps=2 * 6 * 8, num_envs=6, rollout_steps=8, minibatch_size=16, epochs=1, seed=3,
+                           rollout_on_cpu=on_cpu)
+        policy_config = GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4, fleet_assignment=True)
+        trainer = GeneralistPPO(policy_config, config, problems, ReferenceTable(rows), reward, [list(range(6))] * 3)
+        histories.append(trainer.learn())
+        trainer.close()
+    assert [h["policy_loss"] for h in histories[0]] == pytest.approx([h["policy_loss"] for h in histories[1]])
+    assert [h["value_loss"] for h in histories[0]] == pytest.approx([h["value_loss"] for h in histories[1]])

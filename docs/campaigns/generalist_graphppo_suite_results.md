@@ -90,6 +90,38 @@ Static episodes also need the time-0 plan before they start: about 37–60 core-
 - **Seed sensitivity.** Two of three runs pass. s1 passes neither on validation nor on test. The arm's training does not reliably give a passing policy, and the test reports all three.
 - **Drayage is not evidence of near-optimality.** The policy serves 1.23–1.37× the BKS and more than the "hindsight" value, which is an unproven heuristic, so the portfolio there is weak rather than the policy shown optimal.
 
+### Generalisation to unseen problems (claim 2, 2026-11-01)
+
+Pre-registered in `results/generalist_graphppo/suite_v4_heldout/PREREGISTRATION.md` before any held-out result existed: the frozen passing weights (suite_v4 `best.pt`, mask at margin 0 with the energy-rule fallback, guard, plan on, no tuning) on eight held-out problems, 128 validation-namespace seeds each, against a BKS built per problem with the suite's portfolio plus `lh_rolling_served`, judged by the unchanged gate. Table: `results/generalist_graphppo/suite_v4_heldout/evaluation/validation/heldout/near_optimal_gate.md`.
+
+**Claim 2 does not hold under the pre-registered rule, for any kind.** No run passes all eight (arm distance 0.090). What passes and what fails is the same for all three runs:
+
+| Kind | Problem | s0 / s1 / s2 |
+|---|---|---|
+| Unseen network | `de_nl_be_longhaul` | PASS (hours +0.8 / +0.5 / +0.3 %, success 100 %) |
+| Unseen network | `de_nl_be_longhaul_hos` | FAIL (success 88 / 83 / 86 % vs 98 needed; hours +7.5 / +4.9 / +6.4 %) |
+| Unseen size | `tx_longhaul_t5c15` | PASS (+0.7 / +0.4 / +0.3 %) |
+| Unseen size | `tx_longhaul_t20c60` | PASS (+3.0 / +4.5 / +1.3 %) |
+| Unseen size | `ca_sameday_t5` | FAIL (services 0.825 / 0.837 / 0.862 of BKS; s1, s2 failure 1.6 / 3.9 %) |
+| Unseen size | `ca_sameday_t20` | PASS (0.975 / 0.984 / 0.962) |
+| Unseen combination | `tx_sameday` | FAIL (0.840 / 0.857 / 0.809) |
+| Unseen combination | `pnw_drayage_combined` | FAIL (0.603 / 0.576 / 0.641) |
+
+Reading: on long-haul problems without hours-of-service the policy with its planner transfers to a new network and to fleets 2.5× smaller and 2× larger within the gate's hours margin, which is consistent with the static pass being the policy following the planner. Hours-of-service on an unseen network breaks it (one truck in eight fails to finish on time). On the dynamic side it transfers to a larger same-day fleet but not to a smaller one, and both unseen combinations fail, drayage badly: the drayage gain seen on the suite problem does not carry to Seattle–Tacoma, where the policy serves 60 % of the BKS. No held-out problem was used for any decision, so these numbers are a clean read of the frozen policy.
+
+### PPO on the deployed problem (suite_v5, pre-registered, 2026-11-01)
+
+Question (pre-registered 2026-10-31 in `suite_v4_heldout/PREREGISTRATION.md`, amended before any result): does PPO noticeably improve the passing policy when it trains on the deployed problem (both filters on, plan on, `--public-wake`, per-problem advantages, learning rate 1e-4, 2M steps, warm start from each seed's suite_v4 weights)? Two arms: `ppo_deployed` (pure PPO) and `ppo_deployed_anchor` (imitation held at bc 0.05, DAgger β 0.3). Checkpoints chosen on the 64 selection seeds by gate distance (score breaking ties), then read on the 128 validation seeds against the same seed's starting weights (`4M_mask0_fix_guard_publicwake`); "noticeable" = no gate criterion turns pass → fail, and a gain of ≥ 1 point of static hours excess or success, or ≥ 0.02 same-day services ratio, on a long-haul or same-day problem, with a paired 95 % bootstrap interval excluding zero (drayage gains are reported but do not qualify alone).
+
+| Run | Chosen checkpoint | Gate on 128 seeds | Qualifying gain | Losses | Verdict |
+|---|---|---|---|---|---|
+| pure PPO s0 / s1 / s2 | step 0 (= the start weights, bit-for-bit) | as the start | none: every later checkpoint is farther from the gate on the selection seeds (static hours +4…+29 %, Northwest success 0.73–0.94) | — | **no improvement** |
+| anchored s0 | 1.54M | PASS all five | Northwest hours excess −2.75 pts [−4.04, −1.48]; same-day +0.01; drayage +0.17 | congested hours +1.20 pts [0.43, 2.03] | **noticeable** (also on seeds 64–127) |
+| anchored s1 | 1.92M | PASS all five (its start failed congested and Northwest) | Northwest hours −3.29 pts [−5.44, −1.34]; drayage +0.05 | Texas hours +0.96 pts; on seeds 64–127 same-day turns PASS → FAIL (failure 1.6 %, services −0.02) | **noticeable** on the primary read, regression on the second half |
+| anchored s2 | 1.02M | FAIL: Northwest success 96.9 % (124/128, limit 98 %) | same-day +0.02, drayage +0.13 | Northwest success −2.34 pts, Texas and congested hours +1.9 pts each | **not noticeable** (gate regression) |
+
+Reading: pure PPO at this batch only degrades the policy, which matches the gradient probe (per-problem PPO gradients are sampling noise at 128–1 000 decisions per problem; `agent/pilots/gradient_conflict/CONCLUSIONS.md`). With the imitation anchor PPO moves hours between problems — Northwest better by 2–3 points on two seeds, Texas and congested worse by 1–2 points on all three — and lifts drayage, and whether the net is a pass depends on the seed. By the pre-registered rule the anchored arm shows a noticeable improvement on 2 of 3 seeds; the claim that PPO reliably improves the deployed policy is not supported. Variance-reduction arms (bigger batches, a seed-paired return baseline, family critic heads) and an imitation-only control are training as `suite_v5b` / `suite_v5c` (pre-registered in `suite_v5b/PREREGISTRATION.md`) to attribute the gains to PPO or to the anchor.
+
 ## 4. Integrity of the test
 
 - `agent/TEST_OPENED` was written on 2026-10-31 with the user's approval, after the user was told the validation pass depends on the guard.

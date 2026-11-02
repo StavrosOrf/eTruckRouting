@@ -36,6 +36,7 @@ from algo.canonical_encoders import (
 from algo.canonical_policy import PolicyOutput
 from algo.canonical_state import scatter_logits
 from algo.generalist_observation import (
+    CONTEXT_FEATURE_NAMES,
     GENERALIST_SCHEMA_VERSION,
     NODE_TYPES,
     RELATION_TYPES,
@@ -43,6 +44,20 @@ from algo.generalist_observation import (
     ObservationSpec,
     feature_dims,
 )
+
+
+CRITIC_HEADS = ("shared", "family")
+CRITIC_FAMILIES = ("longhaul", "same_day", "drayage")
+_FAMILY_COLUMNS = [CONTEXT_FEATURE_NAMES.index(name) for name in ("mode_static", "mode_same_day", "mode_drayage")]
+
+
+def critic_family(context: torch.Tensor) -> torch.Tensor:
+    """Each row's critic family from its mode flags: 0 long-haul (static), 1 same-day, 2 drayage."""
+    return context[:, _FAMILY_COLUMNS].argmax(dim=-1)
+
+
+def _critic(hidden: int) -> nn.Sequential:
+    return nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1))
 
 
 @dataclass(frozen=True)
@@ -57,9 +72,15 @@ class GeneralistPolicyConfig:
     fleet_assignment: bool = False
     plan_conditioned: bool = False
     charge_plan: bool = False
+    # "shared": one value head for every problem; "family": one per mechanism
+    # family (long-haul, same-day, drayage), chosen from the observation's mode
+    # flags, so an unseen problem routes itself. The actor is shared either way.
+    critic_heads: str = "shared"
     feature_schema_version: str = GENERALIST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if self.critic_heads not in CRITIC_HEADS:
+            raise ValueError(f"critic_heads must be one of {CRITIC_HEADS}, got {self.critic_heads!r}")
         for name in ("hidden_dim", "encoder_layers", "action_head_layers"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -182,9 +203,26 @@ class GeneralistActorCritic(nn.Module):
             dims["action"] + 2 * hidden,
             num_layers=config.action_head_layers,
         )
-        self.value_head = nn.Sequential(
-            nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1)
-        )
+        if config.critic_heads == "family":
+            self.value_heads = nn.ModuleDict({family: _critic(hidden) for family in CRITIC_FAMILIES})
+        else:
+            self.value_head = _critic(hidden)
+
+    def _values(self, pooled: torch.Tensor, batch: GraphBatch) -> torch.Tensor:
+        if self.config.critic_heads != "family":
+            return self.value_head(pooled).squeeze(-1)
+        stacked = torch.stack([self.value_heads[family](pooled).squeeze(-1) for family in CRITIC_FAMILIES], dim=1)
+        return stacked.gather(1, critic_family(batch.context).view(-1, 1)).squeeze(1)
+
+    def adopt(self, state: dict) -> None:
+        """Load a checkpoint; a shared critic seeds every family head of a family-critic policy."""
+        if self.config.critic_heads == "family" and any(key.startswith("value_head.") for key in state):
+            state = dict(state)
+            for key in [key for key in state if key.startswith("value_head.")]:
+                tensor = state.pop(key)
+                for family in CRITIC_FAMILIES:
+                    state[key.replace("value_head.", f"value_heads.{family}.", 1)] = tensor.clone()
+        self.load_state_dict(state)
 
     def observe(self, batch: GraphBatch) -> None:
         self.encoder.observe(batch)
@@ -212,14 +250,14 @@ class GeneralistActorCritic(nn.Module):
         head = self.action_head(pooled, rows, ptr)
         return PolicyOutput(
             logits=scatter_logits(head.logits, head.ptr, mask),
-            values=self.value_head(pooled).squeeze(-1),
+            values=self._values(pooled, batch),
             feasible_mask=mask,
         )
 
     def predict_values(self, batch: GraphBatch) -> torch.Tensor:
         """Value estimate that never touches the action head (terminal states)."""
         pooled, _ = self.encoder(batch)
-        return self.value_head(pooled).squeeze(-1)
+        return self._values(pooled, batch)
 
     @torch.no_grad()
     def act(self, batch: GraphBatch, deterministic: bool = False):

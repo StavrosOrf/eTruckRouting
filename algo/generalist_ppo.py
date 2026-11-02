@@ -23,6 +23,15 @@ Differences from :mod:`algo.canonical_ppo`, which trains on one configuration:
   by default: a retained cross-entropy term on labelled states in every PPO
   minibatch, and DAgger rounds whose sub-environments live in the same forked
   workers.
+* **Seed-paired baseline**, off by default: with ``group_size`` K > 1 every
+  train seed runs in K sub-environments at once (common random numbers), and
+  ``advantage_mode="group"`` replaces the policy's GAE advantage by the
+  episode's return minus its partners' mean (:func:`group_advantages`); the
+  critic still trains on its GAE targets. ``policy_gradient_weight=0`` turns
+  the surrogate off for the imitation-only control. ``rollout_on_cpu`` keeps
+  the collated rollout on the CPU so long rollouts fit the GPU, and
+  ``accumulate_minibatches`` takes one gradient step per K minibatches, the
+  step of a minibatch K times the size.
 """
 
 from __future__ import annotations
@@ -503,17 +512,27 @@ class SuiteVecEnv:
                 process.terminate()
 
 
-def balanced_slots(num_problems: int, num_envs: int, seeds: Sequence[Sequence[int]]) -> list[tuple[int, list[int]]]:
-    """Sub-environment ``i`` runs problem ``i mod P`` on a disjoint seed slice."""
-    if num_envs % num_problems:
-        raise ValueError(f"num_envs ({num_envs}) must be a multiple of the {num_problems} problems")
-    width = num_envs // num_problems
+def balanced_slots(
+    num_problems: int, num_envs: int, seeds: Sequence[Sequence[int]], group_size: int = 1,
+) -> list[tuple[int, list[int]]]:
+    """Sub-environment ``i`` runs problem ``i mod P`` on a disjoint seed slice.
+
+    With ``group_size`` K > 1 each slice is run by K consecutive sub-environments
+    at once (common random numbers): slots ``Kj .. Kj+K-1`` run problem ``j mod P``.
+    """
+    if num_envs % (num_problems * group_size):
+        raise ValueError(
+            f"num_envs ({num_envs}) must be a multiple of the {num_problems} problems"
+            + (f" times the group size {group_size}" if group_size > 1 else "")
+        )
+    width = num_envs // (num_problems * group_size)
     if any(len(stream) < width for stream in seeds):
         raise ValueError(f"every problem needs at least {width} train seeds for its {width} sub-environments")
-    return [
-        (slot % num_problems, list(seeds[slot % num_problems][slot // num_problems :: width]))
-        for slot in range(num_envs)
-    ]
+    slots = []
+    for slot in range(num_envs // group_size):
+        problem = slot % num_problems
+        slots.extend((problem, list(seeds[problem][slot // num_problems :: width])) for _ in range(group_size))
+    return slots
 
 
 # ---------------------------------------------------------------------------
@@ -551,9 +570,10 @@ class GeneralistPPO:
             slots_for_dagger = dagger_slots(self.problems, train_seeds, imitation)
         # Every worker, DAgger sub-environments included, is forked here,
         # before the policy touches the device.
+        slots = balanced_slots(len(self.problems), ppo_config.num_envs, train_seeds, ppo_config.group_size)
         self.envs = SuiteVecEnv(
             self.problems,
-            balanced_slots(len(self.problems), ppo_config.num_envs, train_seeds),
+            slots,
             policy_config.observation_spec,
             reward,
             references,
@@ -573,12 +593,13 @@ class GeneralistPPO:
         self.history: list[dict] = []
         self.episodes = {problem.name: deque(maxlen=50) for problem in self.problems}
         self.advantage_groups = None
-        if ppo_config.advantage_by_problem:
-            slots = balanced_slots(len(self.problems), ppo_config.num_envs, train_seeds)
+        if ppo_config.advantage_by_problem or ppo_config.advantage_mode == "group":
             self.advantage_groups = torch.as_tensor([problem for problem, _ in slots], device=self.device)
         self.total_steps = 0
         self.completed_updates = 0
         self._observations: list[GraphObservation] | None = None
+        # Whether each sub-environment's current observation opens an episode.
+        self._fresh = np.ones(ppo_config.num_envs, dtype=bool)
 
     # -- interaction -------------------------------------------------------
 
@@ -608,6 +629,7 @@ class GeneralistPPO:
                 "timesteps": self.total_steps,
                 "elapsed_seconds": time.perf_counter() - started,
                 **statistics_,
+                **rollout["statistics"],
                 **self.episode_statistics(),
                 **dagger,
             }
@@ -641,6 +663,7 @@ class GeneralistPPO:
         values = torch.zeros((steps, num_envs), device=self.device)
         rewards = torch.zeros((steps, num_envs), device=self.device)
         dones = torch.zeros((steps, num_envs), device=self.device)
+        finished: list[tuple[int, int, dict]] = []
         observations = self._observations
         for step in range(steps):
             stored.extend(observations)
@@ -659,23 +682,29 @@ class GeneralistPPO:
                 step_rewards = self.reward_scale.normalize(step_rewards)
             rewards[step] = torch.as_tensor(step_rewards, device=self.device)
             dones[step] = torch.as_tensor(step_dones.astype(np.float32), device=self.device)
-            for record in records:
+            for index, record in enumerate(records):
                 if record is not None:
                     self.episodes[record["problem"]].append(record)
+                    finished.append((step, index, record))
         self._observations = observations
         with torch.no_grad():
             last_value = self.policy.predict_values(collate(observations, self.device))
         advantages = generalized_advantages(rewards, values, dones, last_value, config.gamma, config.gae_lambda)
         returns = advantages + values
+        statistics_: dict = {}
+        if config.advantage_mode == "group":
+            advantages, statistics_ = group_advantages(advantages, rewards, finished, self._fresh, config.group_size)
+        self._fresh = step_dones.astype(bool)
         if self.advantage_groups is not None:
             advantages = normalized_by_group(advantages, self.advantage_groups)
         return {
-            "batch": collate(stored, self.device),
+            "batch": collate(stored, "cpu" if config.rollout_on_cpu else self.device),
             "actions": actions.reshape(-1),
             "logprobs": logprobs.reshape(-1),
             "advantages": advantages.reshape(-1),
             "returns": returns.reshape(-1),
             "values": values.reshape(-1),
+            "statistics": statistics_,
         }
 
     def _optimize(self, rollout: dict) -> dict:
@@ -685,15 +714,17 @@ class GeneralistPPO:
         bc_weight = self.bc_weight()
         if bc_weight > 0:
             losses.update(bc_loss=[], bc_accuracy=[])
+        accumulate = config.accumulate_minibatches
         for _ in range(config.epochs):
             np.random.shuffle(indices)
-            for start in range(0, config.batch_size, config.minibatch_size):
+            starts = [s for s in range(0, config.batch_size, config.minibatch_size) if min(config.minibatch_size, config.batch_size - s) >= 2]
+            for number, start in enumerate(starts):
                 batch_index = torch.as_tensor(indices[start : start + config.minibatch_size], device=self.device)
-                if batch_index.numel() < 2:
-                    continue
-                logprob, entropy, value = self.policy.evaluate_actions(
-                    rollout["batch"].select(batch_index), rollout["actions"][batch_index]
-                )
+                if config.rollout_on_cpu:
+                    minibatch = rollout["batch"].select(batch_index.cpu()).to(self.device)
+                else:
+                    minibatch = rollout["batch"].select(batch_index)
+                logprob, entropy, value = self.policy.evaluate_actions(minibatch, rollout["actions"][batch_index])
                 log_ratio = logprob - rollout["logprobs"][batch_index]
                 ratio = log_ratio.exp()
                 with torch.no_grad():
@@ -712,16 +743,24 @@ class GeneralistPPO:
                     value_loss = 0.5 * torch.max((value - returns).pow(2), (clipped - returns).pow(2)).mean()
                 else:
                     value_loss = 0.5 * F.mse_loss(value, returns)
-                loss = policy_loss + config.value_coefficient * value_loss - config.entropy_coefficient * entropy.mean()
+                loss = (
+                    config.policy_gradient_weight * policy_loss
+                    + config.value_coefficient * value_loss
+                    - config.entropy_coefficient * entropy.mean()
+                )
                 if bc_weight > 0:
                     bc_loss, bc_accuracy = self.imitation_loss()
                     loss = loss + bc_weight * bc_loss
                     losses["bc_loss"].append(float(bc_loss.item()))
                     losses["bc_accuracy"].append(float(bc_accuracy.item()))
-                self.optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(self.policy.parameters(), config.max_grad_norm)
-                self.optimizer.step()
+                # With accumulation the optimizer steps once per ``accumulate`` minibatches on
+                # the mean of their losses, the gradient of one minibatch that size.
+                if number % accumulate == 0:
+                    self.optimizer.zero_grad()
+                (loss / accumulate).backward()
+                if (number + 1) % accumulate == 0 or number + 1 == len(starts):
+                    nn.utils.clip_grad_norm_(self.policy.parameters(), config.max_grad_norm)
+                    self.optimizer.step()
                 losses["policy_loss"].append(float(policy_loss.item()))
                 losses["value_loss"].append(float(value_loss.item()))
                 losses["entropy"].append(float(entropy.mean().item()))
@@ -952,6 +991,7 @@ class GeneralistPPO:
         self.completed_updates = state["completed_updates"]
         self.envs.set_positions(state["seed_positions"])
         self._observations = self.envs.reset()
+        self._fresh[:] = True
         torch.set_rng_state(state["torch_rng"])
         np.random.set_state(state["numpy_rng"])
         random.setstate(state["python_rng"])
@@ -988,6 +1028,53 @@ def normalized_by_group(advantages: torch.Tensor, groups: torch.Tensor) -> torch
         part = advantages[:, rows]
         normalized[:, rows] = (part - part.mean()) / (part.std(unbiased=False) + 1e-8)
     return normalized
+
+
+def group_advantages(
+    advantages: torch.Tensor,
+    rewards: torch.Tensor,
+    finished: Sequence[tuple[int, int, dict]],
+    fresh: Sequence[bool],
+    group_size: int,
+) -> tuple[torch.Tensor, dict]:
+    """Leave-one-out return baselines over ``(steps, envs)`` for the seed-paired groups.
+
+    ``finished`` lists ``(step, env, record)`` for every episode that ended in
+    the rollout and ``fresh`` marks the sub-environments whose step-0 state
+    opened an episode. An episode is complete when it both started and ended
+    inside the rollout; complete episodes of the same (problem, seed) form a
+    group. In a group of at least ``group_size`` episodes every step of each
+    gets the episode's undiscounted return (the buffer's rewards) minus the
+    mean return of the group's other episodes. Every other step keeps the GAE
+    advantage passed in: an episode the rollout boundary cuts, or one whose
+    partner episodes have not finished, falls back. Returns the advantages and
+    the counts to log.
+    """
+    started: list[int | None] = [0 if fresh[env] else None for env in range(rewards.shape[1])]
+    episodes = []
+    for step, env, record in sorted(finished, key=lambda item: item[:2]):
+        if started[env] is not None:
+            total = float(rewards[started[env] : step + 1, env].sum().item())
+            episodes.append((env, started[env], step, (record["problem"], int(record["seed"])), total))
+        started[env] = step + 1
+    returns_of: dict[tuple, list[float]] = {}
+    for _, _, _, key, total in episodes:
+        returns_of.setdefault(key, []).append(total)
+    grouped = advantages.clone()
+    grouped_steps = grouped_episodes = 0
+    for env, start, end, key, total in episodes:
+        partners = returns_of[key]
+        if len(partners) < group_size:
+            continue
+        grouped[start : end + 1, env] = total - (sum(partners) - total) / (len(partners) - 1)
+        grouped_steps += end + 1 - start
+        grouped_episodes += 1
+    fallback = rewards.numel() - grouped_steps
+    return grouped, {
+        "group/episodes": grouped_episodes,
+        "group/fallback_steps": fallback,
+        "group/fallback_fraction": fallback / rewards.numel(),
+    }
 
 
 def generalized_advantages(rewards, values, dones, last_value, gamma: float, gae_lambda: float) -> torch.Tensor:

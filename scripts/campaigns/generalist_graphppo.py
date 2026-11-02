@@ -31,6 +31,7 @@ import argparse
 import functools
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -127,6 +128,14 @@ DEPLOYED = [
     "--learning-rate", "0.0001", "--entropy-coefficient", "0.001", "--validation-scenarios", "64",
     "--save-validation-checkpoints", "--init-from", SUITE_V4_RUN, "--pretrain-epochs", "0", "--dagger-pretrain-rounds", "0",
 ]
+# 512-step rollouts (20480 observations) do not fit a 40 GB GPU collated, so the
+# rollout stays on the CPU and minibatches move over; a 1024-observation
+# minibatch's activations do not fit either, so the 1024-decision gradient
+# step is 4 accumulated minibatches of 256.
+BIGBATCH = [
+    "--rollout-steps", "512", "--minibatch-size", "256", "--accumulate-minibatches", "4", "--rollout-on-cpu",
+    "--validate-every", "6", "--checkpoint-every", "3", "--dagger-every", "3",
+]
 ANCHOR = [
     "--bc-coefficient", "0.05", "--bc-coefficient-final", "0.05", "--dagger-expert", *EXPERTS, "--dagger-every", "10",
     "--dagger-episodes", "8", "--dagger-beta", "0.3", "--dagger-beta-final", "0.3",
@@ -149,6 +158,25 @@ RECIPES = {
     # Pure PPO from the warm start: any change is PPO's.
     "ppo_deployed": [*FULL, "--reward-references", BKS_DIR, "--bc-episodes", "0", *PLAN, *CHARGE_PLAN, *DEPLOYED],
     "ppo_deployed_anchor": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED],
+    # One critic per mechanism family (2026-11-01): the gradient probe found no
+    # actor conflict between problems but shared value structure only within the
+    # long-haul family, so the critics split and the actor stays shared.
+    "ppo_deployed_anchor_critics": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, "--critic-heads", "family"],
+    # Variance reduction (2026-11-01): the same probe found a problem's PPO
+    # gradient on two independent rollouts has cosine ~ 0 at the training batch,
+    # so these arms raise the decisions per update, pair the rollouts by seed
+    # (10 groups of 4 per rollout; a later flag overrides COMMON's), or turn the
+    # surrogate off for the imitation-only control.
+    # 4x the decisions behind every gradient step; cadences in updates are
+    # divided by 4 so validations, checkpoints and DAgger rounds keep their
+    # step spacing. The group arm needs the long rollouts too: suite episodes
+    # run ~160 decisions, so at 128 steps no episode would complete inside a
+    # rollout and every step would fall back to GAE.
+    "ppo_deployed_anchor_bigbatch": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH],
+    "ppo_deployed_anchor_group": [
+        *FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH, "--group-size", "4", "--advantage-mode", "group",
+    ],
+    "imitation_only_deployed": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, "--policy-gradient-weight", "0"],
 }
 SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
@@ -855,6 +883,16 @@ def apply_decision(folder: Path) -> dict:
     return settings
 
 
+CHECKPOINT_LABELS = ("best", "pretrained", "final")
+
+
+def checkpoint_label(value: str) -> str:
+    """evaluate's ``--checkpoint``: a named checkpoint or a ``ckpt_<update>`` the trainer saved at a validation."""
+    if value in CHECKPOINT_LABELS or re.fullmatch(r"ckpt_\d+", value):
+        return value
+    raise argparse.ArgumentTypeError(f"checkpoint must be one of {CHECKPOINT_LABELS} or ckpt_<update>, not {value!r}")
+
+
 def decision_from(
     safety_mask: bool, safety_margin: float | None, search: str | None = None, k: int = 4, n: int = 16,
     retire_guard: bool = False, checkpoint: str | None = None, batch: int | None = None, public_wake: bool = False,
@@ -1219,8 +1257,9 @@ def main() -> None:
                          help="evaluate with --safety-mask: hours to be home before the horizon.")
     command.add_argument("--retire-guard", action="store_true",
                          help="evaluate with --safety-mask: no retirement of a truck the plan still routes customers to.")
-    command.add_argument("--checkpoint", default=None, choices=["best", "pretrained", "final"],
-                         help="evaluate: the checkpoint of every run (default best), frozen in <tag>/decision.json.")
+    command.add_argument("--checkpoint", default=None, type=checkpoint_label,
+                         help="evaluate: the checkpoint of every run (default best; also ckpt_<update> saved at a "
+                              "validation), frozen in <tag>/decision.json.")
     command.add_argument("--eval-batch", type=int, default=None,
                          help="evaluate: environments per problem, frozen in <tag>/decision.json (robustness to batching).")
     command.add_argument("--public-wake", action="store_true",

@@ -1,5 +1,6 @@
 """One generalist policy reads any problem size, and padding or row order never matter."""
 
+import json
 from dataclasses import replace
 
 import numpy as np
@@ -7,7 +8,7 @@ import pytest
 import torch
 from generalist_harness import random_observations, small_env
 
-from algo.generalist_observation import ObservationSpec, collate
+from algo.generalist_observation import CONTEXT_FEATURE_NAMES, ObservationSpec, collate
 from algo.generalist_policy import GeneralistActorCritic, GeneralistPolicyConfig
 
 
@@ -108,3 +109,55 @@ def test_checkpoints_round_trip_and_refuse_another_schema(tmp_path) -> None:
     assert torch.equal(policy(collate(observations)).logits, restored(collate(observations)).logits)
     with pytest.raises(ValueError, match="incompatible"):
         GeneralistPolicyConfig(feature_schema_version="generalist-v0")
+
+
+def test_family_critics_route_by_mode_flags_and_leave_the_actor_shared() -> None:
+    from algo.generalist_policy import CRITIC_FAMILIES, critic_family
+
+    spec = ObservationSpec(charger_budget=4)
+    config = GeneralistPolicyConfig(charger_budget=4, critic_heads="family")
+    policy = GeneralistActorCritic(config)
+    policy.eval()
+    observations = random_observations(small_env("static", spec=spec), 1, 3) + random_observations(
+        small_env("same_day", spec=spec), 2, 3
+    )
+    batch = collate(observations)
+    assert critic_family(batch.context).tolist() == [0, 0, 0, 1, 1, 1]
+    flags = torch.zeros(3, batch.context.shape[1])
+    for row, name in enumerate(("mode_static", "mode_same_day", "mode_drayage")):
+        flags[row, CONTEXT_FEATURE_NAMES.index(name)] = 1.0
+    assert critic_family(flags).tolist() == [0, 1, 2]
+    with torch.no_grad():
+        before = policy(batch)
+        for parameter in policy.value_heads["same_day"].parameters():
+            parameter.add_(1.0)
+        after = policy(batch)
+    assert torch.equal(before.logits, after.logits)
+    assert torch.equal(before.values[:3], after.values[:3])
+    assert not torch.allclose(before.values[3:], after.values[3:])
+    assert set(policy.value_heads) == set(CRITIC_FAMILIES)
+    assert torch.equal(policy.predict_values(batch), after.values)
+
+
+def test_a_family_critic_adopts_a_shared_checkpoint_and_round_trips(tmp_path) -> None:
+    spec = ObservationSpec(charger_budget=4)
+    shared = GeneralistActorCritic(GeneralistPolicyConfig(charger_budget=4))
+    family = GeneralistActorCritic(GeneralistPolicyConfig(charger_budget=4, critic_heads="family"))
+    family.adopt(shared.state_dict())
+    batch = collate(random_observations(small_env("same_day", spec=spec), 3, 4))
+    shared.eval(), family.eval()
+    with torch.no_grad():
+        a, b = shared(batch), family(batch)
+    assert torch.equal(a.logits, b.logits) and torch.allclose(a.values, b.values)
+    with pytest.raises(RuntimeError):
+        shared.adopt(family.state_dict())  # a family checkpoint cannot shrink back to one critic
+    family.save(tmp_path, prefix="best")
+    loaded = GeneralistActorCritic.load(tmp_path, prefix="best")
+    assert loaded.config.critic_heads == "family"
+    loaded.eval()
+    with torch.no_grad():
+        assert torch.allclose(loaded(batch).values, b.values)
+    (tmp_path / "old_config.json").write_text(json.dumps({"charger_budget": 4}))
+    assert GeneralistPolicyConfig.load(tmp_path / "old_config.json").critic_heads == "shared"
+    with pytest.raises(ValueError, match="critic_heads"):
+        GeneralistPolicyConfig(critic_heads="per_problem")

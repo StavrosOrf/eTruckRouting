@@ -104,8 +104,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="A waiting truck's wake-up from public information only, not the hidden request stream.")
     parser.add_argument("--advantage-by-problem", action="store_true",
                         help="Normalize advantages within each problem, not across the mixture.")
+    parser.add_argument("--policy-gradient-weight", type=float, default=1.0,
+                        help="Weight of PPO's clipped surrogate in the loss (0: the imitation-only control).")
+    parser.add_argument("--group-size", type=int, default=1,
+                        help="Sub-environments running each train seed at once (common random numbers).")
+    parser.add_argument("--advantage-mode", choices=["gae", "group"], default="gae",
+                        help="group: the episode's return minus its seed group's leave-one-out mean "
+                             "(needs --group-size > 1); GAE where no group completed in the rollout.")
+    parser.add_argument("--rollout-on-cpu", action="store_true",
+                        help="Keep the collated rollout on the CPU and move each minibatch to the GPU (long rollouts).")
+    parser.add_argument("--accumulate-minibatches", type=int, default=1,
+                        help="Gradient steps span this many minibatches (a big batch within GPU memory).")
     parser.add_argument("--save-validation-checkpoints", action="store_true",
                         help="Keep ckpt_<update>.pt at every validation, to select checkpoints afterwards.")
+    parser.add_argument("--critic-heads", choices=["shared", "family"], default="shared",
+                        help="One value head, or one per mechanism family (long-haul, same-day, drayage).")
     parser.add_argument("--charger-budget", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=3)
@@ -287,9 +300,15 @@ def main(argv: list[str] | None = None) -> None:
         fleet_assignment=arguments.fleet_assignment,
         plan_conditioned=arguments.plan_conditioned,
         charge_plan=arguments.charge_plan,
+        critic_heads=arguments.critic_heads,
     )
     ppo_config = PPOConfig(
         advantage_by_problem=arguments.advantage_by_problem,
+        policy_gradient_weight=arguments.policy_gradient_weight,
+        group_size=arguments.group_size,
+        advantage_mode=arguments.advantage_mode,
+        rollout_on_cpu=arguments.rollout_on_cpu,
+        accumulate_minibatches=arguments.accumulate_minibatches,
         total_timesteps=arguments.total_timesteps,
         num_envs=arguments.num_envs,
         rollout_steps=arguments.rollout_steps,
@@ -348,9 +367,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     if arguments.init_from and not arguments.resume:
         source = GeneralistActorCritic.load(arguments.init_from, prefix="best")
-        if asdict(source.config) != asdict(policy_config):
+        theirs, ours = asdict(source.config), asdict(policy_config)
+        # The critic layout may change at a warm start (a shared critic seeds the family heads); nothing else may.
+        if {key for key in ours if theirs[key] != ours[key]} - {"critic_heads"}:
             raise SystemExit(f"{arguments.init_from} has a different policy configuration")
-        trainer.policy.load_state_dict(source.state_dict())
+        trainer.policy.adopt(source.state_dict())
         print(f"initialised weights from {arguments.init_from}", flush=True)
 
     run_record = {

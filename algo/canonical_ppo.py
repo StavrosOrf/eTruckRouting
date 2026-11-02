@@ -46,6 +46,16 @@ class PPOConfig:
     target_kl: float | None = 0.05
     normalize_advantage: bool = True
     advantage_by_problem: bool = False
+    # Generalist trainer only (algo/generalist_ppo.py): the weight of the
+    # clipped surrogate in the loss (0: imitation-only control), the number of
+    # sub-environments that run each train seed at once, and the policy's
+    # advantage estimator ("gae", or "group": the leave-one-out return
+    # baseline over the seed's group, GAE where no group completed).
+    policy_gradient_weight: float = 1.0
+    group_size: int = 1
+    advantage_mode: str = "gae"
+    rollout_on_cpu: bool = False  # keep the collated rollout on the CPU; minibatches move to the device
+    accumulate_minibatches: int = 1  # gradient steps span this many minibatches (memory-bound big batches)
     normalize_reward: bool = True
     seed: int = 0
     schedule_timesteps: int | None = None
@@ -61,10 +71,19 @@ class PPOConfig:
             ("rollout_steps", self.rollout_steps),
             ("epochs", self.epochs),
             ("minibatch_size", self.minibatch_size),
+            ("group_size", self.group_size),
         )
         for name, value in positive:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
+        if not math.isfinite(self.policy_gradient_weight) or self.policy_gradient_weight < 0:
+            raise ValueError("policy_gradient_weight must be finite and nonnegative")
+        if self.advantage_mode not in ("gae", "group"):
+            raise ValueError("advantage_mode must be 'gae' or 'group'")
+        if self.advantage_mode == "group" and self.group_size < 2:
+            raise ValueError("advantage_mode 'group' needs group_size > 1")
+        if self.accumulate_minibatches < 1:
+            raise ValueError("accumulate_minibatches must be at least 1")
         if not 0.0 < self.learning_rate < 1.0:
             raise ValueError("learning_rate must lie in (0, 1)")
         if not 0.0 <= self.gamma <= 1.0:

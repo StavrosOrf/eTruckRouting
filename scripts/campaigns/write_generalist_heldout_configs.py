@@ -66,10 +66,40 @@ def heldout() -> dict[str, dict]:
     return configs
 
 
+HELDOUT_LARGE = CONFIGS / "generalist_heldout_large"
+
+
+def heldout_large() -> dict[str, dict]:
+    """Larger held-out problems (user decision 2026-11-01: fleets up to 100), written next to the eight above.
+
+    Sizes sit between the suite_v6 training fleets (interpolation) or scale an
+    unseen combination or network; none is in ``generalist_broad``.
+    """
+    from scripts.campaigns.write_generalist_broad_configs import _drayage, _fleet, _sameday, _static
+
+    parts = heldout()
+    configs = {
+        "tx_longhaul_t32": _fleet(_static("tx", "plain"), 32, True, "tx"),
+        "pnw_longhaul_hos_t25": _fleet(_static("pnw", "hos"), 25, True, "pnw"),
+        "de_nl_be_longhaul_t25": _fleet(parts["de_nl_be_longhaul"], 25, True, "pnw"),
+        "ca_sameday_t50": _fleet(_sameday("ca"), 50, False),
+        "ca_drayage_combined_t40": _fleet(_drayage("ca"), 40, False),
+        "tx_sameday_t40": _fleet(parts["tx_sameday"], 40, False),
+        "pnw_drayage_combined_t25": _fleet(parts["pnw_drayage_combined"], 25, False),
+    }
+    for config in configs.values():
+        config["observation"] = dict(OBSERVATION)
+    return configs
+
+
 def main() -> None:
     HELDOUT.mkdir(exist_ok=True)
     for name, config in heldout().items():
         (HELDOUT / f"{name}.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+        print(name)
+    HELDOUT_LARGE.mkdir(exist_ok=True)
+    for name, config in heldout_large().items():
+        (HELDOUT_LARGE / f"{name}.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         print(name)
 
 

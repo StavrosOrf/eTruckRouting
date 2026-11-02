@@ -1,5 +1,6 @@
 """Track A decision-time additions: the feasibility mask and the campaign's decision settings."""
 
+import argparse
 import json
 from types import SimpleNamespace
 
@@ -173,6 +174,10 @@ def test_the_campaign_freezes_decision_settings_per_tag(tmp_path, monkeypatch, c
     assert os.environ["EVRP_RETIRE_GUARD"] == "off"
     assert campaign.decision_from(False, None, checkpoint="best") is None
     assert campaign.decision_from(False, None, checkpoint="pretrained", batch=8) == {"checkpoint": "pretrained", "envs_per_problem": 8}
+    assert campaign.decision_from(False, None, checkpoint="ckpt_200") == {"checkpoint": "ckpt_200"}
+    assert campaign.checkpoint_label("ckpt_200") == "ckpt_200" and campaign.checkpoint_label("final") == "final"
+    with pytest.raises(argparse.ArgumentTypeError):
+        campaign.checkpoint_label("ckpt_x")
 
 
 def test_the_evaluation_wrapper_runs_the_code_frozen_with_a_tag(tmp_path) -> None:

@@ -1,8 +1,10 @@
-"""Best-known solutions (BKS) for the three static long-haul suite problems.
+"""Best-known solutions (BKS) for the static long-haul problems.
 
 Builds ``results/generalist_graphppo/bks/<problem>/validation.json`` (and
-``test.json`` once P5 opens) from a portfolio of independent, non-learning
-methods, each executed closed loop in the simulator on the same seed:
+``test.json`` once P5 opens; ``$BKS_OUT`` moves the root, e.g. to
+``bks_heldout_large`` or a fresh ``bks_test2`` bank on test seeds 500-999 with
+``--offset 500``) from a portfolio of independent, non-learning methods, each
+executed closed loop in the simulator on the same seed:
 
 * ``greedy_teacher``: the generalist's greedy teacher (``auto``);
 * ``alns_respect``: the existing day-ahead ALNS (``heuristics.alns``) with the
@@ -48,13 +50,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.campaigns import generalist_bks_common as common  # noqa: E402
-from scripts.campaigns.generalist_bks_common import OUT, make_env, read_jsonl, seeds_for  # noqa: E402
-
-STATIC_PROBLEMS = (
-    "tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos",
-    # Held-out problems (scripts/campaigns/write_generalist_heldout_configs.py).
-    "de_nl_be_longhaul", "de_nl_be_longhaul_hos", "tx_longhaul_t5c15", "tx_longhaul_t20c60",
+from scripts.campaigns.generalist_bks_common import (  # noqa: E402
+    OUT, STATIC_PROBLEMS, make_env, read_jsonl, seeds_for,
 )
+
+# STATIC_PROBLEMS: every problem of the suite, held-out and broad sets whose
+# configuration has no requests block (generalist_bks_common.known_problems).
 METHODS = ("greedy_teacher", "alns_respect", "lh_plan", "lh_rolling", "lh_plan_safe", "lh_rolling_served")
 BOUND_KIND = "nominal_lower_bound_hours"
 
@@ -135,7 +136,7 @@ def cmd_bound(args) -> None:
     path = OUT / problem / "runs" / f"bound__{args.split}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = {row["seed"] for row in read_jsonl(path)}
-    seeds = [seed for seed in seeds_for(args.split, args.count, 0, args.allow_test) if seed not in done]
+    seeds = [seed for seed in seeds_for(args.split, args.count, args.offset, args.allow_test) if seed not in done]
     common._WORKER_ENV[problem] = make_env(problem)
     jobs = [(problem, seed, args.time_limit) for seed in seeds]
     with open(path, "a") as handle:
@@ -223,7 +224,7 @@ def cmd_run(args) -> None:
 def cmd_merge(args) -> None:
     common.merge_split(
         args.problem, args.split, bound_entry, "hours", methods=args.methods, count=args.count,
-        allow_test=args.allow_test,
+        offset=args.offset, allow_test=args.allow_test,
     )
 
 
@@ -249,6 +250,7 @@ def main(argv=None) -> None:
     merge.add_argument("--methods", nargs="*", default=None)
     merge.add_argument("--split", default="validation", choices=("validation", "test"))
     merge.add_argument("--count", type=int, default=None, help="Seeds of the split (default: 128 validation, 500 test).")
+    merge.add_argument("--offset", type=int, default=0, help="Skip the split's first seeds, as run --offset did.")
     merge.add_argument("--allow-test", action="store_true", help="Open the test split (P5 only).")
     demos = sub.add_parser("demos")
     demos.add_argument("--problem", required=True, choices=STATIC_PROBLEMS)
@@ -260,6 +262,7 @@ def main(argv=None) -> None:
     bound.add_argument("--problem", required=True, choices=STATIC_PROBLEMS)
     bound.add_argument("--split", default="validation", choices=("validation", "test"))
     bound.add_argument("--count", type=int, default=128)
+    bound.add_argument("--offset", type=int, default=0)
     bound.add_argument("--workers", type=int, default=1)
     bound.add_argument("--time-limit", type=float, default=120.0)
     bound.add_argument("--allow-test", action="store_true", help="Open the test split (P5 only).")

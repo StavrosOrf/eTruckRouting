@@ -18,6 +18,11 @@ snapshot; ``prepare --references-from`` reuses another campaign's merged
 references, and ``prepare --bks-from`` freezes a copy of the best-known
 solutions (BKS) the imitation arms clone and pair their reward against. The
 zero-shot size probes are written and evaluated only with ``prepare --probes``.
+``prepare --problems-dir DIR`` trains on every ``*.yaml`` of DIR instead of
+the suite (static where the configuration has no ``requests`` block, dynamic
+otherwise; every later stage reads the frozen ``problems.json``), and
+``prepare --train-seeds N`` sets the train seeds per problem (references,
+plan caches and ``--train-scenarios`` follow the manifest).
 ``submit --test-only`` asks the scheduler to check every composed command
 without submitting it. Evaluation rows are kept per tag (``evaluation/<split>/<tag>/``), so
 a later checkpoint is never confused with an earlier one; baselines are shared in
@@ -82,10 +87,17 @@ COMMON = [
 # substituted there). The DAgger experts are the BKS planners at a reduced
 # budget, one per problem (algo/generalist_experts.py).
 BKS_DIR = "{bks}"
-EXPERTS = [
-    f"{name}=algo.generalist_experts:{'rolling_request' if name in DYNAMIC else 'longhaul_plan'}"
-    for name in PROBLEMS
-]
+
+
+def expert_flags(names, dynamic) -> list[str]:
+    """``--dagger-expert`` entries: the rolling planner on request problems, the long-haul plan elsewhere."""
+    return [
+        f"{name}=algo.generalist_experts:{'rolling_request' if name in dynamic else 'longhaul_plan'}"
+        for name in names
+    ]
+
+
+EXPERTS = expert_flags(PROBLEMS, DYNAMIC)
 FULL = ["--fleet-assignment", "--reward-reference", "scenario"]
 IMITATION = [
     "--demonstrations", BKS_DIR, "--bc-episodes", "256", "--pretrain-epochs", "20",
@@ -172,6 +184,14 @@ RECIPES = {
     # step spacing. The group arm needs the long rollouts too: suite episodes
     # run ~160 decisions, so at 128 steps no episode would complete inside a
     # rollout and every step would fall back to GAE.
+    # suite_v6: the passing arm's recipe trained from scratch on the broad problem
+    # set with the deployed filters on, per-problem advantages, 16 selection seeds
+    # per problem and a checkpoint at every validation (pre-registration suite_v6).
+    "broad_dagger_plan_charge": [
+        *FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN, *CHARGE_PLAN,
+        "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--advantage-by-problem",
+        "--validation-scenarios", "16", "--save-validation-checkpoints",
+    ],
     "ppo_deployed_anchor_bigbatch": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH],
     "ppo_deployed_anchor_group": [
         *FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH, "--group-size", "4", "--advantage-mode", "group",
@@ -210,10 +230,55 @@ def read_manifest(destination: Path) -> dict:
     return json.loads((destination / "manifest.json").read_text())
 
 
+def read_problems(manifest: dict) -> list[dict]:
+    """The campaign's frozen problem rows (``problems.json``; the probes are kept apart)."""
+    return json.loads(Path(manifest["problems"]).read_text())
+
+
+def problem_names(directory: Path) -> list[str]:
+    """The problems of a configuration directory: the suite in its fixed order, any other sorted by name."""
+    if directory.resolve() == SUITE.resolve():
+        return list(PROBLEMS)
+    names = sorted(path.stem for path in directory.glob("*.yaml"))
+    if not names:
+        raise SystemExit(f"no *.yaml problem configurations in {directory}")
+    return names
+
+
+def is_static(config: str | Path) -> bool:
+    """A problem whose configuration has no ``requests`` block is static (long haul); the rest are dynamic."""
+    return "requests" not in (yaml.safe_load(Path(config).read_text()) or {})
+
+
+def static_names(rows: list[dict]) -> list[str]:
+    return [row["name"] for row in rows if is_static(row["config"])]
+
+
+def with_experts(flags: list[str], experts: list[str]) -> list[str]:
+    """The recipe's per-problem DAgger experts (the suite's) replaced by ``experts``."""
+    if not any(flag in EXPERTS for flag in flags):
+        return flags
+    replaced = []
+    for flag in flags:
+        if flag == EXPERTS[0]:
+            replaced.extend(experts)
+        elif flag not in EXPERTS:
+            replaced.append(flag)
+    return replaced
+
+
 def arms_for(
     arm_set: str, recipe: str, seeds: int, bks: str | None = None, arms: list[str] | None = None,
+    problems=None, dynamic=DYNAMIC,
 ) -> list[dict]:
-    """The runs of an arm set; ``{bks}`` in a recipe becomes the frozen BKS copy."""
+    """The runs of an arm set; ``{bks}`` in a recipe becomes the frozen BKS copy.
+
+    ``problems`` (default: the suite) are the campaign's problems, ``dynamic``
+    those with requests: the leave-one-out and specialist sets and the DAgger
+    experts of every recipe follow them.
+    """
+    problems = list(PROBLEMS if problems is None else problems)
+    experts = expert_flags(problems, dynamic)
     if arm_set == "screen":
         chosen = [(name, RECIPES[name]) for name in SCREEN]
     elif arm_set == "named":
@@ -226,16 +291,17 @@ def arms_for(
     elif arm_set == "lopo":
         # Leave one problem out: trained on four, the fifth is zero-shot.
         chosen = [
-            (f"{recipe}_minus_{held}", [*RECIPES[recipe], "--train-problems", *[p for p in PROBLEMS if p != held]])
-            for held in PROBLEMS
+            (f"{recipe}_minus_{held}", [*RECIPES[recipe], "--train-problems", *[p for p in problems if p != held]])
+            for held in problems
         ]
     elif arm_set == "specialists":
-        chosen = [(f"{recipe}_only_{name}", [*RECIPES[recipe], "--train-problems", name]) for name in PROBLEMS]
+        chosen = [(f"{recipe}_only_{name}", [*RECIPES[recipe], "--train-problems", name]) for name in problems]
     else:
         raise ValueError(f"unknown arm set {arm_set!r}")
     runs = []
     for seed in range(seeds):
         for name, flags in chosen:
+            flags = with_experts(flags, experts)
             flags = [flag.replace(BKS_DIR, bks) if bks else flag for flag in flags]
             flags = [flag.replace("{seed}", str(seed)) for flag in flags]
             if any(BKS_DIR in flag for flag in flags):
@@ -279,32 +345,48 @@ def prepare(
     probes: bool = False,
     arms: list[str] | None = None,
     schedule: int = SCHEDULE,
+    problems_dir: Path = SUITE,
+    train_seeds: int = SEEDS["train"],
 ) -> None:
     if (destination / "manifest.json").exists():
         raise FileExistsError(f"immutable campaign already exists: {destination}")
+    if train_seeds < 1:
+        raise SystemExit("--train-seeds must be positive")
+    # The campaign's problems: the suite's five in their order, or every
+    # configuration of --problems-dir; static where no requests block is set.
+    names = problem_names(problems_dir)
+    dynamic = [name for name in names if not is_static(problems_dir / f"{name}.yaml")]
+    static = [name for name in names if name not in dynamic]
     if references_from is not None:
         # Merged references only: teacher runs are deterministic per seed.
-        wanted = ["summary.json", *(f"{name}.json" for name in PROBLEMS)]
+        wanted = ["summary.json", *(f"{name}.json" for name in names)]
         missing = [name for name in wanted if not (references_from / name).is_file()]
         if missing:
             raise SystemExit(f"{references_from} lacks merged references {missing}")
     if bks_from is not None:
-        lacking = [f"{name}/{file}" for name in PROBLEMS for file in BKS_FILES if not (bks_from / name / file).is_file()]
+        lacking = [f"{name}/{file}" for name in names for file in BKS_FILES if not (bks_from / name / file).is_file()]
         if lacking:
             raise SystemExit(f"{bks_from} lacks best-known solutions {lacking}")
     bks = str(destination / "bks") if bks_from is not None else None
-    runs = arms_for(arm_set, recipe, seeds, bks=bks, arms=arms)  # refused arms leave nothing behind
+    # Refused arms leave nothing behind.
+    runs = arms_for(arm_set, recipe, seeds, bks=bks, arms=arms, problems=names, dynamic=dynamic)
     if any("--plan-conditioned" in run["flags"] for run in runs):
-        lacking = [f"{name}/{file}" for name in STATIC for file in PLAN_FILES if not (bks_from / name / file).is_file()]
+        lacking = [f"{name}/{file}" for name in static for file in PLAN_FILES if not (bks_from / name / file).is_file()]
         if lacking:
             raise SystemExit(f"plan-conditioned arms need the time-0 plan cache: {bks_from} lacks {lacking}")
+    common = list(COMMON)
+    common[common.index("--train-scenarios") + 1] = str(train_seeds)
+    num_envs = int(common[common.index("--num-envs") + 1])
+    if num_envs % len(names):
+        # balanced_slots refuses at training time; the manifest's common_flags can be edited.
+        print(f"warning: --num-envs {num_envs} is not a multiple of the {len(names)} problems", flush=True)
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("logs", "training", "evaluation", "configs", "references"):
         (destination / name).mkdir(exist_ok=True)
     problems = []
-    for name in PROBLEMS:
+    for name in names:
         target = destination / "configs" / f"{name}.yaml"
-        shutil.copy2(SUITE / f"{name}.yaml", target)
+        shutil.copy2(problems_dir / f"{name}.yaml", target)
         problems.append({"name": name, "config": str(target), "teacher": "auto"})
     probe_rows = []
     for name, (source, trucks, stops) in (PROBES.items() if probes else ()):
@@ -323,7 +405,7 @@ def prepare(
     if bks_from is not None:
         # The imitation arms clone and pair against this frozen copy; the global
         # BKS directory may grow later (test seeds at P5) without touching it.
-        for name in PROBLEMS:
+        for name in names:
             (destination / "bks" / name).mkdir(parents=True)
             for file in (*BKS_FILES, *BKS_OPTIONAL):
                 if (bks_from / name / file).is_file():
@@ -340,11 +422,12 @@ def prepare(
         "source": str(source),
         "python": str(ROOT / ".venv/bin/python"),
         "problems": str(destination / "problems.json"),
+        "problems_dir": str(problems_dir),
         "probes": str(destination / "probes.json"),
-        "seeds": SEEDS,
+        "seeds": {**SEEDS, "train": int(train_seeds)},
         "reference_shard": SHARD,
         "schedule_timesteps": schedule,
-        "common_flags": COMMON,
+        "common_flags": common,
         "runs": runs,
         "extra_baselines": EXTRA_BASELINES,
         "slurm": SLURM,
@@ -670,7 +753,7 @@ def reference_pack(destination: Path, tasks: list[int], workers: int, steal: boo
     order = list(tasks)
     if steal:
         order += [task for task in pending_reference_tasks(destination, manifest) if task not in order]
-    skipped = []
+    skipped, failed = [], []
     for task in order:
         name, split, shard = table[task]
         stem = shards / f"{name}_{split}_{shard:03d}"
@@ -682,10 +765,16 @@ def reference_pack(destination: Path, tasks: list[int], workers: int, steal: boo
             continue
         try:
             run_references(destination, task, workers)
+        except Exception as error:  # noqa: BLE001 - one shard's failure must not end the pack
+            # The shard stays pending (no result file); the rest of the pack goes on.
+            failed.append((task, f"{name} {split} shard {shard}", f"{type(error).__name__}: {error}"))
+            print(f"FAILED {name} {split} shard {shard} (task {task}): {type(error).__name__}: {error}", flush=True)
         finally:
             claim.unlink(missing_ok=True)
     if skipped:
         print(f"left to the jobs that claimed them: tasks {skipped}", flush=True)
+    if failed:
+        raise SystemExit("reference shards failed (still pending): " + "; ".join(f"{label} (task {task})" for task, label, _ in failed))
 
 
 def pack_groups(items: list[int], size: int) -> list[list[int]]:
@@ -731,6 +820,7 @@ def submit(
     test_only: bool = False,
     time_limit: int | None = None,
     decision: dict | None = None,
+    dependency: str | None = None,
 ) -> None:
     """Compose (and unless ``dry_run``, submit) the sbatch call(s) of a stage.
 
@@ -739,7 +829,9 @@ def submit(
     pending shards. Each array element receives its group as an argument,
     ``0,1`` for runs 0 and 1. ``partition`` moves a GPU stage to an overflow
     partition (with its own cores per GPU); ``test_only`` runs every command
-    through ``sbatch --test-only``, which checks it without submitting.
+    through ``sbatch --test-only``, which checks it without submitting;
+    ``dependency`` is handed to sbatch as is (``afterany:JOBID`` holds the
+    stage until that job ends, which keeps the allocation cap).
     """
     manifest = read_manifest(destination)
     slurm = {**SLURM, **manifest["slurm"]}
@@ -755,6 +847,7 @@ def submit(
     common = [
         "sbatch", "--parsable", *(["--test-only"] if test_only else []),
         f"--account={slurm['account']}", f"--output={destination}/logs/slurm-%A_%a.out",
+        *([f"--dependency={dependency}"] if dependency else []),
     ]
     cpu_gpus = [f"--gpus-per-task={slurm['cpu_gpus']}"] if slurm.get("cpu_gpus", 0) > 0 else []
     commands = []
@@ -765,10 +858,10 @@ def submit(
         if pack:
             # Whole nodes, each working through its share of shards on all cores.
             groups = strided_groups(pending, pack)
-            cores, hours = cpus or slurm["cpu_node_cores"], 2
+            cores, hours = cpus or slurm["cpu_node_cores"], time_limit or 2
         else:
             groups = [[task] for task in pending]
-            cores, hours = cpus or slurm["cpu_cores"], 4
+            cores, hours = cpus or slurm["cpu_cores"], time_limit or 4
         commands.append((groups, [
             *common, f"--job-name={destination.name}_ref", f"--partition={slurm['cpu_partition']}",
             "--nodes=1", "--ntasks=1", f"--cpus-per-task={cores}", f"--mem-per-cpu={slurm['cpu_mem_per_cpu']}",
@@ -995,7 +1088,8 @@ def evaluate(
     # Track A search plays the static problems episode by episode on the CPU;
     # the other problems (and every problem without a search) go batched to the GPU.
     search = applied.get("search")
-    searched = [problem for problem in problems if search and problem.name in STATIC]
+    static = set(static_names(read_problems(manifest))) if search else set()
+    searched = [problem for problem in problems if problem.name in static]
     batched = [problem for problem in problems if problem not in searched]
     # Workers are forked per observation spec before any policy touches CUDA.
     specs = {
@@ -1214,6 +1308,11 @@ def main() -> None:
                          help="Also write and evaluate the zero-shot size probes.")
     command.add_argument("--schedule", type=int, default=SCHEDULE,
                          help="Timesteps over which the learning rate decays to zero (frozen in the manifest).")
+    command.add_argument("--problems-dir", type=Path, default=SUITE,
+                         help="Train on every *.yaml of this directory (default: the suite's five problems); "
+                              "a problem without a requests block is static.")
+    command.add_argument("--train-seeds", type=int, default=SEEDS["train"],
+                         help="Train seeds per problem (references, plan caches, --train-scenarios).")
     command = commands.add_parser("references")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     group = command.add_mutually_exclusive_group(required=True)
@@ -1249,6 +1348,8 @@ def main() -> None:
     command.add_argument("--cpus-per-gpu", type=int, default=None, help="train/evaluate: CPUs per GPU instead of the partition's.")
     command.add_argument("--dry-run", action="store_true", help="Print the commands only.")
     command.add_argument("--test-only", action="store_true", help="Run each command through sbatch --test-only.")
+    command.add_argument("--dependency", default=None,
+                         help="sbatch --dependency value, e.g. afterany:JOBID (wait for a job to end).")
     command.add_argument("--hours", type=int, default=None,
                          help="train/evaluate: time limit in hours instead of the default for the budget or split.")
     command.add_argument("--safety-mask", action="store_true",
@@ -1302,6 +1403,7 @@ def main() -> None:
         prepare(
             destination, arguments.arm_set, arguments.recipe, arguments.seeds, references_from,
             bks_from=bks_from, probes=arguments.probes, arms=arguments.arms, schedule=arguments.schedule,
+            problems_dir=arguments.problems_dir.resolve(), train_seeds=arguments.train_seeds,
         )
     elif arguments.command == "references":
         if arguments.tasks is not None:
@@ -1320,7 +1422,7 @@ def main() -> None:
             arms=arguments.arms, split=arguments.split, tag=arguments.tag, runs=arguments.runs,
             pack=arguments.pack, runs_per_gpu=arguments.runs_per_gpu, cpus=arguments.cpus,
             partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
-            time_limit=arguments.hours, decision=decision_from(
+            time_limit=arguments.hours, dependency=arguments.dependency, decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
             ),

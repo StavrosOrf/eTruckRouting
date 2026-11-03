@@ -13,8 +13,13 @@ same seeds, keep the best outcome per seed, and write
 
 ``<split>.json`` is what ``generalist_near_optimal_gate.py`` reads (``best`` and
 ``bound``) and what :mod:`algo.generalist_imitation` turns into paired reward
-references. ``OUT`` is ``results/generalist_graphppo/bks`` or ``$BKS_OUT``. The
-test split is refused unless the caller passes ``allow_test`` (P5 only).
+references. ``OUT`` is ``results/generalist_graphppo/bks`` or ``$BKS_OUT`` (so a
+held-out or fresh test bank goes to its own directory). A problem name resolves
+to its configuration in the suite, the held-out sets, then the broad training
+set (:func:`config_path`); it is static when the configuration has no
+``requests`` block, dynamic otherwise (:data:`STATIC_PROBLEMS`,
+:data:`DYNAMIC_PROBLEMS`). The test split is refused unless the caller passes
+``allow_test`` (P5 only).
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -34,6 +41,10 @@ if str(ROOT) not in sys.path:
 
 CONFIG_DIR = Path("EVRoutingEnv/config_files/generalist_suite")
 HELDOUT_DIR = Path("EVRoutingEnv/config_files/generalist_heldout")
+HELDOUT_LARGE_DIR = Path("EVRoutingEnv/config_files/generalist_heldout_large")
+BROAD_DIR = Path("EVRoutingEnv/config_files/generalist_broad")
+# Resolution order of a problem name; the suite's five are also in the broad set, unchanged.
+CONFIG_DIRS = (CONFIG_DIR, HELDOUT_DIR, HELDOUT_LARGE_DIR, BROAD_DIR)
 OUT = Path(os.environ.get("BKS_OUT", ROOT / "results/generalist_graphppo/bks"))
 STEP_CAP = 4000
 SUMMARY_FIELDS = ("method", "success", "failed", "dynamic", "tasks", "served", "late", "lost", "unserved", "hours")
@@ -41,8 +52,33 @@ SPLIT_SEEDS = {"validation": 128, "test": 500}
 
 
 def config_path(problem: str) -> str:
-    heldout = HELDOUT_DIR / f"{problem}.yaml"
-    return str(heldout if heldout.exists() else CONFIG_DIR / f"{problem}.yaml")
+    """The problem's configuration: the first of :data:`CONFIG_DIRS` holding ``<problem>.yaml``."""
+    for directory in CONFIG_DIRS:
+        if (directory / f"{problem}.yaml").exists():
+            return str(directory / f"{problem}.yaml")
+    return str(CONFIG_DIR / f"{problem}.yaml")
+
+
+def read_config(path: str | Path) -> dict:
+    return yaml.load(Path(path).read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)) or {}
+
+
+def is_static(path: str | Path) -> bool:
+    """A problem whose configuration has no ``requests`` block is static (long haul); the rest are dynamic."""
+    return "requests" not in read_config(path)
+
+
+def known_problems() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(static, dynamic) names of every configuration in :data:`CONFIG_DIRS`, first directory first."""
+    static, dynamic = [], []
+    for directory in CONFIG_DIRS:
+        for path in sorted(directory.glob("*.yaml")):
+            if path.stem not in static and path.stem not in dynamic:
+                (static if is_static(path) else dynamic).append(path.stem)
+    return tuple(static), tuple(dynamic)
+
+
+STATIC_PROBLEMS, DYNAMIC_PROBLEMS = known_problems()
 
 
 def fast_env_class():
@@ -254,6 +290,7 @@ def merge_split(
     *,
     methods=None,
     count: int | None = None,
+    offset: int = 0,
     allow_test: bool = False,
 ) -> dict:
     """Best outcome per seed over the methods' rows, with the bound; writes ``<split>.json``.
@@ -262,11 +299,12 @@ def merge_split(
     row of ``runs/bound__<split>.jsonl`` next to the seed's best outcome (so a
     heuristic bound can be floored at the BKS). ``bound_metric`` is
     ``"hours"`` (a lower bound on operating hours) or ``"served"`` (an upper
-    bound on services).
+    bound on services). ``offset`` skips the split's first seeds, as ``run``
+    does: a fresh bank on later seeds merges into its own ``$BKS_OUT``.
     """
     if bound_metric not in ("hours", "served"):
         raise ValueError("bound_metric must be 'hours' or 'served'")
-    seeds = seeds_for(split, count or SPLIT_SEEDS.get(split, 128), 0, allow_test)
+    seeds = seeds_for(split, count or SPLIT_SEEDS.get(split, 128), offset, allow_test)
     methods_rows = load_method_rows(problem, split, methods)
     bounds = {int(row["seed"]): row for row in read_jsonl(OUT / problem / "runs" / f"bound__{split}.jsonl")}
     result, missing = {}, []

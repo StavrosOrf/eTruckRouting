@@ -1,8 +1,10 @@
-"""Best-known solutions (BKS) for the two dynamic request suite problems.
+"""Best-known solutions (BKS) for the dynamic request problems.
 
-``ca_sameday`` (same-day freight, hard deadlines) and ``ca_drayage_combined``
-(electric drayage with US hours of service and public stations). The portfolio,
-each method executed closed loop on the same seed and never clairvoyant:
+Same-day freight (hard deadlines; ``ca_sameday`` and its kin) and electric
+drayage (US hours of service and public stations; ``ca_drayage_combined`` and
+its kin), on every problem of the suite, held-out and broad sets with a
+requests block; ``$BKS_OUT`` moves the output root. The portfolio, each method
+executed closed loop on the same seed and never clairvoyant:
 
 * ``greedy_dispatch``: the generalist's teacher for request problems;
 * ``wait_at_depot``: trucks wait at the depot until a request is loadable;
@@ -51,13 +53,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.campaigns import generalist_bks_common as common  # noqa: E402
-from scripts.campaigns.generalist_bks_common import OUT, make_env, read_jsonl, seeds_for  # noqa: E402
-
-DYNAMIC_PROBLEMS = (
-    "ca_sameday", "ca_drayage_combined",
-    # Held-out problems (scripts/campaigns/write_generalist_heldout_configs.py).
-    "ca_sameday_t5", "ca_sameday_t20", "tx_sameday", "pnw_drayage_combined",
+from scripts.campaigns.generalist_bks_common import (  # noqa: E402
+    DYNAMIC_PROBLEMS, OUT, make_env, read_jsonl, seeds_for,
 )
+
+# DYNAMIC_PROBLEMS: every problem of the suite, held-out and broad sets whose
+# configuration has a requests block (generalist_bks_common.known_problems).
 METHODS = ("greedy_dispatch", "wait_at_depot", "kullman_myopic", "rolling_request")
 PUBLIC_ONLY = frozenset({"kullman_myopic"})
 BOUND_KIND = "clairvoyant_rolling_served"
@@ -82,8 +83,13 @@ def build_method(method: str, problem: str):
     return build_teacher(method, None)
 
 
+def has_public_stations(problem: str) -> bool:
+    """Whether the problem's configuration enables public charging (drayage does, same-day does not)."""
+    return bool(common.read_config(common.config_path(problem)).get("public_charging", {}).get("enabled", False))
+
+
 def check_methods(problem: str, methods) -> None:
-    if "sameday" in problem and PUBLIC_ONLY & set(methods):
+    if PUBLIC_ONLY & set(methods) and not has_public_stations(problem):
         raise SystemExit(f"{sorted(PUBLIC_ONLY & set(methods))} need public stations; {problem} has none")
 
 
@@ -134,7 +140,7 @@ def cmd_bound(args) -> None:
     path = OUT / problem / "runs" / f"bound__{args.split}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = {row["seed"] for row in read_jsonl(path)}
-    seeds = [seed for seed in seeds_for(args.split, args.count, 0, args.allow_test) if seed not in done]
+    seeds = [seed for seed in seeds_for(args.split, args.count, args.offset, args.allow_test) if seed not in done]
     print(f"{problem}: clairvoyant bound ({args.iterations} ALNS iterations) on {len(seeds)} seeds "
           f"with {args.workers} workers", flush=True)
     common._WORKER_ENV[problem] = make_env(problem)
@@ -282,7 +288,7 @@ def cmd_run(args) -> None:
 def cmd_merge(args) -> None:
     common.merge_split(
         args.problem, args.split, bound_entry, "served", methods=args.methods, count=args.count,
-        allow_test=args.allow_test,
+        offset=args.offset, allow_test=args.allow_test,
     )
 
 
@@ -309,6 +315,7 @@ def main(argv=None) -> int:
     merge.add_argument("--methods", nargs="*", default=None)
     merge.add_argument("--split", default="validation", choices=("validation", "test"))
     merge.add_argument("--count", type=int, default=None, help="Seeds of the split (default: 128 validation, 500 test).")
+    merge.add_argument("--offset", type=int, default=0, help="Skip the split's first seeds, as run --offset did.")
     merge.add_argument("--allow-test", action="store_true", help="Open the test split (P5 only).")
     demos = sub.add_parser("demos")
     demos.add_argument("--problem", required=True, choices=DYNAMIC_PROBLEMS)
@@ -320,6 +327,7 @@ def main(argv=None) -> int:
     bound.add_argument("--problem", required=True, choices=DYNAMIC_PROBLEMS)
     bound.add_argument("--split", default="validation", choices=("validation", "test"))
     bound.add_argument("--count", type=int, default=128)
+    bound.add_argument("--offset", type=int, default=0)
     bound.add_argument("--workers", type=int, default=1)
     bound.add_argument("--iterations", type=int, default=BOUND_ITERATIONS,
                        help="ALNS iterations per re-plan of the clairvoyant planner (capped at 4 per pending job).")

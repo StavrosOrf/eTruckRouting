@@ -42,16 +42,16 @@ class RunningStandardizer(nn.Module):
     def _update(self, name: str, values: torch.Tensor) -> None:
         if values.numel() == 0:
             return
-        values = values.reshape(-1, self._widths[name]).to(torch.float32)
+        mean = getattr(self, f"{name}_mean")
+        var = getattr(self, f"{name}_var")
+        count = getattr(self, f"{name}_count")
+        # The statistics live with the module; the rows may come from another device.
+        values = values.reshape(-1, self._widths[name]).to(device=mean.device, dtype=torch.float32)
         batch_count = torch.tensor(
             float(values.shape[0]), device=values.device, dtype=torch.float32
         )
         batch_mean = values.mean(dim=0)
         batch_var = values.var(dim=0, unbiased=False)
-
-        mean = getattr(self, f"{name}_mean")
-        var = getattr(self, f"{name}_var")
-        count = getattr(self, f"{name}_count")
 
         total = count + batch_count
         delta = batch_mean - mean

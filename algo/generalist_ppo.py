@@ -66,6 +66,7 @@ from algo.generalist_imitation import (
 )
 from algo.generalist_observation import (
     GeneralistEnv,
+    GraphBatch,
     GraphObservation,
     ObservationSpec,
     collate,
@@ -73,6 +74,9 @@ from algo.generalist_observation import (
 from algo.generalist_policy import GeneralistActorCritic, GeneralistPolicyConfig
 from EVRoutingEnv.evaluation.metrics import extract_operational_metrics
 
+
+# Observations per transfer when a CPU-resident rollout is folded into the input statistics.
+OBSERVE_CHUNK = 4096
 
 # Terminations that mean the fleet broke down, not that the horizon ended.
 FAILURE_REASONS = frozenset({
@@ -621,7 +625,7 @@ class GeneralistPPO:
             rollout = self._collect_rollout()
             statistics_ = self._optimize(rollout)
             # Collection and every epoch above used the same statistics.
-            self.policy.observe(rollout["batch"])
+            self._observe_rollout(rollout["batch"])
             self.completed_updates = update + 1
             record = {
                 "update": update + 1,
@@ -789,6 +793,15 @@ class GeneralistPPO:
         logits = self.policy(collate(observations, self.device)).logits
         target = torch.as_tensor(labels, dtype=torch.long, device=self.device)
         return F.cross_entropy(logits, target), (logits.argmax(dim=-1) == target).float().mean().detach()
+
+    def _observe_rollout(self, batch: GraphBatch) -> None:
+        """Fold a rollout into the input statistics; a CPU-resident rollout goes over in chunks."""
+        if batch.context.device == self.device:
+            self.policy.observe(batch)
+            return
+        for start in range(0, batch.batch_size, OBSERVE_CHUNK):
+            rows = torch.arange(start, min(start + OBSERVE_CHUNK, batch.batch_size))
+            self.policy.observe(batch.select(rows).to(self.device))
 
     def dagger_round(self, beta: float | None = None, observe: bool = False) -> dict:
         """One DAgger round in the workers' DAgger sub-environments.

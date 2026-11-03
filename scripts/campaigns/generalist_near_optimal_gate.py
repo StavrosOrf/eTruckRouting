@@ -35,7 +35,10 @@ Usage::
 
 Rows are read from ``DIR/evaluation/<split>/<tag>/<run>.json`` (lists of
 ``episode_summary`` rows with ``problem`` and ``seed``); BKS files from
-``--bks-dir/<problem>/<split>.json``. The table is printed and written to
+``--bks-dir/<problem>/<split>.json``. The problems are the campaign's
+(``DIR/problems.json``; the suite's five when there is none) unless
+``--problems`` names them; a problem outside the suite is static or dynamic as
+its rows say. The table is printed and written to
 ``DIR/evaluation/<split>/<tag>/near_optimal_gate.{json,md}``. The test split is
 locked: ``--split test`` needs ``--allow-test``, which the coordinator passes
 once, when a run has passed this gate on validation and P5 is opened.
@@ -61,6 +64,14 @@ FAILURE_FLOOR = 0.01
 SUCCESS_SLACK = 0.02
 HOURS_EXCESS_LIMIT = 0.05
 SERVICE_RATIO_LIMIT = 0.95
+
+
+def campaign_problems(campaign: Path) -> list[str]:
+    """The campaign's frozen problem list (``problems.json``), or the suite's five when there is none."""
+    path = campaign / "problems.json"
+    if not path.exists():
+        return list(PROBLEMS)
+    return [row["name"] for row in json.loads(path.read_text())]
 
 
 def load_bks(directory: Path, problem: str, split: str) -> dict[int, dict] | None:
@@ -257,7 +268,8 @@ def main(argv=None) -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--runs", nargs="*", default=None)
     parser.add_argument("--bks-dir", type=Path, default=ROOT / "results/generalist_graphppo/bks")
-    parser.add_argument("--problems", nargs="*", default=list(PROBLEMS))
+    parser.add_argument("--problems", nargs="*", default=None,
+                        help="Default: the campaign's problems.json, or the suite's five without one.")
     parser.add_argument("--resamples", type=int, default=10_000)
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--allow-test", action="store_true",
@@ -265,6 +277,8 @@ def main(argv=None) -> int:
     parser.add_argument("--promote", type=int, default=None,
                         help="Rank the arms by their mean distance to the gate and name the N closest.")
     args = parser.parse_args(argv)
+    if args.problems is None:
+        args.problems = campaign_problems(args.campaign)
     if args.split == "test" and not args.allow_test:
         raise SystemExit("the test bank is locked; the gate reads validation only unless the coordinator "
                          "opens P5 (--allow-test)")

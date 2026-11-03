@@ -105,8 +105,62 @@ def test_the_test_split_merge_keeps_its_own_summary(tmp_path, monkeypatch) -> No
     assert not (tmp_path / "tx" / "summary.json").exists()
 
 
+def test_a_fresh_bank_merges_later_seeds_of_the_split(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(common, "OUT", tmp_path)
+    seeds = split_seeds("test", 6)
+    _write_runs(tmp_path, "tx", "test", {"greedy_teacher": [_row(s, "greedy_teacher") for s in seeds[2:]]}, [])
+    result = common.merge_split("tx", "test", static.bound_entry, "hours", count=4, offset=2, allow_test=True)
+    assert [int(seed) for seed in result] == seeds[2:]
+    assert json.loads((tmp_path / "tx" / "test.json").read_text()) == result
+
+
+def test_problem_names_resolve_across_the_configuration_sets() -> None:
+    assert common.config_path("tx_longhaul") == str(common.CONFIG_DIR / "tx_longhaul.yaml")
+    assert common.config_path("de_nl_be_longhaul") == str(common.HELDOUT_DIR / "de_nl_be_longhaul.yaml")
+    assert common.config_path("ca_sameday_t5") == str(common.HELDOUT_DIR / "ca_sameday_t5.yaml")  # also in the broad set
+    assert common.config_path("tx_longhaul_t32") == str(common.HELDOUT_LARGE_DIR / "tx_longhaul_t32.yaml")
+    assert common.config_path("chi_sameday_t50") == str(common.BROAD_DIR / "chi_sameday_t50.yaml")
+    assert common.config_path("nope").endswith("generalist_suite/nope.yaml")
+    for name in ("tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos", "tx_longhaul_t40", "de_nl_be_longhaul_t25",
+                 "tx_longhaul_t5c15"):
+        assert name in static.STATIC_PROBLEMS and common.is_static(common.config_path(name))
+    for name in ("ca_sameday", "ca_drayage_combined", "chi_sameday_t50", "pnw_drayage_combined_t25", "tx_sameday_t40",
+                 "pnw_sameday_t10"):
+        assert name in dynamic.DYNAMIC_PROBLEMS and not common.is_static(common.config_path(name))
+    assert not set(static.STATIC_PROBLEMS) & set(dynamic.DYNAMIC_PROBLEMS)
+    assert static.STATIC_PROBLEMS[:3] == ("pnw_longhaul_hos", "tx_longhaul", "tx_longhaul_congested")
+    assert len(static.STATIC_PROBLEMS) + len(dynamic.DYNAMIC_PROBLEMS) == len({
+        path.stem for directory in common.CONFIG_DIRS for path in directory.glob("*.yaml")
+    })
+
+
+def test_the_builders_take_the_new_names_and_an_offset(monkeypatch) -> None:
+    captured = {}
+    for module in (static, dynamic):
+        for command in ("run", "merge", "bound", "demos", "plans"):
+            if hasattr(module, f"cmd_{command}"):
+                monkeypatch.setattr(module, f"cmd_{command}", lambda args, key=(module, command): captured.update({key: args}))
+    static.main(["run", "--problem", "tx_longhaul_t40", "--methods", "lh_plan", "--split", "test", "--count", "500",
+                 "--offset", "500", "--allow-test"])
+    static.main(["bound", "--problem", "de_nl_be_longhaul_t25", "--split", "test", "--count", "500", "--offset", "500",
+                 "--allow-test"])
+    static.main(["merge", "--problem", "tx_longhaul", "--split", "test", "--count", "500", "--offset", "500",
+                 "--allow-test", "--methods", "lh_plan"])
+    static.main(["plans", "--problem", "tx_longhaul", "--split", "test", "--count", "500", "--offset", "500", "--allow-test"])
+    dynamic.main(["run", "--problem", "chi_sameday_t50", "--methods", "rolling_request", "--offset", "500"])
+    dynamic.main(["bound", "--problem", "pnw_drayage_combined_t25", "--offset", "500"])
+    dynamic.main(["merge", "--problem", "ca_sameday", "--split", "test", "--count", "500", "--offset", "500", "--allow-test"])
+    for (module, command), args in captured.items():
+        assert args.offset == 500, (module.__name__, command)
+    assert captured[(static, "merge")].methods == ["lh_plan"] and captured[(static, "plans")].split == "test"
+    with pytest.raises(SystemExit):
+        static.main(["run", "--problem", "chi_sameday_t50", "--methods", "lh_plan"])
+    with pytest.raises(SystemExit):
+        dynamic.main(["run", "--problem", "tx_longhaul_t40", "--methods", "rolling_request"])
+
+
 def test_builders_expose_their_portfolios() -> None:
-    assert static.METHODS == ("greedy_teacher", "alns_respect", "lh_plan", "lh_rolling", "lh_plan_safe")
+    assert static.METHODS == ("greedy_teacher", "alns_respect", "lh_plan", "lh_rolling", "lh_plan_safe", "lh_rolling_served")
     assert callable(static.build_method("greedy_teacher", "tx_longhaul"))
     assert dynamic.METHODS == ("greedy_dispatch", "wait_at_depot", "kullman_myopic", "rolling_request")
     assert type(dynamic.build_method("rolling_request", "ca_sameday")).__name__ == "RollingHorizonRequestPolicy"
@@ -120,6 +174,12 @@ def test_builders_expose_their_portfolios() -> None:
     with pytest.raises(SystemExit, match="public stations"):
         dynamic.check_methods("ca_sameday", ["greedy_dispatch", "kullman_myopic"])
     dynamic.check_methods("ca_drayage_combined", ["kullman_myopic"])
+    # Same-day problems of every set have no public stations; drayage ones do.
+    for name in ("pnw_sameday_t10", "chi_sameday_t50", "sea_sameday_t13", "tx_sameday_t40"):
+        with pytest.raises(SystemExit, match="public stations"):
+            dynamic.check_methods(name, ["kullman_myopic"])
+    dynamic.check_methods("tx_drayage_combined_t25", ["kullman_myopic"])
+    dynamic.check_methods("pnw_drayage_combined_t25", ["kullman_myopic"])
 
 
 def test_the_reduced_instances_keep_the_envelope_and_drop_the_draws() -> None:

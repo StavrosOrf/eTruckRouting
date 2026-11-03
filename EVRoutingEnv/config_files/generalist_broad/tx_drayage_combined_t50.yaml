@@ -10,7 +10,7 @@ problem:
   time_windows:
     enabled: false
 environment:
-  num_trucks: 100
+  num_trucks: 50
   num_stops: 200
   allow_variable_num_stops: false
   observation_mode: canonical_flat
@@ -82,9 +82,9 @@ requests:
   arrival_process: euro_neurips_epochs
   epoch_hours: 1.0
   dispatch_margin_hours: 1.0
-  max_requests_per_epoch: 40
+  max_requests_per_epoch: 20
   initial_requests: 0
-  max_requests: 1000
+  max_requests: 500
   static_context_size: 36
   time_windows:
     enabled: true

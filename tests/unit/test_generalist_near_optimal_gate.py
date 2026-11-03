@@ -83,6 +83,27 @@ def test_validation_needs_no_flag(tmp_path) -> None:
     assert (folder / "near_optimal_gate.md").exists()
 
 
+def test_the_problems_default_to_the_campaign_list(tmp_path) -> None:
+    campaign, bks, folder = _campaign(tmp_path, "validation")
+    argv = ["--campaign", str(campaign), "--split", "validation", "--tag", "final", "--bks-dir", str(bks),
+            "--resamples", "100"]
+    # Without problems.json the suite's five are scored, and the four without BKS files are MISSING.
+    assert gate.campaign_problems(campaign) == list(gate.PROBLEMS)
+    assert gate.main(argv) == 0
+    report = json.loads((folder / "near_optimal_gate.json").read_text())
+    assert list(report["runs"]["full_s0"]["problems"]) == list(gate.PROBLEMS) and report["passing_runs"] == []
+    (campaign / "problems.json").write_text(json.dumps([{"name": "tx_longhaul", "config": "c.yaml", "teacher": "auto"}]))
+    assert gate.campaign_problems(campaign) == ["tx_longhaul"]
+    assert gate.main(argv) == 0
+    report = json.loads((folder / "near_optimal_gate.json").read_text())
+    assert list(report["runs"]["full_s0"]["problems"]) == ["tx_longhaul"] and report["passing_runs"] == ["full_s0"]
+    assert list(report["arm_distance"]["full"]["problems"]) == ["tx_longhaul"]
+    # --problems still overrides the campaign's list.
+    assert gate.main([*argv, "--problems", "ca_sameday"]) == 0
+    report = json.loads((folder / "near_optimal_gate.json").read_text())
+    assert list(report["runs"]["full_s0"]["problems"]) == ["ca_sameday"]
+
+
 def test_arms_are_ranked_by_their_mean_shortfall_to_the_gate() -> None:
     passing = gate.gate_problem("tx_longhaul", _static_rows(306.0), _static_bks(), resamples=100)
     slow = gate.gate_problem("tx_longhaul", _static_rows(330.0), _static_bks(), resamples=100)

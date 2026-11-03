@@ -61,7 +61,7 @@ FLEETS = {
     ("congested", "tx"): (8, 25, 40), ("congested", "pnw"): (13, 40),
     ("hos", "tx"): (8, 25, 40), ("hos", "pnw"): (13, 40),
     ("sameday", "ca"): (5, 16, 40, 100), ("sameday", "chi"): (8, 25, 50), ("sameday", "sea"): (13, 60), ("sameday", "pnw"): (10,),
-    ("drayage", "ca"): (16, 60), ("drayage", "tx"): (10, 25, 100),
+    ("drayage", "ca"): (16, 60), ("drayage", "tx"): (10, 25, 50),
 }
 
 

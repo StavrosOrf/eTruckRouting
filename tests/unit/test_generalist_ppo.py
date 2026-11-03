@@ -324,6 +324,17 @@ def test_the_variance_reduction_arms_override_the_common_flags() -> None:
     assert parsed["imitation_only_deployed"] == (128, 256, 1, 1, "gae", 0.0, False)
 
 
+def test_the_broad_recipe_is_the_passing_arm_with_the_deployed_filters() -> None:
+    from scripts.campaigns import generalist_graphppo as campaign
+    from scripts.training.train_generalist_ppo import build_argument_parser
+
+    base, broad = campaign.RECIPES["full_dagger_plan_charge"], campaign.RECIPES["broad_dagger_plan_charge"]
+    assert broad[: len(base)] == base and "--init-from" not in broad
+    arguments = build_argument_parser().parse_args(["--references", "/r", *campaign.COMMON, *broad])
+    assert (arguments.safety_mask, arguments.safety_margin, arguments.retire_guard, arguments.public_wake) == (True, 0.0, True, True)
+    assert arguments.advantage_by_problem and arguments.validation_scenarios == 16 and arguments.save_validation_checkpoints
+
+
 def test_accumulated_minibatches_take_the_step_of_one_big_minibatch(suite) -> None:
     """Four accumulated minibatches of 12 move the weights like one minibatch of 48."""
     problems, rows = suite
@@ -355,3 +366,22 @@ def test_a_rollout_kept_on_the_cpu_trains_like_one_on_the_device(suite) -> None:
         trainer.close()
     assert [h["policy_loss"] for h in histories[0]] == pytest.approx([h["policy_loss"] for h in histories[1]])
     assert [h["value_loss"] for h in histories[0]] == pytest.approx([h["value_loss"] for h in histories[1]])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="the regression needs a policy on a second device")
+def test_a_cpu_rollout_is_folded_into_the_statistics_of_a_policy_on_the_gpu(suite, monkeypatch) -> None:
+    """suite_v5c (28828755) died in ``observe`` with a CPU rollout and GPU statistics; chunks go over."""
+    import algo.generalist_ppo as module
+    monkeypatch.setattr(module, "OBSERVE_CHUNK", 5)
+    problems, rows = suite
+    config = PPOConfig(total_timesteps=2 * 6 * 8, num_envs=6, rollout_steps=8, minibatch_size=16, epochs=1, seed=3,
+                       rollout_on_cpu=True, accumulate_minibatches=2)
+    policy_config = GeneralistPolicyConfig(hidden_dim=32, encoder_layers=1, charger_budget=4, fleet_assignment=True)
+    trainer = GeneralistPPO(policy_config, config, problems, ReferenceTable(rows), SuiteReward(reference="scenario"),
+                            [list(range(6))] * 3, device="cuda")
+    history = trainer.learn()
+    normalizer = trainer.policy.encoder.normalizer
+    trainer.close()
+    assert len(history) == 2
+    assert normalizer.context_count.device.type == "cuda"
+    assert float(normalizer.context_count.item()) >= 6 + 2 * 6 * 8  # the reset and two rollouts

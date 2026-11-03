@@ -14,15 +14,30 @@ import pytest
 from scripts.campaigns import generalist_graphppo as campaign
 
 
-def _bks(tmp_path) -> Path:
-    """A best-known-solutions directory with the files prepare requires."""
+def _bks(tmp_path, names=campaign.PROBLEMS, plans: bool = False) -> Path:
+    """A best-known-solutions directory with the files prepare requires (``plans``: the time-0 plan cache too)."""
     root = tmp_path / "bks"
-    for name in campaign.PROBLEMS:
+    for name in names:
         (root / name).mkdir(parents=True)
         (root / name / "validation.json").write_text(json.dumps({"1000000000": {"best": {"hours": 1.0}}}))
         (root / name / "train_demonstrations.json").write_text("[]")
         (root / name / "summary.json").write_text("{}")
+        for file in campaign.PLAN_FILES if plans else ():
+            (root / name / file).write_text("{}")
     return root
+
+
+def _problems_dir(tmp_path) -> tuple[Path, list[str]]:
+    """Three tiny Seattle problems, two static (plain, hours of service) and one with same-day requests."""
+    import yaml
+    from generalist_harness import small_config
+
+    directory = tmp_path / "problems"
+    directory.mkdir()
+    configs = {"sea_longhaul_hos": "hos", "sea_sameday": "same_day", "sea_longhaul": "static"}
+    for name, component in configs.items():
+        (directory / f"{name}.yaml").write_text(yaml.safe_dump(small_config(component), sort_keys=False))
+    return directory, sorted(configs)
 
 
 def test_prepare_freezes_problems_arms_bks_and_source(tmp_path) -> None:
@@ -49,8 +64,71 @@ def test_prepare_freezes_problems_arms_bks_and_source(tmp_path) -> None:
     assert not any("{bks}" in flag for run in manifest["runs"] for flag in run["flags"])
     assert str(destination / "bks") in manifest["runs"][4]["flags"]
     assert "--demonstrations" not in manifest["runs"][3]["flags"]
+    # Without --problems-dir and --train-seeds the suite and its seed counts are frozen as before.
+    assert manifest["problems_dir"] == str(campaign.SUITE) and manifest["seeds"] == campaign.SEEDS
+    assert manifest["common_flags"] == campaign.COMMON
+    assert campaign.static_names(problems) == list(campaign.STATIC)
     with pytest.raises(FileExistsError):
         campaign.prepare(destination, "screen", "full", 3, bks_from=bks)
+
+
+def test_prepare_takes_its_problems_from_a_directory(tmp_path, capsys) -> None:
+    directory, names = _problems_dir(tmp_path)
+    assert names == ["sea_longhaul", "sea_longhaul_hos", "sea_sameday"]
+    destination = tmp_path / "broad"
+    campaign.prepare(destination, "named", "full", 1, arms=["base"], problems_dir=directory, train_seeds=512)
+    manifest = campaign.read_manifest(destination)
+    problems = json.loads((destination / "problems.json").read_text())
+    assert [row["name"] for row in problems] == names
+    assert all(row["config"] == str(destination / "configs" / f"{row['name']}.yaml") for row in problems)
+    assert all(Path(row["config"]).read_text() == (directory / f"{row['name']}.yaml").read_text() for row in problems)
+    assert campaign.static_names(problems) == ["sea_longhaul", "sea_longhaul_hos"]
+    assert manifest["problems_dir"] == str(directory) and manifest["bks"] is None
+    # The train-seed count reaches the references (shards) and the trainer (--train-scenarios).
+    assert manifest["seeds"] == {**campaign.SEEDS, "train": 512} and campaign.SEEDS["train"] == 2048
+    flags = manifest["common_flags"]
+    assert flags[flags.index("--train-scenarios") + 1] == "512" and "2048" not in flags
+    tasks = campaign.reference_tasks(manifest)
+    assert {name for name, _, _ in tasks} == set(names)
+    assert sum(split == "train" for _, split, _ in tasks) == 3 * -(-512 // campaign.SHARD)
+    assert "not a multiple of the 3 problems" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="no \\*.yaml"):
+        campaign.prepare(tmp_path / "empty", "named", "full", 1, arms=["base"], problems_dir=tmp_path / "nothing")
+    with pytest.raises(SystemExit, match="--train-seeds"):
+        campaign.prepare(tmp_path / "zero", "named", "full", 1, arms=["base"], problems_dir=directory, train_seeds=0)
+
+
+def test_the_campaign_problems_reach_the_experts_the_plan_check_and_the_arm_sets(tmp_path) -> None:
+    directory, names = _problems_dir(tmp_path)
+    static, dynamic = ["sea_longhaul", "sea_longhaul_hos"], ["sea_sameday"]
+    bks = _bks(tmp_path, names)
+    with pytest.raises(SystemExit, match="lacks best-known solutions"):
+        campaign.prepare(tmp_path / "x", "named", "full", 1, arms=["full_dagger"], bks_from=_bks(tmp_path / "s", static),
+                         problems_dir=directory)
+    # The plan cache is required for the campaign's static problems only.
+    with pytest.raises(SystemExit, match=r"lacks \['sea_longhaul/plans_train.json"):
+        campaign.prepare(tmp_path / "y", "named", "full", 1, arms=["full_dagger_plan"], bks_from=bks, problems_dir=directory)
+    destination = tmp_path / "broad"
+    campaign.prepare(destination, "named", "full", 1, arms=["full_dagger_plan"], bks_from=_bks(tmp_path / "p", names, plans=True),
+                     problems_dir=directory)
+    manifest = campaign.read_manifest(destination)
+    (run,) = manifest["runs"]
+    experts = run["flags"][run["flags"].index("--dagger-expert") + 1:][:4]
+    assert experts == [
+        "sea_longhaul=algo.generalist_experts:longhaul_plan", "sea_longhaul_hos=algo.generalist_experts:longhaul_plan",
+        "sea_sameday=algo.generalist_experts:rolling_request", "--dagger-every",
+    ]
+    assert not any(flag in campaign.EXPERTS for flag in run["flags"])
+    for name in names:
+        assert (destination / "bks" / name / "validation.json").exists()
+    # The suite's own recipes are untouched.
+    (suite,) = campaign.arms_for("named", "full", 1, bks="/b", arms=["full_dagger_plan"])
+    assert [flag for flag in suite["flags"] if "=algo.generalist_experts:" in flag] == campaign.EXPERTS
+    lopo = campaign.arms_for("lopo", "full", 1, problems=names, dynamic=dynamic)
+    assert [run["name"] for run in lopo] == [f"full_minus_{name}_s0" for name in names]
+    assert lopo[0]["flags"][-2:] == ["sea_longhaul_hos", "sea_sameday"]
+    specialists = campaign.arms_for("specialists", "base", 1, problems=names, dynamic=dynamic)
+    assert [run["flags"][-1] for run in specialists] == names
 
 
 def test_probes_are_written_only_on_request(tmp_path) -> None:
@@ -550,6 +628,40 @@ def test_reference_jobs_claim_shards_and_take_over_what_is_left(tmp_path, monkey
     stem(3).with_suffix(".json").unlink()
     campaign.reference_pack(destination, [3], workers=4, steal=False)
     assert done[-1] == 3 and not stem(2).with_suffix(".json").exists()
+
+
+def test_a_failed_shard_stays_pending_and_the_pack_goes_on(tmp_path, monkeypatch) -> None:
+    """suite_v6_refs: one uncertifiable seed killed whole 2-hour packs; now the shard is reported and skipped."""
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
+    tasks = campaign.reference_tasks(campaign.read_manifest(destination))
+    shards = destination / "references" / "shards"
+    shards.mkdir(parents=True)
+    done = []
+
+    def fake_run(directory, task, workers):
+        if task == 1:
+            raise ValueError("could not certify a solvable instance after 64 attempts")
+        name, split, shard = tasks[task]
+        (shards / f"{name}_{split}_{shard:03d}.json").write_text("[]")
+        done.append(task)
+
+    monkeypatch.setattr(campaign, "run_references", fake_run)
+    with pytest.raises(SystemExit, match=r"shards failed.*task 1"):
+        campaign.reference_pack(destination, [0, 1, 2], workers=4, steal=False)
+    assert done == [0, 2]
+    assert not any(shards.glob("*.claim"))
+    assert campaign.pending_reference_tasks(destination, campaign.read_manifest(destination))[0] == 1
+
+
+def test_submit_hands_a_dependency_to_sbatch(tmp_path, capsys) -> None:
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
+    campaign.submit(destination, "references", None, dry_run=True, pack=2, dependency="afterany:123")
+    command = capsys.readouterr().out.strip().splitlines()[-1]
+    assert "--dependency=afterany:123" in command
+    campaign.submit(destination, "references", None, dry_run=True, pack=2)
+    assert "--dependency" not in capsys.readouterr().out
 
 
 def test_a_shard_claim_is_exclusive(tmp_path) -> None:

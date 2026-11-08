@@ -52,11 +52,22 @@ SPLIT_SEEDS = {"validation": 128, "test": 500}
 
 
 def config_path(problem: str) -> str:
-    """The problem's configuration: the first of :data:`CONFIG_DIRS` holding ``<problem>.yaml``."""
-    for directory in CONFIG_DIRS:
-        if (directory / f"{problem}.yaml").exists():
-            return str(directory / f"{problem}.yaml")
-    return str(CONFIG_DIR / f"{problem}.yaml")
+    """The problem's configuration: the first of :data:`CONFIG_DIRS` holding ``<problem>.yaml``.
+
+    A name that two sets configure differently is refused: its bank would
+    describe one problem while a campaign trains on the other (suite_v6 pilot,
+    2026-11-08: ``ca_sameday_t5`` of the held-out set, 200 requests, and of the
+    broad set, 50 requests). Identical copies, such as the suite's five in the
+    broad set, resolve to the first directory.
+    """
+    found = [directory / f"{problem}.yaml" for directory in CONFIG_DIRS if (directory / f"{problem}.yaml").exists()]
+    if not found:
+        return str(CONFIG_DIR / f"{problem}.yaml")
+    first = read_config(found[0])
+    different = [str(path) for path in found[1:] if read_config(path) != first]
+    if different:
+        raise SystemExit(f"{problem!r} is configured differently in {found[0]} and {different}; rename one of them")
+    return str(found[0])
 
 
 def read_config(path: str | Path) -> dict:

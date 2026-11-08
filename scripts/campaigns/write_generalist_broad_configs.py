@@ -22,7 +22,10 @@ held-out problem out of reach:
   of service (rests at stops only, as in the suite), same-day freight,
   drayage with hours of service and public charging, as in the suite.
 
-The five suite problems are included unchanged, so suite_v6 is a superset: 40 problems, one env each at 40 envs.
+The five suite problems are included unchanged, so suite_v6 is a superset: 39 problems, one env each at 39 envs.
+A broad problem never takes a held-out problem's name: the BKS tools resolve a name over
+the held-out sets first, and the 5-truck Los Angeles same-day problem (dropped 2026-11-08,
+user decision) had received the held-out ca_sameday_t5's bank under its name.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from scripts.campaigns.write_generalist_suite_configs import (
 )
 
 BROAD = CONFIGS / "generalist_broad"
+HELDOUT = (CONFIGS / "generalist_heldout", CONFIGS / "generalist_heldout_large")  # names a broad problem may not take
 LONGHAUL = {"tx": "config_joint_texas_longhaul.yaml", "pnw": "config_joint_pacific_northwest_longhaul.yaml"}
 SAMEDAY = {
     "ca": "config_joint_california_10t30c.yaml", "chi": "config_joint_chicago.yaml",
@@ -49,6 +53,15 @@ STOPS_PER_TRUCK = 3
 # the Pacific Northwest passed 160). Larger fleets share the capped stops.
 MAX_STOPS = {"tx": 120, "pnw": 160}
 REQUESTS_PER_EPOCH_PER_TRUCK = 0.4  # the suite's 4 per epoch at 10 trucks
+# Static fleets of 40 trucks and more need more generation attempts than the
+# generator's default 64: about 1 % of seeds certify only after 70-90 draws
+# (tx_longhaul_congested_t40 validation seeds 95, 120, 199: attempts 73/84/...,
+# 2026-11-03), and every reference shard of tx_longhaul_congested_t40,
+# tx_longhaul_hos_t40, pnw_longhaul_congested_t40 and pnw_longhaul_t60 had died
+# at its first such seed. The first 64 draws are unchanged, so seeds that
+# certified before produce the same instance.
+LARGE_STATIC_FLEET = 40
+GENERATION_ATTEMPTS_LARGE_STATIC = 512
 REQUEST_ENVELOPE = 25  # max_requests per request-per-epoch, well above the 36 h stream
 
 # Fleets per problem family and network (the suite's 10-truck problems are added unchanged).
@@ -60,7 +73,8 @@ FLEETS = {
     ("plain", "tx"): (5, 8, 16, 25, 40), ("plain", "pnw"): (5, 13, 25, 40, 60),
     ("congested", "tx"): (8, 25, 40), ("congested", "pnw"): (13, 40),
     ("hos", "tx"): (8, 25, 40), ("hos", "pnw"): (13, 40),
-    ("sameday", "ca"): (5, 16, 40, 100), ("sameday", "chi"): (8, 25, 50), ("sameday", "sea"): (13, 60), ("sameday", "pnw"): (10,),
+    # Los Angeles same-day at 5 trucks is a held-out problem (ca_sameday_t5): not here.
+    ("sameday", "ca"): (16, 40, 100), ("sameday", "chi"): (8, 25, 50), ("sameday", "sea"): (13, 60), ("sameday", "pnw"): (10,),
     ("drayage", "ca"): (16, 60), ("drayage", "tx"): (10, 25, 50),
 }
 
@@ -70,6 +84,8 @@ def _fleet(config: dict, trucks: int, static: bool, network: str | None = None) 
     config["environment"]["num_trucks"] = trucks
     if static:
         config["environment"]["num_stops"] = min(STOPS_PER_TRUCK * trucks, MAX_STOPS[network])
+        if trucks >= LARGE_STATIC_FLEET:
+            config["environment"]["generation_attempts"] = GENERATION_ATTEMPTS_LARGE_STATIC
     else:
         per_epoch = max(1, round(REQUESTS_PER_EPOCH_PER_TRUCK * trucks))
         config["requests"].update(max_requests_per_epoch=per_epoch, max_requests=REQUEST_ENVELOPE * per_epoch)
@@ -113,6 +129,10 @@ def broad() -> dict[str, dict]:
                 configs[f"{network}_{label}_t{trucks}"] = _fleet(_static(network, family), trucks, True, network)
     for name, config in configs.items():
         config["observation"] = dict(OBSERVATION)
+    taken = {path.stem for directory in HELDOUT for path in directory.glob("*.yaml")}
+    clash = sorted(set(configs) & taken)
+    if clash:
+        raise SystemExit(f"broad problems may not take held-out names (their banks would collide): {clash}")
     return configs
 
 

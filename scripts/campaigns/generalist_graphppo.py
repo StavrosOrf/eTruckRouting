@@ -148,6 +148,10 @@ BIGBATCH = [
     "--rollout-steps", "512", "--minibatch-size", "256", "--accumulate-minibatches", "4", "--rollout-on-cpu",
     "--validate-every", "6", "--checkpoint-every", "3", "--dagger-every", "3",
 ]
+# Imitation sized by cost for the 40-problem broad set (user decision 1, 2026-11-08): see the broad recipes below.
+BROAD_IMITATION_BUDGET = [
+    "--bc-max-decisions-per-problem", "2500", "--dagger-episodes", "1", "--dagger-every", "6", "--dagger-max-states", "40000",
+]
 ANCHOR = [
     "--bc-coefficient", "0.05", "--bc-coefficient-final", "0.05", "--dagger-expert", *EXPERTS, "--dagger-every", "10",
     "--dagger-episodes", "8", "--dagger-beta", "0.3", "--dagger-beta-final", "0.3",
@@ -187,10 +191,28 @@ RECIPES = {
     # suite_v6: the passing arm's recipe trained from scratch on the broad problem
     # set with the deployed filters on, per-problem advantages, 16 selection seeds
     # per problem and a checkpoint at every validation (pre-registration suite_v6).
+    # suite_v5b/v5c verdicts (preregistration_suite_v5b.md amendments 7-8): the family critics (2026-11-06) and the
+    # big batch (2026-11-07) each showed a noticeable improvement attributable to PPO on 3 of 3 seeds, so
+    # "--critic-heads family" and BIGBATCH (512-step rollouts, 4 x 256 accumulated minibatches, rollout on the CPU,
+    # validation / checkpoint / DAgger cadences divided by 4) enter the suite_v6 recipe; the group baseline (1 of 3) does not.
+    # User decision 1 of 2026-11-08 (pre-registration suite_v6 amendments 15-16): the imitation data is sized by cost on the
+    # 40-problem set, where a replayed observation weighs 0.2-1.2 MB and the rolling-request expert takes up to an hour per
+    # episode on 50-100 trucks: behaviour cloning takes whole demonstration episodes up to 2 500 decisions per problem
+    # (about 100k observations in all, half of suite_v5c's), DAgger runs one episode per problem per round every 6 updates
+    # (40 per round, the suite's absolute budget) and keeps 40k states, and the budget is 4M steps.
     "broad_dagger_plan_charge": [
         *FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN, *CHARGE_PLAN,
         "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--advantage-by-problem",
-        "--validation-scenarios", "16", "--save-validation-checkpoints",
+        "--validation-scenarios", "16", "--save-validation-checkpoints", "--critic-heads", "family", *BIGBATCH,
+        *BROAD_IMITATION_BUDGET,
+    ],
+    # suite_v6's imitation-only control (pre-registration suite_v6, "PPO's
+    # contribution"): the broad recipe with the policy gradient switched off.
+    "broad_imitation_only": [
+        *FULL, *IMITATION, *RETAINED, *DAGGER, *PLAN, *CHARGE_PLAN,
+        "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--advantage-by-problem",
+        "--validation-scenarios", "16", "--save-validation-checkpoints", "--critic-heads", "family", *BIGBATCH,
+        *BROAD_IMITATION_BUDGET, "--policy-gradient-weight", "0",
     ],
     "ppo_deployed_anchor_bigbatch": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH],
     "ppo_deployed_anchor_group": [
@@ -347,14 +369,26 @@ def prepare(
     schedule: int = SCHEDULE,
     problems_dir: Path = SUITE,
     train_seeds: int = SEEDS["train"],
+    exclude: list[str] | None = None,
+    num_envs: int | None = None,
 ) -> None:
     if (destination / "manifest.json").exists():
         raise FileExistsError(f"immutable campaign already exists: {destination}")
     if train_seeds < 1:
         raise SystemExit("--train-seeds must be positive")
+    if num_envs is not None and num_envs < 1:
+        raise SystemExit("--num-envs must be positive")
     # The campaign's problems: the suite's five in their order, or every
-    # configuration of --problems-dir; static where no requests block is set.
+    # configuration of --problems-dir minus --exclude; static where no requests
+    # block is set.
     names = problem_names(problems_dir)
+    excluded = sorted(set(exclude or ()))
+    unknown = [name for name in excluded if name not in names]
+    if unknown:
+        raise SystemExit(f"--exclude names problems not in {problems_dir}: {unknown}")
+    names = [name for name in names if name not in excluded]
+    if not names:
+        raise SystemExit("--exclude leaves no problem")
     dynamic = [name for name in names if not is_static(problems_dir / f"{name}.yaml")]
     static = [name for name in names if name not in dynamic]
     if references_from is not None:
@@ -376,9 +410,12 @@ def prepare(
             raise SystemExit(f"plan-conditioned arms need the time-0 plan cache: {bks_from} lacks {lacking}")
     common = list(COMMON)
     common[common.index("--train-scenarios") + 1] = str(train_seeds)
+    if num_envs is not None:
+        # One sub-environment per problem per rollout slot; frozen like every other flag.
+        common[common.index("--num-envs") + 1] = str(num_envs)
     num_envs = int(common[common.index("--num-envs") + 1])
     if num_envs % len(names):
-        # balanced_slots refuses at training time; the manifest's common_flags can be edited.
+        # balanced_slots refuses at training time; pass --num-envs (a multiple of the problem count).
         print(f"warning: --num-envs {num_envs} is not a multiple of the {len(names)} problems", flush=True)
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("logs", "training", "evaluation", "configs", "references"):
@@ -423,6 +460,7 @@ def prepare(
         "python": str(ROOT / ".venv/bin/python"),
         "problems": str(destination / "problems.json"),
         "problems_dir": str(problems_dir),
+        "excluded": excluded,
         "probes": str(destination / "probes.json"),
         "seeds": {**SEEDS, "train": int(train_seeds)},
         "reference_shard": SHARD,
@@ -1313,6 +1351,10 @@ def main() -> None:
                               "a problem without a requests block is static.")
     command.add_argument("--train-seeds", type=int, default=SEEDS["train"],
                          help="Train seeds per problem (references, plan caches, --train-scenarios).")
+    command.add_argument("--exclude", nargs="*", default=(), metavar="PROBLEM",
+                         help="Leave these problems of --problems-dir out of the campaign (recorded in the manifest).")
+    command.add_argument("--num-envs", type=int, default=None,
+                         help="Sub-environments per rollout step (frozen in common_flags; a multiple of the problem count).")
     command = commands.add_parser("references")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     group = command.add_mutually_exclusive_group(required=True)
@@ -1404,6 +1446,7 @@ def main() -> None:
             destination, arguments.arm_set, arguments.recipe, arguments.seeds, references_from,
             bks_from=bks_from, probes=arguments.probes, arms=arguments.arms, schedule=arguments.schedule,
             problems_dir=arguments.problems_dir.resolve(), train_seeds=arguments.train_seeds,
+            exclude=list(arguments.exclude), num_envs=arguments.num_envs,
         )
     elif arguments.command == "references":
         if arguments.tasks is not None:

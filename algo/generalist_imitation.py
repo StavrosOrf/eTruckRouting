@@ -209,13 +209,18 @@ def demonstration_episodes(
     *,
     demonstrations: str | Path | None = None,
     references=None,
+    max_decisions: int | None = None,
 ) -> tuple[list[tuple[int, int, list[int]]], dict]:
     """Up to ``count`` non-failed episodes per problem as ``(problem index, seed, actions)``.
 
     Rows come from ``demonstrations/<problem>/train_demonstrations.json`` when
     it exists, else from the reference table. Only seeds in that problem's
     ``train_seeds`` are used, in that order; a demonstrations file holding a
-    validation or test seed is refused outright.
+    validation or test seed is refused outright. With ``max_decisions`` the
+    episodes of a problem stop (whole episodes, at least one) once their
+    recorded decisions reach that many, so a 100-truck problem with thousands
+    of decisions per episode cannot swamp the replayed set that behaviour
+    cloning holds in memory.
     """
     episodes, sources = [], {}
     for position, problem in enumerate(problems):
@@ -236,6 +241,14 @@ def demonstration_episodes(
         candidates = [by_seed[seed] for seed in stream if seed in by_seed]
         usable = [row for row in candidates if not row.get("failed", False) and row.get("actions")]
         chosen = usable[:count]
+        if max_decisions is not None and chosen:
+            kept, decisions = [], 0
+            for row in chosen:
+                if kept and decisions + len(row["actions"]) > max_decisions:
+                    break
+                kept.append(row)
+                decisions += len(row["actions"])
+            chosen = kept
         episodes.extend((position, row["seed"], [int(action) for action in row["actions"]]) for row in chosen)
         sources[problem.name] = {
             "source": source,
@@ -243,6 +256,7 @@ def demonstration_episodes(
             "train_rows": len(candidates),
             "usable": len(usable),
             "used": len(chosen),
+            "decisions": sum(len(row["actions"]) for row in chosen),
             "failed_skipped": sum(bool(row.get("failed", False)) for row in candidates),
         }
     return episodes, sources

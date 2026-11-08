@@ -117,7 +117,6 @@ def test_a_fresh_bank_merges_later_seeds_of_the_split(tmp_path, monkeypatch) -> 
 def test_problem_names_resolve_across_the_configuration_sets() -> None:
     assert common.config_path("tx_longhaul") == str(common.CONFIG_DIR / "tx_longhaul.yaml")
     assert common.config_path("de_nl_be_longhaul") == str(common.HELDOUT_DIR / "de_nl_be_longhaul.yaml")
-    assert common.config_path("ca_sameday_t5") == str(common.HELDOUT_DIR / "ca_sameday_t5.yaml")  # also in the broad set
     assert common.config_path("tx_longhaul_t32") == str(common.HELDOUT_LARGE_DIR / "tx_longhaul_t32.yaml")
     assert common.config_path("chi_sameday_t50") == str(common.BROAD_DIR / "chi_sameday_t50.yaml")
     assert common.config_path("nope").endswith("generalist_suite/nope.yaml")
@@ -132,6 +131,23 @@ def test_problem_names_resolve_across_the_configuration_sets() -> None:
     assert len(static.STATIC_PROBLEMS) + len(dynamic.DYNAMIC_PROBLEMS) == len({
         path.stem for directory in common.CONFIG_DIRS for path in directory.glob("*.yaml")
     })
+
+
+def test_a_name_configured_differently_in_two_sets_is_refused(tmp_path, monkeypatch) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "same.yaml").write_text("environment:\n  num_trucks: 5\n")
+    (second / "same.yaml").write_text("# another comment\nenvironment:\n  num_trucks: 5\n")
+    (first / "twin.yaml").write_text("environment:\n  num_trucks: 5\n")
+    (second / "twin.yaml").write_text("environment:\n  num_trucks: 20\n")
+    (second / "only.yaml").write_text("environment:\n  num_trucks: 1\n")
+    monkeypatch.setattr(common, "CONFIG_DIRS", (first, second))
+    assert common.config_path("same") == str(first / "same.yaml")
+    assert common.config_path("only") == str(second / "only.yaml")
+    assert common.config_path("missing") == str(common.CONFIG_DIR / "missing.yaml")
+    with pytest.raises(SystemExit, match="'twin' is configured differently"):
+        common.config_path("twin")
 
 
 def test_the_builders_take_the_new_names_and_an_offset(monkeypatch) -> None:

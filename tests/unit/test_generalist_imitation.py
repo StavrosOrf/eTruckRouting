@@ -73,6 +73,23 @@ def _demonstrations(suite, count=2):
 # ---------------------------------------------------------------------------
 
 
+def test_a_decision_cap_keeps_whole_episodes_and_at_least_one(suite) -> None:
+    problems, rows = suite
+    references = ReferenceTable(rows)
+    full, full_sources = demonstration_episodes(problems, [SEEDS] * 3, 6, references=references)
+    lengths = {name: [len(actions) for position, _, actions in full if problems[position].name == name] for name in rows}
+    name = problems[0].name
+    cap = lengths[name][0] + lengths[name][1]  # exactly the first two episodes fit
+    capped, sources = demonstration_episodes(problems, [SEEDS] * 3, 6, references=references, max_decisions=cap)
+    taken = [len(actions) for position, _, actions in capped if problems[position].name == name]
+    assert taken == lengths[name][:2] and sources[name]["decisions"] == cap
+    assert all(sources[other]["decisions"] <= max(cap, lengths[other][0]) for other in rows)
+    # A cap below one episode still keeps that first episode, whole.
+    one, sources = demonstration_episodes(problems, [SEEDS] * 3, 6, references=references, max_decisions=1)
+    assert [len(actions) for position, _, actions in one if problems[position].name == name] == lengths[name][:1]
+    assert sources[name]["used"] == 1 and full_sources[name]["decisions"] == sum(lengths[name])
+
+
 def test_a_demonstrations_folder_is_read_per_problem_with_reference_fallback(suite, tmp_path) -> None:
     problems, rows = suite
     static, hos = rows["static"], rows["hos"]

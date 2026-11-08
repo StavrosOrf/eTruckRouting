@@ -141,6 +141,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validate-every", type=int, default=25)
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--bc-episodes", type=int, default=64, help="Teacher episodes per problem (0: no BC).")
+    parser.add_argument("--bc-max-decisions-per-problem", type=int, default=None,
+                        help="Stop taking a problem's demonstration episodes once their decisions reach this many "
+                             "(whole episodes, at least one); bounds the replayed set held in memory.")
     parser.add_argument("--pretrain-epochs", type=int, default=20)
     parser.add_argument("--pretrain-learning-rate", type=float, default=3e-4)
     imitation = parser.add_argument_group("imitation (algo/generalist_imitation.py; off by default)")
@@ -333,6 +336,7 @@ def main(argv: list[str] | None = None) -> None:
         episodes, sources = demonstration_episodes(
             training_problems, [train_seeds] * len(training_problems), arguments.bc_episodes,
             demonstrations=arguments.demonstrations, references=references,
+            max_decisions=arguments.bc_max_decisions_per_problem,
         )
         demonstrations = replay_demonstrations(
             training_problems, policy_config.observation_spec, episodes, workers=arguments.rollout_workers,
@@ -340,7 +344,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"behaviour cloning on {demonstrations[2]['kept']}/{demonstrations[2]['steps']} demonstrated decisions; "
               f"outside the candidate set: {demonstrations[2]['misses']}", flush=True)
         for name, source in sources.items():
-            print(f"  {name}: {source['used']} episodes from {source['source']}", flush=True)
+            print(f"  {name}: {source['used']} episodes ({source['decisions']} decisions) from {source['source']}", flush=True)
     dagger_replay = None
     if arguments.resume and imitation is not None:
         archive = trainable_archive(peek_imitation_state(arguments.resume), training_problems)

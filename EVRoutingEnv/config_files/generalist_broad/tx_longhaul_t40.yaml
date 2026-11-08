@@ -20,6 +20,7 @@ environment:
   max_depot_energy_kwh: null
   max_time: 72.0
   verbose: false
+  generation_attempts: 512
 truck:
   battery_capacity: 400.0
   base_speed: 40.0

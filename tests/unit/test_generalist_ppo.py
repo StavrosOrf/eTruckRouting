@@ -114,6 +114,14 @@ def test_replay_rebuilds_the_teacher_decisions(suite) -> None:
     assert [int(o.action_index[label]) for o, label in zip(observations, labels, strict=True)] == recorded
 
 
+def test_replay_refuses_actions_outside_the_action_space(suite) -> None:
+    problems, rows = suite
+    actions = list(rows[problems[0].name][0]["actions"])
+    actions[1] = 10_000  # recorded on a configuration with a larger action space
+    with pytest.raises(ValueError, match=f"{problems[0].name}: demonstration seed 0 step 1 .* outside the action space"):
+        replay_demonstrations(problems, ObservationSpec(charger_budget=10_000), [(0, 0, actions)])
+
+
 def test_evaluation_runs_every_seed_once(suite) -> None:
     problems, rows = suite
     seeds = [[0, 1, 2], [3], [4, 5]]

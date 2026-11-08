@@ -98,6 +98,26 @@ def test_prepare_takes_its_problems_from_a_directory(tmp_path, capsys) -> None:
         campaign.prepare(tmp_path / "zero", "named", "full", 1, arms=["base"], problems_dir=directory, train_seeds=0)
 
 
+def test_prepare_can_leave_problems_of_the_directory_out(tmp_path, capsys) -> None:
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "narrow"
+    campaign.prepare(destination, "named", "full", 1, arms=["base"], problems_dir=directory, train_seeds=8,
+                     exclude=["sea_sameday"], num_envs=4)
+    manifest = campaign.read_manifest(destination)
+    problems = json.loads((destination / "problems.json").read_text())
+    assert [row["name"] for row in problems] == ["sea_longhaul", "sea_longhaul_hos"]
+    assert manifest["excluded"] == ["sea_sameday"] and not (destination / "configs" / "sea_sameday.yaml").exists()
+    flags = manifest["common_flags"]
+    assert flags[flags.index("--num-envs") + 1] == "4" and "not a multiple" not in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="--num-envs"):
+        campaign.prepare(tmp_path / "z", "named", "full", 1, arms=["base"], problems_dir=directory, num_envs=0)
+    assert {name for name, _, _ in campaign.reference_tasks(manifest)} == {"sea_longhaul", "sea_longhaul_hos"}
+    with pytest.raises(SystemExit, match="not in"):
+        campaign.prepare(tmp_path / "x", "named", "full", 1, arms=["base"], problems_dir=directory, exclude=["nope"])
+    with pytest.raises(SystemExit, match="leaves no problem"):
+        campaign.prepare(tmp_path / "y", "named", "full", 1, arms=["base"], problems_dir=directory, exclude=names)
+
+
 def test_the_campaign_problems_reach_the_experts_the_plan_check_and_the_arm_sets(tmp_path) -> None:
     directory, names = _problems_dir(tmp_path)
     static, dynamic = ["sea_longhaul", "sea_longhaul_hos"], ["sea_sameday"]

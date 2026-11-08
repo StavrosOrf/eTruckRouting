@@ -1173,7 +1173,15 @@ def _replay_job(arguments):
     try:
         for seed, actions in episodes:
             observation, _ = env.reset(seed=int(seed))
-            for action in actions:
+            for index, action in enumerate(actions):
+                if not 0 <= int(action) < int(env.action_space.n):
+                    # The archive was recorded on another configuration of the
+                    # problem (suite_v6 pilot, 2026-11-08: a held-out and a broad
+                    # problem shared a name); a silent IndexError hid which one.
+                    raise ValueError(
+                        f"{problem.name}: demonstration seed {seed} step {index} uses action {action} outside the "
+                        f"action space of {env.action_space.n}; it was recorded on another configuration of the problem"
+                    )
                 position = observation.candidate(action)
                 steps += 1
                 if position is None:

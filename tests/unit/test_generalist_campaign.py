@@ -252,8 +252,53 @@ def test_submit_train_selects_the_runs_of_the_given_arms(tmp_path, capsys) -> No
     campaign.submit(destination, "train", 8_000_000, dry_run=True, arms=["fleet", "full"])
     command = capsys.readouterr().out.strip().splitlines()[-1]
     assert "--array=0-3%20" in command and "--time=36:00:00" in command and command.endswith(" 8000000 1 1 3 8 10")
+    assert "--mem-per-cpu=6500M" in command
+    campaign.submit(destination, "train", 8_000_000, dry_run=True, arms=["fleet"], mem_per_cpu="13000M", time_limit=12)
+    command = capsys.readouterr().out.strip().splitlines()[-1]
+    assert "--mem-per-cpu=13000M" in command and "--time=12:00:00" in command and "6500M" not in command
     with pytest.raises(SystemExit, match="unknown arms"):
         campaign.submit(destination, "train", 8_000_000, dry_run=True, arms=["nope"])
+
+
+def test_submit_demonstrations_is_one_cpu_stage_job_and_training_shares_the_store(tmp_path, capsys) -> None:
+    destination = tmp_path / "suite"
+    campaign.prepare(destination, "screen", "full", 1, bks_from=_bks(tmp_path))
+    campaign.submit(destination, "demonstrations", None, dry_run=True)
+    command = capsys.readouterr().out.strip().splitlines()[-1]
+    assert "--array=0-0" in command and "--time=04:00:00" in command and "_demos" in command
+    assert command.endswith(f"generalist_graphppo_cpu.sbatch {destination} demonstrations 0")
+    manifest = campaign.read_manifest(destination)
+    cloning = [index for index, run in enumerate(manifest["runs"]) if "--demonstrations" in run["flags"]]
+    plain = [index for index, run in enumerate(manifest["runs"]) if "--demonstrations" not in run["flags"]]
+    assert cloning and plain
+    commands = []
+
+    class Child:
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+        def send_signal(self, signal):
+            pass
+
+    monkeypatch_popen = lambda command, **kwargs: commands.append(command) or Child()  # noqa: E731
+    import unittest.mock as mock
+
+    with mock.patch.object(campaign.subprocess, "Popen", monkeypatch_popen):
+        campaign.train(destination, cloning[0], 10, "cpu", build_store_only=True)
+        campaign.train(destination, plain[0], 10, "cpu")
+    assert "--demonstration-store" in commands[0] and "--build-demonstration-store-only" in commands[0]
+    assert commands[0][commands[0].index("--demonstration-store") + 1] == str(destination / "demonstrations")
+    assert "--demonstration-store" not in commands[1] and "--build-demonstration-store-only" not in commands[1]
+    assert (destination / "logs" / "demonstrations.log").exists()
+    # Measured slot costs in the campaign directory are handed to the trainer; without the file nothing is.
+    assert all("--slot-costs" not in command for command in commands)
+    (destination / campaign.SLOT_COSTS).write_text("{}")
+    with mock.patch.object(campaign.subprocess, "Popen", monkeypatch_popen):
+        campaign.train(destination, plain[0], 10, "cpu")
+    assert commands[2][commands[2].index("--slot-costs") + 1] == str(destination / campaign.SLOT_COSTS)
 
 
 def test_submit_evaluate_composes_one_gpu_allocation(tmp_path, capsys) -> None:

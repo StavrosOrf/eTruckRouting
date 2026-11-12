@@ -55,6 +55,8 @@ from algo.generalist_ppo import (
     SuiteReward,
     evaluate_policy_suite,
     evaluation_envs,
+    PAIR_BUDGET,
+    load_or_replay_store,
     replay_demonstrations,
     summarize_suite,
 )
@@ -113,6 +115,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
                              "(needs --group-size > 1); GAE where no group completed in the rollout.")
     parser.add_argument("--rollout-on-cpu", action="store_true",
                         help="Keep the collated rollout on the CPU and move each minibatch to the GPU (long rollouts).")
+    parser.add_argument("--slot-costs", default=None,
+                        help="JSON of measured costs per problem ({name: {step, episode, dagger}} in seconds): "
+                             "sub-environments are dealt to the workers by cost. Timing only, no effect on results.")
+    parser.add_argument("--step-together", action="store_true",
+                        help="Advance all sub-environments in lockstep (rollouts, DAgger rounds, validation) instead "
+                             "of worker by worker. Slower when one environment's step is slow; the same results.")
     parser.add_argument("--accumulate-minibatches", type=int, default=1,
                         help="Gradient steps span this many minibatches (a big batch within GPU memory).")
     parser.add_argument("--save-validation-checkpoints", action="store_true",
@@ -146,6 +154,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
                              "(whole episodes, at least one); bounds the replayed set held in memory.")
     parser.add_argument("--pretrain-epochs", type=int, default=20)
     parser.add_argument("--pretrain-learning-rate", type=float, default=3e-4)
+    parser.add_argument("--pair-budget", type=int, default=PAIR_BUDGET,
+                        help="Padded node pairs per forward pass, rows x (trucks + tasks + chargers)^2: minibatches, "
+                             "acting and validation run in chunks within it (halved automatically if the device runs out).")
+    parser.add_argument("--demonstration-store", default=None,
+                        help="Root of replayed-demonstration stores shared by the runs and resumes of a campaign: the "
+                             "store of this replay (problems, view, episodes) is loaded when present, built otherwise.")
+    parser.add_argument("--build-demonstration-store-only", action="store_true",
+                        help="Build or verify the demonstration store, then exit before any worker or training.")
     imitation = parser.add_argument_group("imitation (algo/generalist_imitation.py; off by default)")
     imitation.add_argument("--demonstrations", default=None,
                            help="Folder of <problem>/train_demonstrations.json; problems without one use the references.")
@@ -210,6 +226,35 @@ def build_imitation_config(arguments) -> ImitationConfig | None:
         print("warning: DAgger labels train the policy only through --bc-coefficient or "
               "--dagger-pretrain-rounds; otherwise rounds only measure expert agreement", flush=True)
     return config
+
+
+def gpu_report() -> str:
+    """The peak memory this process allocated on the GPU so far, when it has one."""
+    if not torch.cuda.is_available() or not torch.cuda.is_initialized():
+        return ""
+    return f" gpu_peak={torch.cuda.max_memory_allocated() / 2**30:.1f}GB"
+
+
+def memory_report() -> str:
+    """This job's resident memory: the cgroup's anonymous, file-cache and peak bytes when Slurm exposes them
+    (what its OOM killer counts), else the resident set of this process tree."""
+    try:
+        path = Path("/proc/self/cgroup").read_text().strip().split(":", 2)[2]
+        base = Path("/sys/fs/cgroup") / path.lstrip("/")
+        stat = dict(line.split() for line in (base / "memory.stat").read_text().splitlines() if line)
+        anon, file = int(stat["anon"]) / 2**30, int(stat["file"]) / 2**30
+        peak = f" peak={int((base / 'memory.peak').read_text()) / 2**30:.1f}GB" if (base / "memory.peak").exists() else ""
+        return f"mem anon={anon:.1f}GB file={file:.1f}GB{peak}{gpu_report()}"
+    except (OSError, ValueError, IndexError, KeyError):
+        pass
+    try:
+        import psutil
+
+        process = psutil.Process()
+        total = process.memory_info().rss + sum(child.memory_info().rss for child in process.children(recursive=True))
+        return f"mem rss={total / 2**30:.1f}GB{gpu_report()}"
+    except Exception:  # noqa: BLE001 - a report, never a failure
+        return "mem=?"
 
 
 def print_dagger(record: dict) -> None:
@@ -311,6 +356,7 @@ def main(argv: list[str] | None = None) -> None:
         group_size=arguments.group_size,
         advantage_mode=arguments.advantage_mode,
         rollout_on_cpu=arguments.rollout_on_cpu,
+        step_together=arguments.step_together,
         accumulate_minibatches=arguments.accumulate_minibatches,
         total_timesteps=arguments.total_timesteps,
         num_envs=arguments.num_envs,
@@ -338,13 +384,28 @@ def main(argv: list[str] | None = None) -> None:
             demonstrations=arguments.demonstrations, references=references,
             max_decisions=arguments.bc_max_decisions_per_problem,
         )
-        demonstrations = replay_demonstrations(
-            training_problems, policy_config.observation_spec, episodes, workers=arguments.rollout_workers,
-        )
+        replay_started = time.perf_counter()
+        if arguments.demonstration_store:
+            demonstrations = load_or_replay_store(
+                arguments.demonstration_store, training_problems, policy_config.observation_spec, episodes,
+                workers=arguments.rollout_workers,
+            )
+            where = f" (store {demonstrations[0].directory})"
+        else:
+            demonstrations = replay_demonstrations(
+                training_problems, policy_config.observation_spec, episodes, workers=arguments.rollout_workers,
+            )
+            where = " (in memory)"
         print(f"behaviour cloning on {demonstrations[2]['kept']}/{demonstrations[2]['steps']} demonstrated decisions; "
-              f"outside the candidate set: {demonstrations[2]['misses']}", flush=True)
+              f"outside the candidate set: {demonstrations[2]['misses']}{where} "
+              f"[{time.perf_counter() - replay_started:.0f}s; {memory_report()}]", flush=True)
         for name, source in sources.items():
             print(f"  {name}: {source['used']} episodes ({source['decisions']} decisions) from {source['source']}", flush=True)
+        if arguments.build_demonstration_store_only:
+            print(f"demonstration store ready: {demonstrations[0].directory}", flush=True)
+            return
+    elif arguments.build_demonstration_store_only:
+        raise SystemExit("--build-demonstration-store-only needs --bc-episodes > 0 and --demonstration-store")
     dagger_replay = None
     if arguments.resume and imitation is not None:
         archive = trainable_archive(peek_imitation_state(arguments.resume), training_problems)
@@ -354,9 +415,10 @@ def main(argv: list[str] | None = None) -> None:
             )
             print(f"rebuilt {sum(len(labels) for _, labels in dagger_replay)} DAgger states "
                   f"from {len(archive)} archived episodes", flush=True)
+    slot_costs = json.loads(Path(arguments.slot_costs).read_text()) if arguments.slot_costs else None
     validation_envs = evaluation_envs(
         problems, [validation_seeds] * len(problems), policy_config.observation_spec, reward, reward_references,
-        workers=arguments.rollout_workers,
+        workers=arguments.rollout_workers, costs=slot_costs,
     )
     trainer = GeneralistPPO(
         policy_config,
@@ -368,7 +430,10 @@ def main(argv: list[str] | None = None) -> None:
         device=arguments.device,
         rollout_workers=arguments.rollout_workers,
         imitation=imitation,
+        pair_budget=arguments.pair_budget,
+        slot_costs=slot_costs,
     )
+    print(f"workers forked [{memory_report()}]", flush=True)
     if arguments.init_from and not arguments.resume:
         source = GeneralistActorCritic.load(arguments.init_from, prefix="best")
         theirs, ours = asdict(source.config), asdict(policy_config)
@@ -420,14 +485,16 @@ def main(argv: list[str] | None = None) -> None:
 
     def score_validation(update: int) -> None:
         nonlocal best_score
+        began = time.perf_counter()
         rows = evaluate_policy_suite(
             trainer.policy, problems, [validation_seeds] * len(problems), reward_references, reward,
-            device=trainer.device, envs=validation_envs,
+            device=trainer.device, envs=validation_envs, budget=trainer.budget, together=arguments.step_together,
         )
         summary = summarize_suite(rows, names)
         # Held-out problems are reported but never select a checkpoint.
         summary["selection_score"] = sum(summary[name]["score"] for name in trained) / len(trained)
-        summary.update(update=update, timesteps=trainer.total_steps, elapsed_seconds=time.perf_counter() - started)
+        summary.update(update=update, timesteps=trainer.total_steps, elapsed_seconds=time.perf_counter() - started,
+                       validation_seconds=time.perf_counter() - began)
         validation_history.append(summary)
         (destination / "validation_history.json").write_text(json.dumps(validation_history, indent=2, sort_keys=True))
         if summary["selection_score"] > best_score:
@@ -441,7 +508,8 @@ def main(argv: list[str] | None = None) -> None:
             + " ".join(
                 f"{name}={summary[name]['score']:.2f}/{summary[name]['served_fraction']:.2f}"
                 for name in names
-            ),
+            )
+            + f" [{summary['validation_seconds']:.0f}s; {memory_report()}]",
             flush=True,
         )
 
@@ -464,7 +532,8 @@ def main(argv: list[str] | None = None) -> None:
                 f"upd {record['update']:4d}/{record['num_updates']} steps={record['timesteps']:9d} "
                 f"train_score={record['train_score']:.3f} entropy={record['entropy']:.3f} "
                 f"kl={record['approx_kl']:.4f}{imitation_} {record['decisions_per_second']:.0f} dec/s{memory} "
-                f"{record['elapsed_seconds']:.0f}s",
+                f"{record['elapsed_seconds']:.0f}s rollout={record.get('rollout_seconds', 0.0):.0f}s "
+                f"optimize={record.get('optimize_seconds', 0.0):.0f}s {memory_report()}",
                 flush=True,
             )
         stopping = stop_requested or (
@@ -481,7 +550,7 @@ def main(argv: list[str] | None = None) -> None:
         print(
             f"  bc epoch {record['epoch']}: loss={record['train_loss']:.4f} "
             f"holdout={record.get('holdout_loss', float('nan')):.4f} "
-            f"acc={record.get('holdout_accuracy', float('nan')):.3f}",
+            f"acc={record.get('holdout_accuracy', float('nan')):.3f} {record.get('seconds', 0.0):.0f}s",
             flush=True,
         )
 
@@ -499,6 +568,7 @@ def main(argv: list[str] | None = None) -> None:
                     observe=arguments.pretrain_epochs > 0,
                 )
                 pretrain_record = {"coverage": coverage, "epochs": history}
+                print(f"behaviour cloning done [{memory_report()}]", flush=True)
                 if imitation is not None:
                     pretrain_record["sources"] = sources
             del observations, labels
@@ -508,6 +578,7 @@ def main(argv: list[str] | None = None) -> None:
             for _ in range(arguments.dagger_pretrain_rounds):
                 round_record = trainer.dagger_round(observe=True)
                 print_dagger(round_record)
+                print(f"  dagger pretraining round done [{memory_report()}]", flush=True)
                 observations, labels = trainer.imitation_data.flat()
                 round_record["epochs"] = trainer.pretrain(
                     observations, list(labels), epochs=arguments.dagger_pretrain_epochs,

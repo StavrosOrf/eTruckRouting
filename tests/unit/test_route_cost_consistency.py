@@ -2,10 +2,12 @@
 
 import math
 import random
+import tempfile
 from itertools import pairwise
 
 import networkx as nx
 
+from EVRoutingEnv.models.core import transportation_graph
 from EVRoutingEnv.models.core.transportation_graph import TransportationGraph
 from EVRoutingEnv.models.core.customer import CustomerTask, FleetTaskRegistry
 from EVRoutingEnv.models.core.truck import Truck
@@ -155,3 +157,50 @@ def test_prevalidated_edges_and_matrices_refresh_after_scaling_and_mutation():
     transport.clear_distance_cache()
     assert transport.get_leg_costs(1, 0) == (7.0, 15.0)
     assert transport.cost_matrices() is not old_matrix
+
+
+def test_precomputed_graphs_of_one_network_share_route_tables_until_one_changes_them(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(transportation_graph, "_ROUTE_TABLES", {})
+
+    def build(direct=5.0):
+        graph = nx.DiGraph()
+        for a, b, energy, hours in ((0, 1, 2.0, 3.0), (1, 2, 1.0, 1.0), (2, 0, 4.0, 5.0), (0, 2, direct, 9.0)):
+            graph.add_edge(a, b, distance=energy, time=hours)
+        return TransportationGraph(graph)
+
+    def costs(transport):
+        return {(a, b): (transport.get_leg_costs(a, b), transport.get_shortest_path(a, b)) for a in range(3) for b in range(3)}
+
+    def tables(transport):
+        return transport._distance_cache, transport._time_cache, transport._path_cache, transport._populated_sources
+
+    first, second, third = build(), build(), build()
+    assert all(mine is theirs for mine, theirs in zip(tables(second) + tables(third), tables(first) * 2, strict=True))
+    expected = costs(first)
+    assert expected[(0, 2)] == ((3.0, 4.0), [0, 1, 2]) and costs(second) == expected
+
+    # Another network has its own tables.
+    other = build(direct=2.5)
+    assert all(mine is not theirs for mine, theirs in zip(tables(other), tables(first), strict=True))
+    assert other.get_leg_costs(0, 2) == (2.5, 9.0)
+
+    # Scaling takes private tables: the unscaled graphs keep their costs, and a route found
+    # later on the scaled graph neither reaches them nor marks a source populated for them.
+    second.scale_network(time_scale=2.0, energy_scale=3.0)
+    assert all(mine is not theirs for mine, theirs in zip(tables(second), tables(first), strict=True))
+    assert second.get_leg_costs(0, 2) == (9.0, 8.0) and second.get_shortest_path(0, 2) == [0, 1, 2]
+    second._populated_sources.add(99)
+    assert 99 not in first._populated_sources and costs(first) == expected
+
+    # Clearing does not empty the tables of the other graphs; the cleared graph recomputes its own.
+    third.clear_distance_cache()
+    assert costs(first) == expected and len(first._distance_cache) == 9
+    assert costs(third) == expected and third._distance_cache is not first._distance_cache
+
+    # Without sharing every graph loads its own copy, with the same costs.
+    monkeypatch.setattr(transportation_graph, "SHARE_ROUTE_TABLES", False)
+    private = build()
+    assert all(mine is not theirs for mine, theirs in zip(tables(private), tables(first), strict=True))
+    assert costs(private) == expected
+

@@ -54,8 +54,9 @@ class PPOConfig:
     policy_gradient_weight: float = 1.0
     group_size: int = 1
     advantage_mode: str = "gae"
-    rollout_on_cpu: bool = False  # keep the collated rollout on the CPU; minibatches move to the device
+    rollout_on_cpu: bool = False  # keep the collated rollout on the CPU; minibatches move to the device (the generalist trainer always keeps its rollout as a list on the CPU)
     accumulate_minibatches: int = 1  # gradient steps span this many minibatches (memory-bound big batches)
+    step_together: bool = False  # generalist trainer: advance all sub-environments in lockstep instead of worker by worker
     normalize_reward: bool = True
     seed: int = 0
     schedule_timesteps: int | None = None

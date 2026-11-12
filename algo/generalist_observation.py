@@ -939,6 +939,94 @@ class GraphBatch:
         )
 
 
+def node_counts(observations) -> np.ndarray:
+    """``(trucks, tasks, chargers)`` of every observation, as an ``(n, 3)`` array.
+
+    A sequence that already knows them (``.counts``: the demonstration store,
+    the imitation set) is not read.
+    """
+    known = getattr(observations, "counts", None)
+    if known is not None:
+        return np.asarray(known, dtype=np.int64).reshape(-1, 3)
+    return np.asarray(
+        [(len(item.trucks), len(item.tasks), len(item.chargers)) for item in observations], dtype=np.int64,
+    ).reshape(-1, 3)
+
+
+def padded_pairs(counts) -> int:
+    """Node pairs of the batch :func:`collate` builds from these rows: rows x (widest trucks + tasks + chargers)^2."""
+    counts = np.asarray(counts, dtype=np.int64).reshape(-1, 3)
+    if not len(counts):
+        return 0
+    return int(len(counts)) * int(np.maximum(counts.max(axis=0), 1).sum()) ** 2
+
+
+def budget_chunks(counts, budget: int | None, slack: float | None = None) -> list[np.ndarray]:
+    """Split rows into chunks whose padded node pairs stay within ``budget``.
+
+    A batch is padded to its widest member per node type, and the encoder holds
+    a hidden vector per node pair, so memory and time grow with
+    :func:`padded_pairs`. When every row fits one chunk the rows keep their
+    order, and nothing changes for small problems. Otherwise rows are taken
+    largest first; a single row larger than the budget is a chunk of its own.
+
+    Without ``slack`` each row joins the current chunk until the budget is
+    reached: few chunks, but a 100-truck state and a 160-customer state of the
+    same total size pad each other (broad-set minibatches: 2.8 times the pairs
+    their rows have). With ``slack`` a row joins the open chunk that it pads
+    least, and only if that chunk then holds at most ``(1 + slack)`` times the
+    pairs its rows really have; otherwise it opens a chunk. Shapes that differ
+    stay apart, at the price of more, smaller chunks. Returns arrays of
+    positions into ``counts``.
+    """
+    counts = np.asarray(counts, dtype=np.int64).reshape(-1, 3)
+    size = len(counts)
+    if size == 0:
+        return []
+    if budget is None or padded_pairs(counts) <= budget:
+        return [np.arange(size)]
+    widths = np.maximum(counts, 1)
+    own = widths.sum(axis=1) ** 2
+    order = np.argsort(-own, kind="stable")
+    if slack is None:
+        chunks: list[np.ndarray] = []
+        current: list[int] = []
+        widest = np.ones(3, dtype=np.int64)
+        for row in order:
+            grown = np.maximum(widest, widths[row])
+            if current and (len(current) + 1) * int(grown.sum()) ** 2 > budget:
+                chunks.append(np.asarray(current, dtype=np.int64))
+                current, grown = [], widths[row]
+            current.append(int(row))
+            widest = grown
+        chunks.append(np.asarray(current, dtype=np.int64))
+        return chunks
+    members: list[list[int]] = []
+    wide = np.zeros((0, 3), dtype=np.int64)  # widest member of every open chunk, per node type
+    rows = np.zeros(0, dtype=np.int64)       # rows in every open chunk
+    real = np.zeros(0, dtype=np.int64)       # pairs those rows really have
+    for row in order:
+        best = -1
+        if len(members):
+            grown = np.maximum(wide, widths[row])
+            padded = (rows + 1) * grown.sum(axis=1) ** 2
+            allowed = (padded <= budget) & (padded <= (1.0 + slack) * (real + own[row]))
+            if allowed.any():
+                added = np.where(allowed, padded - rows * wide.sum(axis=1) ** 2, np.iinfo(np.int64).max)
+                best = int(added.argmin())
+        if best < 0:
+            members.append([int(row)])
+            wide = np.concatenate([wide, widths[row][None]])
+            rows = np.append(rows, 1)
+            real = np.append(real, own[row])
+        else:
+            members[best].append(int(row))
+            wide[best] = np.maximum(wide[best], widths[row])
+            rows[best] += 1
+            real[best] += own[row]
+    return [np.asarray(chunk, dtype=np.int64) for chunk in members]
+
+
 def collate(observations: list[GraphObservation], device: str | torch.device = "cpu") -> GraphBatch:
     """Pad a list of observations to their largest member, per entity type."""
     if not observations:

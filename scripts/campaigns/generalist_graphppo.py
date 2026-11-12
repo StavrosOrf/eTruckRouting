@@ -242,6 +242,7 @@ SLURM = {
 BKS_FILES = ("validation.json", "train_demonstrations.json")
 BKS_OPTIONAL = ("summary.json", "train_demonstrations_summary.json", "plans_train.json", "plans_validation.json")
 PLAN_FILES = ("plans_train.json", "plans_validation.json")
+SLOT_COSTS = "slot_costs.json"  # optional, in the campaign directory (see ``train``)
 
 
 def write_json(path: Path, value) -> None:
@@ -565,10 +566,11 @@ def completed_run(destination: Path, run: dict, budget: int) -> bool:
         return False
 
 
-def train(destination: Path, run_index: int, budget: int, device: str | None) -> None:
+def train(destination: Path, run_index: int, budget: int, device: str | None, build_store_only: bool = False) -> None:
+    """Train one run; with ``build_store_only`` only replay its demonstrations into the campaign's shared store."""
     manifest = read_manifest(destination)
     run = manifest["runs"][run_index]
-    if completed_run(destination, run, budget):
+    if not build_store_only and completed_run(destination, run, budget):
         print(f"{run['name']} already reached {budget}", flush=True)
         return
     cpus = sorted(os.sched_getaffinity(0))
@@ -595,7 +597,17 @@ def train(destination: Path, run_index: int, budget: int, device: str | None) ->
         "--run-name", run["name"],
         *run["flags"],
     ]
-    if resume.exists():
+    if "--demonstrations" in run["flags"]:
+        # Replayed demonstrations are shared by every run and resume of the campaign (one store per
+        # distinct replay, keyed by fingerprint): the replay ran 1 h 45 min per run on the broad set.
+        command.extend(["--demonstration-store", str(destination / "demonstrations")])
+    if (destination / SLOT_COSTS).exists():
+        # Measured seconds per decision and per episode of each problem: slots are dealt to the
+        # rollout workers by cost. Timing only; the file may be added or replaced between resumes.
+        command.extend(["--slot-costs", str(destination / SLOT_COSTS)])
+    if build_store_only:
+        command.append("--build-demonstration-store-only")
+    elif resume.exists():
         command.extend(["--resume", str(resume)])
     scratch = destination / "logs" / "runtime" / f"{os.environ.get('SLURM_JOB_ID', 'local')}_{run_index}"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -605,8 +617,12 @@ def train(destination: Path, run_index: int, budget: int, device: str | None) ->
         OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1",
         TMPDIR=str(scratch), MPLCONFIGDIR=str(scratch / "matplotlib"),
         EVRP_SCENARIO_CACHE=str(scratch / "scenarios"),
+        # Chunks of very different sizes follow each other on the device: growable segments keep
+        # the allocator from fragmenting between them.
+        PYTORCH_CUDA_ALLOC_CONF=os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"),
     )
-    with (destination / "logs" / f"{run['name']}_{budget}.log").open("a") as handle:
+    log_name = "demonstrations.log" if build_store_only else f"{run['name']}_{budget}.log"
+    with (destination / "logs" / log_name).open("a") as handle:
         handle.write("COMMAND " + repr(command) + "\n")
         handle.flush()
         child = subprocess.Popen(command, cwd=manifest["source"], env=environment, stdout=handle, stderr=subprocess.STDOUT)
@@ -859,6 +875,7 @@ def submit(
     time_limit: int | None = None,
     decision: dict | None = None,
     dependency: str | None = None,
+    mem_per_cpu: str | None = None,
 ) -> None:
     """Compose (and unless ``dry_run``, submit) the sbatch call(s) of a stage.
 
@@ -869,7 +886,10 @@ def submit(
     partition (with its own cores per GPU); ``test_only`` runs every command
     through ``sbatch --test-only``, which checks it without submitting;
     ``dependency`` is handed to sbatch as is (``afterany:JOBID`` holds the
-    stage until that job ends, which keeps the allocation cap).
+    stage until that job ends, which keeps the allocation cap); ``mem_per_cpu``
+    replaces the manifest's memory per core (a job is charged by the largest
+    of its core, GPU and memory shares of the node, so twice the memory of a
+    GPU share costs two shares).
     """
     manifest = read_manifest(destination)
     slurm = {**SLURM, **manifest["slurm"]}
@@ -881,6 +901,8 @@ def submit(
         gpu_partition, per_gpu = partition, overflow[partition]
     if cpus_per_gpu is not None:
         per_gpu = cpus_per_gpu
+    if mem_per_cpu is not None:
+        slurm = {**slurm, "gpu_mem_per_cpu": mem_per_cpu, "cpu_mem_per_cpu": mem_per_cpu}
     throttle = slurm["max_concurrent"]
     common = [
         "sbatch", "--parsable", *(["--test-only"] if test_only else []),
@@ -938,6 +960,17 @@ def submit(
                 str(ROOT / "scripts/campaigns/generalist_graphppo_gpu.sbatch"), str(destination), str(budget),
                 str(runs_per_gpu), *(",".join(map(str, group)) for group in groups),
             ]))
+    elif stage == "demonstrations":
+        # One CPU-stage job replays the demonstrations of run 0 into the shared store before training.
+        if not any("--demonstrations" in run["flags"] for run in manifest["runs"]):
+            raise SystemExit("no run of this campaign clones demonstrations")
+        commands.append(([[0]], [
+            *common, f"--job-name={destination.name}_demos", f"--partition={slurm['cpu_partition']}",
+            "--nodes=1", "--ntasks=1", f"--cpus-per-task={cpus or slurm['cpu_cores']}",
+            f"--mem-per-cpu={slurm['cpu_mem_per_cpu']}", *cpu_gpus, f"--time={time_limit or 4:02d}:00:00",
+            "--array=0-0",
+            str(ROOT / "scripts/campaigns/generalist_graphppo_cpu.sbatch"), str(destination), "demonstrations", "0",
+        ]))
     elif stage == "evaluate":
         if not tag:
             raise SystemExit("--tag is required for the evaluate stage")
@@ -1368,6 +1401,12 @@ def main() -> None:
     command.add_argument("--run", type=int, required=True, help="Index into manifest runs.")
     command.add_argument("--budget", type=int, required=True)
     command.add_argument("--device", default=None)
+    command = commands.add_parser("demonstrations", help="Replay the demonstrations of one run into the shared store.")
+    command.add_argument("--directory", type=Path, default=DEFAULT)
+    command.add_argument("--run", type=int, default=0, help="Index into manifest runs (its imitation flags).")
+    command.add_argument("--device", default="cpu")
+    command.add_argument("--tasks", default=None, help=argparse.SUPPRESS)  # the CPU wrapper passes its group
+    command.add_argument("--workers", type=int, default=None, help=argparse.SUPPRESS)
     command = commands.add_parser("train-pack", help="Several runs in one allocation, each on its own GPU and CPU slice.")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--runs", type=_indices, required=True, help="Comma-separated indices into manifest runs.")
@@ -1376,7 +1415,7 @@ def main() -> None:
     command.add_argument("--device", default=None)
     command = commands.add_parser("submit")
     command.add_argument("--directory", type=Path, default=DEFAULT)
-    command.add_argument("--stage", required=True, choices=["references", "train", "evaluate"])
+    command.add_argument("--stage", required=True, choices=["references", "demonstrations", "train", "evaluate"])
     command.add_argument("--budget", type=int, default=None)
     command.add_argument("--arms", nargs="*", default=None, help="train: only the runs of these arms.")
     command.add_argument("--split", default="validation", choices=["validation", "test"])
@@ -1390,6 +1429,8 @@ def main() -> None:
     command.add_argument("--cpus-per-gpu", type=int, default=None, help="train/evaluate: CPUs per GPU instead of the partition's.")
     command.add_argument("--dry-run", action="store_true", help="Print the commands only.")
     command.add_argument("--test-only", action="store_true", help="Run each command through sbatch --test-only.")
+    command.add_argument("--mem-per-cpu", default=None, metavar="SIZE",
+                         help="Memory per core instead of the manifest's (e.g. 13000M: twice a GPU share, charged as two).")
     command.add_argument("--dependency", default=None,
                          help="sbatch --dependency value, e.g. afterany:JOBID (wait for a job to end).")
     command.add_argument("--hours", type=int, default=None,
@@ -1459,13 +1500,16 @@ def main() -> None:
         train(destination, arguments.run, arguments.budget, arguments.device)
     elif arguments.command == "train-pack":
         train_pack(destination, arguments.runs, arguments.budget, arguments.runs_per_gpu, arguments.device)
+    elif arguments.command == "demonstrations":
+        train(destination, arguments.run, 0, arguments.device, build_store_only=True)
     elif arguments.command == "submit":
         submit(
             destination, arguments.stage, arguments.budget, arguments.dry_run,
             arms=arguments.arms, split=arguments.split, tag=arguments.tag, runs=arguments.runs,
             pack=arguments.pack, runs_per_gpu=arguments.runs_per_gpu, cpus=arguments.cpus,
             partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
-            time_limit=arguments.hours, dependency=arguments.dependency, decision=decision_from(
+            time_limit=arguments.hours, dependency=arguments.dependency, mem_per_cpu=arguments.mem_per_cpu,
+            decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
             ),

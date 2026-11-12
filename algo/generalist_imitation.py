@@ -42,18 +42,22 @@ under DAgger the learner, not the expert, chose some of the earlier actions.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import math
+import os
+import pickle
 import time
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 
-from algo.generalist_observation import GeneralistEnv, GraphObservation, ObservationSpec
+from algo.generalist_observation import GeneralistEnv, GraphObservation, ObservationSpec, node_counts
 
 
 DEMONSTRATIONS_FILE = "train_demonstrations.json"
@@ -398,10 +402,10 @@ class DaggerSlots:
     def __init__(self, problems: Sequence, slots: Sequence[DaggerSlot], spec: ObservationSpec):
         self.problems = list(problems)
         self.slots = list(slots)
-        self.envs = [
-            GeneralistEnv(self.problems[slot.problem].config, spec, problem=self.problems[slot.problem].name)
-            for slot in self.slots
-        ]
+        self.spec = spec
+        # Built at a slot's first episode. With fewer episodes per round than slots per problem most
+        # slots never run one, and an idle long-haul environment holds 0.2 to 0.4 GB of route tables.
+        self.envs: list[GeneralistEnv | None] = [None] * len(self.slots)
         self.experts: list = [None] * len(self.slots)
         self.position = [0] * len(self.slots)
         self.remaining = [0] * len(self.slots)
@@ -429,6 +433,9 @@ class DaggerSlots:
         self.position[index] += 1
         self.remaining[index] -= 1
         env = self.envs[index]
+        if env is None:
+            problem = self.problems[slot.problem]
+            env = self.envs[index] = GeneralistEnv(problem.config, self.spec, problem=problem.name)
         observation, _ = env.reset(seed=seed)
         # A fresh expert per episode, as a per-episode controller expects.
         self.experts[index] = resolve_expert(slot.expert, self.problems[slot.problem], env)
@@ -513,7 +520,8 @@ class DaggerSlots:
 
     def close(self) -> None:
         for env in self.envs:
-            env.close()
+            if env is not None:
+                env.close()
 
 
 # ---------------------------------------------------------------------------
@@ -521,12 +529,230 @@ class DaggerSlots:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Replayed observations on disk, shared by the runs and resumes of a campaign
+# ---------------------------------------------------------------------------
+
+STORE_META = "meta.json"
+STORE_INDEX = "index.npy"
+STORE_LABELS = "labels.npy"
+STORE_COUNTS = "counts.npy"
+
+
+def store_fingerprint(problems: Sequence, spec: ObservationSpec, episodes: Sequence[tuple[int, int, Sequence[int]]]) -> str:
+    """What a replay depends on: the problems' configurations, the view, and the episodes' seeds and actions."""
+    digest = hashlib.sha256()
+    for problem in problems:
+        digest.update(problem.name.encode())
+        digest.update(hashlib.sha256(Path(problem.config).read_bytes()).hexdigest().encode())
+    digest.update(json.dumps(asdict(spec), sort_keys=True).encode())
+    for problem, seed, actions in episodes:
+        digest.update(json.dumps([int(problem), int(seed), [int(action) for action in actions]]).encode())
+    return digest.hexdigest()
+
+
+class ShardWriter:
+    """Appends pickled observations to one shard file, recording offsets and lengths."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._handle = self.path.open("wb")
+        self.offsets: list[int] = []
+        self.lengths: list[int] = []
+        self.counts: list[tuple[int, int, int]] = []
+
+    def append(self, observation: GraphObservation) -> None:
+        data = pickle.dumps(observation, protocol=5)
+        self.offsets.append(self._handle.tell())
+        self.lengths.append(len(data))
+        self.counts.append((len(observation.trucks), len(observation.tasks), len(observation.chargers)))
+        self._handle.write(data)
+
+    def close(self) -> dict:
+        self._handle.close()
+        return {"file": self.path.name, "offsets": self.offsets, "lengths": self.lengths, "counts": self.counts}
+
+
+def write_store(directory: Path, shards: Sequence[dict], labels: Sequence[int], fingerprint: str, coverage: dict) -> None:
+    """Index the shard files of ``directory`` (the ``ShardWriter.close`` records, in order)."""
+    rows = [
+        (number, offset, length)
+        for number, shard in enumerate(shards)
+        for offset, length in zip(shard["offsets"], shard["lengths"], strict=True)
+    ]
+    index = np.asarray(rows, dtype=np.int64).reshape(-1, 3)
+    if len(index) != len(labels):
+        raise ValueError("the store needs one label per stored observation")
+    np.save(directory / STORE_INDEX, index)
+    np.save(directory / STORE_LABELS, np.asarray([int(label) for label in labels], dtype=np.int64))
+    if all("counts" in shard for shard in shards):
+        counts = [row for shard in shards for row in shard["counts"]]
+        np.save(directory / STORE_COUNTS, np.asarray(counts, dtype=np.int64).reshape(-1, 3))
+    (directory / STORE_META).write_text(json.dumps({
+        "fingerprint": fingerprint, "count": int(len(index)), "files": [shard["file"] for shard in shards],
+        "coverage": coverage, "bytes": int(index[:, 2].sum()) if len(index) else 0,
+    }, indent=2))
+
+
+class ObservationStore(Sequence):
+    """Replayed observations in shard files, read one at a time with ``os.pread``.
+
+    Only the index (three integers per observation) and the labels live in
+    memory; behaviour cloning loads each minibatch from disk, in threads. File
+    descriptors are opened per process, so forked workers share nothing. An
+    observation of a 60-truck static problem weighs 1.5 MB (its dense edge
+    block grows with the square of trucks + tasks + chargers), so the broad
+    set's 92k replayed decisions do not fit beside the trainer (2026-11-09).
+    """
+
+    def __init__(self, directory: str | Path):
+        self.directory = Path(directory)
+        meta = json.loads((self.directory / STORE_META).read_text())
+        self.fingerprint: str = meta["fingerprint"]
+        self.coverage: dict = meta["coverage"]
+        self.files: list[str] = list(meta["files"])
+        self.index = np.load(self.directory / STORE_INDEX)
+        self.labels = np.load(self.directory / STORE_LABELS)
+        if len(self.index) != len(self.labels) or len(self.index) != int(meta["count"]):
+            raise ValueError(f"{self.directory} is inconsistent")
+        self._counts: np.ndarray | None = None
+        self._descriptors: dict[int, int] = {}
+        self._pid: int | None = None
+
+    @property
+    def counts(self) -> np.ndarray:
+        """``(trucks, tasks, chargers)`` per observation, so batches are sized without reading them.
+
+        A store written before the counts were kept computes them once, reading
+        every observation, and leaves them beside the index for the next reader.
+        """
+        if self._counts is None:
+            path = self.directory / STORE_COUNTS
+            if path.exists():
+                self._counts = np.load(path).reshape(-1, 3)
+            else:
+                rows: list[tuple[int, int, int]] = []
+                for start in range(0, len(self), 512):
+                    loaded = self.read_many(range(start, min(start + 512, len(self))))
+                    rows.extend((len(item.trucks), len(item.tasks), len(item.chargers)) for item in loaded)
+                self._counts = np.asarray(rows, dtype=np.int64).reshape(-1, 3)
+                try:
+                    temporary = self.directory / f"{STORE_COUNTS}.{os.getpid()}.tmp"
+                    with temporary.open("wb") as handle:
+                        np.save(handle, self._counts)
+                    os.replace(temporary, path)
+                except OSError:
+                    pass  # a read-only store: the counts live in this process only
+            if len(self._counts) != len(self.index):
+                raise ValueError(f"{self.directory} holds counts for another number of observations")
+        return self._counts
+
+    def __len__(self) -> int:
+        return int(len(self.index))
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            return [self._load(row) for row in range(*item.indices(len(self)))]
+        row = int(item)
+        if row < 0:
+            row += len(self)
+        if not 0 <= row < len(self):
+            raise IndexError(row)
+        return self._load(row)
+
+    def read_many(self, rows: Sequence[int], threads: int = 8) -> list[GraphObservation]:
+        """The observations at ``rows``, read concurrently (positional reads, one descriptor per shard)."""
+        rows = [int(row) for row in rows]
+        for shard in {int(self.index[row, 0]) for row in rows}:
+            self._descriptor(shard)
+        if len(rows) < 2 or threads < 2:
+            return [self._load(row) for row in rows]
+        with ThreadPoolExecutor(min(threads, len(rows))) as pool:
+            return list(pool.map(self._load, rows))
+
+    def _load(self, row: int) -> GraphObservation:
+        shard, offset, length = (int(value) for value in self.index[row])
+        return pickle.loads(os.pread(self._descriptor(shard), length, offset))
+
+    def _descriptor(self, shard: int) -> int:
+        if self._pid != os.getpid():  # fresh descriptors after a fork
+            self._descriptors, self._pid = {}, os.getpid()
+        descriptor = self._descriptors.get(shard)
+        if descriptor is None:
+            descriptor = self._descriptors[shard] = os.open(self.directory / self.files[shard], os.O_RDONLY)
+        return descriptor
+
+    def close(self) -> None:
+        if self._pid == os.getpid():
+            for descriptor in self._descriptors.values():
+                os.close(descriptor)
+        self._descriptors = {}
+
+    def __getstate__(self):
+        return {**self.__dict__, "_descriptors": {}, "_pid": None}
+
+
+class _Concatenated(Sequence):
+    """Several sequences read as one without copying: the demonstrations (a store or a list) and the DAgger states."""
+
+    def __init__(self, parts: Sequence[Sequence]):
+        self.parts = [part for part in parts if len(part)]
+        self.bounds = np.cumsum([0, *(len(part) for part in self.parts)])
+        self._counts: np.ndarray | None = None
+
+    @property
+    def counts(self) -> np.ndarray:
+        """``(trucks, tasks, chargers)`` of every member (a store's are read from its index)."""
+        if self._counts is None:
+            parts = [node_counts(part) for part in self.parts]
+            self._counts = np.concatenate(parts) if parts else np.zeros((0, 3), dtype=np.int64)
+        return self._counts
+
+    def __len__(self) -> int:
+        return int(self.bounds[-1])
+
+    def _locate(self, row: int) -> tuple[int, int]:
+        part = int(np.searchsorted(self.bounds, row, side="right") - 1)
+        return part, row - int(self.bounds[part])
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            return [self[row] for row in range(*item.indices(len(self)))]
+        row = int(item)
+        if row < 0:
+            row += len(self)
+        if not 0 <= row < len(self):
+            raise IndexError(row)
+        part, offset = self._locate(row)
+        return self.parts[part][offset]
+
+    def read_many(self, rows: Sequence[int]) -> list[GraphObservation]:
+        rows = [int(row) for row in rows]
+        grouped: dict[int, list[tuple[int, int]]] = {}
+        for position, row in enumerate(rows):
+            part, offset = self._locate(row)
+            grouped.setdefault(part, []).append((position, offset))
+        out: list = [None] * len(rows)
+        for part, items in grouped.items():
+            loaded = gather_observations(self.parts[part], [offset for _, offset in items])
+            for (position, _), observation in zip(items, loaded, strict=True):
+                out[position] = observation
+        return out
+
+
+def gather_observations(observations: Sequence, rows: Sequence[int]) -> list[GraphObservation]:
+    """The observations at ``rows``: threaded from a store, a plain lookup otherwise."""
+    if hasattr(observations, "read_many"):
+        return observations.read_many(rows)
+    return [observations[int(row)] for row in rows]
+
+
 class ImitationData:
     """Fixed demonstrations plus DAgger episodes, oldest episodes evicted first."""
 
     def __init__(self, max_dagger_states: int = 200_000):
         self.max_dagger_states = int(max_dagger_states)
-        self.demonstrations: tuple[list[GraphObservation], list[int]] = ([], [])
+        self.demonstrations: tuple[Sequence[GraphObservation], np.ndarray] = ([], np.zeros(0, dtype=np.int64))
         self.episodes: deque[tuple[dict, list[GraphObservation], list[int]]] = deque()
         self.dagger_states = 0
         self.evicted_episodes = 0
@@ -536,9 +762,11 @@ class ImitationData:
         return len(self.demonstrations[1]) + self.dagger_states
 
     def set_demonstrations(self, observations: Sequence[GraphObservation], labels: Sequence[int]) -> None:
+        """Keep the replayed demonstrations: a store stays on disk, anything else is copied into a list."""
         if len(observations) != len(labels):
             raise ValueError("demonstrations need one label per observation")
-        self.demonstrations = (list(observations), [int(label) for label in labels])
+        kept = observations if isinstance(observations, ObservationStore) else list(observations)
+        self.demonstrations = (kept, np.asarray([int(label) for label in labels], dtype=np.int64))
         self._flat = None
 
     def add_episode(self, row: dict, observations: Sequence[GraphObservation], labels: Sequence[int]) -> None:
@@ -568,14 +796,15 @@ class ImitationData:
             self.dagger_states += len(labels)
         self._flat = None
 
-    def flat(self) -> tuple[list[GraphObservation], np.ndarray]:
+    def flat(self) -> tuple[Sequence[GraphObservation], np.ndarray]:
+        """Every labelled state as one sequence; the demonstrations are read where they are (a store is not loaded)."""
         if self._flat is None:
-            observations = list(self.demonstrations[0])
-            labels = list(self.demonstrations[1])
-            for _, states, targets in self.episodes:
-                observations.extend(states)
-                labels.extend(targets)
-            self._flat = (observations, np.asarray(labels, dtype=np.int64))
+            parts = [self.demonstrations[0], *(states for _, states, _ in self.episodes)]
+            labels = np.concatenate([
+                np.asarray(self.demonstrations[1], dtype=np.int64),
+                *(np.asarray(targets, dtype=np.int64) for _, _, targets in self.episodes),
+            ])
+            self._flat = (_Concatenated(parts), labels)
         return self._flat
 
     def sample(self, generator: np.random.Generator, size: int) -> tuple[list[GraphObservation], np.ndarray]:
@@ -584,7 +813,7 @@ class ImitationData:
         if not len(labels):
             raise ValueError("the imitation set is empty")
         rows = generator.integers(0, len(labels), size=int(size))
-        return [observations[row] for row in rows], labels[rows]
+        return gather_observations(observations, rows), labels[rows]
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +914,10 @@ def summarize_dagger_round(records: Sequence[dict], agreement: dict[str, list[in
         record[f"dagger/{name}/success"] = float(np.mean([row["success"] for row in group]))
         record[f"dagger/{name}/failed"] = float(np.mean([row["failed"] for row in group]))
         record[f"dagger/{name}/hours"] = float(np.mean([row["hours"] for row in group]))
+        # Where a round's wall time goes: the longest episode sets it, since the slots step together.
+        record[f"dagger/{name}/decisions"] = float(np.mean([row["decisions"] for row in group]))
+        record[f"dagger/{name}/seconds"] = float(np.mean([row["seconds"] for row in group]))
+        record[f"dagger/{name}/expert_seconds"] = float(np.mean([row["expert_seconds"] for row in group]))
     for name, (agree, total) in sorted(agreement.items()):
         record[f"dagger/{name}/agreement"] = agree / max(1, total)
     return record

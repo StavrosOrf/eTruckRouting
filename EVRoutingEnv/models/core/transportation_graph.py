@@ -16,6 +16,16 @@ import numpy as np
 
 ROUTING_POLICY_VERSION = "min_energy_then_time_v1"
 
+# Route tables of the precomputed graphs built in this process, by cache fingerprint:
+# (energies, times, paths, populated sources). One fingerprint means the same nodes and the
+# same edge costs -- the disk cache already rests on that -- so those graphs hold one set of
+# tables between them instead of a copy each (0.2 GB for a 666-node network, and a worker of
+# a vectorised trainer holds several environments of one network). Entries only ever gain
+# routes, which are a function of the fingerprint; a graph that rescales or clears its
+# tables takes private ones first (``scale_network``, ``clear_distance_cache``).
+_ROUTE_TABLES: dict[str, tuple[dict, dict, dict, set]] = {}
+SHARE_ROUTE_TABLES = True
+
 
 class TransportationGraph:
     """Manages the transportation network graph and routing operations."""
@@ -97,6 +107,11 @@ class TransportationGraph:
         self._time_cache = {
             key: value * time_scale for key, value in self._time_cache.items()
         }
+        # The tables may be shared with unscaled graphs of the same fingerprint. The two above
+        # are new objects already; routes found later on this scaled network must not reach the
+        # shared paths or mark a source as populated for graphs whose costs lack it.
+        self._path_cache = dict(self._path_cache)
+        self._populated_sources = set(self._populated_sources)
         # The dense view is derived from the above, so it has to be rebuilt.
         self._dense_node_index = None
         self._dense_transport = None
@@ -157,7 +172,12 @@ class TransportationGraph:
         Initialize the distance cache by either loading from file or computing it.
         This is called during __init__ if precompute_distances=True.
         """
+        shared = _ROUTE_TABLES.get(self._cache_fingerprint) if SHARE_ROUTE_TABLES else None
+        if shared is not None:
+            self._distance_cache, self._time_cache, self._path_cache, self._populated_sources = shared
+            return
         if self.load_distance_cache():
+            self._share_route_tables()
             return
 
         # Compute energy-optimal paths and the travel time on each same path.
@@ -186,6 +206,14 @@ class TransportationGraph:
         )
 
         self.save_distance_cache()
+        self._share_route_tables()
+
+    def _share_route_tables(self) -> None:
+        """Offer this graph's freshly loaded or computed tables to later graphs of the same fingerprint."""
+        if SHARE_ROUTE_TABLES and self._cache_file is not None:
+            _ROUTE_TABLES[self._cache_fingerprint] = (
+                self._distance_cache, self._time_cache, self._path_cache, self._populated_sources,
+            )
 
     def get_charging_nodes(self) -> list[int]:
         """Return list of all charging station nodes."""
@@ -401,11 +429,12 @@ class TransportationGraph:
 
     def clear_distance_cache(self):
         """Clear all paired route costs and paths from memory."""
-        self._distance_cache.clear()
-        self._time_cache.clear()
-        self._path_cache.clear()
+        # New containers, not ``clear()``: the old ones may be shared with other graphs.
+        self._distance_cache = {}
+        self._time_cache = {}
+        self._path_cache = {}
         self._route_successors = None
-        self._populated_sources.clear()
+        self._populated_sources = set()
         self._ordered_successors = {
             node: tuple(sorted(self.graph.successors(node))) for node in self.graph
         }

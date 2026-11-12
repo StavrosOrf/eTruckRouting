@@ -12,9 +12,12 @@ from generalist_harness import small_config
 from algo import generalist_ppo
 from algo.canonical_ppo import PPOConfig
 from algo.generalist_imitation import (
+    DaggerSlots,
     ImitationConfig,
     ImitationData,
+    dagger_slots,
     demonstration_episodes,
+    episode_counts,
     peek_imitation_state,
     read_rows,
     replay_dagger_archive,
@@ -50,10 +53,11 @@ def suite(tmp_path_factory):
     return problems, rows
 
 
-def _trainer(suite, imitation=None, *, workers=1, updates=2, seed=3, policy=POLICY) -> GeneralistPPO:
+def _trainer(suite, imitation=None, *, workers=1, updates=2, seed=3, policy=POLICY, together=False, steps=8) -> GeneralistPPO:
     problems, rows = suite
     config = PPOConfig(
-        total_timesteps=3 * 8 * updates, num_envs=3, rollout_steps=8, minibatch_size=12, epochs=2, seed=seed,
+        total_timesteps=3 * steps * updates, num_envs=3, rollout_steps=steps, minibatch_size=12, epochs=2, seed=seed,
+        step_together=together,
     )
     return GeneralistPPO(
         policy, config, problems, ReferenceTable(rows), SuiteReward(reference="scenario"), [SEEDS] * 3,
@@ -204,8 +208,8 @@ def test_the_auxiliary_loss_changes_the_update_only_when_lambda_is_positive(suit
 
     # The gradient itself: the cross-entropy term reaches the action head and nothing else is needed.
     positive.policy.zero_grad()
-    loss, _ = positive.imitation_loss()
-    loss.backward()
+    loss, accuracy = positive.imitation_gradient()
+    assert loss > 0 and 0.0 <= accuracy <= 1.0
     head = [parameter.grad for name, parameter in positive.policy.named_parameters() if name.startswith("action_head")]
     assert all(grad is not None and torch.isfinite(grad).all() for grad in head)
     assert any(grad.abs().sum() > 0 for grad in head)
@@ -213,6 +217,93 @@ def test_the_auxiliary_loss_changes_the_update_only_when_lambda_is_positive(suit
         parameter.grad is None or not parameter.grad.abs().sum()
         for name, parameter in positive.policy.named_parameters() if name.startswith("value_head")
     )
+
+
+def test_minibatches_in_chunks_give_the_gradient_of_the_whole_minibatch(suite) -> None:
+    """A pair budget that splits every minibatch (and its labelled batch) leaves the update unchanged."""
+    from algo.generalist_ppo import PairBudget
+
+    demonstrations = _demonstrations(suite)
+    trainer = _trainer(suite, ImitationConfig(bc_coefficient=0.5, bc_batch_size=6))
+    try:
+        trainer.set_demonstrations(*demonstrations)
+        trainer._observations = trainer.envs.reset()
+        trainer._observe(trainer._observations)
+        rollout = trainer._collect_rollout()
+        assert len(rollout["observations"]) == 24 and rollout["counts"].shape == (24, 3)
+        policy = {name: value.clone() for name, value in trainer.policy.state_dict().items()}
+        optimizer = {key: value for key, value in trainer.optimizer.state_dict().items()}
+        import copy
+
+        optimizer = copy.deepcopy(optimizer)
+        results = []
+        for pairs in (None, 150):  # 150 pairs: two or three of these small graphs per chunk
+            trainer.policy.load_state_dict(policy)
+            trainer.optimizer.load_state_dict(copy.deepcopy(optimizer))
+            trainer.budget = PairBudget(pairs)
+            trainer._bc_rng = np.random.default_rng(7)
+            np.random.seed(11)
+            statistics = trainer._optimize(rollout)
+            results.append((statistics, {name: value.clone() for name, value in trainer.policy.state_dict().items()}))
+        (whole, whole_weights), (split, split_weights) = results
+        assert len(trainer.budget.chunks(rollout["counts"][:12])) > 2
+        for key in ("policy_loss", "value_loss", "entropy", "approx_kl", "bc_loss", "bc_accuracy"):
+            assert split[key] == pytest.approx(whole[key], rel=1e-4, abs=1e-6), key
+        for name, value in whole_weights.items():
+            assert torch.allclose(value, split_weights[name], atol=1e-5, rtol=1e-4), name
+    finally:
+        trainer.close()
+
+
+def test_behaviour_cloning_in_chunks_matches_whole_minibatches(suite) -> None:
+    from algo.generalist_ppo import PairBudget
+
+    observations, labels = _demonstrations(suite, count=3)
+    trainer = _trainer(suite)
+    try:
+        # The gradient of a labelled minibatch is the same whether it is scored whole or in chunks.
+        results = []
+        for pairs in (None, 150):
+            trainer.budget = PairBudget(pairs)
+            trainer.policy.zero_grad()
+            sums = trainer._labelled_sums(observations, labels, 1.0 / len(labels))
+            silent = trainer._labelled_sums(observations, labels, None)
+            assert silent == pytest.approx(sums, rel=1e-5)
+            results.append((sums, [None if p.grad is None else p.grad.clone() for p in trainer.policy.parameters()]))
+        sizes = np.asarray([(len(o.trucks), len(o.tasks), len(o.chargers)) for o in observations])
+        assert len(trainer.budget.chunks(sizes)) > 5
+        (whole, whole_gradients), (split, split_gradients) = results
+        assert split == pytest.approx(whole, rel=1e-5)
+        used = 0
+        for mine, theirs in zip(split_gradients, whole_gradients, strict=True):
+            assert (mine is None) == (theirs is None)
+            if mine is not None:
+                used += 1
+                assert torch.allclose(mine, theirs, atol=1e-6, rtol=1e-4)
+        assert used > 4
+    finally:
+        trainer.close()
+    # Cloning itself: the first minibatch scores the same, and training follows the same course
+    # (Adam's default epsilon amplifies rounding noise, so later losses agree loosely).
+    histories, statistics = [], []
+    for pairs in (None, 150):
+        trainer = _trainer(suite)
+        try:
+            trainer.budget = PairBudget(pairs)
+            histories.append(trainer.pretrain(observations, labels, epochs=2, learning_rate=3e-3, batch_size=10_000))
+            normalizer = trainer.policy.encoder.normalizer
+            statistics.append((float(normalizer.context_count.item()), normalizer.context_mean.clone(),
+                               normalizer.edge_mean.clone(), normalizer.edge_var.clone()))
+        finally:
+            trainer.close()
+    # The input statistics fold every observation exactly once, in whatever chunks.
+    assert statistics[0][0] == statistics[1][0] == len(observations)
+    for whole, split in zip(statistics[0][1:], statistics[1][1:], strict=True):
+        assert torch.allclose(whole, split, atol=1e-5, rtol=1e-3)
+    assert histories[1][0]["train_loss"] == pytest.approx(histories[0][0]["train_loss"], rel=1e-4)
+    for whole, split in zip(*histories, strict=True):
+        assert split["train_loss"] == pytest.approx(whole["train_loss"], rel=1e-2)
+        assert split["holdout_loss"] == pytest.approx(whole["holdout_loss"], rel=1e-2) and split["seconds"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +344,174 @@ def test_dagger_with_the_teacher_labels_every_state_and_reproduces_it_at_beta_on
         assert trainer.dagger_rounds == 2
     finally:
         trainer.close()
+
+
+def test_dagger_environments_are_built_only_for_the_slots_that_run_an_episode(suite) -> None:
+    problems, _ = suite
+    config = ImitationConfig(dagger_expert=("teacher",), dagger_episodes=1, dagger_envs_per_problem=4)
+    slots = dagger_slots(problems, [list(range(8))] * len(problems), config)
+    assert len(slots) == 4 * len(problems)
+    workers = DaggerSlots(problems, slots, POLICY.observation_spec)
+    try:
+        assert all(env is None for env in workers.envs)
+        live = workers.start(episode_counts(slots, config.dagger_episodes), 1.0, (0, 0))
+        running = [index for index, item in enumerate(live) if item is not None]
+        # One episode per problem: one slot of the four runs, and only it holds an environment.
+        assert len(running) == len(problems)
+        assert [index for index, env in enumerate(workers.envs) if env is not None] == running
+        records = []
+        while any(item is not None for item in live):
+            actions = [None if item is None else int(item[0].action_index[item[1]]) for item in live]
+            stepped = workers.step(actions)
+            live = [None if result is None else result[0] for result in stepped]
+            records.extend(result[1] for result in stepped if result is not None and result[1] is not None)
+        assert sorted(record["problem"] for record in records) == sorted(problem.name for problem in problems)
+        assert all(record["seconds"] > 0 and record["decisions"] > 0 for record in records)
+        assert [index for index, env in enumerate(workers.envs) if env is not None] == running
+    finally:
+        workers.close()
+
+
+def test_the_slots_a_dagger_round_runs_are_spread_over_the_workers(suite) -> None:
+    imitation = ImitationConfig(dagger_expert=("teacher",), dagger_episodes=1, dagger_envs_per_problem=4, dagger_beta=1.0)
+    trainer = _trainer(suite, imitation, workers=2)
+    try:
+        counts = episode_counts(trainer.dagger_slots, imitation.dagger_episodes)
+        running = [index for index, count in enumerate(counts) if count]
+        assert running == [0, 4, 8]
+        spans = trainer.envs._dagger_spans
+        assert sorted(index for span in spans for index in span) == list(range(12))
+        # Listing order would put all three running slots on the first of the two workers.
+        assert sorted(sum(index in span for index in running) for span in spans) == [1, 2]
+        record = trainer.dagger_round()
+        assert record["dagger/episodes"] == 3 and record["dagger/labelled"] == record["dagger/decisions"] > 0
+        assert {row["problem"] for row in trainer.imitation_data.archive()} == set(COMPONENTS)
+        assert all(record[f"dagger/{name}/seconds"] > 0 and record[f"dagger/{name}/decisions"] > 0 for name in COMPONENTS)
+    finally:
+        trainer.close()
+
+
+# ---------------------------------------------------------------------------
+# Workers at their own pace
+# ---------------------------------------------------------------------------
+
+
+def _same_observations(mine, theirs) -> bool:
+    return len(mine) == len(theirs) and all(
+        np.array_equal(getattr(a, name), getattr(b, name))
+        for a, b in zip(mine, theirs, strict=True) for name in ("trucks", "tasks", "chargers", "edges", "action_index")
+    )
+
+
+def test_worker_by_worker_and_lockstep_collect_the_same_rollouts(suite) -> None:
+    collected = []
+    for together in (True, False):
+        trainer = _trainer(suite, workers=2, together=together, steps=40)
+        try:
+            assert len(generalist_ppo.Pace(trainer.envs, together=together).groups) == (1 if together else 2)
+            trainer._observations = trainer.envs.reset()
+            trainer._observe(trainer._observations)
+            rollouts = [trainer._collect_rollout(), trainer._collect_rollout()]
+            episodes = {name: [(row["seed"], row["score"]) for row in rows] for name, rows in trainer.episodes.items()}
+            collected.append((rollouts, episodes, trainer.total_steps, trainer.reward_scale.scale, trainer._fresh.tolist()))
+        finally:
+            trainer.close()
+    (lockstep, episodes, steps, scale, fresh), (alone, *others) = collected
+    assert others[0] == episodes and sum(len(rows) for rows in episodes.values()) >= 3  # episodes ended and restarted
+    assert others[1] == steps == 2 * 40 * 3 and others[3] == fresh
+    assert others[2] == pytest.approx(scale, rel=1e-9)
+    for mine, theirs in zip(lockstep, alone, strict=True):
+        assert _same_observations(mine["observations"], theirs["observations"])
+        assert torch.equal(mine["actions"], theirs["actions"])
+        for key in ("logprobs", "values", "advantages", "returns"):
+            assert torch.allclose(mine[key], theirs[key], rtol=1e-4, atol=1e-5), key
+
+
+def test_worker_by_worker_and_lockstep_dagger_rounds_label_the_same_episodes(suite) -> None:
+    imitation = ImitationConfig(dagger_expert=("teacher",), dagger_episodes=3, dagger_envs_per_problem=2, dagger_beta=0.5)
+    archives = []
+    for together in (True, False):
+        trainer = _trainer(suite, imitation, workers=2, together=together)
+        try:
+            record = trainer.dagger_round()
+            observations, labels = trainer.imitation_data.flat()
+            archives.append((trainer.imitation_data.archive(), list(observations), list(labels), record))
+        finally:
+            trainer.close()
+    (rows, observations, labels, record), (other_rows, other_observations, other_labels, other_record) = archives
+    assert len(rows) == 9 and 0.0 < record["dagger/expert_executed_fraction"] < 1.0
+    assert other_rows == rows and other_labels == labels and _same_observations(other_observations, observations)
+    assert {key: value for key, value in other_record.items() if "seconds" not in key} == {
+        key: value for key, value in record.items() if "seconds" not in key
+    }
+
+
+def test_worker_by_worker_and_lockstep_validation_give_the_same_rows(suite) -> None:
+    problems, rows = suite
+    policy = GeneralistActorCritic(POLICY)
+    outcomes = [
+        generalist_ppo.evaluate_policy_suite(
+            policy, problems, [SEEDS] * 3, ReferenceTable(rows), SuiteReward(reference="scenario"),
+            workers=2, envs_per_problem=2, together=together,
+        )
+        for together in (True, False)
+    ]
+    assert [(row["problem"], row["seed"]) for row in outcomes[0]] == [(name, seed) for name in COMPONENTS for seed in SEEDS]
+    assert outcomes[1] == outcomes[0]
+
+
+def test_slots_are_dealt_by_cost_and_the_rollout_stays_the_same(suite) -> None:
+    assert generalist_ppo.pack_slots(None, 5, 2) == [[0, 2, 4], [1, 3]]
+    assert generalist_ppo.pack_slots([5.0, 1.0, 1.0, 1.0, 1.0, 1.0], 6, 2) == [[0], [1, 2, 3, 4, 5]]
+    loads = [10.0, 0.0]
+    assert generalist_ppo.pack_slots([3.0, 2.0, 1.0], 3, 2, loads) == [[], [0, 1, 2]] and loads == [10.0, 6.0]
+    costs = {"static": {"step": 0.1, "episode": 2.0, "dagger": 3.0}, "same_day": {"step": 0.9, "episode": 30.0, "dagger": 60.0}}
+    assert generalist_ppo.slot_weights(costs, ["static", "hos", "same_day"], "step") == [0.1, 0.9, 0.9]  # unknown: the median
+    assert generalist_ppo.slot_weights(costs, ["static"], "episode", [4]) == [8.0]
+    assert generalist_ppo.slot_weights(None, ["static"], "step") is None
+
+    problems, rows = suite
+    imitation = ImitationConfig(dagger_expert=("teacher",), dagger_episodes=1, dagger_envs_per_problem=2, dagger_beta=0.5)
+    collected = []
+    for slot_costs in (None, {"static": {"step": 0.1, "dagger": 1.0}, "hos": {"step": 0.1, "dagger": 1.0},
+                              "same_day": {"step": 5.0, "dagger": 9.0}}):
+        config = PPOConfig(total_timesteps=6 * 16 * 2, num_envs=6, rollout_steps=16, minibatch_size=12, epochs=2, seed=3)
+        trainer = GeneralistPPO(
+            POLICY, config, problems, ReferenceTable(rows), SuiteReward(reference="scenario"), [SEEDS] * 3,
+            rollout_workers=2, imitation=imitation, slot_costs=slot_costs,
+        )
+        try:
+            spans, dagger_spans = trainer.envs._spans, trainer.envs._dagger_spans
+            trainer._observations = trainer.envs.reset()
+            trainer._observe(trainer._observations)
+            rollout = trainer._collect_rollout()
+            trainer.dagger_round()
+            collected.append((spans, dagger_spans, rollout, trainer.imitation_data.archive()))
+        finally:
+            trainer.close()
+    (plain, plain_dagger, first, archive), (packed, packed_dagger, second, other_archive) = collected
+    # Slots 2 and 5 run the costly problem: they are dealt first, one to each worker, then the light ones.
+    assert plain == [[0, 2, 4], [1, 3, 5]] and packed == [[0, 2, 3], [1, 4, 5]]
+    assert sorted(index for span in packed_dagger for index in span) == list(range(6)) and packed_dagger != plain_dagger
+    assert _same_observations(first["observations"], second["observations"]) and torch.equal(first["actions"], second["actions"])
+    assert torch.allclose(first["returns"], second["returns"], rtol=1e-4, atol=1e-5) and other_archive == archive
+
+
+def test_sampling_from_given_noise_does_not_depend_on_the_batch(suite) -> None:
+    observations, _ = _demonstrations(suite, count=1)
+    policy = GeneralistActorCritic(POLICY)
+    noise = np.random.default_rng(5).random(len(observations))
+    whole, _, _ = generalist_ppo.act_in_chunks(policy, observations, "cpu", uniform=noise)
+    single = [
+        int(generalist_ppo.act_in_chunks(policy, [observation], "cpu", uniform=noise[index : index + 1])[0])
+        for index, observation in enumerate(observations)
+    ]
+    assert whole.tolist() == single and len(set(single)) > 1
+    for observation, position in zip(observations, single, strict=True):
+        assert 0 <= position < len(observation.action_index)
+    # The draws follow the policy's distribution: both ends of the unit interval stay inside the candidates.
+    edges, _, _ = generalist_ppo.act_in_chunks(policy, observations[:2] * 2, "cpu", uniform=[0.0, 0.0, 1.0 - 1e-12, 1.0 - 1e-12])
+    assert all(0 <= int(position) < len(observation.action_index) for position, observation in zip(edges, observations[:2] * 2, strict=True))
 
 
 BUILT = []
@@ -377,6 +636,55 @@ def test_workers_with_dagger_slots_fork_before_the_policy_moves(suite, monkeypat
         trainer.close()
 
 
+def test_the_replay_store_matches_the_in_memory_replay_and_is_shared(suite, tmp_path, monkeypatch) -> None:
+    from algo.generalist_imitation import ImitationData, ObservationStore
+    from algo.generalist_observation import ObservationSpec
+
+    problems, rows = suite
+    spec = ObservationSpec(charger_budget=10_000)
+    episodes = [(index, seed, rows[problem.name][seed]["actions"]) for index, problem in enumerate(problems) for seed in (0, 1)]
+    observations, labels, coverage = generalist_ppo.replay_demonstrations(problems, spec, episodes)
+    store, stored_labels, stored_coverage = generalist_ppo.replay_demonstrations(
+        problems, spec, episodes, workers=2, store=tmp_path / "store",
+    )
+    assert isinstance(store, ObservationStore) and len(store) == len(observations) == len(stored_labels) > 4
+    assert stored_labels == labels and stored_coverage == coverage and len(store.files) > 1
+    # The store knows every observation's size without reading it; a store written without the
+    # counts computes them once and leaves them beside its index.
+    from algo.generalist_observation import node_counts
+
+    assert np.array_equal(store.counts, node_counts(observations)) and np.array_equal(node_counts(store), store.counts)
+    (tmp_path / "store" / "counts.npy").unlink()
+    older = ObservationStore(tmp_path / "store")
+    assert np.array_equal(older.counts, store.counts) and (tmp_path / "store" / "counts.npy").exists()
+    picks = [2, 0, len(store) - 1]
+    for mine, theirs in zip(store.read_many(picks), [observations[row] for row in picks], strict=True):
+        assert np.array_equal(mine.edges, theirs.edges) and np.array_equal(mine.action_index, theirs.action_index)
+        assert np.array_equal(mine.tasks, theirs.tasks) and mine.active_truck == theirs.active_truck
+    assert np.array_equal(store[1].actions, observations[1].actions) and len(store[1:3]) == 2
+    # The imitation set reads the store where it is and samples across it and the DAgger states.
+    data = ImitationData(max_dagger_states=100)
+    data.set_demonstrations(store, stored_labels)
+    data.add_episode({"problem": "x"}, observations[:2], labels[:2])
+    flat, flat_labels = data.flat()
+    assert data.demonstrations[0] is store and len(flat) == len(store) + 2 and len(data) == len(flat)
+    assert list(flat_labels[-2:]) == labels[:2] and flat[len(store)] is observations[0]
+    assert np.array_equal(flat.counts, np.concatenate([store.counts, node_counts(observations[:2])]))
+    sampled, sampled_labels = data.sample(np.random.default_rng(0), 7)
+    assert len(sampled) == 7 == len(sampled_labels)
+    # A campaign's runs share one store per replay: a present store is loaded, a different view gets its own.
+    calls = []
+    original = generalist_ppo.replay_demonstrations
+    monkeypatch.setattr(generalist_ppo, "replay_demonstrations", lambda *a, **k: calls.append(1) or original(*a, **k))
+    root = tmp_path / "shared"
+    first = generalist_ppo.load_or_replay_store(root, problems, spec, episodes)
+    again = generalist_ppo.load_or_replay_store(root, problems, spec, episodes)
+    assert len(calls) == 1 and again[0].directory == first[0].directory and again[1] == labels
+    other = generalist_ppo.load_or_replay_store(root, problems, ObservationSpec(charger_budget=5), episodes)
+    assert len(calls) == 2 and other[0].directory != first[0].directory
+    assert sorted(path.name for path in root.iterdir()) == sorted([first[0].directory.name, other[0].directory.name])
+
+
 def test_the_trainer_cli_clones_demonstrations_runs_dagger_and_resumes(suite, tmp_path, monkeypatch) -> None:
     from scripts.training import train_generalist_ppo as cli
 
@@ -399,8 +707,13 @@ def test_the_trainer_cli_clones_demonstrations_runs_dagger_and_resumes(suite, tm
         "--dagger-envs-per-problem", "1", "--dagger-pretrain-rounds", "1", "--dagger-pretrain-epochs", "1",
         "--train-scenarios", "6", "--validation-scenarios", "1", "--validate-every", "100",
         "--rollout-workers", "2", "--output", str(tmp_path / "training"), "--run-name", "cli",
+        "--demonstration-store", str(tmp_path / "store"),
+        # Small enough that acting, minibatches, the labelled batches and validation all run in several chunks.
+        "--pair-budget", "150",
     ]
     cli.main([*common, "--total-timesteps", "24"])
+    stores = list((tmp_path / "store").iterdir())
+    assert len(stores) == 1 and (stores[0] / "meta.json").exists()
     run = tmp_path / "training" / "cli"
     history = json.loads((run / "training_history.json").read_text())
     pretrain = json.loads((run / "pretrain_history.json").read_text())
@@ -420,12 +733,13 @@ def test_the_trainer_cli_clones_demonstrations_runs_dagger_and_resumes(suite, tm
             return function(*args, **kwargs)
         return wrapper
 
-    for name in ("replay_demonstrations", "replay_dagger_archive", "evaluation_envs", "GeneralistPPO"):
+    for name in ("load_or_replay_store", "replay_dagger_archive", "evaluation_envs", "GeneralistPPO"):
         monkeypatch.setattr(cli, name, record(name, getattr(cli, name)))
+    monkeypatch.setattr(generalist_ppo, "replay_demonstrations", lambda *a, **k: pytest.fail("the store is loaded, not replayed"))
     original_to = GeneralistActorCritic.to
     monkeypatch.setattr(GeneralistActorCritic, "to", lambda self, *a, **k: events.append("to") or original_to(self, *a, **k))
     cli.main([*common, "--total-timesteps", "36", "--resume", str(run / "training.pt")])
-    assert events == ["replay_demonstrations", "replay_dagger_archive", "evaluation_envs", "GeneralistPPO", "to"]
+    assert events == ["load_or_replay_store", "replay_dagger_archive", "evaluation_envs", "GeneralistPPO", "to"]
     history = json.loads((run / "training_history.json").read_text())
     assert [record["update"] for record in history] == [1, 2, 3]
     assert history[2]["dagger/round"] == 3 and history[2]["bc_loss"] > 0

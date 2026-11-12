@@ -122,6 +122,98 @@ def test_replay_refuses_actions_outside_the_action_space(suite) -> None:
         replay_demonstrations(problems, ObservationSpec(charger_budget=10_000), [(0, 0, actions)])
 
 
+def test_chunks_respect_the_pair_budget_and_keep_small_batches_whole() -> None:
+    from algo.generalist_observation import budget_chunks, padded_pairs
+
+    generator = np.random.default_rng(0)
+    counts = np.stack([generator.integers(1, 100, 200), generator.integers(0, 300, 200), generator.integers(1, 64, 200)], axis=1)
+    assert padded_pairs(counts[:1]) == int(counts[0].sum()) ** 2 and padded_pairs(counts[:0]) == 0
+    assert padded_pairs(np.array([[2, 0, 3], [1, 4, 1]])) == 2 * (2 + 4 + 3) ** 2  # padded per node type
+    # Everything fits: one chunk, rows in their order (small problems run as before).
+    whole = budget_chunks(counts, padded_pairs(counts))
+    assert len(whole) == 1 and np.array_equal(whole[0], np.arange(200))
+    assert np.array_equal(budget_chunks(counts, None)[0], np.arange(200)) and budget_chunks(counts[:0], 10) == []
+    own = np.maximum(counts, 1).sum(axis=1) ** 2
+    for budget in (10, 5_000, 400_000, 4_000_000):
+        for slack in (None, 0.25, 0.75):
+            chunks = budget_chunks(counts, budget, slack)
+            assert sorted(np.concatenate(chunks).tolist()) == list(range(200))  # every row exactly once
+            for chunk in chunks:
+                assert len(chunk) == 1 or padded_pairs(counts[chunk]) <= budget
+                if slack is not None and len(chunk) > 1:  # padding stays within the slack
+                    assert padded_pairs(counts[chunk]) <= (1.0 + slack) * own[chunk].sum() + 1e-6
+    # Filling by size alone pads far less than one batch; keeping shapes apart pads less again.
+    plain = sum(padded_pairs(counts[chunk]) for chunk in budget_chunks(counts, 400_000))
+    shaped = sum(padded_pairs(counts[chunk]) for chunk in budget_chunks(counts, 400_000, 0.5))
+    assert shaped < plain < 0.5 * padded_pairs(counts) and shaped <= 1.5 * own.sum()
+    sizes = [int(counts[chunk].sum(axis=1).max()) for chunk in budget_chunks(counts, 400_000)]
+    assert sizes == sorted(sizes, reverse=True)  # largest first
+
+
+def test_a_chunk_that_exhausts_the_device_is_split_and_the_budget_halves(capsys) -> None:
+    from algo.generalist_ppo import PairBudget, run_chunks
+
+    counts = np.tile(np.array([[2, 3, 5]]), (16, 1))  # 100 pairs each
+    budget = PairBudget(800)
+    attempts = []
+
+    def run(rows):
+        attempts.append(len(rows))
+        if len(rows) > 2:
+            raise torch.OutOfMemoryError("CUDA out of memory")
+        return int(rows.sum())
+
+    results = list(run_chunks(budget, counts, run))
+    assert sorted(np.concatenate([rows for rows, _ in results]).tolist()) == list(range(16))
+    assert sum(value for _, value in results) == sum(range(16)) and max(len(rows) for rows, _ in results) == 2
+    assert budget.reductions >= 2 and budget.pairs <= 200 and "exhausted the device" in capsys.readouterr().out
+    # Later calls start from the reduced budget; a single row that does not fit is an error.
+    assert all(len(chunk) <= 2 for chunk in budget.chunks(counts))
+    with pytest.raises(torch.OutOfMemoryError):
+        list(run_chunks(PairBudget(100), counts[:1], run_always_failing))
+    with pytest.raises(ValueError):
+        PairBudget(0)
+
+
+def run_always_failing(rows):
+    raise torch.OutOfMemoryError("CUDA out of memory")
+
+
+def test_acting_in_chunks_matches_one_batch(suite) -> None:
+    from algo.generalist_ppo import PairBudget, act_in_chunks, values_in_chunks
+    from algo.generalist_observation import collate
+
+    problems, rows = suite
+    spec = ObservationSpec(charger_budget=4)
+    episodes = [(index, seed, rows[problem.name][seed]["actions"]) for index, problem in enumerate(problems) for seed in (0, 1)]
+    observations, _, _ = replay_demonstrations(problems, spec, episodes)
+    policy = _policy()
+    policy.observe(collate(observations, "cpu"))
+    whole = act_in_chunks(policy, observations, "cpu", True, PairBudget(None))
+    direct = policy.act(collate(observations, "cpu"), True)
+    for mine, theirs in zip(whole, direct, strict=True):
+        assert torch.equal(mine, theirs)  # one chunk is the old call
+    budget = PairBudget(200)
+    assert len(budget.chunks(np.asarray([(len(o.trucks), len(o.tasks), len(o.chargers)) for o in observations]))) > 3
+    split = act_in_chunks(policy, observations, "cpu", True, budget)
+    assert torch.equal(split[0], whole[0])
+    assert torch.allclose(split[1], whole[1], atol=1e-5) and torch.allclose(split[2], whole[2], atol=1e-5)
+    values = values_in_chunks(policy, observations, "cpu", budget)
+    with torch.no_grad():
+        assert torch.allclose(values, policy.predict_values(collate(observations, "cpu")), atol=1e-5)
+    # Validation acts through the same chunks and reaches the same episodes.
+    seeds = [[0, 1], [2], [3]]
+    table = ReferenceTable(rows)
+    found = [
+        evaluate_policy_suite(policy, problems, seeds, table, SuiteReward(), envs_per_problem=2, budget=PairBudget(pairs))
+        for pairs in (None, 200)
+    ]
+    key = lambda row: (row["problem"], row["seed"])  # noqa: E731
+    assert [(key(row), row["steps"], row["hours"]) for row in sorted(found[0], key=key)] == [
+        (key(row), row["steps"], row["hours"]) for row in sorted(found[1], key=key)
+    ]
+
+
 def test_evaluation_runs_every_seed_once(suite) -> None:
     problems, rows = suite
     seeds = [[0, 1, 2], [3], [4, 5]]

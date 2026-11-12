@@ -260,11 +260,27 @@ class GeneralistActorCritic(nn.Module):
         return self._values(pooled, batch)
 
     @torch.no_grad()
-    def act(self, batch: GraphBatch, deterministic: bool = False):
-        """Candidate positions, their log probabilities, and state values."""
+    def act(self, batch: GraphBatch, deterministic: bool = False, uniform: torch.Tensor | None = None):
+        """Candidate positions, their log probabilities, and state values.
+
+        ``uniform`` (one number in [0, 1) per row) makes the sampled position of a row a function
+        of that row alone: the inverse of its cumulative distribution at the row's number. Rows
+        can then be acted on in any grouping and order and draw the same positions.
+        """
         output = self(batch)
         distribution = Categorical(logits=output.logits)
-        actions = output.logits.argmax(dim=-1) if deterministic else distribution.sample()
+        if deterministic:
+            actions = output.logits.argmax(dim=-1)
+        elif uniform is None:
+            actions = distribution.sample()
+        else:
+            cumulative = distribution.probs.double().cumsum(dim=-1)
+            target = uniform.to(cumulative).view(-1, 1) * cumulative[:, -1:]
+            # A masked candidate has probability zero and adds nothing to the cumulative sum, so
+            # the count below never lands on one; the clamp and the mask check guard the edges.
+            actions = (cumulative <= target).sum(dim=-1).clamp(max=cumulative.shape[-1] - 1)
+            allowed = output.feasible_mask.gather(1, actions.view(-1, 1)).squeeze(1)
+            actions = torch.where(allowed, actions, output.logits.argmax(dim=-1))
         return actions, distribution.log_prob(actions), output.values
 
     def evaluate_actions(self, batch: GraphBatch, actions: torch.Tensor):

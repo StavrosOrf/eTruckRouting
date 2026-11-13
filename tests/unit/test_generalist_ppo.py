@@ -274,6 +274,31 @@ def test_the_trainer_records_throughput_in_its_history(suite, tmp_path) -> None:
     assert all("gpu_peak_gb" not in record for record in history)
 
 
+@pytest.mark.parametrize("every, expected", [(1, [1, 2]), (100, [2])])
+def test_the_last_update_is_validated_once(suite, tmp_path, every, expected) -> None:
+    import json
+    from dataclasses import asdict
+
+    from scripts.training.train_generalist_ppo import main
+
+    problems, rows = suite
+    (tmp_path / "problems.json").write_text(json.dumps([asdict(problem) for problem in problems]))
+    for name, values in rows.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps({str(seed): row for seed, row in values.items()}))
+    main([
+        "--problems", str(tmp_path / "problems.json"), "--references", str(tmp_path),
+        "--num-envs", "3", "--rollout-steps", "4", "--minibatch-size", "6", "--epochs", "1",
+        "--hidden-dim", "16", "--encoder-layers", "1", "--charger-budget", "4", "--bc-episodes", "0",
+        "--train-scenarios", "6", "--validation-scenarios", "1", "--validate-every", str(every),
+        "--total-timesteps", "24", "--output", str(tmp_path / "training"), "--run-name", "cli",
+    ])
+    run = tmp_path / "training" / "cli"
+    validations = json.loads((run / "validation_history.json").read_text())
+    # A validation update at the end is not scored a second time; without one the end is still scored.
+    assert [row["update"] for row in validations] == expected
+    assert (run / "final.pt").exists() and (run / "best.pt").exists()
+
+
 def test_advantages_are_normalized_within_each_problem() -> None:
     from algo.generalist_ppo import normalized_by_group
 

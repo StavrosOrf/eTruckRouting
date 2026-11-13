@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -205,6 +206,108 @@ def test_imitation_arms_override_the_common_flags(tmp_path) -> None:
     assert dagger.bc_coefficient == 0.1 and len(dagger.dagger_expert) == 5 and dagger.dagger_pretrain_rounds == 2
     assert dagger.dagger_every == 10 and dagger.dagger_beta == 0.5 and dagger.dagger_beta_anneal_timesteps == 2_000_000
     assert all("=algo.generalist_experts:" in spec for spec in dagger.dagger_expert)
+
+
+def test_the_anchored_broad_arms_differ_only_where_registered(tmp_path) -> None:
+    from scripts.training.train_generalist_ppo import build_argument_parser
+
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "suite"
+    arms = ["broad_clone_anchor", "broad_clone_anchor_imitation", "broad_stage1_anchor"]
+    campaign.prepare(
+        destination, "named", "full", 2, bks_from=_bks(tmp_path, names, plans=True), arms=arms,
+        problems_dir=directory, schedule=998_400, num_envs=6,
+    )
+    manifest = campaign.read_manifest(destination)
+    parser = build_argument_parser()
+    parsed = {}
+    for run in manifest["runs"]:
+        argv = ["--problems", manifest["problems"], "--references", str(destination / "references"),
+                *manifest["common_flags"], "--total-timesteps", "998400", "--seed", str(run["seed"]), *run["flags"]]
+        parsed[run["name"]] = vars(parser.parse_args(argv))
+    main, control, staged = (parsed[f"{arm}_s1"] for arm in arms)
+    # The anchored recipe: the imitation weight and the expert share held, a low learning rate and entropy bonus,
+    # the deployed filters, no plan dropout, long rollouts, and the larger demonstration set.
+    assert (main["bc_coefficient"], main["bc_coefficient_final"]) == (0.05, 0.05)
+    assert (main["dagger_beta"], main["dagger_beta_final"], main["dagger_every"], main["dagger_episodes"]) == (0.3, 0.3, 3, 1)
+    assert (main["learning_rate"], main["entropy_coefficient"], main["plan_dropout"]) == (1e-4, 1e-3, 0.0)
+    assert (main["bc_episodes"], main["bc_max_decisions_per_problem"], main["pretrain_epochs"]) == (64, 30_000, 12)
+    assert (main["dagger_pretrain_rounds"], main["dagger_pretrain_epochs"], main["dagger_max_states"]) == (2, 2, 80_000)
+    assert (main["rollout_steps"], main["minibatch_size"], main["accumulate_minibatches"]) == (512, 256, 4)
+    assert (main["validate_every"], main["validation_scenarios"], main["checkpoint_every"]) == (13, 16, 3)
+    assert main["safety_mask"] and main["retire_guard"] and main["public_wake"] and main["advantage_by_problem"]
+    assert main["critic_heads"] == "family" and main["save_validation_checkpoints"] and main["rollout_on_cpu"]
+    assert main["policy_gradient_weight"] == 1.0 and main["init_from"] is None
+    assert len(main["dagger_expert"]) == len(names)
+    # The control differs by the surrogate's weight alone.
+    assert {key for key in main if main[key] != control[key]} == {"policy_gradient_weight"}
+    assert control["policy_gradient_weight"] == 0.0
+    # The two-stage arm starts from suite_v6's best checkpoint of its seed and does not clone.
+    assert {key for key in main if main[key] != staged[key]} == {"init_from", "pretrain_epochs", "dagger_pretrain_rounds"}
+    assert staged["init_from"].endswith("suite_v6_stage1_best/broad_dagger_plan_charge_s1")
+    assert (staged["pretrain_epochs"], staged["dagger_pretrain_rounds"]) == (0, 0)
+    assert parsed["broad_stage1_anchor_s0"]["init_from"].endswith("broad_dagger_plan_charge_s0")
+
+
+def test_fork_starts_the_control_from_its_main_runs_state_after_pretraining(tmp_path, capsys) -> None:
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "suite"
+    arms = ["broad_clone_anchor", "broad_clone_anchor_imitation"]
+    campaign.prepare(
+        destination, "named", "full", 2, bks_from=_bks(tmp_path, names, plans=True), arms=arms,
+        problems_dir=directory, schedule=998_400, num_envs=6,
+    )
+    training = destination / "training"
+    ready = training / "broad_clone_anchor_s0"
+    ready.mkdir(parents=True)
+    for name in (*campaign.FORK_FILES, *campaign.FORK_BEST):
+        (ready / name).write_text(f"{name} of seed 0")
+    (ready / "training.pt").write_text("the rolling checkpoint, already past update 0")
+    (training / "broad_clone_anchor_s1").mkdir()  # seed 1 has not finished pretraining
+    assert campaign.fork(destination, *arms) == ["broad_clone_anchor_imitation_s0"]
+    control = training / "broad_clone_anchor_imitation_s0"
+    # The control resumes from the state after pretraining, not from the main run's later checkpoint.
+    assert (control / "training.pt").read_text() == "training_update0.pt of seed 0"
+    assert (control / "best.pt").read_text() == "ckpt_0.pt of seed 0"
+    assert (control / "pretrained.pt").read_text() == "pretrained.pt of seed 0"
+    assert json.loads((control / "forked_from.json").read_text())["source"] == str(ready)
+    assert not (training / "broad_clone_anchor_imitation_s1").exists()
+    assert "broad_clone_anchor_s1 lacks" in capsys.readouterr().out
+    # A second call leaves the forked run alone and takes the seed that has become ready.
+    (control / "training.pt").write_text("the control's own progress")
+    for name in (*campaign.FORK_FILES, *campaign.FORK_BEST):
+        (training / "broad_clone_anchor_s1" / name).write_text(f"{name} of seed 1")
+    assert campaign.fork(destination, *arms) == ["broad_clone_anchor_imitation_s1"]
+    assert (control / "training.pt").read_text() == "the control's own progress"
+    with pytest.raises(SystemExit, match="no runs"):
+        campaign.fork(destination, "broad_clone_anchor", "full")
+
+
+
+def test_submit_leaves_a_control_out_until_it_is_forked(tmp_path, capsys) -> None:
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "suite"
+    arms = ["broad_clone_anchor", "broad_clone_anchor_imitation"]
+    campaign.prepare(
+        destination, "named", "full", 2, bks_from=_bks(tmp_path, names, plans=True), arms=arms,
+        problems_dir=directory, schedule=998_400, num_envs=6,
+    )
+    (destination / "references" / "summary.json").write_text("{}")
+    capsys.readouterr()
+    # Runs 0 and 2 are the main arm's; the controls 1 and 3 would clone on their own, so they wait.
+    campaign.submit(destination, "train", 998_400, dry_run=True)
+    output = capsys.readouterr().out
+    assert "awaiting fork" in output and "broad_clone_anchor_imitation_s0, broad_clone_anchor_imitation_s1" in output
+    assert output.strip().endswith(" 998400 1 0 2") and "--array=0-1%" in output
+    with pytest.raises(SystemExit, match="awaits its fork"):
+        campaign.submit(destination, "train", 998_400, dry_run=True, arms=["broad_clone_anchor_imitation"])
+    # Once forked (a training.pt in its folder), a control is submitted like any other run.
+    forked = destination / "training" / "broad_clone_anchor_imitation_s1"
+    forked.mkdir(parents=True)
+    (forked / "training.pt").write_text("state after pretraining")
+    capsys.readouterr()
+    campaign.submit(destination, "train", 998_400, dry_run=True, arms=["broad_clone_anchor_imitation"])
+    assert capsys.readouterr().out.strip().endswith(" 998400 1 3")
 
 
 def test_leave_one_problem_out_and_specialist_arms() -> None:
@@ -590,6 +693,121 @@ def test_the_gpu_wrapper_trains_the_group_of_its_array_index(tmp_path, index, gr
         "scripts/campaigns/generalist_graphppo.py", "train-pack", "--directory", str(directory),
         "--runs", group, "--budget", "2000000", "--runs-per-gpu", "2",
     ]
+
+
+def _twin_queue(tmp_path, listing: str, answers: bool = True) -> tuple:
+    """Fake squeue and scancel: the queue is a file that scancel empties; ``answers`` False makes squeue fail."""
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    queue, cancelled = tmp_path / "queue.txt", tmp_path / "cancelled.txt"
+    queue.write_text(listing)
+    (tools / "squeue").write_text(f"#!/bin/bash\ncat {queue}\n" if answers else "#!/bin/bash\nexit 1\n")
+    (tools / "scancel").write_text(f"#!/bin/bash\necho \"$@\" >> {cancelled}\n: > {queue}\n")
+    for tool in tools.iterdir():
+        tool.chmod(0o755)
+    return tools, cancelled
+
+
+@pytest.mark.parametrize("listing, answers, status, trains, cancels", [
+    ("55_1 RUNNING\n55_2 PENDING\n", True, 0, False, False),   # the twin element trains: this one stops
+    ("55_0 RUNNING\n55_1 PENDING\n", True, 0, True, True),     # the twin is taken out of the queue first
+    ("55_0 RUNNING\n", True, 0, True, False),                  # no twin element queued
+    ("", False, 1, False, False),                               # no answer from the scheduler: nothing starts
+])
+def test_only_one_element_of_a_twin_pair_trains(tmp_path, listing, answers, status, trains, cancels) -> None:
+    directory, record = _fake_campaign(tmp_path)
+    tools, cancelled = _twin_queue(tmp_path, listing, answers)
+    environment = {
+        **os.environ, "SLURM_ARRAY_TASK_ID": "1", "SLURM_JOB_ID": "7", "PATH": f"{tools}:/usr/bin:/bin",
+        "EVRP_TWIN_ARRAY": "55", "EVRP_TWIN_POLL": "0", "USER": "tester",
+    }
+    result = subprocess.run(
+        ["bash", str(campaign.ROOT / "scripts/campaigns/generalist_graphppo_gpu.sbatch"),
+         str(directory), "2000000", "1", "0", "3"],
+        env=environment, capture_output=True, text=True,
+    )
+    assert result.returncode == status, result.stderr
+    assert record.exists() == trains and cancelled.exists() == cancels
+    if cancels:
+        assert cancelled.read_text().split() == ["55_1"]
+    if trains:
+        assert "--runs 3 " in record.read_text()
+
+
+def _store_campaign(tmp_path, local) -> tuple:
+    """A fake campaign whose demonstrations link into ``local`` and whose built store lies at demonstrations_shared."""
+    directory, record = _fake_campaign(tmp_path)
+    built = tmp_path / "built" / "fingerprint"
+    built.mkdir(parents=True)
+    (built / "meta.json").write_text("{}")
+    (built / "shard_0000.bin").write_bytes(b"x" * 3000)
+    (directory / "demonstrations_shared").symlink_to(tmp_path / "built")
+    (directory / "demonstrations").symlink_to(local)
+    return directory, record
+
+
+@pytest.mark.skipif(not os.access("/dev/shm", os.W_OK), reason="needs a writable /dev/shm")
+def test_the_gpu_wrapper_copies_the_store_into_job_memory_before_it_trains(tmp_path) -> None:
+    local = Path("/dev/shm") / f"evrp_test_{os.getpid()}_{tmp_path.name}"
+    directory, record = _store_campaign(tmp_path, local)
+    wrapper = ["bash", str(campaign.ROOT / "scripts/campaigns/generalist_graphppo_gpu.sbatch"), str(directory), "2000000", "1", "0"]
+    environment = {**os.environ, "SLURM_ARRAY_TASK_ID": "0", "SLURM_JOB_ID": "7", "PATH": "/usr/bin:/bin"}
+    for name in ("SLURM_MEM_PER_NODE", "SLURM_MEM_PER_CPU", "SLURM_CPUS_ON_NODE"):
+        environment.pop(name, None)
+    try:
+        # A job too small for the store beside the trainer does not start, and copies nothing.
+        small = subprocess.run(wrapper, env={**environment, "SLURM_MEM_PER_CPU": "100", "SLURM_CPUS_ON_NODE": "16"},
+                               capture_output=True, text=True)
+        assert small.returncode == 1 and "need 90000 MB" in small.stderr
+        assert not record.exists() and not local.exists()
+        result = subprocess.run(wrapper, env={**environment, "SLURM_MEM_PER_NODE": "176000"}, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert "2 files, 3002 bytes" in result.stdout and record.exists()
+        assert (local / "fingerprint" / "shard_0000.bin").read_bytes() == b"x" * 3000
+        assert (local / "fingerprint" / "meta.json").read_text() == "{}"
+    finally:
+        shutil.rmtree(local, ignore_errors=True)
+
+
+def test_the_gpu_wrapper_leaves_a_store_on_disk_alone(tmp_path) -> None:
+    directory, record = _fake_campaign(tmp_path)
+    (directory / "demonstrations").mkdir()
+    (directory / "demonstrations_shared").mkdir()
+    result = subprocess.run(
+        ["bash", str(campaign.ROOT / "scripts/campaigns/generalist_graphppo_gpu.sbatch"), str(directory), "2000000", "1", "0"],
+        env={**os.environ, "SLURM_ARRAY_TASK_ID": "0", "SLURM_JOB_ID": "7", "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0 and record.exists() and "demonstration store" not in result.stdout
+
+
+def test_submit_can_name_the_runs_to_train(tmp_path, capsys) -> None:
+    destination = _prepared(tmp_path, seeds=2)
+    names = [run["name"] for run in campaign.read_manifest(destination)["runs"]]
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, runs=[names[1]])
+    (command,) = _commands(capsys)
+    assert command.endswith(" 2000000 1 1") and "--array=0-0%" in command
+    with pytest.raises(SystemExit, match="unknown runs"):
+        campaign.submit(destination, "train", 2_000_000, dry_run=True, runs=["nobody_s9"])
+
+
+def test_a_twin_array_must_queue_the_same_runs(tmp_path, capsys) -> None:
+    destination = _prepared(tmp_path, seeds=1)
+    with pytest.raises(SystemExit, match="no training submission"):
+        campaign.submit(destination, "train", 2_000_000, dry_run=True, partition="gpu_h100", twin_of="55")
+    capsys.readouterr()
+    campaign.submit(destination, "train", 2_000_000, dry_run=True)
+    groups = [[int(index)] for index in _commands(capsys)[0].split(" 2000000 1 ")[1].split()]
+    row = {"stage": "train", "budget": 2_000_000, "tag": None, "job": "55", "groups": groups, "runs_per_gpu": 1, "command": []}
+    (destination / "logs" / "submissions.jsonl").write_text(json.dumps(row) + "\n")
+    campaign.submit(destination, "train", 2_000_000, dry_run=True, partition="gpu_h100", twin_of="55")
+    (command,) = _commands(capsys)
+    assert "--export=ALL,EVRP_TWIN_ARRAY=55" in command and "--partition=gpu_h100" in command
+    # Another budget, or other runs, is not the same work.
+    with pytest.raises(SystemExit, match="not the runs composed here"):
+        campaign.submit(destination, "train", 4_000_000, dry_run=True, partition="gpu_h100", twin_of="55")
+    with pytest.raises(SystemExit, match="train stage"):
+        campaign.submit(destination, "evaluate", None, dry_run=True, tag="2M", twin_of="55")
 
 
 def test_the_cpu_wrapper_runs_the_shards_of_its_array_index_on_all_cores(tmp_path) -> None:

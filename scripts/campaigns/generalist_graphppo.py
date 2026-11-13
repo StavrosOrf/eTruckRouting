@@ -156,6 +156,25 @@ ANCHOR = [
     "--bc-coefficient", "0.05", "--bc-coefficient-final", "0.05", "--dagger-expert", *EXPERTS, "--dagger-every", "10",
     "--dagger-episodes", "8", "--dagger-beta", "0.3", "--dagger-beta-final", "0.3",
 ]
+# suite_v6b (user decisions 2026-11-12, pre-registration suite_v6 amendment 25): suite_v5c's anchored recipe on
+# the 25 broad problems. suite_v6 let the imitation weight fade to zero and fell from update 60 on, as suite_v4 had;
+# its entropy bonus held the policy at 1.1 nats, so PPO improved the sampled policy while the greedy one that is
+# validated got worse; and its clone saw 1 to 44 expert episodes per problem (2 500 decisions each, 17 times fewer
+# than suite_v4's). Here: up to 64 expert episodes per problem and 30 000 decisions (345k in all, read from the
+# store on disk), 12 cloning epochs, the imitation weight held at 0.05, a DAgger round of one episode per problem
+# every 3 updates at a held expert share of 0.3, learning rate 1e-4, entropy 0.001, no plan dropout, and 39 updates
+# of 25 600 decisions with a validation every 13; the final checkpoint is the registered one. Up to 80 000 DAgger
+# states are kept (user decision 2026-11-12, amendment 27): a run labels about 82 000, so none is evicted, where
+# 40 000 kept the newest half; at 0.45 MB a state the host stays near 73 GB of its 117 GB share.
+SUITE_V6_BEST = str(ROOT / "results/generalist_graphppo/suite_v6_stage1_best/broad_dagger_plan_charge_s{seed}")
+BROAD_ANCHORED = [
+    *FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN,
+    "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--plan-dropout", "0",
+    "--advantage-by-problem", "--learning-rate", "0.0001", "--entropy-coefficient", "0.001",
+    "--validation-scenarios", "16", "--save-validation-checkpoints", "--critic-heads", "family", *BIGBATCH,
+    "--validate-every", "13", "--bc-episodes", "64", "--bc-max-decisions-per-problem", "30000", "--pretrain-epochs", "12",
+    "--dagger-episodes", "1", "--dagger-every", "3", "--dagger-max-states", "80000", "--dagger-pretrain-epochs", "2",
+]
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
@@ -219,6 +238,14 @@ RECIPES = {
         *FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, *BIGBATCH, "--group-size", "4", "--advantage-mode", "group",
     ],
     "imitation_only_deployed": [*FULL, *IMITATION, *ANCHOR, *PLAN, *CHARGE_PLAN, *DEPLOYED, "--policy-gradient-weight", "0"],
+    # suite_v6b: clone on the larger demonstration set, then the anchored recipe (the main arm); the same with the
+    # surrogate off (what PPO adds over imitation, everything else equal); and the anchored recipe from suite_v6's
+    # best checkpoint of the same seed, without cloning (the two-stage hedge).
+    "broad_clone_anchor": [*BROAD_ANCHORED, "--dagger-pretrain-rounds", "2"],
+    "broad_clone_anchor_imitation": [*BROAD_ANCHORED, "--dagger-pretrain-rounds", "2", "--policy-gradient-weight", "0"],
+    "broad_stage1_anchor": [
+        *BROAD_ANCHORED, "--init-from", SUITE_V6_BEST, "--pretrain-epochs", "0", "--dagger-pretrain-rounds", "0",
+    ],
 }
 SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
@@ -638,6 +665,62 @@ def train(destination: Path, run_index: int, budget: int, device: str | None, bu
         raise SystemExit(code)
 
 
+# What a forked run takes from its source: the complete state after pretraining becomes its training.pt (so the
+# trainer resumes from it with the forked run's own flags), with the policy files and histories that state refers to.
+FORK_STATE = "training_update0.pt"
+FORK_FILES = {
+    "training_update0.pt": "training.pt", "pretrained.pt": "pretrained.pt", "pretrained_config.json": "pretrained_config.json",
+    "ckpt_0.pt": "ckpt_0.pt", "ckpt_0_config.json": "ckpt_0_config.json", "pretrain_history.json": "pretrain_history.json",
+}
+FORK_BEST = {"ckpt_0.pt": "best.pt", "ckpt_0_config.json": "best_config.json"}  # the best checkpoint at update 0
+# Arms whose runs never clone on their own: each is forked from the same-seed run of the arm named here, and
+# ``submit`` leaves a run of such an arm out until ``fork`` has given it its training.pt.
+FORKED_ARMS = {"broad_clone_anchor_imitation": "broad_clone_anchor"}
+
+
+def awaiting_fork(destination: Path, run: dict) -> bool:
+    return run["arm"] in FORKED_ARMS and not (destination / "training" / run["name"] / "training.pt").exists()
+
+
+def fork(destination: Path, source_arm: str, target_arm: str) -> list[str]:
+    """Start every run of ``target_arm`` from the same-seed ``source_arm`` run's state after pretraining.
+
+    The two arms then share the cloned policy, the optimizer, the DAgger set and the random streams at update 0 and
+    differ only by their own flags from there on (the imitation-only control: the surrogate's weight). A target that
+    already has a ``training.pt`` is left alone; a source without its update-0 state yet is reported and skipped.
+    Returns the names of the runs forked by this call.
+    """
+    import hashlib
+
+    manifest = read_manifest(destination)
+    by_seed = {run["seed"]: run for run in manifest["runs"] if run["arm"] == source_arm}
+    targets = [run for run in manifest["runs"] if run["arm"] == target_arm]
+    if not by_seed or not targets:
+        raise SystemExit(f"the manifest has no runs of {source_arm!r} or {target_arm!r}")
+    forked = []
+    for run in targets:
+        source = destination / "training" / by_seed[run["seed"]]["name"]
+        target = destination / "training" / run["name"]
+        if (target / "training.pt").exists():
+            print(f"{run['name']}: already has a training.pt, left alone", flush=True)
+            continue
+        missing = [name for name in (*FORK_FILES, *FORK_BEST) if not (source / name).is_file()]
+        if missing:
+            print(f"{run['name']}: {source.name} lacks {sorted(set(missing))}, not forked yet", flush=True)
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        for name, copy in (*FORK_BEST.items(), *FORK_FILES.items()):
+            if copy != "training.pt":
+                shutil.copy2(source / name, target / copy)
+        # training.pt goes last: its presence is what marks the run as forked and makes the trainer resume.
+        digest = hashlib.sha256((source / FORK_STATE).read_bytes()).hexdigest()
+        write_json(target / "forked_from.json", {"source": str(source), "state": FORK_STATE, "sha256": digest})
+        shutil.copy2(source / FORK_STATE, target / "training.pt")
+        print(f"{run['name']}: forked from {source.name} ({digest[:12]})", flush=True)
+        forked.append(run["name"])
+    return forked
+
+
 # ---------------------------------------------------------------------------
 # Packing several training runs into one allocation
 # ---------------------------------------------------------------------------
@@ -876,6 +959,7 @@ def submit(
     decision: dict | None = None,
     dependency: str | None = None,
     mem_per_cpu: str | None = None,
+    twin_of: str | None = None,
 ) -> None:
     """Compose (and unless ``dry_run``, submit) the sbatch call(s) of a stage.
 
@@ -889,7 +973,11 @@ def submit(
     stage until that job ends, which keeps the allocation cap); ``mem_per_cpu``
     replaces the manifest's memory per core (a job is charged by the largest
     of its core, GPU and memory shares of the node, so twice the memory of a
-    GPU share costs two shares).
+    GPU share costs two shares). ``twin_of`` names a training array that already
+    queues the same groups on another partition (a job cannot name two GPU
+    partitions here): the new array's elements carry that job id, and the
+    wrapper lets each one yield to a twin element that is running or else take
+    the twin out of the queue before it trains, so a run never trains twice.
     """
     manifest = read_manifest(destination)
     slurm = {**SLURM, **manifest["slurm"]}
@@ -908,7 +996,10 @@ def submit(
         "sbatch", "--parsable", *(["--test-only"] if test_only else []),
         f"--account={slurm['account']}", f"--output={destination}/logs/slurm-%A_%a.out",
         *([f"--dependency={dependency}"] if dependency else []),
+        *([f"--export=ALL,EVRP_TWIN_ARRAY={twin_of}"] if twin_of else []),
     ]
+    if twin_of and stage != "train":
+        raise SystemExit("--twin-of applies to the train stage")
     cpu_gpus = [f"--gpus-per-task={slurm['cpu_gpus']}"] if slurm.get("cpu_gpus", 0) > 0 else []
     commands = []
     if stage == "references":
@@ -938,12 +1029,22 @@ def submit(
         known = {run["arm"] for run in manifest["runs"]}
         if arms and not set(arms) <= known:
             raise SystemExit(f"unknown arms {sorted(set(arms) - known)}; the manifest has {sorted(known)}")
+        names = {run["name"] for run in manifest["runs"]}
+        if runs and not set(runs) <= names:
+            raise SystemExit(f"unknown runs {sorted(set(runs) - names)}")
         pending = [
             index for index, run in enumerate(manifest["runs"])
-            if (not arms or run["arm"] in arms) and not completed_run(destination, run, budget)
+            if (not arms or run["arm"] in arms) and (not runs or run["name"] in runs)
+            and not completed_run(destination, run, budget)
         ]
+        waiting = [index for index in pending if awaiting_fork(destination, manifest["runs"][index])]
+        if waiting:
+            # Submitted now, such a run would clone on its own instead of sharing its source run's start.
+            names = ", ".join(manifest["runs"][index]["name"] for index in waiting)
+            print(f"not submitted, awaiting fork from {sorted(set(FORKED_ARMS.values()))}: {names}", flush=True)
+            pending = [index for index in pending if index not in waiting]
         if not pending:
-            raise SystemExit(f"every selected run already reached {budget}")
+            raise SystemExit(f"every selected run already reached {budget} or awaits its fork")
         if not (destination / "references" / "summary.json").exists():
             raise SystemExit("merge the references first")
         # One array per group size, so a short last group asks only for what it uses.
@@ -990,6 +1091,16 @@ def submit(
         ]))
     else:
         raise SystemExit(f"unknown stage {stage!r}")
+    if twin_of:
+        # Element i of each array must stand for the same runs, or a twin would be yielded to or removed wrongly.
+        log = destination / "logs" / "submissions.jsonl"
+        rows = [json.loads(line) for line in log.read_text().splitlines() if line.strip()] if log.exists() else []
+        twin = next((row for row in rows if row["job"] == str(twin_of) and row["stage"] == "train"), None)
+        if twin is None:
+            raise SystemExit(f"{log} has no training submission {twin_of}")
+        mine = [(groups, budget, runs_per_gpu) for groups, _ in commands]
+        if mine != [(twin["groups"], twin["budget"], twin["runs_per_gpu"])]:
+            raise SystemExit(f"job {twin_of} queues {twin['groups']} at {twin['budget']}, not the runs composed here: {mine}")
     for groups, command in commands:
         print(" ".join(command), flush=True)
         if dry_run:
@@ -1407,6 +1518,10 @@ def main() -> None:
     command.add_argument("--device", default="cpu")
     command.add_argument("--tasks", default=None, help=argparse.SUPPRESS)  # the CPU wrapper passes its group
     command.add_argument("--workers", type=int, default=None, help=argparse.SUPPRESS)
+    command = commands.add_parser("fork", help="Start one arm's runs from another arm's state after pretraining.")
+    command.add_argument("--directory", type=Path, default=DEFAULT)
+    command.add_argument("--from-arm", required=True)
+    command.add_argument("--to-arm", required=True)
     command = commands.add_parser("train-pack", help="Several runs in one allocation, each on its own GPU and CPU slice.")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--runs", type=_indices, required=True, help="Comma-separated indices into manifest runs.")
@@ -1420,7 +1535,7 @@ def main() -> None:
     command.add_argument("--arms", nargs="*", default=None, help="train: only the runs of these arms.")
     command.add_argument("--split", default="validation", choices=["validation", "test"])
     command.add_argument("--tag", default=None, help="evaluate: checkpoint label, e.g. 2M, 8M, final.")
-    command.add_argument("--runs", nargs="*", default=None, help="evaluate: only these runs.")
+    command.add_argument("--runs", nargs="*", default=None, help="train/evaluate: only these runs, by name.")
     command.add_argument("--pack", type=int, default=None,
                          help="train: K runs per job (one node). references: J whole-node jobs sharing the shards.")
     command.add_argument("--runs-per-gpu", type=int, default=1, help="train with --pack: runs sharing one GPU.")
@@ -1435,6 +1550,9 @@ def main() -> None:
                          help="sbatch --dependency value, e.g. afterany:JOBID (wait for a job to end).")
     command.add_argument("--hours", type=int, default=None,
                          help="train/evaluate: time limit in hours instead of the default for the budget or split.")
+    command.add_argument("--twin-of", default=None, metavar="JOBID",
+                         help="train: the array already queuing the same runs on another partition; only one of each "
+                              "pair of elements trains (this one yields to a running twin, else removes it).")
     command.add_argument("--safety-mask", action="store_true",
                          help="evaluate: decision-time feasibility mask (track A), frozen in <tag>/decision.json.")
     command.add_argument("--safety-margin", type=float, default=None,
@@ -1498,6 +1616,8 @@ def main() -> None:
         merge_references(destination)
     elif arguments.command == "train":
         train(destination, arguments.run, arguments.budget, arguments.device)
+    elif arguments.command == "fork":
+        fork(arguments.directory, arguments.from_arm, arguments.to_arm)
     elif arguments.command == "train-pack":
         train_pack(destination, arguments.runs, arguments.budget, arguments.runs_per_gpu, arguments.device)
     elif arguments.command == "demonstrations":
@@ -1509,6 +1629,7 @@ def main() -> None:
             pack=arguments.pack, runs_per_gpu=arguments.runs_per_gpu, cpus=arguments.cpus,
             partition=arguments.partition, cpus_per_gpu=arguments.cpus_per_gpu, test_only=arguments.test_only,
             time_limit=arguments.hours, dependency=arguments.dependency, mem_per_cpu=arguments.mem_per_cpu,
+            twin_of=arguments.twin_of,
             decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,

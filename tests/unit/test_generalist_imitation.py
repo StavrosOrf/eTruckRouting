@@ -1,6 +1,7 @@
 """Imitation for the generalist policy: demonstrations, retained imitation, DAgger, resume."""
 
 import json
+import shutil
 from dataclasses import asdict
 
 import numpy as np
@@ -715,6 +716,18 @@ def test_the_trainer_cli_clones_demonstrations_runs_dagger_and_resumes(suite, tm
     stores = list((tmp_path / "store").iterdir())
     assert len(stores) == 1 and (stores[0] / "meta.json").exists()
     run = tmp_path / "training" / "cli"
+    # The complete state after pretraining is kept: a control forked from it starts at update 0 with the same
+    # validation row and trains with its own flags (here the surrogate switched off).
+    control = tmp_path / "training" / "control"
+    control.mkdir()
+    shutil.copy2(run / "training_update0.pt", control / "training.pt")
+    forked = [*common[: common.index("--run-name")], "--run-name", "control", *common[common.index("--run-name") + 2:]]
+    cli.main([*forked, "--total-timesteps", "24", "--policy-gradient-weight", "0", "--resume", str(control / "training.pt")])
+    main_validation = json.loads((run / "validation_history.json").read_text())
+    control_validation = json.loads((control / "validation_history.json").read_text())
+    assert control_validation[0]["update"] == 0 and control_validation[0]["selection_score"] == main_validation[0]["selection_score"]
+    assert [record["update"] for record in json.loads((control / "training_history.json").read_text())] == [1, 2]
+    assert json.loads((control / "run_config.json").read_text())["ppo_config"]["policy_gradient_weight"] == 0.0
     history = json.loads((run / "training_history.json").read_text())
     pretrain = json.loads((run / "pretrain_history.json").read_text())
     assert [record["update"] for record in history] == [1, 2]

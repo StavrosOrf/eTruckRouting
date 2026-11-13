@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import time
 from dataclasses import asdict
@@ -64,6 +65,7 @@ from scripts.evaluation.canonical_harness import split_seeds
 
 
 SUITE = Path("EVRoutingEnv/config_files/generalist_suite")
+UPDATE0_CHECKPOINT = "training_update0.pt"
 SUITE_PROBLEMS = (
     "ca_sameday", "ca_drayage_combined", "tx_longhaul", "tx_longhaul_congested", "pnw_longhaul_hos",
 )
@@ -591,13 +593,18 @@ def main(argv: list[str] | None = None) -> None:
             trainer.save(destination, prefix="pretrained")
             score_validation(0)
             checkpoint()
+            # The complete state after pretraining, kept beside the rolling training.pt: a control run resumes
+            # from a copy of it with its own flags (scripts/campaigns/generalist_graphppo.py fork).
+            shutil.copy2(destination / "training.pt", destination / UPDATE0_CHECKPOINT)
         elif arguments.init_from and not arguments.resume:
             score_validation(0)  # the warm start, the baseline of the run
             checkpoint()
         window.update(steps=trainer.total_steps, time=time.perf_counter())
         trainer.learn(progress)
         checkpoint()
-        if not stop_requested:
+        validated = bool(validation_history) and validation_history[-1].get("update") == trainer.completed_updates
+        if not stop_requested and not validated:
+            # The last update is scored once: when it was a validation update its row is already there.
             score_validation(trainer.completed_updates)
             checkpoint()
         trainer.save(destination, prefix="final")

@@ -791,6 +791,59 @@ def test_submit_can_name_the_runs_to_train(tmp_path, capsys) -> None:
         campaign.submit(destination, "train", 2_000_000, dry_run=True, runs=["nobody_s9"])
 
 
+def test_a_tag_can_freeze_fewer_seeds_per_problem() -> None:
+    assert campaign.decision_from(False, None, count=64) == {"count": 64}
+    assert campaign.decision_from(False, None, count=500, first=500) == {"count": 500, "first": 500}
+    assert campaign.decision_from(False, None, count=64, first=0) == {"count": 64}
+    settings = campaign.decision_from(True, 0.0, retire_guard=True, checkpoint="final", public_wake=True, count=64)
+    assert settings == {
+        "safety_mask": True, "safety_margin": 0.0, "retire_guard": True, "checkpoint": "final",
+        "public_wake": True, "count": 64,
+    }
+
+
+def test_a_file_lock_is_held_by_one_process_at_a_time(tmp_path) -> None:
+    lock = tmp_path / "file.lock"
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time; from pathlib import Path\n"
+         "from scripts.campaigns import generalist_graphppo as campaign\n"
+         "with campaign.file_lock(Path(sys.argv[1])) as held:\n"
+         "    print('held' if held else 'refused', flush=True); time.sleep(60)\n", str(lock)],
+        cwd=campaign.ROOT, stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        with campaign.file_lock(lock, wait=False) as held:
+            assert held is False
+    finally:
+        holder.kill()
+        holder.wait()
+    with campaign.file_lock(lock, wait=False) as held:  # released with the process
+        assert held is True
+
+
+def test_processes_asked_for_the_same_files_compute_each_once(tmp_path) -> None:
+    script = (
+        "import os, sys, time; from pathlib import Path\n"
+        "from scripts.campaigns import generalist_graphppo as campaign\n"
+        "folder = Path(sys.argv[1])\n"
+        "targets = [folder / f'file_{index}.json' for index in range(6)]\n"
+        "def compute(target):\n"
+        "    with (folder / 'computed.txt').open('a') as log:\n"
+        "        log.write(f'{target.name} {os.getpid()}\\n')\n"
+        "    time.sleep(0.3)\n"
+        "    target.write_text('done')\n"
+        "campaign.shared_files(targets, lambda target: target.exists(), compute, poll=0.05)\n"
+        "assert all(target.exists() for target in targets)\n"
+    )
+    workers = [subprocess.Popen([sys.executable, "-c", script, str(tmp_path)], cwd=campaign.ROOT) for _ in range(3)]
+    assert [worker.wait(timeout=120) for worker in workers] == [0, 0, 0]
+    computed = [line.split() for line in (tmp_path / "computed.txt").read_text().splitlines()]
+    assert sorted(name for name, _ in computed) == [f"file_{index}.json" for index in range(6)]  # each once
+    assert len({pid for _, pid in computed}) > 1  # the work was shared
+
+
 def test_a_twin_array_must_queue_the_same_runs(tmp_path, capsys) -> None:
     destination = _prepared(tmp_path, seeds=1)
     with pytest.raises(SystemExit, match="no training submission"):

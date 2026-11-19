@@ -144,6 +144,140 @@ Drayage services rise on every PPO run (+0.05 to +0.19 vs start) and are reporte
 
 Reading: the imitation-only control settles the attribution question. On two seeds its best checkpoint is the start itself, so the anchor alone changes nothing and every gain of the PPO arms is PPO's; on seed 1 the anchor alone does move the policy through the gate, but at −41 % drayage services, and the PPO arms still beat it by 2.4–2.9 points of Northwest hours. PPO's signature is the same in every arm: Northwest long-haul hours better by 1.5–3.6 points, drayage services up, Texas and congested hours worse by 0.4–2.3 points. Neither change removes the Texas cost; what the critics and the big batch buy is that all three seeds now pass the gate after training (the anchored arm alone passed on 2 of 3), i.e. a more reliable trade rather than a larger one. The group baseline (common random numbers across four env slots) cost Northwest success on two seeds. The checkpoint selector hard-coded 5 120 decisions per update and would have mis-numbered the 20 480-decision big-batch runs; it now reads the value from each run's configuration (`agent/pilots/suite_v5_select/select.py`). Per-seed outputs: `agent/pilots/suite_v5_select/improvement_suite_v5{b,c}_*.json`, `ppo_share_suite_v5{b,c}.json`.
 
+### One policy for 25 problems (suite_v6 / suite_v6b, pre-registered, development result 2026-11-18)
+
+Question (`results/generalist_graphppo/agent/preregistration_suite_v6.md`, amendments 23 to 30): can one policy trained on 25 problems (the five suite problems plus other fleets and cities, 5 to 40 trucks) come near the best-known solutions on all of them, and does PPO add to imitation there? Four sets of five seeds were compared on 64 validation seeds per problem with the training filters. This is the development comparison; the confirmatory tests are reported separately.
+
+| Arm | What it is | Distance to the gate | Problems passed of 25 (mean, range) | Without single-episode failures |
+| --- | --- | --- | --- | --- |
+| `broad_clone_anchor_imitation` | clone on 345k expert decisions, imitation and DAgger only (PPO off) | 0.006 | 17.2 (15 to 19) | 18.8 |
+| `broad_stage1_anchor` | the same recipe with PPO, started from each `suite_v6` run's best checkpoint | 0.013 | 15.4 (14 to 19) | 19.0 |
+| `broad_dagger_plan_charge` (`suite_v6`) | the earlier recipe (imitation weight fading), best checkpoint | 0.024 | 14.0 (12 to 17) | 16.0 |
+| `broad_clone_anchor` | clone on 345k expert decisions, then PPO with the imitation term held | 0.033 | 12.4 (5 to 17) | 14.4 |
+
+- No run passes all 25 problems. The hours-of-service long-haul problems fail for nearly every run of every arm (0 to 0.8 of 4 passed on average).
+- With 64 seeds one failed episode is 1.6 %, above the 1 % failure limit, so a problem can fail on a single episode; the last column counts those as passes. The distance weighs them lightly and is the registered measure.
+- PPO's contribution, measured as `broad_clone_anchor` against its control from the same starting state: not noticeable on any of the five seeds by the suite_v5 rule. PPO lost a gate criterion on 7 to 19 problems per seed and gained none that qualifies. It raised drayage services by 0.13 of best-known and made long-haul hours 4.6 points worse.
+- Six times more expert data (345k decisions, 95 % holdout agreement against 80 %) moved the clone's starting validation score from 2.418 to 2.435.
+- Holding the imitation term on removed the late decline of `suite_v4` and `suite_v6`: the two-stage runs rose from 2.526 to 2.570 on the 16 monitoring seeds.
+- Confirmatory arm by the registered rule: `broad_stage1_anchor` (the control is closer to the gate and was registered as ineligible).
+
+Gate tables: `results/generalist_graphppo/suite_v6b/evaluation/validation/final_v64_mask0_guard_publicwake/near_optimal_gate.md` and `results/generalist_graphppo/suite_v6/evaluation/validation/best_v64_mask0_guard_publicwake/near_optimal_gate.md`; PPO contribution per seed: `ppo_contribution_*.json` in the first folder.
+
+#### Change from the shared starting policy (2026-11-18)
+
+The main runs and their controls start from the same policy: the clone after two DAgger pretraining rounds (`ckpt_0`). It was evaluated on the same 64 validation seeds (tag `ckpt0_v64_mask0_guard_publicwake`).
+
+| Policy | Distance to the gate | Problems passed of 25 | Without single-episode failures | Drayage services / best-known | Long-haul hours excess | Hours-of-service success | Hours-of-service hours excess |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Shared start (update 0) | 0.014 | 13.4 | 17.6 | 0.915 | 1.4 % | 93.6 % | 5.0 % |
+| `broad_clone_anchor` final (PPO on) | 0.033 | 12.4 | 14.4 | 1.074 | 4.8 % | 89.8 % | 11.5 % |
+| `broad_clone_anchor_imitation` final (PPO off) | 0.006 | 17.2 | 18.8 | 0.940 | 1.1 % | 95.6 % | 4.4 % |
+
+- The 39 updates with PPO moved the policy away from the gate: drayage services rose, long-haul hours and hours-of-service success got worse. By the suite_v5 rule the final policy is not noticeably better than the start on any seed (gate criteria lost on 5 to 15 problems per seed, no qualifying gain).
+- The same 39 updates with the policy-gradient term off (imitation on expert data plus DAgger corrections) moved it closer: noticeably better on one seed of five, criteria lost on 0 to 2 problems per seed, 1 to 3 qualifying gains per seed (nearly all lower hours excess on hours-of-service and congested long haul).
+
+Per-seed files: `change_from_start_<run>.json` in the `final_v64_mask0_guard_publicwake` folder.
+
+#### Confirmatory test of claim 1 on a fresh bank (2026-11-18): fails
+
+The five `broad_stage1_anchor` runs at their final checkpoints, the five suite problems, 500 fresh test seeds (test-namespace seeds 500 to 999, bank `bks_test2`, built before any of these policies existed), the training filters, evaluated once. The claim needed at least 3 of 5 seeds to pass all five problems; none does.
+
+| Seed | Problems passed | `ca_sameday` services / best-known (limit 0.95) | `pnw_longhaul_hos` success (limit 97.8 %) | `pnw_longhaul_hos` hours excess (limit 5 %) |
+| --- | --- | --- | --- | --- |
+| 0 | 4 of 5 | 0.967 | **97.2 %** | 4.2 % |
+| 1 | 3 of 5 | **0.941** | **95.2 %** | **5.2 %** |
+| 2 | 4 of 5 | 0.980 | **97.0 %** | **6.0 %** |
+| 3 | 3 of 5 | **0.950** (below the limit before rounding) | **96.8 %** | **6.4 %** |
+| 4 | 3 of 5 | **0.945** | **96.8 %** | 4.2 % |
+
+Every seed passes `ca_drayage_combined` (services 1.31 to 1.40 of best-known), `tx_longhaul` (hours excess 1.0 to 2.2 %) and `tx_longhaul_congested` (2.8 to 4.8 %); failure rates are 0.0 to 0.8 % everywhere. The arm's distance to the gate is 0.004: the misses are small, and they are the same two problems on every seed. The policy trained on five problems passed this gate on 2 of 3 seeds on 2026-10-31 (section 1); the policy trained on 25 does not. Claim 2 needs a run that passes claim 1, so it cannot hold; its held-out evaluations are reported per run when they finish. Record: `results/generalist_graphppo/agent/TEST2_OPENED`, amendments 30 and 31 of the pre-registration, gate table in `results/generalist_graphppo/suite_v6b_test2/evaluation/test/test2_final_mask0_guard_publicwake/`.
+
+#### Confirmatory test of claim 2 on held-out problems (2026-11-18): fails for every kind
+
+The same five runs and filters on 15 problems the policy never trained on, 128 validation-namespace seeds each, evaluated once. Claim 2 needed a run that passes claim 1, so it could not hold by rule; on its own numbers no run passes every problem of any kind either. Problems passed of 15 per seed: 10, 8, 9, 9, 9; distance to the gate 0.025.
+
+| Kind | Problem | Seeds passing (of 5) | Range over seeds |
+| --- | --- | --- | --- |
+| Unseen network | `de_nl_be_longhaul` | 5 | hours excess 1.0 to 3.8 % |
+| Unseen network | `de_nl_be_longhaul_t25` | 5 | hours excess 2.4 to 4.2 % |
+| Unseen network | `de_nl_be_longhaul_hos` | 0 | success 91.4 to 95.3 % (98 % needed) |
+| Size inside the trained range | `tx_longhaul_t5c15` | 4 | hours excess 0.2 to 1.6 %; one seed has two failed episodes |
+| Size inside the trained range | `tx_longhaul_t20c60` | 5 | hours excess 2.4 to 3.8 % |
+| Size inside the trained range | `ca_sameday_t20` | 5 | services 0.974 to 0.992 of best-known |
+| Larger fleet than trained | `tx_longhaul_t32` | 5 | hours excess 2.2 to 4.6 % |
+| Larger fleet than trained | `ca_drayage_combined_t40` | 5 | services 1.12 to 1.52 |
+| Larger fleet than trained | `ca_sameday_t50` | 2 | services 0.921 to 0.972; failure up to 1.6 % |
+| Larger fleet than trained on its network | `pnw_longhaul_hos_t25` | 0 | success 86.7 to 96.9 %; hours excess 3.2 to 10.2 % |
+| Smaller fleet than trained | `ca_sameday_t5` | 0 | services 0.902 to 0.930; failure 0.8 to 6.2 % |
+| Unseen combination | `pnw_drayage_combined` | 5 | services 1.15 to 1.24 |
+| Unseen combination | `pnw_drayage_combined_t25` | 4 | services 0.918 to 1.27 |
+| Unseen combination | `tx_sameday` | 0 | services 0.830 to 0.906 |
+| Unseen combination | `tx_sameday_t40` | 0 | services 0.756 to 0.933 |
+
+- What fails is the same on every seed: hours of service (new network, larger fleet), the smallest same-day fleet, and same-day in Texas.
+- Against the five-problem policy on the eight problems of the 2026-11-01 test (same best-known solutions; not a registered comparison): distance 0.090 then, 0.022 now; problems passed of 8: 4 on each of three runs then, 5, 4, 5, 5, 5 now. `pnw_drayage_combined` moved from 0.58 to 0.64 of best-known to 1.15 to 1.24, `de_nl_be_longhaul_hos` success from 83 to 88 % to 91 to 95 %, `ca_sameday_t5` services from 0.83 to 0.86 to 0.90 to 0.93. Training on 25 problems improved transfer without reaching the gate.
+
+Gate table: `results/generalist_graphppo/suite_v6b_heldout/evaluation/validation/heldout_final_mask0_guard_publicwake/near_optimal_gate.md`; amendment 33 of the pre-registration.
+
+#### Heavy problems left out of training (scale-up report, 2026-11-19; no claim)
+
+Registered on 2026-11-10 as a report only: the five `suite_v6` runs (`broad_dagger_plan_charge`, the earlier recipe, best checkpoint) on the 14 problems with 25 to 100 trucks that were too costly to train on, the first 32 validation seeds, the training filters. These are not the policies of the confirmatory tests.
+
+No run passes all 14: the five seeds pass 6, 8, 5, 8 and 7. Distance to the gate 0.130, against 0.024 for the same policies on the 25 training problems. With 32 seeds one unsuccessful episode is 3.1 %, so a long-haul problem fails on a single episode; read the quantities, not the pass counts.
+
+| Problem | Seeds passing (of 5) | Seeds 0 / 1 / 2 / 3 / 4 |
+| --- | --- | --- |
+| `tx_longhaul_t40` | 5 | hours excess 1.2 / 0.7 / 2.0 / 2.9 / 2.1 % |
+| `tx_longhaul_congested_t40` | 3 | hours excess 2.7 / 2.5 / 5.8 / 3.4 / 7.3 % |
+| `tx_longhaul_hos_t40` | 0 | success 97 / 75 / 88 / 94 / 84 % |
+| `pnw_longhaul_t40` | 2 | success 97 / 100 / 84 / 100 / 94 % |
+| `pnw_longhaul_congested_t40` | 1 | success 100 / 94 / 75 / 94 / 88 % |
+| `pnw_longhaul_hos_t40` | 1 | success 94 / 38 / 91 / 100 / 84 % |
+| `pnw_longhaul_t60` | 1 | success 94 / 94 / 84 / 94 / 100 % |
+| `ca_sameday_t100` | 0 | services of best-known 0.419 / 0.873 / 0.000 / 0.412 / 0.266 |
+| `sea_sameday_t60` | 4 | services 0.965 / 0.980 / 0.000 / 0.953 / 0.972 |
+| `chi_sameday_t25` | 5 | services 0.980 to 0.997 |
+| `chi_sameday_t50` | 5 | services 0.973 to 0.992 |
+| `ca_drayage_combined_t60` | 2 | services 0.624 / 0.774 / 1.036 / 0.834 / 1.217 |
+| `tx_drayage_combined_t25` | 4 | services 0.832 / 1.465 / 1.197 / 1.164 / 1.235 |
+| `tx_drayage_combined_t50` | 1 | services 0.702 / 1.162 / 0.818 / 0.789 / 0.767 |
+
+- The policies do not carry to fleets of 40 and more: long-haul success drops to 75 to 97 % on most 40- and 60-truck problems, and the 100-truck same-day problem is served at 0 to 87 % of best-known.
+- Seed 2 serves nothing on `ca_sameday_t100` and `sea_sameday_t60`: every episode has one decision per truck, zero hours and every request lost, which reads as every truck retired at its first decision. The other seeds do not do this.
+- What holds: Texas long haul at 40 trucks and Chicago same-day at 25 and 50 on every seed; Houston drayage at 25 and Seattle same-day at 60 on four of five.
+
+Gate table: `results/generalist_graphppo/suite_v6_scaleup/evaluation/validation/scaleup_best_v32_mask0_guard_publicwake/near_optimal_gate.md`.
+
+#### Re-check against the planners (2026-11-19)
+
+All six evaluation sets were recomputed from their rows (40 run files); every stored gate verdict and quantity matches. Each solver of the best-known portfolio was then judged by the same gate on the same seeds (`agent/pilots/suite_v6b_ppo/recheck_against_solvers.py`, `policy_vs_planner.py`).
+
+| On the 25 training problems (64 seeds) | Problems passed | Distance to the gate |
+| --- | --- | --- |
+| `lh_plan` on static, `rolling_request` on request problems (the better per problem) | 24 of 25 | 0.0002 |
+| `broad_clone_anchor_imitation` (PPO off) | 17.2 | 0.006 |
+| `broad_stage1_anchor` (two-stage) | 15.4 | 0.013 |
+| `broad_dagger_plan_charge` (`suite_v6`) | 14.0 | 0.024 |
+| `broad_clone_anchor` (PPO on) | 12.4 | 0.033 |
+
+Against the planner the policy reads at every decision, on the same seeds:
+
+| Set | Policy | Long-haul hours | Hours-of-service success (policy / planner) | Same-day services | Drayage on-time services |
+| --- | --- | --- | --- | --- | --- |
+| Training problems | PPO off | +0.3 % | 95.5 % / 98.0 % | ×0.994 | ×0.969 |
+| Training problems | PPO on | +4.6 % | 89.8 % / 98.0 % | ×0.980 | ×1.114 |
+| Training problems | two-stage | +1.7 % | 93.0 % / 98.0 % | ×0.971 | ×1.372 |
+| Fresh test bank | two-stage | +1.3 % | 96.6 % / 99.2 % | ×0.957 | ×1.388 |
+| Held-out problems | two-stage | +2.1 % | 93.4 % / 95.7 % | ×0.923 | ×1.281 |
+| Heavy problems | `suite_v6` | +2.4 % | 84.4 % / 90.6 % | ×0.786 | ×0.944 |
+
+- On long haul and same-day the learned policy is a slightly worse copy of its planner: the PPO-off policy replays the plan's episode on 85 % of plain long-haul episodes, and the planner alone is closer to the gate on 12 of 25 problems and equal on 12. The policy cannot run without the planner (measured on the five-problem policy, section 3).
+- On drayage the PPO-trained policies beat the best heuristic by 28 to 39 % of on-time services: on 97 % of training episodes, 99 % of 2,500 fresh test episodes and 89 % of held-out episodes in other regions. The PPO-off control does not (×0.97), so this is what the reinforcement-learning phase adds.
+- The drayage gain costs 11 to 12 % more operating hours and more late jobs (5.6 to 6.7 per episode against 1.5 to 1.7). Earlier checks found it disappears at 30-minute terminal turns, and the older policies show no gain at 25 to 60 trucks.
+
+Reading: not a general solver that improves on existing planners; one replicated result, that reinforcement learning on top of a planner finds a better drayage strategy and does not help where the planner is already strong.
+
 ## 4. Integrity of the test
 
 - `agent/TEST_OPENED` was written on 2026-10-31 with the user's approval, after the user was told the validation pass depends on the guard.

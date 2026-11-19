@@ -33,6 +33,7 @@ a later checkpoint is never confused with an earlier one; baselines are shared i
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import json
 import os
@@ -1171,6 +1172,7 @@ def checkpoint_label(value: str) -> str:
 def decision_from(
     safety_mask: bool, safety_margin: float | None, search: str | None = None, k: int = 4, n: int = 16,
     retire_guard: bool = False, checkpoint: str | None = None, batch: int | None = None, public_wake: bool = False,
+    count: int | None = None, first: int | None = None,
 ) -> dict | None:
     if safety_margin is not None and not safety_mask:
         raise SystemExit("--safety-margin needs --safety-mask")
@@ -1187,9 +1189,59 @@ def decision_from(
         settings.update(envs_per_problem=int(batch))
     if public_wake:
         settings.update(public_wake=True)
+    if count is not None:
+        # Fewer seeds per problem than the manifest's split (the first ``count`` of it).
+        settings.update(count=int(count))
+    if first:
+        # The seeds start at index ``first`` of the split's namespace (a bank built past seeds already spent).
+        settings.update(first=int(first))
     if search:
         settings.update(search=search, k=int(k) if search == "lookahead" else None, n=int(n) if search == "best_of_n" else None)
     return settings or None
+
+
+@contextlib.contextmanager
+def file_lock(path: Path, wait: bool = True):
+    """A POSIX lock on ``path``, released when the block or the process ends.
+
+    Yields True once held. With ``wait`` off it yields False at once when another process holds the lock.
+    """
+    import fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        try:
+            fcntl.lockf(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.lockf(handle, fcntl.LOCK_UN)
+
+
+def shared_files(targets, done, compute, poll: float = 30.0) -> None:
+    """Bring every file of ``targets`` up to date when several processes are asked for the same files at once.
+
+    A file is computed by the one process holding its lock; the others go on to the next file and come back
+    until ``done`` holds for all of them. Evaluation jobs of one campaign share their baselines this way:
+    they split the work, none writes a file another is writing, and none waits while work is left.
+    """
+    pending = list(targets)
+    while pending:
+        busy = []
+        for target in pending:
+            if done(target):
+                continue
+            with file_lock(target.with_name(target.name + ".lock"), wait=False) as held:
+                if not held:
+                    busy.append(target)
+                elif not done(target):
+                    compute(target)
+        pending = busy
+        if pending:
+            time.sleep(poll)
 
 
 def evaluate(
@@ -1229,8 +1281,6 @@ def evaluate(
     os.environ["EVRP_PLAN_DROPOUT"] = "0"
     problems = [SuiteProblem(**row) for row in json.loads(Path(manifest["problems"]).read_text())]
     problems += [SuiteProblem(**row) for row in json.loads(Path(manifest["probes"]).read_text())]
-    count = count or manifest["seeds"][split]
-    seeds = split_seeds(split, count)
     folder = destination / "evaluation" / split
     (folder / tag).mkdir(parents=True, exist_ok=True)
     if decision:
@@ -1239,21 +1289,32 @@ def evaluate(
     if applied:
         print(f"decision-time settings ({tag}): {applied}", flush=True)
     envs_per_problem = applied.get("envs_per_problem", envs_per_problem)
+    count = count or applied.get("count") or manifest["seeds"][split]
+    first = int(applied.get("first", 0))
+    seeds = split_seeds(split, first + count)[first:]
     # Baselines on exactly these seeds; the teacher rows are also the
-    # per-scenario references of the score.
-    for problem in problems:
-        for policy in ["teacher", *manifest["extra_baselines"].get(problem.name, [])]:
-            target = folder / "baselines" / f"{problem.name}__{policy}.json"
-            if target.exists() and {row["seed"] for row in json.loads(target.read_text())} == set(seeds):
-                continue
-            target.parent.mkdir(exist_ok=True)
-            rows = run_reference_episodes(problem, seeds, policy, workers=workers)
-            for row in rows:
-                row.pop("actions", None)
-            partial = target.with_suffix(".partial")  # a concurrent evaluation never reads a half-written file
-            write_json(partial, rows)
-            partial.replace(target)
-            print(f"baseline {problem.name} {policy}: {len(rows)}", flush=True)
+    # per-scenario references of the score. Jobs of one campaign start together and share
+    # these files: each file is computed by one job, and every job goes on once all are there.
+    baselines = {
+        folder / "baselines" / f"{problem.name}__{policy}.json": (problem, policy)
+        for problem in problems for policy in ["teacher", *manifest["extra_baselines"].get(problem.name, [])]
+    }
+
+    def baseline_done(target: Path) -> bool:
+        return target.exists() and {row["seed"] for row in json.loads(target.read_text())} == set(seeds)
+
+    def compute_baseline(target: Path) -> None:
+        problem, policy = baselines[target]
+        rows = run_reference_episodes(problem, seeds, policy, workers=workers)
+        for row in rows:
+            row.pop("actions", None)
+        partial = target.with_suffix(".partial")  # a concurrent evaluation never reads a half-written file
+        write_json(partial, rows)
+        partial.replace(target)
+        print(f"baseline {problem.name} {policy}: {len(rows)}", flush=True)
+
+    (folder / "baselines").mkdir(exist_ok=True)
+    shared_files(list(baselines), baseline_done, compute_baseline)
     references = ReferenceTable({
         problem.name: {
             row["seed"]: row for row in json.loads((folder / "baselines" / f"{problem.name}__teacher.json").read_text())
@@ -1564,6 +1625,12 @@ def main() -> None:
                               "validation), frozen in <tag>/decision.json.")
     command.add_argument("--eval-batch", type=int, default=None,
                          help="evaluate: environments per problem, frozen in <tag>/decision.json (robustness to batching).")
+    command.add_argument("--count", type=int, default=None,
+                         help="evaluate: seeds per problem (the first COUNT of the split) instead of the manifest's, "
+                              "frozen in <tag>/decision.json.")
+    command.add_argument("--first-seed", type=int, default=None, metavar="INDEX",
+                         help="evaluate: start at this index of the split's seeds (0 = its first seed), "
+                              "frozen in <tag>/decision.json.")
     command.add_argument("--public-wake", action="store_true",
                          help="evaluate: a waiting truck's wake-up from public information only, frozen in <tag>/decision.json.")
     command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"],
@@ -1633,6 +1700,7 @@ def main() -> None:
             decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
+                count=arguments.count, first=arguments.first_seed,
             ),
         )
     elif arguments.command == "evaluate":

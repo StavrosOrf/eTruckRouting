@@ -234,6 +234,12 @@ class GraphObservation:
     action_task: np.ndarray
     action_charger: np.ndarray
     active_truck: int
+    # Row of ``actions`` holding the planner's own action for the active truck; -1 when marking is off
+    # (``algo.generalist_plans.plan_marked``), no plan is read, or the planner has no action the
+    # simulator accepts. When marked, that action is a candidate whatever the safety mask and the
+    # charger budget say. The network reads it only as the row its learned plan margin is added to
+    # (``GeneralistPolicyConfig.plan_default``).
+    plan_position: int = -1
 
     @property
     def num_actions(self) -> int:
@@ -294,6 +300,12 @@ class GeneralistEnv(EventDrivenTruckEnv):
             return None
         return self._plan_provider.moves(self)
 
+    def plan_action(self) -> int | None:
+        """The planner's own action for the active truck (``PlanProvider.action``); None without a plan."""
+        if self._plan_withheld or self._plan_provider is None:
+            return None
+        return self._plan_provider.action(self)
+
 
 def build_observation(env, spec: ObservationSpec, features=None) -> GraphObservation:
     """Build the generalist view of the environment's current state."""
@@ -336,6 +348,15 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         plan = env.plan_routes() if hasattr(env, "plan_routes") else None
         if spec.charge_plan and plan is not None and hasattr(env, "plan_moves"):
             moves = env.plan_moves()
+    # The planner's own action for the active truck (the decision-time plan gate, or a policy with a
+    # learned plan margin). It stays a candidate whatever the safety mask and the charger budget say,
+    # so that a policy that always takes it is the planner.
+    plan_target = None
+    if plan is not None and hasattr(env, "plan_action"):
+        from algo.generalist_plans import plan_marked
+
+        if plan_marked():
+            plan_target = env.plan_action()
 
     # Charger subgraph.
     action_rows = features.action_features
@@ -352,6 +373,12 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         )
         if retire_guard_enabled() and plan and active_id is not None and not getattr(env, "dynamic_requests", False):
             feasible = retire_guarded(kinds, feasible, plan.get(int(active_id)))
+    if plan_target is not None:
+        if not 0 <= int(plan_target) < len(action_rows) or action_rows[int(plan_target), _A["feasible"]] <= 0.5:
+            plan_target = None  # never an action the simulator itself refuses
+        else:
+            feasible = np.array(feasible, dtype=bool)
+            feasible[int(plan_target)] = True
     charger_kind = _KINDS.index(ActionKind.CHARGER)
     feasible_targets = set(
         action_rows[feasible & (kinds == charger_kind), _A["target_node"]].astype(int).tolist()
@@ -372,6 +399,9 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
     if moves:
         planned = {int(env.charging_nodes[action]) for action, _ in moves if action < env.num_charging_nodes}
         chosen |= {row for row, node in enumerate(charger_nodes.tolist()) if node in planned}
+    if plan_target is not None and kinds[int(plan_target)] == charger_kind:
+        station = int(action_rows[int(plan_target), _A["target_node"]])
+        chosen |= {row for row, node in enumerate(charger_nodes.tolist()) if node == station}
     selected = sorted(chosen, key=lambda row: (detour[row], int(charger_nodes[row])))
     excluded = [row for row in range(len(charger_nodes)) if row not in chosen]
     charger_row_of_node = {int(charger_nodes[row]): position for position, row in enumerate(selected)}
@@ -448,6 +478,10 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
             charge = _charge_plan_blocks(moves, positions, candidate_kinds)
             actions = np.concatenate([actions, charge["action"]], axis=1)
             context = np.concatenate([context, charge["context"]])
+    plan_position = -1
+    if plan_target is not None:
+        rows = [row for row, action in enumerate(positions) if int(action) == int(plan_target)]
+        plan_position = rows[0] if rows else -1
     return GraphObservation(
         trucks=truck_features,
         tasks=task_features,
@@ -459,6 +493,7 @@ def build_observation(env, spec: ObservationSpec, features=None) -> GraphObserva
         action_task=np.asarray(task_links, dtype=np.int64),
         action_charger=np.asarray(charger_links, dtype=np.int64),
         active_truck=active_row,
+        plan_position=plan_position,
     )
 
 
@@ -905,6 +940,8 @@ class GraphBatch:
     action_task: torch.Tensor
     action_charger: torch.Tensor
     active_truck: torch.Tensor
+    # Per row, the candidate position of the planner's own action (-1: none marked).
+    plan_position: torch.Tensor | None = None
 
     @property
     def batch_size(self) -> int:
@@ -921,6 +958,7 @@ class GraphBatch:
             context=move(self.context), actions=move(self.actions), action_mask=move(self.action_mask),
             action_task=move(self.action_task), action_charger=move(self.action_charger),
             active_truck=move(self.active_truck),
+            plan_position=None if self.plan_position is None else move(self.plan_position),
         )
 
     def select(self, rows: torch.Tensor) -> GraphBatch:
@@ -936,6 +974,7 @@ class GraphBatch:
             action_task=self.action_task[rows],
             action_charger=self.action_charger[rows],
             active_truck=self.active_truck[rows],
+            plan_position=None if self.plan_position is None else self.plan_position[rows],
         )
 
 
@@ -1092,4 +1131,7 @@ def collate(observations: list[GraphObservation], device: str | torch.device = "
         action_task=torch.as_tensor(action_task, device=device),
         action_charger=torch.as_tensor(action_charger, device=device),
         active_truck=torch.as_tensor([item.active_truck for item in observations], dtype=torch.long, device=device),
+        plan_position=torch.as_tensor(
+            [int(getattr(item, "plan_position", -1)) for item in observations], dtype=torch.long, device=device,
+        ),
     )

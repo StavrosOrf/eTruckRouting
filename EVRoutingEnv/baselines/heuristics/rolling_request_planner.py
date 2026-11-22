@@ -1416,6 +1416,8 @@ class RollingHorizonRequestPolicy:
         iterations = max(self.parameters.min_iterations, min(self.parameters.iterations, 4 * free))
         routes, _ = planner.plan(snapshot, self._plan, rng, iterations)
         self._plan = routes
+        active = env.active_truck_id
+        self._planned_at = (None if active is None else int(active), int(env.episode_steps), snapshot)
         self.decisions += 1
         out = {}
         for tid, route in routes.items():
@@ -1423,6 +1425,33 @@ class RollingHorizonRequestPolicy:
             flat = [r for item in route for r in (item if isinstance(item, tuple) else (item,))]
             out[int(tid)] = [int(r) for r in flat if r != REST]
         return out
+
+    def planned_action(self, env) -> int:
+        """The action :meth:`__call__` maps the plan of :meth:`planned_routes` to at this decision.
+
+        The planner's own decision for the active truck, for a policy that keeps
+        it as its default action: a forced station epoch first, else the first
+        step of the truck's planned route after the safety check, else the
+        fallback. Call after :meth:`planned_routes` at the same decision;
+        nothing is re-planned. Unlike :meth:`__call__` the plan was also
+        refreshed at a forced epoch, so the two controllers need not replay
+        each other step for step where public stations force decisions.
+        """
+        marker = getattr(self, "_planned_at", None)
+        active = env.active_truck_id
+        if active is None or marker is None or marker[:2] != (int(active), int(env.episode_steps)):
+            raise RuntimeError("planned_action needs planned_routes at the same decision")
+        model, snapshot = self._model, marker[2]
+        decisions = joint_action_feasibility(env)
+        truck = env.trucks[env.active_truck_id]
+        forced = self._forced(env, model, truck, decisions)
+        if forced is not None:
+            return int(forced)
+        ts = next(ts for ts in snapshot.trucks if ts.tid == truck.truck_id)
+        action = self._act(env, model, snapshot, ts, self._plan.get(truck.truck_id, ()), decisions)
+        if action is None or not decisions[action].feasible:
+            action = self._fallback(env, model, truck, decisions)
+        return int(action)
 
     # -- action mapping --------------------------------------------------------------
 

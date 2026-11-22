@@ -12,6 +12,9 @@ are handed, as DAgger requires when the learner chose the earlier actions:
   deviation from the plan (``LonghaulPlanPolicy._reconcile``). The planner runs
   at a reduced budget (:data:`DAGGER_PLANNER`); the best-known solutions keep
   the full one (``scripts/campaigns/generalist_bks_static.py``).
+* :func:`longhaul_cached` (static long-haul problems): the same controller at
+  the best-known budget with its first plan read from the plan cache: the
+  teacher of the planner-free policy (``suite_v8``).
 * :func:`rolling_request` (request problems): the rolling-horizon request
   planner, which rebuilds its snapshot at every decision. The same
   :data:`ROLLING` parameters build the ``rolling_request`` method of the
@@ -55,6 +58,24 @@ def longhaul_plan(problem, env):
     return LonghaulPlanPolicy(LonghaulSettings(
         name="dagger_lh", planner=DAGGER_PLANNER, restarts=DAGGER_RESTARTS, replan="events",
     ))
+
+
+def longhaul_cached(problem, env):
+    """The long-haul planner at the best-known budget, its time-0 plan read from the plan cache.
+
+    The controller the plan-conditioned policy reads (``algo.generalist_plans.PlanProvider``): the cached
+    full-budget plan of the episode's seed (``EVRP_PLAN_CACHE``, set by the trainer's ``--expert-plan-cache``),
+    re-planned with a few hundred iterations on any deviation. As a DAgger expert it is a better teacher than
+    :func:`longhaul_plan` (whose reduced first plan alone costs 0.1 to 3 % of operating hours against the full
+    planner, measured on train seeds on 2026-11-21) and a cheaper one, because the first plan is read, not
+    searched. A seed without a cached plan is planned at the full budget.
+    """
+    from algo.generalist_plans import plan_cache, static_settings
+    from EVRoutingEnv.baselines.optimization.longhaul.policy import LonghaulPlanPolicy
+
+    if is_dynamic(env):
+        raise ValueError(f"{_name(problem)}: longhaul_cached needs a static problem")
+    return LonghaulPlanPolicy(static_settings(), plan_cache=plan_cache(_name(problem)))
 
 
 def rolling_request(problem, env, *, clairvoyant: bool = False):

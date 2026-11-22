@@ -18,6 +18,7 @@ id, and every node is conditioned on the context row.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -76,11 +77,21 @@ class GeneralistPolicyConfig:
     # family (long-haul, same-day, drayage), chosen from the observation's mode
     # flags, so an unseen problem routes itself. The actor is shared either way.
     critic_heads: str = "shared"
+    # A learned margin for the planner's own action: the score of the candidate the observation marks
+    # (``GraphObservation.plan_position``) is raised by ``margin(state)`` nats, a small head that starts
+    # at ``plan_margin_init`` everywhere. The policy then follows the planner unless its other scores
+    # beat that margin, and training moves the margin state by state.
+    plan_default: bool = False
+    plan_margin_init: float = 4.0
     feature_schema_version: str = GENERALIST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if self.critic_heads not in CRITIC_HEADS:
             raise ValueError(f"critic_heads must be one of {CRITIC_HEADS}, got {self.critic_heads!r}")
+        if self.plan_default and not self.plan_conditioned:
+            raise ValueError("plan_default needs plan_conditioned")
+        if not math.isfinite(self.plan_margin_init):
+            raise ValueError("plan_margin_init must be finite")
         for name in ("hidden_dim", "encoder_layers", "action_head_layers"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -207,6 +218,14 @@ class GeneralistActorCritic(nn.Module):
             self.value_heads = nn.ModuleDict({family: _critic(hidden) for family in CRITIC_FAMILIES})
         else:
             self.value_head = _critic(hidden)
+        if config.plan_default:
+            # Reads the state summary and the planner's candidate row; its last layer starts at zero
+            # weights, so the margin is ``plan_margin_init`` in every state until training moves it.
+            self.margin_head = nn.Sequential(
+                nn.Linear(dims["action"] + 3 * hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1),
+            )
+            nn.init.zeros_(self.margin_head[-1].weight)
+            nn.init.constant_(self.margin_head[-1].bias, float(config.plan_margin_init))
 
     def _values(self, pooled: torch.Tensor, batch: GraphBatch) -> torch.Tensor:
         if self.config.critic_heads != "family":
@@ -215,14 +234,32 @@ class GeneralistActorCritic(nn.Module):
         return stacked.gather(1, critic_family(batch.context).view(-1, 1)).squeeze(1)
 
     def adopt(self, state: dict) -> None:
-        """Load a checkpoint; a shared critic seeds every family head of a family-critic policy."""
+        """Load a checkpoint; a shared critic seeds every family head of a family-critic policy.
+
+        A checkpoint without a plan margin leaves this policy's margin head at its start.
+        """
         if self.config.critic_heads == "family" and any(key.startswith("value_head.") for key in state):
             state = dict(state)
             for key in [key for key in state if key.startswith("value_head.")]:
                 tensor = state.pop(key)
                 for family in CRITIC_FAMILIES:
                     state[key.replace("value_head.", f"value_heads.{family}.", 1)] = tensor.clone()
-        self.load_state_dict(state)
+        result = self.load_state_dict(state, strict=False)
+        stray = [key for key in result.missing_keys if not key.startswith("margin_head.")] + list(result.unexpected_keys)
+        if stray:
+            raise RuntimeError(f"checkpoint does not fit this policy: {stray[:6]}")
+
+    def _plan_margin(self, batch: GraphBatch, pooled: torch.Tensor, rows: torch.Tensor):
+        """Per state: the margin of the planner's candidate, whether one is marked, and its position."""
+        width = batch.action_mask.shape[1]
+        plan = batch.plan_position
+        if plan is None:
+            plan = torch.full((batch.action_mask.shape[0],), -1, dtype=torch.long, device=pooled.device)
+        held = plan.clamp(min=0, max=width - 1).view(-1, 1)
+        marked = (plan >= 0) & (plan < width) & batch.action_mask.gather(1, held).squeeze(1)
+        row = rows.gather(1, held.unsqueeze(-1).expand(-1, 1, rows.shape[-1])).squeeze(1)
+        margin = self.margin_head(torch.cat((pooled, row), dim=-1)).squeeze(-1)
+        return margin, marked, held
 
     def observe(self, batch: GraphBatch) -> None:
         self.encoder.observe(batch)
@@ -244,15 +281,33 @@ class GeneralistActorCritic(nn.Module):
                 active.expand(-1, mask.shape[1], -1),
             ),
             dim=-1,
-        )[mask]
+        )
         ptr = torch.zeros(mask.shape[0] + 1, dtype=torch.long, device=mask.device)
         torch.cumsum(counts, dim=0, out=ptr[1:])
-        head = self.action_head(pooled, rows, ptr)
+        head = self.action_head(pooled, rows[mask], ptr)
+        logits = scatter_logits(head.logits, head.ptr, mask)
+        if self.config.plan_default:
+            margin, marked, held = self._plan_margin(batch, pooled, rows)
+            logits = logits + torch.zeros_like(logits).scatter(1, held, (margin * marked).view(-1, 1))
         return PolicyOutput(
-            logits=scatter_logits(head.logits, head.ptr, mask),
+            logits=logits,
             values=self._values(pooled, batch),
             feasible_mask=mask,
         )
+
+    @torch.no_grad()
+    def plan_margins(self, batch: GraphBatch) -> tuple[torch.Tensor, torch.Tensor]:
+        """The learned margin of the planner's candidate in each state, and whether one is marked."""
+        if not self.config.plan_default:
+            raise RuntimeError("this policy has no plan margin")
+        pooled, nodes = self.encoder(batch)
+        targets = _gather_rows(nodes["task"], batch.action_task) + _gather_rows(nodes["charger"], batch.action_charger)
+        active = _gather_rows(nodes["truck"], batch.active_truck.unsqueeze(1))
+        rows = torch.cat(
+            (self.encoder.standardized_actions(batch), targets, active.expand(-1, batch.action_mask.shape[1], -1)), dim=-1,
+        )
+        margin, marked, _ = self._plan_margin(batch, pooled, rows)
+        return margin, marked
 
     def predict_values(self, batch: GraphBatch) -> torch.Tensor:
         """Value estimate that never touches the action head (terminal states)."""
@@ -282,6 +337,28 @@ class GeneralistActorCritic(nn.Module):
             allowed = output.feasible_mask.gather(1, actions.view(-1, 1)).squeeze(1)
             actions = torch.where(allowed, actions, output.logits.argmax(dim=-1))
         return actions, distribution.log_prob(actions), output.values
+
+    def act_gated(
+        self, batch: GraphBatch, plan: torch.Tensor, margin: float, deterministic: bool = True,
+        uniform: torch.Tensor | None = None,
+    ):
+        """:meth:`act` behind the plan gate: positions, their log probabilities, values, and the ungated positions.
+
+        ``plan`` holds, per row, the candidate position of the planner's own action (-1 for none). A row
+        takes that position when it is selectable, unless the policy's own choice is at least ``margin``
+        nats more likely: margin 0 leaves the policy alone, ``inf`` follows the planner wherever it can.
+        Decision time only; nothing here is differentiated through.
+        """
+        own, _, values = self.act(batch, deterministic, uniform)
+        output = self(batch)
+        logp = torch.log_softmax(output.logits, dim=-1)
+        width = output.feasible_mask.shape[1]
+        plan = plan.to(own)
+        held = plan.clamp(min=0, max=width - 1).view(-1, 1)
+        selectable = (plan >= 0) & (plan < width) & output.feasible_mask.gather(1, held).squeeze(1)
+        gap = logp.gather(1, own.view(-1, 1)).squeeze(1) - logp.gather(1, held).squeeze(1)
+        actions = torch.where(selectable & (gap < margin), held.squeeze(1), own)
+        return actions, logp.gather(1, actions.view(-1, 1)).squeeze(1), values, own
 
     def evaluate_actions(self, batch: GraphBatch, actions: torch.Tensor):
         """Score stored candidate positions; refuses any outside the mask."""

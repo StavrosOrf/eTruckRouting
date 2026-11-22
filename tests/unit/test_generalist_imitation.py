@@ -756,3 +756,86 @@ def test_the_trainer_cli_clones_demonstrations_runs_dagger_and_resumes(suite, tm
     history = json.loads((run / "training_history.json").read_text())
     assert [record["update"] for record in history] == [1, 2, 3]
     assert history[2]["dagger/round"] == 3 and history[2]["bc_loss"] > 0
+
+
+def test_a_round_can_play_its_own_number_of_episodes_per_problem(suite) -> None:
+    imitation = ImitationConfig(dagger_expert=("teacher",), dagger_episodes=1, dagger_envs_per_problem=2, dagger_beta=1.0)
+    trainer = _trainer(suite, imitation, workers=2)
+    try:
+        slots = trainer.dagger_slots
+        assert [slot.problem for slot in slots] == [0, 0, 1, 1, 2, 2]
+        assert episode_counts(slots, 3) == [2, 1, 2, 1, 2, 1]
+        assert episode_counts(slots, [3, 0, 1]) == [2, 1, 0, 0, 1, 0]
+        with pytest.raises(ValueError, match="negative"):
+            episode_counts(slots, [1, -1, 1])
+        record = trainer.dagger_round(episodes=[2, 0, 1])
+        assert record["dagger/episodes"] == 3
+        played = [row["problem"] for row in trainer.imitation_data.archive()]
+        assert sorted(played) == sorted([COMPONENTS[0], COMPONENTS[0], COMPONENTS[2]])
+    finally:
+        trainer.close()
+
+
+def test_the_imitation_stage_before_ppo_lowers_the_expert_share_and_validates_between_rounds(suite, tmp_path) -> None:
+    from scripts.training import train_generalist_ppo as cli
+
+    problems, rows = suite
+    (tmp_path / "problems.json").write_text(json.dumps([asdict(problem) for problem in problems]))
+    references = tmp_path / "references"
+    references.mkdir()
+    for name, values in rows.items():
+        (references / f"{name}.json").write_text(json.dumps({str(seed): row for seed, row in values.items()}))
+    demonstrations = tmp_path / "bks" / "static"
+    demonstrations.mkdir(parents=True)
+    (demonstrations / "train_demonstrations.json").write_text(json.dumps(list(rows["static"].values())))
+    cli.main([
+        "--problems", str(tmp_path / "problems.json"), "--references", str(references),
+        "--num-envs", "3", "--rollout-steps", "4", "--minibatch-size", "6", "--epochs", "1",
+        "--hidden-dim", "16", "--encoder-layers", "1", "--charger-budget", "10000",
+        "--bc-episodes", "2", "--pretrain-epochs", "1", "--demonstrations", str(tmp_path / "bks"),
+        "--bc-coefficient", "0.5", "--bc-batch-size", "8",
+        "--dagger-expert", "teacher", "--dagger-every", "100", "--dagger-episodes", "1", "--dagger-envs-per-problem", "2",
+        "--dagger-pretrain-rounds", "3", "--dagger-pretrain-epochs", "1", "--dagger-pretrain-episodes", "2",
+        "--dagger-pretrain-episodes-by", "same_day=1", "--dagger-pretrain-beta", "0.5", "--dagger-pretrain-beta-final", "0.1",
+        "--dagger-pretrain-learning-rate", "0.0001", "--dagger-pretrain-validate-every", "1",
+        "--train-scenarios", "6", "--validation-scenarios", "1", "--validate-every", "100",
+        "--rollout-workers", "2", "--output", str(tmp_path / "training"), "--run-name", "stage",
+        "--demonstration-store", str(tmp_path / "store"), "--total-timesteps", "12",
+    ])
+    run = tmp_path / "training" / "stage"
+    pretrain = json.loads((run / "pretrain_history.json").read_text())
+    rounds = pretrain["dagger_rounds"]
+    assert [record["dagger/beta"] for record in rounds] == pytest.approx([0.5, 0.3, 0.1])
+    # Two episodes of the two static problems, one of the request problem, in every round.
+    assert [record["dagger/episodes"] for record in rounds] == [5, 5, 5]
+    assert all(len(record["epochs"]) == 1 for record in rounds)
+    # Rounds 1 and 2 are scored and kept; the last one is the update-0 validation of the run.
+    between = json.loads((run / "pretrain_validation.json").read_text())
+    assert [row["dagger_round"] for row in between] == [1, 2] and all(row["update"] == 0 for row in between)
+    assert (run / "dagger_1.pt").exists() and (run / "dagger_2.pt").exists() and not (run / "dagger_3.pt").exists()
+    validation = json.loads((run / "validation_history.json").read_text())
+    assert validation[0]["update"] == 0 and "dagger_round" not in validation[0]
+    assert (run / "pretrained.pt").exists() and (run / "final.pt").exists()
+
+
+def test_the_expert_share_and_the_episodes_of_the_imitation_stage() -> None:
+    from argparse import Namespace
+
+    from scripts.training.train_generalist_ppo import pretrain_beta, pretrain_episodes
+
+    fixed = Namespace(dagger_pretrain_beta=None, dagger_pretrain_beta_final=0.1, dagger_pretrain_rounds=4)
+    assert pretrain_beta(fixed, 1) is None  # the configured schedule stays in charge
+    constant = Namespace(dagger_pretrain_beta=0.4, dagger_pretrain_beta_final=None, dagger_pretrain_rounds=4)
+    assert [pretrain_beta(constant, number) for number in (1, 4)] == [0.4, 0.4]
+    falling = Namespace(dagger_pretrain_beta=0.5, dagger_pretrain_beta_final=0.2, dagger_pretrain_rounds=4)
+    assert [pretrain_beta(falling, number) for number in (1, 2, 3, 4)] == pytest.approx([0.5, 0.4, 0.3, 0.2])
+    problems = [type("Problem", (), {"name": name})() for name in ("a_static", "b_sameday", "c_drayage")]
+    none = Namespace(dagger_pretrain_episodes=None, dagger_pretrain_episodes_by=[], dagger_episodes=8)
+    assert pretrain_episodes(none, problems) is None
+    plain = Namespace(dagger_pretrain_episodes=3, dagger_pretrain_episodes_by=[], dagger_episodes=8)
+    assert pretrain_episodes(plain, problems) == [3, 3, 3]
+    by = Namespace(dagger_pretrain_episodes=None, dagger_pretrain_episodes_by=["sameday=1", "drayage=2"], dagger_episodes=8)
+    assert pretrain_episodes(by, problems) == [8, 1, 2]
+    with pytest.raises(SystemExit, match="PATTERN=N"):
+        pretrain_episodes(Namespace(dagger_pretrain_episodes=1, dagger_pretrain_episodes_by=["sameday"], dagger_episodes=1), problems)
+

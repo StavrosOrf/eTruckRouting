@@ -176,6 +176,104 @@ BROAD_ANCHORED = [
     "--validate-every", "13", "--bc-episodes", "64", "--bc-max-decisions-per-problem", "30000", "--pretrain-epochs", "12",
     "--dagger-episodes", "1", "--dagger-every", "3", "--dagger-max-states", "80000", "--dagger-pretrain-epochs", "2",
 ]
+# suite_v7 (user decision 2026-11-20, pre-registration suite_v6 amendment 40): the policy starts as its planner
+# and learns where to leave it. The planner's own action is a marked candidate whose score carries a learned
+# margin, 2 nats in every state at the start. In the decision-time check a fixed margin of 4 put the two-stage
+# policies at the planner's level but let them leave the plan on 1 % of drayage decisions and 0.04 to 0.7 % of
+# the others, too few to learn from; at 2 they leave it on 17 % of drayage and 0.2 to 2.7 % of the other
+# decisions. Deployment adds a fixed margin chosen on tuning seeds (evaluate --plan-gate), so the deployed
+# policy still starts at the planner's level. The staged recipe of the literature review trains it: three updates
+# that fit only the value heads (collected returns, no value clipping), then PPO with the pretrained weights
+# at a tenth of the anchored recipe's learning rate (the new margin head at 3e-4, the value heads at 1e-3),
+# no entropy bonus, per-problem advantages, the planner's score on the same seed taken off every return, and
+# a charge of 0.001 on every decision that leaves the planner's action. No imitation term
+# and no DAgger round: following the planner no longer depends on how well the network copies it. Train seeds
+# are the 256 per problem that have a stored planner episode (prepare --train-seeds 256).
+SUITE_V6B_RUN = str(ROOT / "results/generalist_graphppo/suite_v6b/training")
+PLAN_MARGIN = [
+    *FULL, "--reward-references", BKS_DIR, "--bc-episodes", "0", "--pretrain-epochs", "0", *PLAN, *CHARGE_PLAN,
+    "--safety-mask", "--safety-margin", "0", "--retire-guard", "--public-wake", "--plan-dropout", "0",
+    "--advantage-by-problem", "--learning-rate", "0.00001", "--entropy-coefficient", "0",
+    "--validation-scenarios", "16", "--save-validation-checkpoints", "--critic-heads", "family", *BIGBATCH,
+    "--validate-every", "14", "--checkpoint-every", "3",
+    "--plan-default", "--plan-margin-init", "2", "--gate-learning-rate", "0.0003", "--critic-learning-rate", "0.001",
+    "--critic-warmup-updates", "3", "--deviation-penalty", "0.001", "--planner-baseline", BKS_DIR,
+]
+PLANNER_EPISODES = "planner_train.json"  # in <campaign>/bks/<problem>/, written by ``planner-baseline``
+# suite_v8 (user decision 2026-11-21, pre-registration suite_v6 amendment 44): a policy that never reads the
+# planner, so that its computation at decision time is the network's alone. Every policy near the planner's score
+# so far read the planner's plan; the planner-free arms of P2/P3 (0.24 from the gate at 8M steps) cloned 256
+# episodes, let the imitation weight fade to zero by 2M steps, explored at entropy 0.01 and had no decision-time
+# mask. Here the planner is the teacher at training time only, and imitation carries the policy:
+#   * cloning on the planners' demonstrations replayed without the plan columns (32 episodes and at most 15 000
+#     decisions per problem, which leaves the host memory to the corrections below);
+#   * an imitation stage of 20 rounds before PPO: the learner plays train seeds, the planner (re-planning from
+#     whatever state the learner reached; on the static problems from the cached full-budget plan of the seed,
+#     algo/generalist_experts.py longhaul_cached) labels every state it visits and plays its
+#     own action with a share that falls from 0.5 to 0.1, and the policy is cloned for one epoch on everything
+#     labelled so far. A round plays 4 episodes of every static problem, 2 of every drayage problem and 1 of
+#     every same-day problem, whose episodes are 3 to 20 times longer, so two thirds of the labels come from the
+#     static problems; the newest 100 000 corrected states are kept, and a problem's episodes share two
+#     correction environments (16 worker processes run the teachers, so more environments would add memory
+#     and no speed);
+#   * then PPO (39 updates of 25 600 decisions) with the imitation term held at 0.1, a correction round every 3
+#     updates, three updates that fit only the value heads first, the planner's score on the same seed taken off
+#     every return, per-problem advantages and family critics.
+# Decision-time filters: the feasibility mask at margin 0 and the public wake. The retirement guard reads the
+# plan and is off. The two arms differ in the size of the network only.
+FREE = [
+    *FULL, "--demonstrations", BKS_DIR, "--reward-references", BKS_DIR,
+    "--bc-episodes", "32", "--bc-max-decisions-per-problem", "15000", "--pretrain-epochs", "12",
+    "--dagger-expert", *EXPERTS,
+    "--dagger-pretrain-rounds", "20", "--dagger-pretrain-episodes", "4",
+    "--dagger-pretrain-episodes-by", "sameday=1", "drayage=2", "--dagger-pretrain-epochs", "1",
+    "--dagger-pretrain-beta", "0.5", "--dagger-pretrain-beta-final", "0.1",
+    "--dagger-pretrain-learning-rate", "0.0001", "--dagger-pretrain-validate-every", "5",
+    "--dagger-max-states", "100000", "--dagger-envs-per-problem", "2",
+    "--bc-coefficient", "0.1", "--bc-coefficient-final", "0.1", "--dagger-episodes", "1",
+    "--dagger-beta", "0.1", "--dagger-beta-final", "0.1",
+    "--safety-mask", "--safety-margin", "0", "--public-wake", "--advantage-by-problem",
+    "--learning-rate", "0.00005", "--entropy-coefficient", "0.001",
+    "--validation-scenarios", "16", "--save-validation-checkpoints", "--critic-heads", "family", *BIGBATCH,
+    "--validate-every", "13", "--checkpoint-every", "3", "--dagger-every", "3",
+    "--critic-learning-rate", "0.001", "--critic-warmup-updates", "3", "--planner-baseline", BKS_DIR,
+    "--expert-plan-cache", BKS_DIR,
+]
+
+def with_values(flags: list[str], changes: dict[str, list[str] | None]) -> list[str]:
+    """``flags`` with each named flag's values replaced; ``None`` removes the flag, a flag not there is added at the end."""
+    out, seen, index = [], set(), 0
+    while index < len(flags):
+        end = index + 1
+        while end < len(flags) and not flags[end].startswith("--"):
+            end += 1
+        if flags[index] in changes:
+            seen.add(flags[index])
+            if changes[flags[index]] is not None:
+                out += [flags[index], *changes[flags[index]]]
+        else:
+            out += flags[index:end]
+        index = end
+    for flag, values in changes.items():
+        if flag not in seen and values is not None:
+            out += [flag, *values]
+    return out
+
+
+# The planner-free recipe with its correction rounds on the states the deployed policy reaches (amendment 45).
+# FREE plays the sampled policy in those rounds and executes the teacher's action on a share of the decisions.
+# The deployed policy takes its most likely action with no teacher: on same-day it then waits where the teacher
+# dispatches (round-5 validation of the pilot, 2026-11-21: 0.39 of the planner's on-time services; the same
+# weights played by sampling serve 91 of 113 requests on four validation seeds, by most likely action 40).
+# Here the learner plays its most likely action and the teacher only labels, in the rounds before PPO and in
+# those during it; every problem plays four episodes a round, one in each of four correction environments.
+FREE_OWN = with_values(FREE, {
+    "--dagger-deterministic": [],
+    "--dagger-pretrain-beta": ["0"], "--dagger-pretrain-beta-final": ["0"],
+    "--dagger-beta": ["0"], "--dagger-beta-final": ["0"],
+    "--dagger-pretrain-episodes-by": None,
+    "--dagger-envs-per-problem": ["4"], "--dagger-max-states": ["150000"],
+})
 RECIPES = {
     "base": [],
     "fleet": ["--fleet-assignment"],
@@ -247,6 +345,14 @@ RECIPES = {
     "broad_stage1_anchor": [
         *BROAD_ANCHORED, "--init-from", SUITE_V6_BEST, "--pretrain-epochs", "0", "--dagger-pretrain-rounds", "0",
     ],
+    # suite_v7: the learned plan margin on the clone of the planner (suite_v6b's state after cloning, before any
+    # PPO update), and on the two-stage policy (suite_v6b's final checkpoint, which holds the drayage strategy).
+    "broad_margin_clone": [*PLAN_MARGIN, "--init-from", SUITE_V6B_RUN + "/broad_clone_anchor_s{seed}", "--init-prefix", "ckpt_0"],
+    "broad_margin_stage1": [*PLAN_MARGIN, "--init-from", SUITE_V6B_RUN + "/broad_stage1_anchor_s{seed}", "--init-prefix", "final"],
+    # suite_v8: the planner-free policy at the size every earlier arm used, and a wider and deeper one.
+    "broad_free": [*FREE],
+    "broad_free_wide": [*FREE, "--hidden-dim", "192", "--encoder-layers", "4"],
+    "broad_free_own": [*FREE_OWN],
 }
 SCREEN = ("base", "fleet", "paired", "full", "full_bks", "full_bks_retained", "full_dagger")
 STATIC = tuple(name for name in PROBLEMS if name not in DYNAMIC)
@@ -353,6 +459,12 @@ def arms_for(
     for seed in range(seeds):
         for name, flags in chosen:
             flags = with_experts(flags, experts)
+            if "--expert-plan-cache" in flags:
+                # The teacher of a planner-free policy starts from the cached full-budget plan.
+                flags = [
+                    flag.replace(":longhaul_plan", ":longhaul_cached") if "=algo.generalist_experts:" in flag else flag
+                    for flag in flags
+                ]
             flags = [flag.replace(BKS_DIR, bks) if bks else flag for flag in flags]
             flags = [flag.replace("{seed}", str(seed)) for flag in flags]
             if any(BKS_DIR in flag for flag in flags):
@@ -504,6 +616,45 @@ def prepare(
         "probes_enabled": bool(probes),
     })
     print(destination, flush=True)
+
+
+PLANNER_FIELDS = (
+    "seed", "method", "hours", "served", "late", "lost", "unserved", "tasks", "failed", "success", "dynamic",
+    "completed_fraction",
+)
+
+
+def write_planner_baseline(destination: Path, runs_from: Path) -> None:
+    """Freeze the planner's own episodes on the campaign's train seeds into ``<campaign>/bks``.
+
+    ``<runs_from>/<problem>/runs/<planner>__train.jsonl`` holds one stored episode per train seed of the
+    planner each policy reads (the rolling planner on request problems, the long-haul plan elsewhere).
+    Their outcomes become ``<campaign>/bks/<problem>/planner_train.json``, which ``--planner-baseline``
+    scores and takes off every training return. Every train seed of the manifest must be there.
+    """
+    from scripts.evaluation.canonical_harness import split_seeds
+
+    manifest = read_manifest(destination)
+    seeds = split_seeds("train", int(manifest["seeds"]["train"]))
+    for row in read_problems(manifest):
+        name = row["name"]
+        planner = "lh_plan" if is_static(row["config"]) else "rolling_request"
+        source = runs_from / name / "runs" / f"{planner}__train.jsonl"
+        if not source.is_file():
+            raise SystemExit(f"no stored planner episodes: {source}")
+        episodes = {}
+        for line in source.read_text().splitlines():
+            if line.strip():
+                episode = json.loads(line)
+                episodes[int(episode["seed"])] = {key: episode[key] for key in PLANNER_FIELDS if key in episode}
+        missing = [seed for seed in seeds if seed not in episodes]
+        if missing:
+            raise SystemExit(f"{source} lacks {len(missing)} of the {len(seeds)} train seeds (first: {missing[:5]})")
+        target = destination / "bks" / name / PLANNER_EPISODES
+        if target.exists():
+            raise FileExistsError(f"already frozen: {target}")
+        write_json(target, [episodes[seed] for seed in seeds])
+        print(f"{name}: {len(seeds)} {planner} episodes -> {target}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1307,7 @@ def apply_decision(folder: Path) -> dict:
     os.environ["EVRP_SAFETY_MARGIN"] = str(float(settings.get("safety_margin", 0.0)))
     os.environ["EVRP_RETIRE_GUARD"] = "on" if settings.get("retire_guard") else "off"
     os.environ["EVRP_PUBLIC_WAKE"] = "on" if settings.get("public_wake") else "off"
+    os.environ["EVRP_PLAN_GATE"] = str(float(settings["plan_gate"])) if settings.get("plan_gate") is not None else "off"
     return settings
 
 
@@ -1172,8 +1324,10 @@ def checkpoint_label(value: str) -> str:
 def decision_from(
     safety_mask: bool, safety_margin: float | None, search: str | None = None, k: int = 4, n: int = 16,
     retire_guard: bool = False, checkpoint: str | None = None, batch: int | None = None, public_wake: bool = False,
-    count: int | None = None, first: int | None = None,
+    count: int | None = None, first: int | None = None, plan_gate: float | None = None,
 ) -> dict | None:
+    if plan_gate is not None and not plan_gate >= 0.0:
+        raise SystemExit("--plan-gate needs a margin >= 0 (inf follows the planner wherever it can)")
     if safety_margin is not None and not safety_mask:
         raise SystemExit("--safety-margin needs --safety-mask")
     if retire_guard and not safety_mask:
@@ -1195,6 +1349,9 @@ def decision_from(
     if first:
         # The seeds start at index ``first`` of the split's namespace (a bank built past seeds already spent).
         settings.update(first=int(first))
+    if plan_gate is not None:
+        # The planner's own action unless the policy's choice is this many nats more likely (decision time only).
+        settings.update(plan_gate=float(plan_gate))
     if search:
         settings.update(search=search, k=int(k) if search == "lookahead" else None, n=int(n) if search == "best_of_n" else None)
     return settings or None
@@ -1335,10 +1492,17 @@ def evaluate(
     searched = [problem for problem in problems if problem.name in static]
     batched = [problem for problem in problems if problem not in searched]
     # Workers are forked per observation spec before any policy touches CUDA.
-    specs = {
-        run["name"]: GeneralistPolicyConfig.load(destination / "training" / run["name"] / "best_config.json").observation_spec
+    configs = {
+        run["name"]: GeneralistPolicyConfig.load(destination / "training" / run["name"] / "best_config.json")
         for run in pending
     }
+    specs = {name: config.observation_spec for name, config in configs.items()}
+    # A policy with a learned plan margin needs the planner's own action located in every observation;
+    # for any other policy that marking would change which candidates it is offered.
+    learned = {bool(config.plan_default) for config in configs.values()}
+    if len(learned) > 1:
+        raise SystemExit("runs with and without a learned plan margin cannot share one evaluation: name them with --runs")
+    os.environ["EVRP_PLAN_MARK"] = "on" if learned == {True} else "off"
     envs = {
         spec: evaluation_envs(
             batched, [seeds] * len(batched), spec, reward, references,
@@ -1568,6 +1732,10 @@ def main() -> None:
     command.add_argument("--workers", type=int, default=max(1, len(os.sched_getaffinity(0)) - 1))
     command = commands.add_parser("merge-references")
     command.add_argument("--directory", type=Path, default=DEFAULT)
+    command = commands.add_parser("planner-baseline", help="Freeze the planner's episodes on the train seeds into <campaign>/bks.")
+    command.add_argument("--directory", type=Path, default=DEFAULT)
+    command.add_argument("--runs-from", type=Path, required=True,
+                         help="Bank with <problem>/runs/<planner>__train.jsonl (one stored episode per train seed).")
     command = commands.add_parser("train")
     command.add_argument("--directory", type=Path, default=DEFAULT)
     command.add_argument("--run", type=int, required=True, help="Index into manifest runs.")
@@ -1633,6 +1801,9 @@ def main() -> None:
                               "frozen in <tag>/decision.json.")
     command.add_argument("--public-wake", action="store_true",
                          help="evaluate: a waiting truck's wake-up from public information only, frozen in <tag>/decision.json.")
+    command.add_argument("--plan-gate", type=float, default=None, metavar="MARGIN",
+                         help="evaluate: take the planner's own action unless the policy's choice is MARGIN nats more "
+                              "likely (0 = the policy alone, inf = the planner wherever it can), frozen in <tag>/decision.json.")
     command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"],
                          help="evaluate: decision-time search on the static problems (track A).")
     command.add_argument("--search-k", type=int, default=4, help="lookahead: candidates per decision.")
@@ -1654,6 +1825,8 @@ def main() -> None:
     command.add_argument("--checkpoint", default=None, choices=["best", "pretrained", "final"], help="The checkpoint of every run (default best).")
     command.add_argument("--eval-batch", type=int, default=None, help="Environments per problem, frozen with the tag.")
     command.add_argument("--public-wake", action="store_true", help="A waiting truck's wake-up from public information only.")
+    command.add_argument("--plan-gate", type=float, default=None, metavar="MARGIN",
+                         help="The planner's own action unless the policy's choice is MARGIN nats more likely.")
     command.add_argument("--search", default=None, choices=["lookahead", "best_of_n"], help="Decision-time search (track A).")
     command.add_argument("--search-k", type=int, default=4)
     command.add_argument("--search-n", type=int, default=16)
@@ -1681,6 +1854,8 @@ def main() -> None:
             run_references(destination, arguments.task, arguments.workers)
     elif arguments.command == "merge-references":
         merge_references(destination)
+    elif arguments.command == "planner-baseline":
+        write_planner_baseline(destination, arguments.runs_from.resolve())
     elif arguments.command == "train":
         train(destination, arguments.run, arguments.budget, arguments.device)
     elif arguments.command == "fork":
@@ -1700,7 +1875,7 @@ def main() -> None:
             decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
-                count=arguments.count, first=arguments.first_seed,
+                count=arguments.count, first=arguments.first_seed, plan_gate=arguments.plan_gate,
             ),
         )
     elif arguments.command == "evaluate":
@@ -1710,6 +1885,7 @@ def main() -> None:
             decision=decision_from(
                 arguments.safety_mask, arguments.safety_margin, arguments.search, arguments.search_k, arguments.search_n,
                 arguments.retire_guard, arguments.checkpoint, arguments.eval_batch, arguments.public_wake,
+                plan_gate=arguments.plan_gate,
             ),
         )
     else:

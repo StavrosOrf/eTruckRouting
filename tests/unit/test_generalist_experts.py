@@ -73,3 +73,30 @@ def test_the_campaign_experts_resolve_for_every_suite_problem() -> None:
     for name in PROBLEMS:
         factory = "rolling_request" if name in DYNAMIC else "longhaul_plan"
         assert table[name] == f"algo.generalist_experts:{factory}"
+
+
+def test_the_cached_plan_expert_is_the_full_planner_and_needs_no_plan_in_the_observation(monkeypatch, tmp_path) -> None:
+    from algo import generalist_plans
+
+    # No cache directory: the seed is planned at the best-known budget, as a seed missing from a cache is.
+    monkeypatch.delenv("EVRP_PLAN_CACHE", raising=False)
+    monkeypatch.setattr(generalist_plans, "_CACHES", {})
+    env = small_env("static", trucks=2, stops=4)
+    env.reset(seed=3)
+    problem = SuiteProblem("static", "unused.yaml")
+    expert = resolve_expert("algo.generalist_experts:longhaul_cached", problem, env)
+    assert expert.settings.plan_tag() == generalist_plans.static_settings().plan_tag()
+    assert expert.settings.replan == "events" and expert.plan_cache == {}
+    expert.reset(env, 3)
+    steps = 0
+    for _ in range(60):
+        action = expert.act(env)
+        assert _decisions(env)[action].feasible
+        _, _, terminated, truncated, _ = env.step(action)
+        steps += 1
+        if terminated or truncated:
+            break
+    assert steps > 1 and expert.stats["decisions"] == steps
+    with pytest.raises(ValueError, match="static problem"):
+        experts.longhaul_cached(problem, small_env("same_day"))
+

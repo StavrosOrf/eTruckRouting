@@ -66,6 +66,34 @@ def plan_mode() -> str:
     return mode
 
 
+def plan_gate() -> float | None:
+    """The decision-time plan gate (``EVRP_PLAN_GATE``): None when off, else its margin in nats.
+
+    With the gate on, the planner's own action for the active truck is located
+    among the candidates of every observation (``GraphObservation.plan_position``)
+    and a gated policy takes it unless its own choice is at least ``margin``
+    more likely in log terms: 0 is the policy alone, ``inf`` the planner's
+    action whenever it is a feasible candidate.
+    """
+    value = os.environ.get("EVRP_PLAN_GATE", "off") or "off"
+    if value == "off":
+        return None
+    margin = float(value)
+    if not margin >= 0.0:
+        raise ValueError(f"EVRP_PLAN_GATE must be 'off' or a margin >= 0, not {value!r}")
+    return margin
+
+
+def plan_marked() -> bool:
+    """Whether observations locate the planner's own action (``GraphObservation.plan_position``).
+
+    On under the decision-time gate, and for a policy that scores the planner's action with its own
+    learned margin (``GeneralistPolicyConfig.plan_default``): the trainer and the evaluation set
+    ``EVRP_PLAN_MARK=on`` before any worker is forked.
+    """
+    return os.environ.get("EVRP_PLAN_MARK", "off") == "on" or plan_gate() is not None
+
+
 def plan_cache(problem: str) -> dict[str, dict]:
     """Seed -> time-0 plan record for a static problem (all splits merged); empty without a cache."""
     directory = os.environ.get("EVRP_PLAN_CACHE")
@@ -147,6 +175,21 @@ class PlanProvider:
             if planner.n_chargers <= action <= planner.depot_action:
                 break
         return leg
+
+    def action(self, env) -> int | None:
+        """The planner's own environment action for the active truck at this decision; None when it has none.
+
+        Static problems: the first of :meth:`moves` (the continuation search of
+        the long-haul planner). Request problems: the rolling planner's mapping
+        of the plan it just made to an action (``planned_action``). Call after
+        :meth:`routes` at the same decision.
+        """
+        if env.active_truck_id is None:
+            return None
+        if self.dynamic:
+            return int(self.planner.planned_action(env))
+        moves = self.moves(env)
+        return int(moves[0][0]) if moves else None
 
     def _solve_moves(self, env, truck) -> list[int]:
         """The planner's continuation search from the truck's state, as environment actions.

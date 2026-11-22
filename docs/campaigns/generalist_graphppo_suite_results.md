@@ -278,6 +278,92 @@ Against the planner the policy reads at every decision, on the same seeds:
 
 Reading: not a general solver that improves on existing planners; one replicated result, that reinforcement learning on top of a planner finds a better drayage strategy and does not help where the planner is already strong.
 
+### Following the plan unless there is evidence: three checks without training (2026-11-19/20)
+
+After a literature review (`reports/Learned policies that surpass planners.md`) the next direction is a policy whose default is the planner's own action and which deviates only on evidence. Three checks used the existing policies and planners, validation seeds only (amendments 34 to 39; files in `results/generalist_graphppo/agent/pilots/plan_default_checks/`).
+
+1. **Re-weighting the drayage planner.** Thirteen settings of the rolling planner's objective and search budget on tuning seeds; only a zero travel-cost weight helps (×1.02 to ×1.08 on-time services). Against that tuned planner the five two-stage policies still serve +4.9 to +38.4 more jobs on time per episode on the three training and three held-out drayage problems (×1.07 to ×1.33, every interval above zero). The policies also deliver more jobs late (2 to 17 per episode, 22 to 64 on 40 trucks, against 1 to 6). The check varies weights and budget, not the planner's route model, so a structurally stronger drayage planner is not ruled out.
+2. **Choosing the long-haul planner per episode.** Picking one of three planners before the episode (per problem, per category, or with a classifier on the initial plan) gains nothing over the default planner: hours within −0.07 to +0.28 % with every interval spanning zero. The target on long haul is parity.
+3. **A gate around the existing policies.** At every decision the policy takes the planner's action unless its own choice is at least a margin more likely (in nats). A closed gate reproduces the planner. On tuning seeds every category moves smoothly from the planner to the policy as the margin falls; the margin that keeps parity (4) was then run on the five policies and the reporting seeds:
+
+| Validation seeds 0 to 63, five runs | Distance to the gate | Problems passed of 25 | Long-haul hours (plain / congested) | Hours of service (success, hours) | Same-day services | Drayage on-time services |
+| --- | --- | --- | --- | --- | --- | --- |
+| Planner the policy reads | 0.0013 | 24 | 0 / 0 | 0, 0 | ×1.000 | ×1.000 |
+| Two-stage policies, no gate | 0.0128 | 14 to 19 | +1.66 % / +2.08 % | −5.1 points, +1.48 % | ×0.971 | ×1.372 |
+| Same policies, margin 4 | 0.0014 | 23 to 24 | +0.07 % / +0.06 % | −0.2 points, −0.22 % | ×0.998 | ×1.036 |
+| Policy on drayage, margin 4 on hours of service, planner elsewhere (stored rows) | 0.0015 | 23 to 24 | 0 / 0 | −0.2 points, −0.22 % | ×1.000 | ×1.372 |
+
+- The gate brings the policies to the planner's level (ten times closer to the gate) by letting them deviate on 0.5 % of decisions, and keeps a tenth of the drayage gain.
+- One confidence margin cannot give both parity and the drayage gain: the policy is as confident in the deviations that cost success under hours of service as in those that gain services on drayage. A gate has to depend on the state or the operation type.
+- The last row is the reference a trained gated policy has to match: planner-level on four categories and the full drayage gain.
+
+### A learned plan margin trained with PPO (suite_v7, pre-registered, development result 2026-11-21)
+
+The trained version of the gate (amendments 40 to 43; files in `results/generalist_graphppo/agent/pilots/plan_margin/`). The workers mark the planner's own action among the candidates and the network adds a learned margin m(state) to its score, 2 nats in every state at the start; deployment adds a fixed margin d. Training: three updates that only fit the critic, then 39 PPO updates at a tenth of the earlier learning rate, the planner's score on the same seed taken off each return, and a small charge per decision that leaves the plan. Two starting points, five seeds each: the two-stage policy and the clone of the planner. Ten runs of 7 to 9 hours; every operational check passed (no policy change during the critic warm-up, a planner baseline for every episode, 44 GB peak memory).
+
+| Validation seeds 0 to 63, five runs | Distance to the gate | Problems passed of 25 | Long-haul hours (plain / congested) | Hours of service (success, hours) | Same-day services | Drayage on-time services |
+| --- | --- | --- | --- | --- | --- | --- |
+| Planner the policy reads | 0.0013 | 24 | 0 / 0 | 0, 0 | ×1.000 | ×1.000 |
+| Two-stage policies before this training, margin 4 | 0.0014 | 23 to 24 | +0.07 % / +0.06 % | −0.2 points, −0.22 % | ×0.998 | ×1.036 |
+| **Learned margin, two-stage start, d = 2 (registered)** | 0.0040 | 19 to 24 | +0.77 % / +0.94 % | −2.0 points, −0.92 % | ×0.997 | ×1.440 |
+| **Learned margin, clone start, d = 2 (registered)** | 0.0045 | 18 to 24 | +0.43 % / +0.80 % | −1.6 points, +0.26 % | ×0.998 | ×0.999 |
+| Learned margin, two-stage start, d = 4 (exploratory) | 0.0020 | 21 to 24 | +0.22 % / +0.20 % | −0.4 points, −0.75 % | ×0.998 | ×1.358 |
+| Trained two-stage-start policy on drayage, planner elsewhere (stored rows) | 0.0013 to 0.0015 | 23 to 24 | 0 / 0 | 0, 0 | ×1.000 | ×1.440 |
+
+- **Registered readings (d = 2, chosen by the registered rule on tuning seeds).** Two-stage start: the drayage gain is kept in full (×1.44, above the ungated policies' ×1.37), but the policy is worse than the planner on the four other categories, training moved it away from the gate on four of five runs, and the distance is above the reference (0.0040 against 0.0033). Clone start: no drayage gain and all four readings fail.
+- **What training changed.** It strengthened the policy's own preference for its drayage deviations, which is why the gain survives a margin. The learned margin itself moved by about one nat and does not separate drayage from long haul, and the trained policies deviate more on long haul than before. The paired baseline and the deviation charge did not give PPO a signal strong enough to stay on the plan where a deviation costs a fraction of a percent.
+- **Exploratory, wider margin (chosen after the registered grid failed).** At d = 4 the two-stage-start policies are close to the planner (0.0020; plain and congested +0.2 % hours, same-day ×0.998, hours of service −0.75 % hours at a success rate whose interval includes the planner's) and keep drayage at ×1.36, ten times the gain the untrained policies keep at a comparable distance. Late drayage jobs are 3.6 per episode against 1.7. This needs seeds it was not chosen on.
+- A switch by operation type (last row) reaches the planner's level with the full drayage gain, but it is two systems, a reference only.
+
+**Room above the planner** (stored bank, 128 validation seeds per problem, no new episode; `headroom.txt`). Every problem has random travel times, energy use and unloading times, but the question is whether randomness changes the best decision:
+
+| Category | Room measured |
+| --- | --- |
+| Plain long haul | re-planning during the trip changes hours by 0.00 %; the hindsight best of six solvers gains 0.1 to 0.9 % |
+| Congested stations | re-planning 0.00 %; hindsight best 1.1 to 2.0 % |
+| Hours of service | hindsight best 2.3 to 3.5 % hours; some solver succeeds on 98 to 100 % of episodes against the planner's 95 to 99 % |
+| Same-day | the planner serves 96 to 99.7 % on time; told every request in advance it serves 0 to 0.4 more per episode |
+| Drayage | the planner serves 46 to 47 % on time; told every request in advance it gains 2.5 to 4.5 %, against 36 to 44 % for the policy |
+
+So a learned policy can at most match the planner on plain long haul and same-day, has a little room on congested stations and under hours of service, and wins on drayage because the planner there is far from optimal, not because it reacts to randomness. All stored solvers are heuristics, so these are indications of room, not bounds.
+
+**Computation, and the goal as stated by the user on 2026-11-21** (a score equal to or better than the planner's at significantly less computation). The planner takes 8 to 195 seconds per episode (bank `summary.json`); the network takes about 15 ms per decision, 1 to 20 seconds per episode, a saving of 10 to 50 times on most problems and none on the small same-day problems. Every policy at or near parity reads the planner's plan and, with the gate, the planner's action, so it pays the planner's time as well. With the plan withheld the five-problem weights fail every problem, and the planner-free policies of the first stages reached a distance of 0.237. No policy in this campaign had met the goal by 2026-11-21. The planner at reduced search budgets was measured on 2026-11-22 (next subsection) and replaces the 10 to 50 times saving estimated here.
+
+### A policy without the planner at run time (suite_v8 / suite_v9, pre-registered, development result 2026-11-22)
+
+**The goal (equal or better score at significantly less computation) is not met.** On the 13 slower request problems, the policy passes the gate with a compute saving on four drayage problems only. There it is 1.9 to 4.4 times faster than the cheapest planner setting that passes, with 9 to 15 % more fleet hours than the full planner. On same-day and on long haul without hours of service, a cheaper setting of the planner is both good enough and faster than the policy wherever a setting passes.
+
+The policy imitates the planner, is corrected on the states it reaches itself, is then trained with PPO, and never calls the planner when deployed. Amendments 44 to 53; files in `results/generalist_graphppo/agent/pilots/planner_free/`. All numbers are from one training seed and validation seeds (64 per problem, 32 for the seven large request problems, on which the policy never trained). Times are per episode on one thread of a Xeon 8360Y, against this repository's Python planners, and say nothing about compiled planner code.
+
+**Registered result.** `suite_v8` (25 problems): distance to the gate 0.631, 0 passed. `suite_v9` (the nine request problems): 0.160 after imitation and 0.078 after PPO, against a bar of 0.03, with 5 of 9 passed. The three problems that the planner solves in under 10 seconds all fail (0.83 to 0.85 of its on-time services) and are outside the compute question.
+
+**Request problems on which the planner is slow.** "Cheapest passing planner" is the rolling planner with the fewest search iterations per re-plan (0, 3, 12, 30 or 60; 60 is the campaign's setting) that still passes the gate, cheapest by seconds. At 0 it only inserts requests greedily into its previous plan. The last column is that planner's time divided by the policy's on two timed seeds, with the estimate on all seeds in brackets; below 1 the planner is faster.
+
+| Problem | Policy passes gate | On time, vs full planner | Fleet hours, vs full planner | Cheapest passing planner | Its time / policy's |
+| --- | --- | --- | --- | --- | --- |
+| ca_drayage_combined | yes | 1.104 | +11.8 % | 3 | 2.70 (2.23) |
+| ca_drayage_combined_t16 | yes | 1.153 | +10.4 % | 3 | 3.45 (3.19) |
+| tx_drayage_combined_t10 | yes | 1.057 | +9.4 % | 3 | 2.08 (1.90) |
+| tx_drayage_combined_t25 | yes | 1.076 | +15.3 % | 3 | 4.43 (4.37) |
+| ca_drayage_combined_t60 | no | 0.763 | +14.2 % | 3 | 3.69 (3.98) |
+| tx_drayage_combined_t50 | no | 0.795 | +2.8 % | 3 | 6.42 (5.40) |
+| chi_sameday_t8 | yes | 0.952 | +6.5 % | 0 | 0.27 (0.31) |
+| sea_sameday_t13 | yes | 0.966 | +8.5 % | 0 | 0.52 (0.47) |
+| chi_sameday_t25 | yes | 0.965 | +17.1 % | 0 | 0.42 (0.46) |
+| chi_sameday_t50 | no | 0.919 | +36.5 % | 0 | 0.35 (0.36) |
+| sea_sameday_t60 | no | 0.860 | +39.8 % | 0 | 0.38 (0.37) |
+| ca_sameday_t40 | no | 0.700 | +12.8 % | 3 | 0.71 (0.47) |
+| ca_sameday_t100 | no | 0.527 | +18.0 % | 3 | 0.37 (0.34) |
+
+- **Same-day.** On six of seven the policy is dominated: some planner budget is no slower, serves at least as many requests on time and fails no more often. On the seventh (`chi_sameday_t25`) three iterations serve 3.7 % more on time in 1.09 times the policy's time.
+- **Drayage.** No planner budget reaches the policy's on-time count on the four passes. Their leads disappear if the planner's search code were 3.9, 5.2, 6.9 and 11.5 times faster (table order). On `ca_drayage_combined_t60` the Kullman heuristic is better and faster than the policy.
+- **The gate does not see the cost of the drayage wins.** Its dynamic criteria read on-time services and failures only. On all 16 request problems the policy averages more fleet hours than the planner and delivers more requests late; on none is it at least as good on both on-time services and hours. Drayage deadlines are soft, and the training objective prefers a late delivery to an unserved request while the planner declines such requests.
+- **Against the tuned drayage planner** (route-duration weight 0, amendment 38, full search budget) the on-time lead is 1.081 and 1.085 on the two California training problems and 1.015 on Texas, whose interval includes zero. It was not run on the large problems or at reduced budgets.
+
+**Long haul** (`suite_v8` policy; 16 problems). Without hours of service the policy is dominated on all 12: on 11 of them one second of planner search passes the gate 1.6 to 3.7 times faster than the policy, which takes 28 to 63 % more hours, and on the twelfth no setting passes. More training alone cannot create a saving there, because the policy's own decision time exceeds that planner's. With hours of service (4 problems) the policy is 4.5 to 9.8 times faster than the cheapest passing planner but completes 16 to 42 % of episodes against 95 to 98 %.
+
+**Open decisions (user).** Whether fleet hours and late deliveries count in "equally good"; a stronger drayage baseline; whether a learned policy is pursued on long haul with hours of service. No five-seed campaign follows from this pilot by itself.
+
 ## 4. Integrity of the test
 
 - `agent/TEST_OPENED` was written on 2026-10-31 with the user's approval, after the user was told the validation pass depends on the guard.

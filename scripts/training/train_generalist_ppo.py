@@ -58,6 +58,7 @@ from algo.generalist_ppo import (
     evaluation_envs,
     PAIR_BUDGET,
     load_or_replay_store,
+    planner_baseline,
     replay_demonstrations,
     summarize_suite,
 )
@@ -129,6 +130,22 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="Keep ckpt_<update>.pt at every validation, to select checkpoints afterwards.")
     parser.add_argument("--critic-heads", choices=["shared", "family"], default="shared",
                         help="One value head, or one per mechanism family (long-haul, same-day, drayage).")
+    parser.add_argument("--plan-default", action="store_true",
+                        help="Score the planner's own action with a learned margin (needs --plan-conditioned): "
+                             "the policy follows the planner unless its other scores beat the margin.")
+    parser.add_argument("--plan-margin-init", type=float, default=4.0,
+                        help="With --plan-default: the margin, in nats, in every state at the start.")
+    parser.add_argument("--gate-learning-rate", type=float, default=None,
+                        help="Learning rate of the plan-margin head (default: --learning-rate).")
+    parser.add_argument("--critic-learning-rate", type=float, default=None,
+                        help="Learning rate of the value heads (default: --learning-rate).")
+    parser.add_argument("--critic-warmup-updates", type=int, default=0,
+                        help="First updates that fit the value heads only; every other weight stays as it is.")
+    parser.add_argument("--deviation-penalty", type=float, default=0.0,
+                        help="Reward taken off every decision that leaves the planner's marked action.")
+    parser.add_argument("--planner-baseline", default=None,
+                        help="Directory of <problem>.json planner episodes on the train seeds: the planner's score "
+                             "on the same seed is taken off each episode's return.")
     parser.add_argument("--charger-budget", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--encoder-layers", type=int, default=3)
@@ -189,7 +206,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
     imitation.add_argument("--dagger-pretrain-rounds", type=int, default=0,
                            help="DAgger rounds, each followed by --dagger-pretrain-epochs of cloning, before PPO.")
     imitation.add_argument("--dagger-pretrain-epochs", type=int, default=4)
+    imitation.add_argument("--expert-plan-cache", default=None,
+                           help="Directory of <problem>/plans_<split>.json for the experts only (algo.generalist_experts:"
+                                "longhaul_cached); the policy's observation does not read it.")
+    imitation.add_argument("--dagger-pretrain-episodes", type=int, default=None,
+                           help="Episodes per problem in a round before PPO (default: --dagger-episodes).")
+    imitation.add_argument("--dagger-pretrain-episodes-by", nargs="*", default=[], metavar="PATTERN=N",
+                           help="Episodes per round before PPO for the problems whose name holds PATTERN "
+                                "(first match wins; the others play --dagger-pretrain-episodes).")
+    imitation.add_argument("--dagger-pretrain-beta", type=float, default=None,
+                           help="Expert share in the first round before PPO (default: --dagger-beta in every round).")
+    imitation.add_argument("--dagger-pretrain-beta-final", type=float, default=None,
+                           help="Expert share in the last round before PPO, reached linearly (default: constant).")
+    imitation.add_argument("--dagger-pretrain-learning-rate", type=float, default=None,
+                           help="Cloning rate of the rounds before PPO (default: --pretrain-learning-rate).")
+    imitation.add_argument("--dagger-pretrain-validate-every", type=int, default=0,
+                           help="Validate and keep dagger_<round> every this many rounds before PPO (0: never).")
     parser.add_argument("--init-from", default=None, help="Policy directory with best.pt/best_config.json.")
+    parser.add_argument("--init-prefix", default="best", help="Checkpoint of --init-from to start from (best, final, ckpt_<update>).")
     parser.add_argument("--resume", default=None, help="Trusted complete training checkpoint.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
@@ -228,6 +262,38 @@ def build_imitation_config(arguments) -> ImitationConfig | None:
         print("warning: DAgger labels train the policy only through --bc-coefficient or "
               "--dagger-pretrain-rounds; otherwise rounds only measure expert agreement", flush=True)
     return config
+
+
+def pretrain_beta(arguments, number: int) -> float | None:
+    """The expert's share in round ``number`` (1-based) of the imitation stage before PPO.
+
+    ``None`` leaves the configured DAgger schedule in charge. With only a
+    first value the share is constant; with both it moves linearly from the
+    first round to the last.
+    """
+    first, last = arguments.dagger_pretrain_beta, arguments.dagger_pretrain_beta_final
+    if first is None:
+        return None
+    rounds = arguments.dagger_pretrain_rounds
+    if last is None or rounds <= 1:
+        return float(first)
+    return float(first + (last - first) * (number - 1) / (rounds - 1))
+
+
+def pretrain_episodes(arguments, problems) -> list[int] | None:
+    """Episodes per problem in a round of the imitation stage before PPO; ``None`` keeps ``--dagger-episodes``."""
+    default = arguments.dagger_pretrain_episodes
+    rules = []
+    for entry in arguments.dagger_pretrain_episodes_by:
+        pattern, separator, number = entry.partition("=")
+        if not separator or not pattern or not number.isdigit():
+            raise SystemExit(f"--dagger-pretrain-episodes-by takes PATTERN=N entries, not {entry!r}")
+        rules.append((pattern, int(number)))
+    if default is None and not rules:
+        return None
+    if default is None:
+        default = arguments.dagger_episodes
+    return [next((number for pattern, number in rules if pattern in problem.name), int(default)) for problem in problems]
 
 
 def gpu_report() -> str:
@@ -290,15 +356,24 @@ def configure_filters(arguments) -> None:
 def configure_plans(arguments, problems) -> None:
     """Plan settings for every environment of this process and its forked workers (algo/generalist_plans.py)."""
     if not arguments.plan_conditioned:
-        if arguments.plan_cache or arguments.plan_dropout or arguments.charge_plan:
-            raise SystemExit("--plan-cache, --plan-dropout and --charge-plan need --plan-conditioned")
+        if arguments.plan_cache or arguments.plan_dropout or arguments.charge_plan or arguments.plan_default:
+            raise SystemExit("--plan-cache, --plan-dropout, --charge-plan and --plan-default need --plan-conditioned")
+        if arguments.expert_plan_cache:
+            # The teacher's plans only: without plan_conditioned the observation has no plan column to fill.
+            os.environ["EVRP_PLAN_CACHE"] = str(Path(arguments.expert_plan_cache).resolve())
         return
+    if arguments.expert_plan_cache:
+        raise SystemExit("--expert-plan-cache is for a policy that does not read the plan; use --plan-cache")
     if not 0.0 <= arguments.plan_dropout <= 1.0:
         raise SystemExit("--plan-dropout must lie in [0, 1]")
     if arguments.plan_cache:
         os.environ["EVRP_PLAN_CACHE"] = str(Path(arguments.plan_cache).resolve())
     os.environ["EVRP_PLAN_DROPOUT"] = str(arguments.plan_dropout)
     os.environ["EVRP_PLAN_MODE"] = "on"
+    # A learned plan margin needs the planner's own action located in every observation.
+    os.environ["EVRP_PLAN_MARK"] = "on" if arguments.plan_default else "off"
+    if arguments.plan_default and arguments.plan_dropout:
+        raise SystemExit("--plan-default needs --plan-dropout 0 (the margin is added to the planner's action)")
     from algo.generalist_plans import plan_cache
 
     counts = {problem.name: len(plan_cache(problem.name)) for problem in problems}
@@ -351,8 +426,14 @@ def main(argv: list[str] | None = None) -> None:
         plan_conditioned=arguments.plan_conditioned,
         charge_plan=arguments.charge_plan,
         critic_heads=arguments.critic_heads,
+        plan_default=arguments.plan_default,
+        plan_margin_init=arguments.plan_margin_init if arguments.plan_default else 4.0,
     )
     ppo_config = PPOConfig(
+        gate_learning_rate=arguments.gate_learning_rate,
+        critic_learning_rate=arguments.critic_learning_rate,
+        critic_warmup_updates=arguments.critic_warmup_updates,
+        deviation_penalty=arguments.deviation_penalty,
         advantage_by_problem=arguments.advantage_by_problem,
         policy_gradient_weight=arguments.policy_gradient_weight,
         group_size=arguments.group_size,
@@ -418,6 +499,15 @@ def main(argv: list[str] | None = None) -> None:
             print(f"rebuilt {sum(len(labels) for _, labels in dagger_replay)} DAgger states "
                   f"from {len(archive)} archived episodes", flush=True)
     slot_costs = json.loads(Path(arguments.slot_costs).read_text()) if arguments.slot_costs else None
+    baseline = None
+    if arguments.planner_baseline:
+        baseline = planner_baseline(arguments.planner_baseline, training_problems, reward_references, reward)
+        covered = {name: len(set(scores) & set(train_seeds)) for name, scores in baseline.items()}
+        short = {name: count for name, count in covered.items() if count < len(train_seeds)}
+        if short:
+            raise SystemExit(f"--planner-baseline lacks train seeds (of {len(train_seeds)}): {short}")
+        print(f"planner baseline: {len(train_seeds)} train seeds per problem from {arguments.planner_baseline}; "
+              f"mean planner score {sum(sum(s.values()) / len(s) for s in baseline.values()) / len(baseline):.3f}", flush=True)
     validation_envs = evaluation_envs(
         problems, [validation_seeds] * len(problems), policy_config.observation_spec, reward, reward_references,
         workers=arguments.rollout_workers, costs=slot_costs,
@@ -434,16 +524,18 @@ def main(argv: list[str] | None = None) -> None:
         imitation=imitation,
         pair_budget=arguments.pair_budget,
         slot_costs=slot_costs,
+        baseline=baseline,
     )
     print(f"workers forked [{memory_report()}]", flush=True)
     if arguments.init_from and not arguments.resume:
-        source = GeneralistActorCritic.load(arguments.init_from, prefix="best")
+        source = GeneralistActorCritic.load(arguments.init_from, prefix=arguments.init_prefix)
         theirs, ours = asdict(source.config), asdict(policy_config)
-        # The critic layout may change at a warm start (a shared critic seeds the family heads); nothing else may.
-        if {key for key in ours if theirs[key] != ours[key]} - {"critic_heads"}:
+        # The critic layout may change at a warm start (a shared critic seeds the family heads) and a
+        # plan margin may be added (its head starts at --plan-margin-init); nothing else may.
+        if {key for key in ours if theirs[key] != ours[key]} - {"critic_heads", "plan_default", "plan_margin_init"}:
             raise SystemExit(f"{arguments.init_from} has a different policy configuration")
         trainer.policy.adopt(source.state_dict())
-        print(f"initialised weights from {arguments.init_from}", flush=True)
+        print(f"initialised weights from {arguments.init_from} ({arguments.init_prefix})", flush=True)
 
     run_record = {
         "run_name": run_name,
@@ -459,6 +551,7 @@ def main(argv: list[str] | None = None) -> None:
     (destination / "run_config.json").write_text(json.dumps(run_record, indent=2, default=str))
 
     validation_history: list[dict] = []
+    pretrain_validation: list[dict] = []  # the rounds of the imitation stage before PPO (score_validation)
     best_score = float("-inf")
     if arguments.resume:
         restored = trainer.load_training(arguments.resume, dagger_replay=dagger_replay)
@@ -485,7 +578,10 @@ def main(argv: list[str] | None = None) -> None:
         )
         (destination / "training_history.json").write_text(json.dumps(trainer.history, indent=2, sort_keys=True))
 
-    def score_validation(update: int) -> None:
+    def score_validation(update: int, dagger_round: int | None = None) -> None:
+        """Score the greedy policy on the validation seeds. With ``dagger_round`` (a round of the imitation
+        stage before PPO) the row goes to pretrain_validation.json and the weights to dagger_<round>; it
+        never selects ``best``, which is chosen among the updates of the run."""
         nonlocal best_score
         began = time.perf_counter()
         rows = evaluate_policy_suite(
@@ -497,15 +593,21 @@ def main(argv: list[str] | None = None) -> None:
         summary["selection_score"] = sum(summary[name]["score"] for name in trained) / len(trained)
         summary.update(update=update, timesteps=trainer.total_steps, elapsed_seconds=time.perf_counter() - started,
                        validation_seconds=time.perf_counter() - began)
-        validation_history.append(summary)
-        (destination / "validation_history.json").write_text(json.dumps(validation_history, indent=2, sort_keys=True))
-        if summary["selection_score"] > best_score:
-            best_score = summary["selection_score"]
-            trainer.save(destination, prefix="best")
-        if arguments.save_validation_checkpoints:
-            trainer.save(destination, prefix=f"ckpt_{update}")
+        if dagger_round is not None:
+            summary["dagger_round"] = int(dagger_round)
+            pretrain_validation.append(summary)
+            (destination / "pretrain_validation.json").write_text(json.dumps(pretrain_validation, indent=2, sort_keys=True))
+            trainer.save(destination, prefix=f"dagger_{dagger_round}")
+        else:
+            validation_history.append(summary)
+            (destination / "validation_history.json").write_text(json.dumps(validation_history, indent=2, sort_keys=True))
+            if summary["selection_score"] > best_score:
+                best_score = summary["selection_score"]
+                trainer.save(destination, prefix="best")
+            if arguments.save_validation_checkpoints:
+                trainer.save(destination, prefix=f"ckpt_{update}")
         print(
-            f"[validation] update={update} steps={trainer.total_steps} "
+            f"[validation] {'round=' + str(dagger_round) + ' ' if dagger_round is not None else ''}update={update} steps={trainer.total_steps} "
             f"selection={summary['selection_score']:.3f} "
             + " ".join(
                 f"{name}={summary[name]['score']:.2f}/{summary[name]['served_fraction']:.2f}"
@@ -525,15 +627,21 @@ def main(argv: list[str] | None = None) -> None:
             record["gpu_peak_gb"] = torch.cuda.max_memory_allocated(trainer.device) / 2**30
         if "dagger/round" in record:
             print_dagger(record)
-        if record["update"] % 5 == 0 or record["update"] == 1:
+        if record["update"] % 5 == 0 or record["update"] == 1 or "deviation_rate" in record:
             memory = f" gpu_peak={record['gpu_peak_gb']:.1f}GB" if "gpu_peak_gb" in record else ""
             imitation_ = (
                 f" bc={record['bc_coefficient']:.3f}/{record.get('bc_loss', 0.0):.3f}" if "bc_coefficient" in record else ""
             )
+            gate_ = ""
+            if "deviation_rate" in record:
+                gate_ = f" deviated={record['deviation_rate']:.4f}" + "".join(
+                    f" {key.split('/')[1]}={record[key]:.3f}/m{record.get('margin/' + key.split('/')[1], float('nan')):.2f}"
+                    for key in sorted(record) if key.startswith("deviation/")
+                ) + (" [critic warm-up]" if record.get("critic_warmup") else "")
             print(
                 f"upd {record['update']:4d}/{record['num_updates']} steps={record['timesteps']:9d} "
                 f"train_score={record['train_score']:.3f} entropy={record['entropy']:.3f} "
-                f"kl={record['approx_kl']:.4f}{imitation_} {record['decisions_per_second']:.0f} dec/s{memory} "
+                f"kl={record['approx_kl']:.4f}{imitation_}{gate_} {record['decisions_per_second']:.0f} dec/s{memory} "
                 f"{record['elapsed_seconds']:.0f}s rollout={record.get('rollout_seconds', 0.0):.0f}s "
                 f"optimize={record.get('optimize_seconds', 0.0):.0f}s {memory_report()}",
                 flush=True,
@@ -577,17 +685,26 @@ def main(argv: list[str] | None = None) -> None:
         if not arguments.resume and trainer.envs.num_dagger and arguments.dagger_pretrain_rounds > 0:
             # Classic DAgger before PPO: collect with the current policy, then clone the aggregate.
             pretrain_record["dagger_rounds"] = []
-            for _ in range(arguments.dagger_pretrain_rounds):
-                round_record = trainer.dagger_round(observe=True)
+            rounds = arguments.dagger_pretrain_rounds
+            round_episodes = pretrain_episodes(arguments, problems)
+            for number in range(1, rounds + 1):
+                round_record = trainer.dagger_round(
+                    beta=pretrain_beta(arguments, number), observe=True, episodes=round_episodes,
+                )
                 print_dagger(round_record)
-                print(f"  dagger pretraining round done [{memory_report()}]", flush=True)
+                print(f"  dagger pretraining round {number}/{rounds} done [{memory_report()}]", flush=True)
                 observations, labels = trainer.imitation_data.flat()
                 round_record["epochs"] = trainer.pretrain(
                     observations, list(labels), epochs=arguments.dagger_pretrain_epochs,
-                    learning_rate=arguments.pretrain_learning_rate, progress=print_epoch, observe=False,
+                    learning_rate=arguments.dagger_pretrain_learning_rate or arguments.pretrain_learning_rate,
+                    progress=print_epoch, observe=False,
                 )
                 pretrain_record["dagger_rounds"].append(round_record)
                 del observations, labels
+                (destination / "pretrain_history.json").write_text(json.dumps(pretrain_record, indent=2, sort_keys=True))
+                every = arguments.dagger_pretrain_validate_every
+                if every > 0 and number % every == 0 and number < rounds:
+                    score_validation(0, dagger_round=number)
         if pretrain_record:
             (destination / "pretrain_history.json").write_text(json.dumps(pretrain_record, indent=2, sort_keys=True))
             trainer.save(destination, prefix="pretrained")

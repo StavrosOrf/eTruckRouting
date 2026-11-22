@@ -384,15 +384,23 @@ def dagger_slots(problems: Sequence, train_seeds: Sequence[Sequence[int]], confi
     return slots
 
 
-def episode_counts(slots: Sequence[DaggerSlot], episodes: int) -> list[int]:
-    """Spread ``episodes`` per problem over that problem's slots."""
+def episode_counts(slots: Sequence[DaggerSlot], episodes: int | Sequence[int]) -> list[int]:
+    """Spread ``episodes`` per problem over that problem's slots.
+
+    ``episodes`` is one number for every problem, or one per problem position
+    (``DaggerSlot.problem``), so that a round can play more episodes of the
+    problems whose episodes are short.
+    """
     by_problem: dict[int, list[int]] = {}
     for index, slot in enumerate(slots):
         by_problem.setdefault(slot.problem, []).append(index)
     counts = [0] * len(slots)
-    for members in by_problem.values():
+    for problem, members in by_problem.items():
+        wanted = int(episodes) if isinstance(episodes, (int, np.integer)) else int(episodes[problem])
+        if wanted < 0:
+            raise ValueError("a DAgger round cannot play a negative number of episodes")
         for rank, index in enumerate(members):
-            counts[index] = episodes // len(members) + int(rank < episodes % len(members))
+            counts[index] = wanted // len(members) + int(rank < wanted % len(members))
     return counts
 
 

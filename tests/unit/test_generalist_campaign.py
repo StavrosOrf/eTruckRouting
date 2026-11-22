@@ -1004,3 +1004,91 @@ def test_a_shard_claim_is_exclusive(tmp_path) -> None:
     claim = tmp_path / "x.claim"
     assert campaign.claim_shard(claim) and not campaign.claim_shard(claim)
     assert campaign.claim_shard(claim, stale_seconds=0)
+
+
+def test_the_planner_free_arms_never_read_the_plan_and_differ_in_size_only(tmp_path) -> None:
+    from scripts.training.train_generalist_ppo import build_argument_parser, pretrain_beta, pretrain_episodes
+
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "suite"
+    arms = ["broad_free", "broad_free_wide"]
+    campaign.prepare(
+        destination, "named", "full", 1, bks_from=_bks(tmp_path, names), arms=arms,
+        problems_dir=directory, schedule=998_400, num_envs=6,
+    )
+    manifest = campaign.read_manifest(destination)
+    parser = build_argument_parser()
+    parsed = {}
+    for run in manifest["runs"]:
+        argv = ["--problems", manifest["problems"], "--references", str(destination / "references"),
+                *manifest["common_flags"], "--total-timesteps", "998400", "--seed", str(run["seed"]), *run["flags"]]
+        parsed[run["arm"]] = parser.parse_args(argv)
+    base, wide = (vars(parsed[arm]) for arm in arms)
+    # Nothing of the planner at decision time: no plan columns, no plan cache, no marked action, no guard that reads the plan.
+    for name in ("plan_conditioned", "charge_plan", "plan_default", "retire_guard"):
+        assert base[name] is False
+    assert base["plan_cache"] is None and base["plan_dropout"] == 0.0
+    assert base["safety_mask"] and base["safety_margin"] == 0.0 and base["public_wake"]
+    # The planner teaches: demonstrations, then rounds of corrections on the learner's own states before PPO.
+    assert base["demonstrations"] == str(destination / "bks") and base["bc_episodes"] == 32
+    assert base["bc_max_decisions_per_problem"] == 15_000 and base["pretrain_epochs"] == 12
+    assert len(base["dagger_expert"]) == len(names) and all("=algo.generalist_experts:" in spec for spec in base["dagger_expert"])
+    # The teacher on the static problems starts from the cached full-budget plan; the policy never reads that cache.
+    assert sorted(spec.split(":")[1] for spec in base["dagger_expert"]) == ["longhaul_cached", "longhaul_cached", "rolling_request"]
+    assert base["expert_plan_cache"] == str(destination / "bks")
+    assert (base["dagger_pretrain_rounds"], base["dagger_pretrain_epochs"], base["dagger_pretrain_validate_every"]) == (20, 1, 5)
+    assert (base["dagger_pretrain_beta"], base["dagger_pretrain_beta_final"]) == (0.5, 0.1)
+    assert pretrain_beta(parsed["broad_free"], 1) == 0.5 and pretrain_beta(parsed["broad_free"], 20) == pytest.approx(0.1)
+    problems = [type("Problem", (), {"name": name})() for name in ("tx_longhaul_t8", "ca_sameday_t16", "tx_drayage_combined_t10")]
+    assert pretrain_episodes(parsed["broad_free"], problems) == [4, 1, 2]
+    assert base["dagger_max_states"] == 100_000 and base["dagger_envs_per_problem"] == 2
+    # Then PPO with the imitation term held, corrections every three updates, the critic fitted first, and
+    # the planner's score on the same seed as the baseline.
+    assert (base["bc_coefficient"], base["bc_coefficient_final"]) == (0.1, 0.1)
+    assert (base["dagger_every"], base["dagger_episodes"], base["dagger_beta"], base["dagger_beta_final"]) == (3, 1, 0.1, 0.1)
+    assert (base["learning_rate"], base["entropy_coefficient"]) == (0.00005, 0.001)
+    assert (base["critic_learning_rate"], base["critic_warmup_updates"]) == (0.001, 3)
+    assert base["planner_baseline"] == str(destination / "bks") and base["advantage_by_problem"] and base["critic_heads"] == "family"
+    assert (base["rollout_steps"], base["accumulate_minibatches"], base["validate_every"], base["checkpoint_every"]) == (512, 4, 13, 3)
+    assert (base["hidden_dim"], base["encoder_layers"]) == (128, 3) and (wide["hidden_dim"], wide["encoder_layers"]) == (192, 4)
+    assert {key for key in base if base[key] != wide[key]} == {"hidden_dim", "encoder_layers"}
+
+
+def test_the_repaired_planner_free_arm_corrects_the_states_the_deployed_policy_reaches(tmp_path) -> None:
+    from scripts.training.train_generalist_ppo import build_argument_parser, pretrain_beta, pretrain_episodes
+
+    directory, names = _problems_dir(tmp_path)
+    destination = tmp_path / "suite"
+    arms = ["broad_free", "broad_free_own"]
+    campaign.prepare(
+        destination, "named", "full", 1, bks_from=_bks(tmp_path, names), arms=arms,
+        problems_dir=directory, schedule=998_400, num_envs=6,
+    )
+    manifest = campaign.read_manifest(destination)
+    parser = build_argument_parser()
+    parsed = {}
+    for run in manifest["runs"]:
+        argv = ["--problems", manifest["problems"], "--references", str(destination / "references"),
+                *manifest["common_flags"], "--total-timesteps", "998400", "--seed", str(run["seed"]), *run["flags"]]
+        parsed[run["arm"]] = parser.parse_args(argv)
+    base, own = (vars(parsed[arm]) for arm in arms)
+    # In every correction round the learner takes its most likely action and the teacher only labels.
+    assert own["dagger_deterministic"] and not base["dagger_deterministic"]
+    assert pretrain_beta(parsed["broad_free_own"], 1) == 0.0 and pretrain_beta(parsed["broad_free_own"], 20) == 0.0
+    assert (own["dagger_beta"], own["dagger_beta_final"]) == (0.0, 0.0)
+    # Every problem plays the same four episodes a round, one in each of its four correction environments.
+    problems = [type("Problem", (), {"name": name})() for name in ("tx_longhaul_t8", "ca_sameday_t16", "tx_drayage_combined_t10")]
+    assert pretrain_episodes(parsed["broad_free_own"], problems) == [4, 4, 4]
+    assert (own["dagger_envs_per_problem"], own["dagger_max_states"]) == (4, 150_000)
+    # Nothing else differs from the pilot's recipe.
+    assert {key for key in base if base[key] != own[key]} == {
+        "dagger_deterministic", "dagger_pretrain_beta", "dagger_pretrain_beta_final", "dagger_beta", "dagger_beta_final",
+        "dagger_pretrain_episodes_by", "dagger_envs_per_problem", "dagger_max_states",
+    }
+
+
+def test_flag_values_are_replaced_removed_or_added() -> None:
+    flags = ["--a", "1", "--b", "x", "y", "--c"]
+    assert campaign.with_values(flags, {"--b": None, "--a": ["2"], "--d": []}) == ["--a", "2", "--c", "--d"]
+    assert campaign.with_values(flags, {}) == flags
+

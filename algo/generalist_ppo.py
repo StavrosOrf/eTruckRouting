@@ -103,6 +103,22 @@ OBSERVE_FACTOR = 8
 # filling chunks by size alone gives 5 chunks holding 2.8 times.
 CHUNK_SLACK = 0.75
 _OutOfMemory = getattr(torch, "OutOfMemoryError", torch.cuda.OutOfMemoryError)
+# Parameters of the value heads (shared or per family); everything else is the actor.
+_CRITIC_PREFIXES = ("value_head.", "value_heads.")
+PROBLEM_CATEGORIES = ("lh_plain", "lh_congested", "lh_hos", "sameday", "drayage")
+
+
+def problem_category(name: str) -> str:
+    """The benchmark category a problem's name puts it in (reports only; never an input)."""
+    if "drayage" in name:
+        return "drayage"
+    if "sameday" in name:
+        return "sameday"
+    if "hos" in name:
+        return "lh_hos"
+    if "congested" in name:
+        return "lh_congested"
+    return "lh_plain"
 
 
 class PairBudget:
@@ -163,11 +179,15 @@ def act_in_chunks(
     deterministic: bool = False,
     budget: PairBudget | None = None,
     uniform: np.ndarray | None = None,
+    plan_margin: float | None = None,
+    own: list | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """``policy.act`` on ``observations`` in chunks the device can hold; results in the order given.
 
     ``uniform`` holds one number in [0, 1) per observation: its sampled position then depends on
     the observation and that number only, not on the chunk or the call it is acted on in.
+    ``plan_margin`` puts the choice behind the plan gate (``policy.act_gated`` with each observation's
+    ``plan_position``); ``own`` then receives the policy's ungated positions, in the order given.
     """
     budget = budget if budget is not None else PairBudget()
     device = torch.device(device)
@@ -176,15 +196,25 @@ def act_in_chunks(
     logprobs = torch.zeros(size, device=device)
     values = torch.zeros(size, device=device)
     noise = None if uniform is None else torch.as_tensor(np.asarray(uniform, dtype=np.float64), device=device)
+    ungated = None if plan_margin is None else torch.full((size,), -1, dtype=torch.long, device=device)
 
     def run(rows):
         batch = collate([observations[int(row)] for row in rows], device)
         chosen = None if noise is None else noise[torch.as_tensor(np.asarray(rows), device=device)]
-        return policy.act(batch, deterministic, chosen)
+        if plan_margin is None:
+            return policy.act(batch, deterministic, chosen)
+        plan = torch.as_tensor(
+            [int(getattr(observations[int(row)], "plan_position", -1)) for row in rows], dtype=torch.long, device=device,
+        )
+        actions, logprob, value, mine = policy.act_gated(batch, plan, plan_margin, deterministic, chosen)
+        ungated[torch.as_tensor(np.asarray(rows), device=device)] = mine
+        return actions, logprob, value
 
     for rows, (chosen, logprob, value) in run_chunks(budget, node_counts(observations), run):
         index = torch.as_tensor(rows, device=device)
         positions[index], logprobs[index], values[index] = chosen, logprob, value
+    if own is not None and ungated is not None:
+        own.extend(int(value) for value in ungated.cpu().tolist())
     return positions, logprobs, values
 
 
@@ -414,6 +444,34 @@ class SuiteReward:
     def score(self, summary: dict, scale: ReferenceScale) -> float:
         final = (summary["hours"], summary["served"], summary["late"], summary["lost"])
         return self.step((0.0, 0.0, 0.0, 0.0), final, scale) + self.terminal(summary, scale)
+
+
+def planner_baseline(
+    directory: str | Path, problems: Sequence[SuiteProblem], references: ReferenceTable, reward: SuiteReward,
+) -> dict[str, dict[int, float]]:
+    """Per problem and seed, :meth:`SuiteReward.score` of the planner's own stored episode.
+
+    ``<directory>/<problem>/planner_train.json`` (the campaign's frozen bank) or
+    ``<directory>/<problem>.json`` lists the planner's episode summaries (the fields of
+    :func:`episode_summary`, with ``seed``); each is scored in the units the training reward uses on
+    that seed, so a policy that replays the planner's episode has a return of zero once the trainer
+    takes this score off (``GeneralistPPO(baseline=...)``).
+    """
+    import json
+
+    table: dict[str, dict[int, float]] = {}
+    for problem in problems:
+        path = Path(directory) / problem.name / "planner_train.json"
+        if not path.exists():
+            path = Path(directory) / f"{problem.name}.json"
+        if not path.exists():
+            raise FileNotFoundError(f"no planner episodes for {problem.name!r} in {directory}")
+        scores = {}
+        for row in json.loads(path.read_text()):
+            scale, _ = references.scale(problem.name, int(row["seed"]), reward.reference)
+            scores[int(row["seed"])] = float(reward.score(row, scale))
+        table[problem.name] = scores
+    return table
 
 
 # ---------------------------------------------------------------------------
@@ -790,10 +848,15 @@ class GeneralistPPO:
         imitation: ImitationConfig | None = None,
         pair_budget: int | None = PAIR_BUDGET,
         slot_costs: dict | None = None,
+        baseline: dict[str, dict[int, float]] | None = None,
     ):
         """``slot_costs`` maps a problem to its measured ``step`` (seconds per decision) and
         ``dagger`` (seconds per DAgger episode); slots are then dealt to the workers by cost
-        (:func:`pack_slots`). It changes how long a phase takes, not what it computes."""
+        (:func:`pack_slots`). It changes how long a phase takes, not what it computes.
+
+        ``baseline`` holds, per problem and seed, the score of the planner's own episode
+        (:func:`planner_baseline`); it is taken off the last reward of the episode on that seed, so
+        returns measure the gain over the planner on the same scenario."""
         self.budget = PairBudget(pair_budget)
         self.policy_config = policy_config
         self.config = ppo_config
@@ -831,7 +894,14 @@ class GeneralistPPO:
         self.dagger_rounds = 0
         self.policy = GeneralistActorCritic(policy_config).to(self.device)
         self._parameters = list(self.policy.parameters())
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=ppo_config.learning_rate, eps=1e-5)
+        self.optimizer = torch.optim.Adam(self._optimizer_groups(), lr=ppo_config.learning_rate, eps=1e-5)
+        # Everything but the value heads: left untouched while the critic warms up.
+        self._actor_parameters = [
+            parameter for name, parameter in self.policy.named_parameters() if not name.startswith(_CRITIC_PREFIXES)
+        ]
+        self.baseline = baseline
+        self.baseline_misses = 0
+        self.slot_categories = [problem_category(self.problems[problem].name) for problem, _ in slots]
         self.reward_scale = (
             RunningReturnScale(ppo_config.num_envs, ppo_config.gamma) if ppo_config.normalize_reward else None
         )
@@ -859,7 +929,7 @@ class GeneralistPPO:
                 horizon = config.schedule_timesteps or config.total_timesteps
                 fraction = max(0.0, 1.0 - self.total_steps / horizon)
                 for group in self.optimizer.param_groups:
-                    group["lr"] = fraction * config.learning_rate
+                    group["lr"] = fraction * group.get("base_lr", config.learning_rate)
             dagger = {}
             if self.envs.num_dagger and update % self.imitation.dagger_every == 0:
                 dagger = self.dagger_round()
@@ -880,6 +950,7 @@ class GeneralistPPO:
                 "optimize_seconds": optimized - optimize_started,
                 **statistics_,
                 **rollout["statistics"],
+                **self.margin_statistics(rollout),
                 **self.episode_statistics(),
                 **dagger,
             }
@@ -887,6 +958,48 @@ class GeneralistPPO:
             if progress_callback is not None and progress_callback(record):
                 break
         return self.history
+
+    def _optimizer_groups(self) -> list[dict]:
+        """One group at ``learning_rate``, or separate ones for the plan-margin head and the value heads."""
+        config = self.config
+        rates = {"gate": config.gate_learning_rate, "critic": config.critic_learning_rate}
+        members: dict[str, list] = {"actor": [], "gate": [], "critic": []}
+        for name, parameter in self.policy.named_parameters():
+            kind = "gate" if name.startswith("margin_head.") else "critic" if name.startswith(_CRITIC_PREFIXES) else "actor"
+            members[kind if rates.get(kind) is not None else "actor"].append(parameter)
+        groups = []
+        for kind, parameters in members.items():
+            if parameters:
+                rate = rates.get(kind) or config.learning_rate
+                groups.append({"params": parameters, "lr": rate, "base_lr": rate})
+        return groups
+
+    def margin_statistics(self, rollout: dict, sample: int = 1024) -> dict:
+        """Mean learned plan margin per problem category on a sample of the rollout's states."""
+        if not self.policy_config.plan_default:
+            return {}
+        stored = rollout["observations"]
+        picks = np.random.default_rng([self.config.seed, 0x4D4152, self.completed_updates]).choice(
+            len(stored), size=min(sample, len(stored)), replace=False,
+        )
+        observations = [stored[int(index)] for index in picks]
+        margins = torch.zeros(len(observations), device=self.device)
+        marked = torch.zeros(len(observations), dtype=torch.bool, device=self.device)
+
+        def run(rows):
+            return self.policy.plan_margins(collate([observations[int(row)] for row in rows], self.device))
+
+        for rows, (margin, mark) in run_chunks(self.budget, node_counts(observations), run):
+            index = torch.as_tensor(rows, device=self.device)
+            margins[index], marked[index] = margin, mark
+        margins, marked = margins.cpu().numpy(), marked.cpu().numpy()
+        categories = np.asarray([self.slot_categories[int(index) % self.config.num_envs] for index in picks])
+        record = {}
+        for category in sorted(set(categories.tolist())):
+            keep = marked & (categories == category)
+            if keep.any():
+                record[f"margin/{category}"] = float(margins[keep].mean())
+        return record
 
     def episode_statistics(self) -> dict:
         record = {}
@@ -917,6 +1030,9 @@ class GeneralistPPO:
         values = np.zeros((steps, num_envs), dtype=np.float32)
         rewards = np.zeros((steps, num_envs), dtype=np.float32)
         dones = np.zeros((steps, num_envs), dtype=bool)
+        # Decisions with the planner's own action marked, and those that left it.
+        marked = np.zeros((steps, num_envs), dtype=bool)
+        deviated = np.zeros((steps, num_envs), dtype=bool)
         finished: list[tuple[int, int, dict]] = []
         current = list(self._observations)
         pace = Pace(self.envs, together=config.step_together)
@@ -936,6 +1052,9 @@ class GeneralistPPO:
                 actions[at, members] = chosen
                 logprobs[at, members] = logprob.cpu().numpy()
                 values[at, members] = value.cpu().numpy()
+                plan = np.asarray([int(getattr(observation, "plan_position", -1)) for observation in observations])
+                marked[at, members] = plan >= 0
+                deviated[at, members] = (plan >= 0) & (chosen != plan)
                 env_actions = {}
                 for index, step, observation, position in zip(members, at, observations, chosen, strict=True):
                     grid[step][index] = observation
@@ -957,8 +1076,18 @@ class GeneralistPPO:
                     waiting.add(group)
         # Everything below is in step order, whatever order the workers answered in.
         finished.sort(key=lambda item: item[:2])
-        for _, _, record in finished:
+        for step, index, record in finished:
             self.episodes[record["problem"]].append(record)
+            if self.baseline is not None:
+                # The planner's score on this scenario comes off the episode's last reward.
+                score = self.baseline.get(record["problem"], {}).get(int(record["seed"]))
+                if score is None:
+                    self.baseline_misses += 1
+                else:
+                    rewards[step, index] -= score
+        if config.deviation_penalty > 0:
+            rewards -= config.deviation_penalty * deviated
+        gate_statistics = self._deviation_statistics(marked, deviated)
         if self.reward_scale is not None:
             for step in range(steps):
                 self.reward_scale.update(rewards[step], dones[step])
@@ -973,9 +1102,14 @@ class GeneralistPPO:
         last_value = values_in_chunks(self.policy, current, self.device, self.budget)
         advantages = generalized_advantages(rewards, values, dones, last_value, config.gamma, config.gae_lambda)
         returns = advantages + values
-        statistics_: dict = {}
+        if self.completed_updates < config.critic_warmup_updates:
+            # Critic warm-up: the value heads regress on the returns the policy actually collected
+            # (bootstrapped only where the rollout cut an episode), not on their own old estimates.
+            returns = generalized_advantages(rewards, values, dones, last_value, config.gamma, 1.0) + values
+        statistics_: dict = dict(gate_statistics)
         if config.advantage_mode == "group":
-            advantages, statistics_ = group_advantages(advantages, rewards, finished, self._fresh, config.group_size)
+            advantages, grouped = group_advantages(advantages, rewards, finished, self._fresh, config.group_size)
+            statistics_.update(grouped)
         self._fresh = step_dones
         if self.advantage_groups is not None:
             advantages = normalized_by_group(advantages, self.advantage_groups)
@@ -990,15 +1124,39 @@ class GeneralistPPO:
             "advantages": advantages.reshape(-1),
             "returns": returns.reshape(-1),
             "values": values.reshape(-1),
+            "rewards": rewards.reshape(-1),  # as the advantages saw them: charged, baselined, scaled
             "statistics": statistics_,
         }
+
+    def _deviation_statistics(self, marked: np.ndarray, deviated: np.ndarray) -> dict:
+        """Share of the rollout's marked decisions that left the planner's action, overall and per category,
+        and the finished episodes that had no planner score to take off (also for a policy that marks nothing)."""
+        record = {}
+        if self.baseline is not None:
+            record["baseline_misses"] = float(self.baseline_misses)
+        if not marked.any():
+            return record
+        record.update(deviation_rate=float(deviated.sum() / marked.sum()), plan_marked=float(marked.mean()))
+        categories = np.asarray(self.slot_categories)
+        for category in sorted(set(self.slot_categories)):
+            columns = categories == category
+            count = marked[:, columns].sum()
+            if count:
+                record[f"deviation/{category}"] = float(deviated[:, columns].sum() / count)
+        return record
 
     def _optimize(self, rollout: dict) -> dict:
         config = self.config
         stored, counts = rollout["observations"], rollout["counts"]
         indices = np.arange(config.batch_size)
         losses = {"policy_loss": [], "value_loss": [], "entropy": [], "approx_kl": []}
-        bc_weight = self.bc_weight()
+        # Critic warm-up: the first updates fit the value heads to the starting policy and leave
+        # every other weight (and the imitation term) alone.
+        warming = self.completed_updates < config.critic_warmup_updates
+        policy_weight = 0.0 if warming else config.policy_gradient_weight
+        entropy_weight = 0.0 if warming else config.entropy_coefficient
+        value_clip = 0.0 if warming else config.value_clip_range  # a plain regression while warming up
+        bc_weight = 0.0 if warming else self.bc_weight()
         if bc_weight > 0:
             losses.update(bc_loss=[], bc_accuracy=[])
         accumulate = config.accumulate_minibatches
@@ -1032,17 +1190,17 @@ class GeneralistPPO:
                         torch.clamp(ratio, 1.0 - config.clip_range, 1.0 + config.clip_range) * advantage,
                     ).sum()
                     target = returns[at]
-                    if config.value_clip_range > 0.0:
+                    if value_clip > 0.0:
                         old = old_values[at]
-                        clipped = old + torch.clamp(value - old, -config.value_clip_range, config.value_clip_range)
+                        clipped = old + torch.clamp(value - old, -value_clip, value_clip)
                         value_sum = 0.5 * torch.max((value - target).pow(2), (clipped - target).pow(2)).sum()
                     else:
                         value_sum = 0.5 * (value - target).pow(2).sum()
                     entropy_sum = entropy.sum()
                     loss = (
-                        config.policy_gradient_weight * policy_sum
+                        policy_weight * policy_sum
                         + config.value_coefficient * value_sum
-                        - config.entropy_coefficient * entropy_sum
+                        - entropy_weight * entropy_sum
                     ) / (size * accumulate)
                     gradients = torch.autograd.grad(loss, self._parameters, allow_unused=True)
                     return gradients, {
@@ -1061,6 +1219,9 @@ class GeneralistPPO:
                     losses["bc_loss"].append(bc_loss)
                     losses["bc_accuracy"].append(bc_accuracy)
                 if (number + 1) % accumulate == 0 or number + 1 == len(starts):
+                    if warming:
+                        for parameter in self._actor_parameters:
+                            parameter.grad = None  # the optimizer skips it and keeps its moments
                     nn.utils.clip_grad_norm_(self.policy.parameters(), config.max_grad_norm)
                     self.optimizer.step()
                 losses["approx_kl"].append(sums["kl"] / size)
@@ -1070,6 +1231,8 @@ class GeneralistPPO:
             if config.target_kl is not None and losses["approx_kl"] and np.mean(losses["approx_kl"][-8:]) > config.target_kl:
                 break
         statistics_ = {key: float(np.mean(values)) if values else 0.0 for key, values in losses.items()}
+        if config.critic_warmup_updates:
+            statistics_["critic_warmup"] = float(warming)
         if self.imitation is not None:
             statistics_.update(bc_coefficient=bc_weight, imitation_states=len(self.imitation_data))
         if self.budget.reductions:
@@ -1154,14 +1317,19 @@ class GeneralistPPO:
                 rows = chunk[start : start + OBSERVE_CHUNK]
                 self.policy.observe(collate(gather_observations(observations, rows), self.device))
 
-    def dagger_round(self, beta: float | None = None, observe: bool = False) -> dict:
+    def dagger_round(
+        self, beta: float | None = None, observe: bool = False, episodes: int | Sequence[int] | None = None,
+    ) -> dict:
         """One DAgger round in the workers' DAgger sub-environments.
 
         The learner acts here (sampled unless ``dagger_deterministic``); each
         worker queries the expert at every visited state and executes the
         expert's action with probability ``beta``. Labelled states join the
         retained-imitation set; with ``observe`` they also update the input
-        normalizer (rounds before any rollout).
+        normalizer (rounds before any rollout). ``episodes`` per problem (one
+        number, or one per problem position) replaces the configured number
+        for this round: the imitation stage before PPO plays more than the
+        rounds between updates.
         """
         if not self.envs.num_dagger:
             return {}
@@ -1169,7 +1337,7 @@ class GeneralistPPO:
         beta = imitation.beta(self.total_steps) if beta is None else float(beta)
         started = time.perf_counter()
         slots = self.envs.num_dagger
-        counts = episode_counts(self.dagger_slots, imitation.dagger_episodes)
+        counts = episode_counts(self.dagger_slots, imitation.dagger_episodes if episodes is None else episodes)
         pace = Pace(self.envs, dagger=True, together=self.config.step_together)
         live: list = [None] * slots
         states: list[tuple[list, list]] = [([], []) for _ in range(slots)]
@@ -1721,6 +1889,15 @@ def evaluate_policy_suite(
     rows = []
     was_training = policy.training
     policy.eval()
+    # Plan gate (EVRP_PLAN_GATE, decision time only): the workers mark the planner's own action, the
+    # choice below goes through ``act_gated``, and every row reports what the gate did in its episode.
+    from algo.generalist_plans import plan_gate
+
+    plan_margin = plan_gate()
+    gate_counts: dict[int, dict] = {}
+    # A policy with its own learned plan margin: every row reports how often it left the planner's action.
+    learned = bool(getattr(policy.config, "plan_default", False))
+    own_counts: dict[int, dict] = {}
     try:
         observations = envs.reset()
         pace = Pace(envs, together=together)
@@ -1733,11 +1910,30 @@ def evaluate_policy_suite(
             if waiting:
                 order = sorted(waiting)
                 live = [index for group in order for index in pace.groups[group] if observations[index] is not None]
-                positions, _, _ = act_in_chunks(policy, [observations[index] for index in live], device, deterministic, budget)
+                own: list = []
+                positions, _, _ = act_in_chunks(
+                    policy, [observations[index] for index in live], device, deterministic, budget,
+                    plan_margin=plan_margin, own=own,
+                )
                 actions = {
                     index: int(observations[index].action_index[position])
                     for index, position in zip(live, positions.cpu().numpy(), strict=True)
                 }
+                if plan_margin is not None:
+                    for index, position, mine in zip(live, positions.cpu().numpy(), own, strict=True):
+                        count = gate_counts.setdefault(index, {"decisions": 0, "marked": 0, "disagreed": 0, "deviated": 0})
+                        marked = int(getattr(observations[index], "plan_position", -1))
+                        count["decisions"] += 1
+                        count["marked"] += marked >= 0
+                        count["disagreed"] += marked >= 0 and int(mine) != marked
+                        count["deviated"] += marked >= 0 and int(position) != marked
+                if learned:
+                    for index, position in zip(live, positions.cpu().numpy(), strict=True):
+                        count = own_counts.setdefault(index, {"decisions": 0, "marked": 0, "deviated": 0})
+                        marked = int(getattr(observations[index], "plan_position", -1))
+                        count["decisions"] += 1
+                        count["marked"] += marked >= 0
+                        count["deviated"] += marked >= 0 and int(position) != marked
                 for group in order:
                     pace.send(group, "step", [actions.get(index) for index in pace.groups[group]])
                 pending |= waiting
@@ -1747,6 +1943,12 @@ def evaluate_policy_suite(
                 for index, (observation, _, _, record) in zip(pace.groups[group], results, strict=True):
                     observations[index] = observation
                     if record is not None:
+                        if plan_margin is not None:
+                            # decisions; those with the planner's action among the selectable candidates;
+                            # those where the policy's own choice differed; those where the gate let it deviate.
+                            record["plan_gate"] = {"margin": plan_margin, **{k: int(v) for k, v in gate_counts.pop(index, {}).items()}}
+                        if learned:
+                            record["plan_default"] = {k: int(v) for k, v in own_counts.pop(index, {}).items()}
                         rows.append(record)
                 if any(observations[index] is not None for index in pace.groups[group]):
                     waiting.add(group)
@@ -1798,6 +2000,10 @@ def summarize_suite(rows: Sequence[dict], problems: Sequence[str]) -> dict:
                 float(np.mean([row["hours"] for row in group if row["success"]])) if successes else None
             ),
         }
+        counted = [row["plan_default"] for row in group if row.get("plan_default")]
+        if counted:
+            # A policy with a learned plan margin: the share of marked decisions that left the planner's action.
+            summary[name]["deviated"] = sum(c["deviated"] for c in counted) / max(1, sum(c["marked"] for c in counted))
     scores = [values["score"] for values in summary.values()]
     summary["suite_score"] = float(np.mean(scores)) if scores else float("nan")
     return summary

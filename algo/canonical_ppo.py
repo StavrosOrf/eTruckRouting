@@ -60,6 +60,14 @@ class PPOConfig:
     normalize_reward: bool = True
     seed: int = 0
     schedule_timesteps: int | None = None
+    # Generalist trainer, staged fine-tuning of a policy that starts as its planner: learning rates of
+    # the plan-margin head and of the value heads (None: ``learning_rate``), the number of first
+    # updates that fit the value heads only, and the reward taken off every decision that leaves the
+    # planner's own action.
+    gate_learning_rate: float | None = None
+    critic_learning_rate: float | None = None
+    critic_warmup_updates: int = 0
+    deviation_penalty: float = 0.0
     expert_coefficient: float = 0.0
     expert_batch_size: int = 128
     expert_decay_timesteps: int = 0
@@ -87,6 +95,14 @@ class PPOConfig:
             raise ValueError("accumulate_minibatches must be at least 1")
         if not 0.0 < self.learning_rate < 1.0:
             raise ValueError("learning_rate must lie in (0, 1)")
+        for name in ("gate_learning_rate", "critic_learning_rate"):
+            value = getattr(self, name)
+            if value is not None and not 0.0 < value < 1.0:
+                raise ValueError(f"{name} must lie in (0, 1)")
+        if isinstance(self.critic_warmup_updates, bool) or not isinstance(self.critic_warmup_updates, int) or self.critic_warmup_updates < 0:
+            raise ValueError("critic_warmup_updates must be a nonnegative integer")
+        if not math.isfinite(self.deviation_penalty) or self.deviation_penalty < 0:
+            raise ValueError("deviation_penalty must be finite and nonnegative")
         if not 0.0 <= self.gamma <= 1.0:
             raise ValueError("gamma must lie in [0, 1]")
         if not 0.0 <= self.gae_lambda <= 1.0:

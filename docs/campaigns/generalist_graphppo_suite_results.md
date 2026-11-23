@@ -331,38 +331,48 @@ So a learned policy can at most match the planner on plain long haul and same-da
 
 ### A policy without the planner at run time (suite_v8 / suite_v9, pre-registered, development result 2026-11-22)
 
-**The goal (equal or better score at significantly less computation) is not met.** On the 13 slower request problems, the policy passes the gate with a compute saving on four drayage problems only. There it is 1.9 to 4.4 times faster than the cheapest planner setting that passes, with 9 to 15 % more fleet hours than the full planner. On same-day and on long haul without hours of service, a cheaper setting of the planner is both good enough and faster than the policy wherever a setting passes.
+**The goal (equal or better score at significantly less computation) is not met in any class.** Since amendment 54 (user decision of 2026-11-22), a request problem passes only if the policy also uses at most 5 % more fleet hours than the full planner. Under that rule no request problem passes; before it, 7 of 16 did. Long haul already counted hours, and none of its 16 problems pass. The policy is faster than the cheapest passing planner on drayage, hours of service and one large same-day problem, but fails the gate on all of them.
 
-The policy imitates the planner, is corrected on the states it reaches itself, is then trained with PPO, and never calls the planner when deployed. Amendments 44 to 53; files in `results/generalist_graphppo/agent/pilots/planner_free/`. All numbers are from one training seed and validation seeds (64 per problem, 32 for the seven large request problems, on which the policy never trained). Times are per episode on one thread of a Xeon 8360Y, against this repository's Python planners, and say nothing about compiled planner code.
+The policy imitates the planner, is corrected on the states it reaches itself, is then trained with PPO, and never calls the planner when deployed. Amendments 44 to 55; files in `results/generalist_graphppo/agent/pilots/planner_free/` (all classes: `report_classes_hours.txt`). Two sets of weights are reported, never combined: `suite_v8` trained on all 25 problems, `suite_v9` on the nine request problems. All numbers are from one training seed and validation seeds (64 per problem, 32 on the large problems, on which neither policy trained). Times are per episode on one thread of a Xeon 8360Y, against this repository's Python planners, and say nothing about compiled planner code.
 
-**Registered result.** `suite_v8` (25 problems): distance to the gate 0.631, 0 passed. `suite_v9` (the nine request problems): 0.160 after imitation and 0.078 after PPO, against a bar of 0.03, with 5 of 9 passed. The three problems that the planner solves in under 10 seconds all fail (0.83 to 0.85 of its on-time services) and are outside the compute question.
+**Distance to the gate.** `suite_v8`: 0.648 with hours (0.631 without), 0 of 25 passed. `suite_v9` on its nine: 0.117 with hours (0.078 without; 0.160 before PPO), 0 passed (5 without).
 
-**Request problems on which the planner is slow.** "Cheapest passing planner" is the rolling planner with the fewest search iterations per re-plan (0, 3, 12, 30 or 60; 60 is the campaign's setting) that still passes the gate, cheapest by seconds. At 0 it only inserts requests greedily into its previous plan. The last column is that planner's time divided by the policy's on two timed seeds, with the estimate on all seeds in brackets; below 1 the planner is faster.
+**Request problems** (`suite_v9`). "Cheapest passing planner" is the rolling planner with the fewest search iterations per re-plan (0, 3, 12, 30 or 60; 60 is the campaign's setting), default or with the tuned drayage weights of amendment 38, that passes the gate with hours counted. On the three fast problems only the full planner was run. The last column is that planner's time over the policy's on two timed seeds, with the estimate on all seeds in brackets; above 1 the policy is faster.
 
-| Problem | Policy passes gate | On time, vs full planner | Fleet hours, vs full planner | Cheapest passing planner | Its time / policy's |
-| --- | --- | --- | --- | --- | --- |
-| ca_drayage_combined | yes | 1.104 | +11.8 % | 3 | 2.70 (2.23) |
-| ca_drayage_combined_t16 | yes | 1.153 | +10.4 % | 3 | 3.45 (3.19) |
-| tx_drayage_combined_t10 | yes | 1.057 | +9.4 % | 3 | 2.08 (1.90) |
-| tx_drayage_combined_t25 | yes | 1.076 | +15.3 % | 3 | 4.43 (4.37) |
-| ca_drayage_combined_t60 | no | 0.763 | +14.2 % | 3 | 3.69 (3.98) |
-| tx_drayage_combined_t50 | no | 0.795 | +2.8 % | 3 | 6.42 (5.40) |
-| chi_sameday_t8 | yes | 0.952 | +6.5 % | 0 | 0.27 (0.31) |
-| sea_sameday_t13 | yes | 0.966 | +8.5 % | 0 | 0.52 (0.47) |
-| chi_sameday_t25 | yes | 0.965 | +17.1 % | 0 | 0.42 (0.46) |
-| chi_sameday_t50 | no | 0.919 | +36.5 % | 0 | 0.35 (0.36) |
-| sea_sameday_t60 | no | 0.860 | +39.8 % | 0 | 0.38 (0.37) |
-| ca_sameday_t40 | no | 0.700 | +12.8 % | 3 | 0.71 (0.47) |
-| ca_sameday_t100 | no | 0.527 | +18.0 % | 3 | 0.37 (0.34) |
+| Problem | Size | On time, vs full planner | Extra fleet hours | Passed without / with hours | Cheapest passing planner | Its time / policy's |
+| --- | --- | --- | --- | --- | --- | --- |
+| ca_drayage_combined | medium | 1.104 | +12.3 % | yes / no | tuned, 3 | 2.48 (1.92) |
+| ca_drayage_combined_t16 | medium | 1.153 | +10.6 % | yes / no | tuned, 3 | 3.01 (2.71) |
+| tx_drayage_combined_t10 | medium | 1.057 | +9.8 % | yes / no | tuned, 3 | 1.93 (1.72) |
+| tx_drayage_combined_t25 | large | 1.076 | +15.5 % | yes / no | tuned, 3 | 3.86 (3.89) |
+| ca_drayage_combined_t60 | large | 0.763 | +14.5 % | no / no | default, 3 | 3.69 (3.98) |
+| tx_drayage_combined_t50 | large | 0.795 | +3.1 % | no / no | default, 3 | 6.42 (5.40) |
+| chi_sameday_t8 | medium | 0.952 | +6.5 % | yes / no | default, 3 | 0.53 (0.64) |
+| sea_sameday_t13 | medium | 0.966 | +8.5 % | yes / no | default, 3 | 0.93 (1.24) |
+| ca_sameday_t40 | medium | 0.700 | +13.7 % | no / no | default, 3 | 0.71 (0.47) |
+| chi_sameday_t25 | large | 0.965 | +17.1 % | yes / no | default, 3 | 1.09 (1.09) |
+| chi_sameday_t50 | large | 0.919 | +36.5 % | no / no | default, 3 | 0.77 (0.75) |
+| sea_sameday_t60 | large | 0.860 | +39.8 % | no / no | default, 3 | 0.66 (0.73) |
+| ca_sameday_t100 | large | 0.527 | +18.6 % | no / no | default, 3 | 0.37 (0.34) |
+| ca_sameday | fast | 0.828 | +2.4 % | no / no | default, 60 | 1.31 (0.72) |
+| pnw_sameday_t10 | fast | 0.837 | +7.9 % | no / no | default, 60 | 0.34 (0.35) |
+| ca_sameday_t16 | fast | 0.846 | +4.9 % | no / no | default, 60 | 2.12 (1.22) |
 
-- **Same-day.** On six of seven the policy is dominated: some planner budget is no slower, serves at least as many requests on time and fails no more often. On the seventh (`chi_sameday_t25`) three iterations serve 3.7 % more on time in 1.09 times the policy's time.
-- **Drayage.** No planner budget reaches the policy's on-time count on the four passes. Their leads disappear if the planner's search code were 3.9, 5.2, 6.9 and 11.5 times faster (table order). On `ca_drayage_combined_t60` the Kullman heuristic is better and faster than the policy.
-- **The gate does not see the cost of the drayage wins.** Its dynamic criteria read on-time services and failures only. On all 16 request problems the policy averages more fleet hours than the planner and delivers more requests late; on none is it at least as good on both on-time services and hours. Drayage deadlines are soft, and the training objective prefers a late delivery to an unserved request while the planner declines such requests.
-- **Against the tuned drayage planner** (route-duration weight 0, amendment 38, full search budget) the on-time lead is 1.081 and 1.085 on the two California training problems and 1.015 on Texas, whose interval includes zero. It was not run on the large problems or at reduced budgets.
+- **Same-day.** Closest to passing: `chi_sameday_t8` (0.952 of the on-time services at +6.5 % hours) and `sea_sameday_t13`. The planner with no search iterations takes 10.5 to 12.1 % more hours than the full planner, so under the rule it no longer passes and three iterations are the cheapest pass on every slow problem. The policy is then about as fast as that planner on `chi_sameday_t25` and `sea_sameday_t13`, and slower on the other five. Its extra hours are mostly extra driving, already present after imitation; PPO reduced them on all ten same-day problems.
+- **Drayage.** The tuned planner with three iterations passes on the four problems the policy passed before, with 2.4 to 4.0 % extra hours, and is 1.9 to 3.9 times slower than the policy. The policy serves more on time than it on the two California problems (1.081, 1.101; intervals above zero), not on the two Texas problems (1.022, 1.033; intervals include zero), with 7 to 11 % more hours and 5 to 10 times its late deliveries. It drives less than the planner; the extra hours are outside driving while it handles more requests, many of them late. PPO added them: after imitation its hours were below the planner's on four of six problems. On `ca_drayage_combined_t60` the Kullman heuristic is better and faster than the policy.
+- **Reference.** Against the best-known solution instead of the planner, `ca_drayage_combined_t16` would pass (+4.4 %); no other verdict changes.
 
-**Long haul** (`suite_v8` policy; 16 problems). Without hours of service the policy is dominated on all 12: on 11 of them one second of planner search passes the gate 1.6 to 3.7 times faster than the policy, which takes 28 to 63 % more hours, and on the twelfth no setting passes. More training alone cannot create a saving there, because the policy's own decision time exceeds that planner's. With hours of service (4 problems) the policy is 4.5 to 9.8 times faster than the cheapest passing planner but completes 16 to 42 % of episodes against 95 to 98 %.
+**Long haul** (`suite_v8`; the gate already counts hours against the best-known solution).
 
-**Open decisions (user).** Whether fleet hours and late deliveries count in "equally good"; a stronger drayage baseline; whether a learned policy is pursued on long haul with hours of service. No five-seed campaign follows from this pilot by itself.
+| Class | Problems | Episodes completed, policy / planner | Extra hours | Cheapest passing planner's time / policy's |
+| --- | --- | --- | --- | --- |
+| Plain | 8 | 61-92 % / 97-100 % | +28 to +63 % | 0.27-0.62 on 7 (one problem: no setting passes); dominated on 8 |
+| Congested stations | 4 | 58-94 % / 98-100 % | +41 to +52 % | 0.39-0.62; dominated on 4 |
+| Hours of service | 4 | 16-42 % / 95-100 % | +28 to +41 % | 4.5-9.8; not dominated |
+
+Dominated means some planner setting is no slower, completes as often, fails no more often and takes no more hours. Without hours of service a planner with at most one second of search passes faster than the policy decides, so more training alone cannot create a saving there.
+
+**Open decisions (user).** The next pilot: an objective that charges fleet hours and late deliveries, reported for every class; whether a learned policy is pursued on long haul with hours of service; five seeds only after a pilot is near the gate with hours counted.
 
 ## 4. Integrity of the test
 
